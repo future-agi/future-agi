@@ -38,8 +38,8 @@ type crowdstrikeMessage struct {
 }
 
 type crowdstrikeResponse struct {
-	Status  string           `json:"status"`
-	Summary string           `json:"summary"`
+	Status  string            `json:"status"`
+	Summary string            `json:"summary"`
 	Result  crowdstrikeResult `json:"result"`
 }
 
@@ -95,6 +95,9 @@ func (a *crowdstrikeAdapter) getToken(ctx context.Context) (string, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return "", fmt.Errorf("failed to decode token response: %v", err)
 	}
+	if tokenResp.AccessToken == "" {
+		return "", fmt.Errorf("crowdstrike oauth failed: no access_token in token response")
+	}
 
 	a.cachedToken = tokenResp.AccessToken
 	a.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn-60) * time.Second)
@@ -122,9 +125,12 @@ func (a *crowdstrikeAdapter) buildRequest(ctx context.Context, text string) (*ht
 }
 
 func (a *crowdstrikeAdapter) parseResponse(body []byte) *guardrails.CheckResult {
+	if err := validateEnvelope(a, body); err != nil {
+		return guardrails.ExecutionFailure(err.Error())
+	}
 	var resp crowdstrikeResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse crowdstrike response: %v", err)}
+		return guardrails.ExecutionFailure(fmt.Sprintf("failed to parse crowdstrike response: %v", err))
 	}
 
 	if !resp.Result.Blocked {

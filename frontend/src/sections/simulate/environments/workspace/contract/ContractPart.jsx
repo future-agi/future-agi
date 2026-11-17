@@ -1,10 +1,9 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import SectionCard from "../../components/SectionCard";
 
 // A numbered part of the contract — a SectionCard whose title carries a small
-// round index badge.
+// neutral index tag.
 export function Part({ n, title, blurb, children }) {
   return (
     <SectionCard
@@ -13,9 +12,9 @@ export function Part({ n, title, blurb, children }) {
         <Stack direction="row" alignItems="center" spacing={1.25}>
           <Box
             sx={{
-              width: 20, height: 20, borderRadius: "50%", display: "grid", placeItems: "center", flexShrink: 0,
-              color: "primary.main", bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
-              typography: "s3", fontWeight: "fontWeightBold",
+              width: 20, height: 18, borderRadius: "4px", display: "grid", placeItems: "center", flexShrink: 0,
+              color: "text.secondary", bgcolor: "action.selected",
+              typography: "s3", fontWeight: 500,
             }}
           >
             {n}
@@ -36,13 +35,12 @@ Part.propTypes = {
   children: PropTypes.node,
 };
 
-// A small uppercase column label used inside the spaces and episode grids.
+// A small column label used inside the spaces and episode grids.
 export function Label({ children }) {
   return (
     <Typography
       sx={{
-        typography: "s3", fontWeight: "fontWeightBold", color: "text.subtitle",
-        textTransform: "uppercase", letterSpacing: 0.4, mb: 1,
+        typography: "s1", fontWeight: 500, color: "text.secondary", mb: 1,
       }}
     >
       {children}

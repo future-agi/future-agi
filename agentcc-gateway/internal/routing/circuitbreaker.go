@@ -46,7 +46,6 @@ type CircuitBreaker struct {
 	cfg           config.CircuitBreakerConfig
 	codes         map[int]bool
 	onStateChange func(string, bool) // providerID, healthy
-	routable      bool               // last health reported to onStateChange
 }
 
 // NewCircuitBreaker creates a circuit breaker for a provider.
@@ -75,7 +74,6 @@ func NewCircuitBreaker(providerID string, cfg config.CircuitBreakerConfig, onSta
 		cfg:           cfg,
 		codes:         codes,
 		onStateChange: onStateChange,
-		routable:      true,
 	}
 }
 
@@ -122,7 +120,9 @@ func (cb *CircuitBreaker) RecordSuccess() {
 			slog.Info("circuit breaker closed (recovered)",
 				"provider", cb.providerID,
 			)
-			cb.setRoutableLocked(true)
+			if cb.onStateChange != nil {
+				cb.onStateChange(cb.providerID, true)
+			}
 		}
 	}
 }
@@ -147,7 +147,10 @@ func (cb *CircuitBreaker) RecordFailure(err error) {
 				"provider", cb.providerID,
 				"failures", cb.failures,
 			)
-			cb.leaveRotationLocked()
+			if cb.onStateChange != nil {
+				cb.onStateChange(cb.providerID, false)
+				cb.readmitAfterCooldown()
+			}
 		}
 	case StateHalfOpen:
 		// Any failure in half-open → re-open.
@@ -156,44 +159,10 @@ func (cb *CircuitBreaker) RecordFailure(err error) {
 		slog.Warn("circuit breaker re-opened",
 			"provider", cb.providerID,
 		)
-		cb.leaveRotationLocked()
-	}
-}
-
-// leaveRotationLocked takes an opened breaker's provider out of routing and
-// schedules its return. The router never selects an unhealthy target, so
-// without the return Allow() would never run for the provider and the breaker
-// could never go half-open. Caller holds cb.mu.
-func (cb *CircuitBreaker) leaveRotationLocked() {
-	cb.setRoutableLocked(false)
-	if cb.onStateChange != nil {
-		time.AfterFunc(cb.cfg.Cooldown, cb.readmit)
-	}
-}
-
-// readmit returns the provider to routing once Allow() would let a half-open
-// probe through. Failures from requests already in flight when the breaker
-// opened move lastFailure, and with it the end of the cooldown.
-func (cb *CircuitBreaker) readmit() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	if wait := cb.cfg.Cooldown - time.Since(cb.lastFailure); cb.state == StateOpen && wait > 0 {
-		time.AfterFunc(wait, cb.readmit)
-		return
-	}
-	cb.setRoutableLocked(true)
-}
-
-// setRoutableLocked reports routability changes to onStateChange (the
-// router's SetHealthy). It fires only on a change, so the cooldown return and
-// the later recovery to closed don't both report healthy. Caller holds cb.mu.
-func (cb *CircuitBreaker) setRoutableLocked(routable bool) {
-	if cb.routable == routable {
-		return
-	}
-	cb.routable = routable
-	if cb.onStateChange != nil {
-		cb.onStateChange(cb.providerID, routable)
+		if cb.onStateChange != nil {
+			cb.onStateChange(cb.providerID, false)
+			cb.readmitAfterCooldown()
+		}
 	}
 }
 
@@ -202,6 +171,27 @@ func (cb *CircuitBreaker) State() CircuitState {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 	return cb.state
+}
+
+// readmitAfterCooldown puts the provider back into routing once the cooldown has passed. While
+// the circuit is open the router skips the provider, so no request would otherwise reach Allow
+// to move the circuit to half-open; Allow and the half-open probes decide from there.
+func (cb *CircuitBreaker) readmitAfterCooldown() {
+	time.AfterFunc(cb.cfg.Cooldown, cb.readmit)
+}
+
+// readmit follows the latest failure, including calls that were already in flight
+// when the circuit opened. Keep the check and callback under the same lock so a
+// late failure cannot move the cooldown between checking and returning to routing.
+func (cb *CircuitBreaker) readmit() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	if wait := cb.cfg.Cooldown - time.Since(cb.lastFailure); cb.state == StateOpen && wait > 0 {
+		time.AfterFunc(wait, cb.readmit)
+		return
+	}
+	cb.onStateChange(cb.providerID, true)
 }
 
 // isFailure checks if an error counts as a circuit breaker failure.
@@ -223,14 +213,17 @@ type CircuitBreakerRegistry struct {
 	breakers map[string]*CircuitBreaker
 	cfg      config.CircuitBreakerConfig
 	onChange func(string, bool)
+	// Share org state across global and per-request failover configurations.
+	orgBreakers *ScopedCircuitBreakerRegistry
 }
 
 // NewCircuitBreakerRegistry creates a registry of circuit breakers.
 func NewCircuitBreakerRegistry(cfg config.CircuitBreakerConfig, onChange func(string, bool)) *CircuitBreakerRegistry {
 	return &CircuitBreakerRegistry{
-		breakers: make(map[string]*CircuitBreaker),
-		cfg:      cfg,
-		onChange: onChange,
+		breakers:    make(map[string]*CircuitBreaker),
+		cfg:         cfg,
+		onChange:    onChange,
+		orgBreakers: NewScopedCircuitBreakerRegistry(cfg),
 	}
 }
 

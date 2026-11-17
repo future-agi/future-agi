@@ -5,14 +5,14 @@ each one needs, and how to fix what goes wrong on first boot.
 
 If you just want to try it on your laptop, jump to [Quick start](#quick-start).
 
-| Reference | What it covers |
-| --- | --- |
-| [Configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference) | Every environment variable: default, which setup reads it, what breaks when it is wrong |
-| [Telemetry and outbound connections](https://docs.futureagi.com/docs/self-hosting/configuration/telemetry) | Exactly what an install sends to Future AGI, and every other outbound connection |
-| [Container images](https://docs.futureagi.com/docs/self-hosting/images) | The container images: tags, sizes, users, health checks, verifying one |
-| [deploy/helm/futureagi](deploy/helm/futureagi/README.md) | The Helm chart (Distributed on Kubernetes) |
-| [deploy/README.md](deploy/README.md) | Production on Docker Compose |
-| [Local development](https://docs.futureagi.com/docs/self-hosting/development) | Working on the code with hot reload |
+| Reference                                                                                                  | What it covers                                                                          |
+| ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| [Configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference)            | Every environment variable: default, which setup reads it, what breaks when it is wrong |
+| [Telemetry and outbound connections](https://docs.futureagi.com/docs/self-hosting/configuration/telemetry) | Exactly what an install sends to Future AGI, and every other outbound connection        |
+| [Container images](https://docs.futureagi.com/docs/self-hosting/images)                                    | The container images: tags, sizes, users, health checks, verifying one                  |
+| [deploy/helm/futureagi](deploy/helm/futureagi/README.md)                                                   | The Helm chart (Distributed on Kubernetes)                                              |
+| [deploy/README.md](deploy/README.md)                                                                       | Production on Docker Compose                                                            |
+| [Local development](https://docs.futureagi.com/docs/self-hosting/development)                              | Working on the code with hot reload                                                     |
 
 ---
 
@@ -38,6 +38,7 @@ If you just want to try it on your laptop, jump to [Quick start](#quick-start).
 - [Configuring LLM providers](#configuring-llm-providers)
 - [Email](#email)
 - [Upgrading](#upgrading)
+  - [Automatic updates (opt-in)](#automatic-updates-opt-in)
 - [Backups](#backups)
 - [Troubleshooting](#troubleshooting)
 - [Production hardening](#production-hardening)
@@ -89,17 +90,18 @@ For production, do not rely on local-only defaults. See [Production hardening](#
 
 Useful flags:
 
-| Flag | What it does |
-| --- | --- |
-| `--distributed` | Install the Distributed setup (`docker-compose.distributed.yml`). Recorded in `.env`, so later runs keep it. Refused for a project that already holds a Standalone install. |
-| `--from-source` | Build the images from this checkout instead of pulling them. See [Installing a branch from source](#installing-a-branch-from-source). |
-| `--force` | Continue past a failed preflight check (Docker memory, path visibility, architecture). |
-| `--skip-user-creation` | Skip the first-account prompt. Run the `create_user` command later. |
-| `--no-up` | Write `.env` only; don't start the stack. |
-| `--wipe-volumes` | Stop this project and delete its volumes, then install fresh. **Deletes data.** The setup stays the same unless you also pass `--distributed`. |
-| `--new-instance` | Next to an existing install, start an isolated copy (`futureagi-2`, ...) instead. |
-| `-y` | Non-interactive. Reads `FAGI_ADMIN_EMAIL`, `FAGI_ADMIN_NAME` and `FAGI_ADMIN_PASSWORD` for the first account. |
-| `--no-telemetry` | Turn deployment telemetry off: writes `FUTURE_AGI_TELEMETRY_DISABLED=true` to `.env` before anything starts. See [Telemetry](#telemetry-and-outbound-connections). |
+| Flag                   | What it does                                                                                                                                                                                                                                                                                       |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--distributed`        | Install the Distributed setup (`docker-compose.distributed.yml`). Recorded in `.env`, so later runs keep it. Refused for a project that already holds a Standalone install.                                                                                                                        |
+| `--from-source`        | Build the images from this checkout instead of pulling them. See [Installing a branch from source](#installing-a-branch-from-source).                                                                                                                                                              |
+| `--force`              | Continue past a failed preflight check (Docker memory, path visibility, architecture).                                                                                                                                                                                                             |
+| `--skip-user-creation` | Skip the first-account prompt. Run the `create_user` command later.                                                                                                                                                                                                                                |
+| `--no-up`              | Write `.env` only; don't start the stack.                                                                                                                                                                                                                                                          |
+| `--wipe-volumes`       | Stop this project and delete its volumes, then install fresh. **Deletes data.** The setup stays the same unless you also pass `--distributed`.                                                                                                                                                     |
+| `--new-instance`       | Next to an existing install, start an isolated copy (`futureagi-2`, ...) instead.                                                                                                                                                                                                                  |
+| `-y`                   | Non-interactive. Reads `FAGI_ADMIN_EMAIL`, `FAGI_ADMIN_NAME` and `FAGI_ADMIN_PASSWORD` for the first account.                                                                                                                                                                                      |
+| `--auto-update MODE`   | After the stack is ready, opt in once to automatic updates: `apply`, `download` or `notify` (Standalone with published images only; refused with `--no-up`, `--from-source` and `--distributed`). Runs `./bin/update setup --mode MODE --yes`. See [Automatic updates](#automatic-updates-opt-in). |
+| `--no-telemetry`       | Turn deployment telemetry off: writes `FUTURE_AGI_TELEMETRY_DISABLED=true` to `.env` before anything starts. See [Telemetry](#telemetry-and-outbound-connections).                                                                                                                                 |
 
 On Windows, `.\bin\install.ps1` takes the same options as `-Distributed`,
 `-FromSource`, `-Force`, `-SkipUserCreation`, `-NoUp`, `-WipeVolumes`,
@@ -107,7 +109,8 @@ On Windows, `.\bin\install.ps1` takes the same options as `-Distributed`,
 
 `bin/install` exits `1` when the stack came up but your first account could not
 be created, so an unattended run fails loudly instead of pointing you at a login
-you cannot use. Skipping account creation still exits `0`.
+you cannot use. Skipping account creation still exits `0`. It exits `3` when the stack is up but an
+automatic-update opt-in could not be completed.
 
 When the installer prints **Future AGI is up**, it lists the next steps and:
 
@@ -184,11 +187,11 @@ invitee for you to share. To have them emailed, see [Email](#email).
 
 ### Stop, start and remove
 
-| To... | Run |
-| --- | --- |
-| Stop, keeping the data | `docker compose down` (or `./bin/uninstall`) |
-| Start again | `docker compose up -d` |
-| Delete all data | `./bin/uninstall --wipe-data` (or `docker compose down -v`) |
+| To...                                                                             | Run                                                                                                                                                            |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop, keeping the data                                                            | `docker compose down` (or `./bin/uninstall`)                                                                                                                   |
+| Start again                                                                       | `docker compose up -d`                                                                                                                                         |
+| Delete all data                                                                   | `./bin/uninstall --wipe-data` (or `docker compose down -v`)                                                                                                    |
 | Remove the install: containers, volumes, `.env` and the Future AGI images it uses | `./bin/uninstall --purge`. Images built by `--from-source` are shared by every checkout on the machine, so it asks about them separately, and `-y` keeps them. |
 
 Data lives in named Docker volumes and survives restarts and upgrades.
@@ -213,15 +216,15 @@ literal placeholder `CHANGEME-set-by-bin-install`).
 
 ## Prerequisites
 
-| Requirement | Standalone | Distributed | Notes |
-| --- | --- | --- | --- |
-| Docker Engine | 24.0+ | 24.0+ | Docker Desktop, Colima or OrbStack on macOS and Windows, or Docker Engine on Linux |
-| Docker Compose | v2.24+ | v2.24+ | `docker compose version` should print v2.x |
-| CPU | 2 vCPU | 4+ vCPU | |
-| Docker memory | 4 GB (3 GB minimum); idles at about 1 GB | 12–16 GB (6 GB minimum) | The Docker VM's memory, not the host's. `bin/install` measures it |
-| Disk | 10 GB free | 20 GB free | Images plus data; data grows from there |
-| Privileged containers | not needed | needed by `code-executor` | In Standalone only the optional `sandbox` profile needs them. Not available on Fargate, Cloud Run or some PaaS |
-| Architecture | `linux/amd64` or `linux/arm64` | same | See the Apple Silicon note below |
+| Requirement           | Standalone                               | Distributed               | Notes                                                                                                          |
+| --------------------- | ---------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Docker Engine         | 24.0+                                    | 24.0+                     | Docker Desktop, Colima or OrbStack on macOS and Windows, or Docker Engine on Linux                             |
+| Docker Compose        | v2.24+                                   | v2.24+                    | `docker compose version` should print v2.x or later. `./bin/update` does not run on v2.25.0                    |
+| CPU                   | 2 vCPU                                   | 4+ vCPU                   |                                                                                                                |
+| Docker memory         | 4 GB (3 GB minimum); idles at about 1 GB | 12–16 GB (6 GB minimum)   | The Docker VM's memory, not the host's. `bin/install` measures it                                              |
+| Disk                  | 10 GB free                               | 20 GB free                | Images plus data; data grows from there                                                                        |
+| Privileged containers | not needed                               | needed by `code-executor` | In Standalone only the optional `sandbox` profile needs them. Not available on Fargate, Cloud Run or some PaaS |
+| Architecture          | `linux/amd64` or `linux/arm64`           | same                      | See the Apple Silicon note below                                                                               |
 
 The optional `ml` profile (model serving) adds a large image and a few GB of
 memory once its models load. **Helm** needs Kubernetes 1.27+ and Helm 3.10+
@@ -258,11 +261,11 @@ builds native images.
 What a fresh install downloads, compressed. Per-image sizes, their budgets and
 how to check a release are in [Container images](https://docs.futureagi.com/docs/self-hosting/images#images-at-a-glance).
 
-| | Standalone | Distributed |
-| --- | --- | --- |
-| Containers | 3 (+1 per optional profile) | 31: 22 long-running services and 9 one-shot setup jobs (`COMPOSE_PROFILES=all` adds 10) |
-| First download | about 800 MB: `futureagi/standalone` + `postgres:16` + `clickhouse-server:25.3-alpine`. `ml` adds about 450 MB, `sandbox` about 185 MB | the Future AGI images, with the [default backend variant](https://docs.futureagi.com/docs/self-hosting/images#backend-variants), plus Postgres, ClickHouse, Redis, MinIO, Temporal, Kafka and PeerDB |
-| Disk for images | about 2.5–3 GB unpacked | several GB more; keep 20 GB free |
+|                 | Standalone                                                                                                                             | Distributed                                                                                                                                                                                          |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Containers      | 3 (+1 per optional profile)                                                                                                            | 31: 22 long-running services and 9 one-shot setup jobs (`COMPOSE_PROFILES=all` adds 10)                                                                                                              |
+| First download  | about 800 MB: `futureagi/standalone` + `postgres:16` + `clickhouse-server:25.3-alpine`. `ml` adds about 450 MB, `sandbox` about 185 MB | the Future AGI images, with the [default backend variant](https://docs.futureagi.com/docs/self-hosting/images#backend-variants), plus Postgres, ClickHouse, Redis, MinIO, Temporal, Kafka and PeerDB |
+| Disk for images | about 2.5–3 GB unpacked                                                                                                                | several GB more; keep 20 GB free                                                                                                                                                                     |
 
 Standalone's `futureagi/standalone` is built on the slim backend image
 (`futureagi/future-agi:<version>-slim`), while Distributed and Helm run the
@@ -279,20 +282,20 @@ Upgrades download only the layers that changed.
 Three ways to run Future AGI, plus a development overlay. All run the same
 application code.
 
-| | **Standalone** (default) | **Distributed** (at scale) | **Helm** (Distributed on Kubernetes) |
-| --- | --- | --- | --- |
-| Runs on | One Docker host | One Docker host | A Kubernetes cluster |
-| Install | `./bin/install` | `./bin/install --distributed` | `helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z ...` |
-| Files | `docker-compose.yml` | `docker-compose.distributed.yml` | [`deploy/helm/futureagi`](deploy/helm/futureagi/README.md), published signed to GHCR with every release |
-| Containers | 3: `app`, `postgres`, `clickhouse` (+1 per optional profile) | 31: 22 services and 9 one-shot jobs (`all` profile: +10) | One Deployment per service and a bootstrap Job; datastores external (default) or bundled |
-| Hardware | 2 vCPU, 4 GB (3 GB minimum); idles at about 1 GB | 4+ vCPU, 12–16 GB (6 GB minimum) | Evaluation: about 4 CPUs and 8 GiB free. Production: per service, see [Sizing presets](deploy/helm/futureagi/README.md#sizing-presets) |
-| Workflow engine | Temporal dev server (SQLite) inside `app`; the worker runs in the API process | Temporal server on Postgres; one all-queue worker, per-queue workers with the `all` profile | Your Temporal (or a bundled dev server); all-queue worker plus optional per-queue Deployments |
-| Postgres → ClickHouse sync | In-process outbox | PeerDB | In-process outbox |
-| Observed-attribute suggestions in filters, widgets and tasks | On: the collector writes them directly | On: through Kafka | On: the collector writes them directly |
-| Model serving | Optional (`ml` profile) | Always on | Optional (`serving.enabled`) |
-| Code-eval sandbox | In-app, unprivileged, Python only; nsjail, Python and JavaScript, with the optional `sandbox` profile. See [Code evals and the sandbox](#code-evals-and-the-sandbox) | nsjail `code-executor` (privileged) | Off by default: custom code evals are refused until you enable the privileged sandbox |
-| Scaling | One machine | Per service, on one machine | Per service, with autoscaling |
-| Use it for | Laptops, evaluation, a small team on one VM (a few people working at once) | High volume on one large host; the [production overlay](deploy/README.md) | Production on Kubernetes |
+|                                                              | **Standalone** (default)                                                                                                                                             | **Distributed** (at scale)                                                                  | **Helm** (Distributed on Kubernetes)                                                                                                   |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Runs on                                                      | One Docker host                                                                                                                                                      | One Docker host                                                                             | A Kubernetes cluster                                                                                                                   |
+| Install                                                      | `./bin/install`                                                                                                                                                      | `./bin/install --distributed`                                                               | `helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z ...`                                                 |
+| Files                                                        | `docker-compose.yml`                                                                                                                                                 | `docker-compose.distributed.yml`                                                            | [`deploy/helm/futureagi`](deploy/helm/futureagi/README.md), published signed to GHCR with every release                                |
+| Containers                                                   | 3: `app`, `postgres`, `clickhouse` (+1 per optional profile)                                                                                                         | 31: 22 services and 9 one-shot jobs (`all` profile: +10)                                    | One Deployment per service and a bootstrap Job; datastores external (default) or bundled                                               |
+| Hardware                                                     | 2 vCPU, 4 GB (3 GB minimum); idles at about 1 GB                                                                                                                     | 4+ vCPU, 12–16 GB (6 GB minimum)                                                            | Evaluation: about 4 CPUs and 8 GiB free. Production: per service, see [Sizing presets](deploy/helm/futureagi/README.md#sizing-presets) |
+| Workflow engine                                              | Temporal dev server (SQLite) inside `app`; the worker runs in the API process                                                                                        | Temporal server on Postgres; one all-queue worker, per-queue workers with the `all` profile | Your Temporal (or a bundled dev server); all-queue worker plus optional per-queue Deployments                                          |
+| Postgres → ClickHouse sync                                   | In-process outbox                                                                                                                                                    | PeerDB                                                                                      | In-process outbox                                                                                                                      |
+| Observed-attribute suggestions in filters, widgets and tasks | On: the collector writes them directly                                                                                                                               | On: through Kafka                                                                           | On: the collector writes them directly                                                                                                 |
+| Model serving                                                | Optional (`ml` profile)                                                                                                                                              | Always on                                                                                   | Optional (`serving.enabled`)                                                                                                           |
+| Code-eval sandbox                                            | In-app, unprivileged, Python only; nsjail, Python and JavaScript, with the optional `sandbox` profile. See [Code evals and the sandbox](#code-evals-and-the-sandbox) | nsjail `code-executor` (privileged)                                                         | Off by default: custom code evals are refused until you enable the privileged sandbox                                                  |
+| Scaling                                                      | One machine                                                                                                                                                          | Per service, on one machine                                                                 | Per service, with autoscaling                                                                                                          |
+| Use it for                                                   | Laptops, evaluation, a small team on one VM (a few people working at once)                                                                                           | High volume on one large host; the [production overlay](deploy/README.md)                   | Production on Kubernetes                                                                                                               |
 
 ### Standalone (default)
 
@@ -601,25 +604,25 @@ Standalone's `app` image is built on the **slim** backend: heavy ML, audio
 and voice dependencies and several SDKs are not installed, which keeps that
 backend around 340 MB to download. Distributed and Helm run the default
 backend, which also has the `sandbox`, `billing`, `ops`, `gcp`, `langchain`,
-`rabbitmq` and `localizer` extras, `uv`, git and Debian's ffmpeg
+`rabbitmq`, `localizer` and `pii` extras, `uv`, git and Debian's ffmpeg
 ([Backend variants](https://docs.futureagi.com/docs/self-hosting/images#backend-variants)). Neither has `audio`,
-`ml`, `voice`, `pii`, `prompt-opt` or `vectordb`. Most features work out of
+`ml`, `voice`, `prompt-opt` or `vectordb`. Most features work out of
 the box. The ones below need an optional dependency group ("extra") baked into
 the image:
 
-| Feature | Extra |
-| --- | --- |
-| Audio evals: TTS/STT via ElevenLabs, audio decoding (av, librosa) | `audio` |
-| ML-based evals: torch models, HuggingFace datasets/transformers | `ml` |
-| Voice simulation: LiveKit calls, Retell agents | `voice` |
-| PII detection and scrubbing (Presidio, spaCy) | `pii` |
-| Prompt optimization (Optuna, GEPA) | `prompt-opt` |
-| Vector-DB dataset columns (Pinecone, Qdrant, Weaviate, Chroma) | `vectordb` |
-| Vertex AI partner models (Claude, Llama, Mistral, Jamba and Codestral on Vertex), Model Garden, Gemma and PaLM, and Vertex tracing. Gemini, Imagen and embeddings on Vertex work without it | `gcp` |
-| Hosted agent runs on Daytona or E2B sandboxes | `sandbox` |
-| RabbitMQ channel layer (`CHANNEL_LAYER_BACKEND=rabbitmq`) | `rabbitmq` |
-| Error localization with the Claude Agent SDK (`ERROR_LOCALIZER_BACKEND=claude_agent_sdk`, the default outside Standalone; needed to localize simulation call audio). Standalone runs the `legacy` localizer, which needs no extra | `localizer` |
-| Stripe billing tooling, Celery Flower, LangChain (none are used by the open-source app) | `billing`, `ops`, `langchain` |
+| Feature                                                                                                                                                                                                                           | Extra                         |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| Audio evals: TTS/STT via ElevenLabs, audio decoding (av, librosa)                                                                                                                                                                 | `audio`                       |
+| ML-based evals: torch models, HuggingFace datasets/transformers                                                                                                                                                                   | `ml`                          |
+| Voice simulation: LiveKit calls, Retell agents                                                                                                                                                                                    | `voice`                       |
+| PII detection and scrubbing (Presidio, spaCy)                                                                                                                                                                                     | `pii`                         |
+| Prompt optimization (Optuna, GEPA)                                                                                                                                                                                                | `prompt-opt`                  |
+| Vector-DB dataset columns (Pinecone, Qdrant, Weaviate, Chroma)                                                                                                                                                                    | `vectordb`                    |
+| Vertex AI partner models (Claude, Llama, Mistral, Jamba and Codestral on Vertex), Model Garden, Gemma and PaLM, and Vertex tracing. Gemini, Imagen and embeddings on Vertex work without it                                       | `gcp`                         |
+| Hosted agent runs on Daytona or E2B sandboxes                                                                                                                                                                                     | `sandbox`                     |
+| RabbitMQ channel layer (`CHANNEL_LAYER_BACKEND=rabbitmq`)                                                                                                                                                                         | `rabbitmq`                    |
+| Error localization with the Claude Agent SDK (`ERROR_LOCALIZER_BACKEND=claude_agent_sdk`, the default outside Standalone; needed to localize simulation call audio). Standalone runs the `legacy` localizer, which needs no extra | `localizer`                   |
+| Stripe billing tooling, Celery Flower, LangChain (none are used by the open-source app)                                                                                                                                           | `billing`, `ops`, `langchain` |
 
 **What happens without the extra:** most optional features fail with an
 `ImportError` that names the missing extra and points here; some evaluation
@@ -628,9 +631,18 @@ unavailable. Voice simulation is gated up front and returns a clear "not
 available in this build" API error. Without `gcp` the model picker does not
 offer the Vertex partner models. Without `sandbox`, hosted runs on Daytona or
 E2B answer `501 sandbox_sdk_missing`. Standalone's slim backend has neither
-`gcp` nor `sandbox`. If PII redaction is enabled for a project, ingestion
-fails closed until the `pii` extra is installed, so unredacted data is never
-stored silently.
+`gcp` nor `sandbox`. Standalone's slim backend has no `pii` either.
+
+**PII redaction and where it applies:** a project's PII redaction runs on the
+spans the backend ingests itself, through its gRPC trace service. For a
+project with redaction enabled, that ingestion never stores a raw value. A
+value that can never be scanned (too long, undecodable) is stored as
+`[REDACTED: could not be scanned]`. When the engines fail, the batch is
+rejected and retried after 1, 5 and 15 minutes, then dropped with a
+`pii_scrub_batch_dropped` warning. Without the `pii` extra the engines always
+fail, so every batch of that project is dropped. Spans sent to `fi-collector`, the default
+OTLP ingestion path, are not redacted: the collector does not apply a
+project's PII setting.
 
 **To enable extras**, rebuild the backend image with the `EXTRAS` build
 argument (comma-separated). `EXTRAS` replaces the variant's own list of
@@ -639,7 +651,7 @@ groups, so name every group you want:
 ```bash
 # Distributed and Helm: the default backend's groups plus yours
 docker build -f futureagi/Dockerfile.oss \
-  --build-arg EXTRAS=sandbox,billing,ops,gcp,langchain,rabbitmq,localizer,audio,pii \
+  --build-arg EXTRAS=sandbox,billing,ops,gcp,langchain,rabbitmq,localizer,pii,audio \
   -t future-agi-backend:with-extras ./futureagi
 
 # Standalone: the slim backend with just the groups you add
@@ -665,13 +677,13 @@ that if you need everything.
 value you pass wins. Every image's build arguments are in
 [Build arguments](https://docs.futureagi.com/docs/self-hosting/images#build-arguments).
 
-| Build argument | Default: standard / slim | What it changes |
-| --- | --- | --- |
-| `FFMPEG_FLAVOR` | `debian` / `minimal` | `debian`: Debian's ffmpeg (about 145 MB more than `minimal`). `minimal`: a small LGPL `ffmpeg`/`ffprobe` build with the formats the app handles (WAV, MP3, Ogg/Opus, FLAC, AAC/M4A, AMR, WMA, WebM, MP4, H.264/HEVC/VP8/VP9, and more); an upload in an exotic codec (AV1, WavPack, ProRes) fails with "Decoder not found". `none`: no ffmpeg, so audio upload and conversion, video thumbnails and Deepgram speech-to-text fail |
-| `WITH_GIT` | `true` / `false` | git (about 29 MB). Hosted agent runs from a GitHub source need it and otherwise answer `501 git_unavailable` |
-| `SLIM_SITE_PACKAGES` | `0` / `1` | `1` drops package test suites, type stubs, debug symbols and the Google API discovery documents the app does not call (about 63 MB); keep `0` for code that calls other Google APIs through `googleapiclient` |
-| `NLTK_DATA_PROFILE` | `full` / `minimal` | `minimal`: the English NLTK data the app loads. `full`: every language and the legacy packages (about 100 MB more) |
-| `WITH_UV` | `true` / `false` | `uv` and `uvx` in the image, for images built on top of this one that install more packages |
+| Build argument       | Default: standard / slim | What it changes                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FFMPEG_FLAVOR`      | `debian` / `minimal`     | `debian`: Debian's ffmpeg (about 145 MB more than `minimal`). `minimal`: a small LGPL `ffmpeg`/`ffprobe` build with the formats the app handles (WAV, MP3, Ogg/Opus, FLAC, AAC/M4A, AMR, WMA, WebM, MP4, H.264/HEVC/VP8/VP9, and more); an upload in an exotic codec (AV1, WavPack, ProRes) fails with "Decoder not found". `none`: no ffmpeg, so audio upload and conversion, video thumbnails and Deepgram speech-to-text fail |
+| `WITH_GIT`           | `true` / `false`         | git (about 29 MB). Hosted agent runs from a GitHub source need it and otherwise answer `501 git_unavailable`                                                                                                                                                                                                                                                                                                                     |
+| `SLIM_SITE_PACKAGES` | `0` / `1`                | `1` drops package test suites, type stubs, debug symbols and the Google API discovery documents the app does not call (about 63 MB); keep `0` for code that calls other Google APIs through `googleapiclient`                                                                                                                                                                                                                    |
+| `NLTK_DATA_PROFILE`  | `full` / `minimal`       | `minimal`: the English NLTK data the app loads. `full`: every language and the legacy packages (about 100 MB more)                                                                                                                                                                                                                                                                                                               |
+| `WITH_UV`            | `true` / `false`         | `uv` and `uvx` in the image, for images built on top of this one that install more packages                                                                                                                                                                                                                                                                                                                                      |
 
 The model-serving image (`futureagi/model_serving/Dockerfile.oss`) takes
 `TORCH_BACKEND`: `cpu` by default, `cu124` for the CUDA build that releases
@@ -689,13 +701,13 @@ what goes wrong when it is wrong is in the
 [Environment variables](https://docs.futureagi.com/docs/self-hosting/configuration/environment#what-to-set-by-situation) has a table of what to
 set, by situation:
 
-| You want to... | Set |
-| --- | --- |
-| Run LLM evals, the prompt playground, agent features | One provider key, e.g. `OPENAI_API_KEY` ([LLM providers](#configuring-llm-providers)) |
-| Open the UI from another machine or a domain | `VITE_HOST_API`, `BASE_URL`, `FRONTEND_URL`, `APP_URL`, `MINIO_URL` ([below](#opening-the-ui-from-another-machine)) |
-| Send invites and password resets by email | `MAILGUN_API_KEY`, `MAILGUN_SENDER_DOMAIN`, `DEFAULT_FROM_EMAIL`, optionally `DEFAULT_REPLY_TO_EMAIL` ([Email](#email)) |
-| Stop sending deployment telemetry | `FUTURE_AGI_TELEMETRY_DISABLED=true`, or `./bin/install --no-telemetry` ([Telemetry](#telemetry-and-outbound-connections)) |
-| Go to production | The [production checklist](https://docs.futureagi.com/docs/self-hosting/production/checklist) |
+| You want to...                                       | Set                                                                                                                        |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Run LLM evals, the prompt playground, agent features | One provider key, e.g. `OPENAI_API_KEY` ([LLM providers](#configuring-llm-providers))                                      |
+| Open the UI from another machine or a domain         | `VITE_HOST_API`, `BASE_URL`, `FRONTEND_URL`, `APP_URL`, `MINIO_URL` ([below](#opening-the-ui-from-another-machine))        |
+| Send invites and password resets by email            | `MAILGUN_API_KEY`, `MAILGUN_SENDER_DOMAIN`, `DEFAULT_FROM_EMAIL`, optionally `DEFAULT_REPLY_TO_EMAIL` ([Email](#email))    |
+| Stop sending deployment telemetry                    | `FUTURE_AGI_TELEMETRY_DISABLED=true`, or `./bin/install --no-telemetry` ([Telemetry](#telemetry-and-outbound-connections)) |
+| Go to production                                     | The [production checklist](https://docs.futureagi.com/docs/self-hosting/production/checklist)                              |
 
 Docker Compose reads `.env` from the directory where you run it. Two lines
 choose what runs: `COMPOSE_FILE` (unset: Standalone;
@@ -822,33 +834,33 @@ Image by image (ports, users, health checks, sizes): [Container images](https://
 
 ### Standalone
 
-| Service | Purpose |
-| --- | --- |
-| `app` | Everything but the databases, under one process supervisor: the Django API with its Temporal worker, the Temporal dev server (SQLite in the `app-data` volume), Redis (in memory), object storage (in `app-data`), the fi-collector trace collector, the agentcc-gateway LLM proxy, the code-eval sandbox, and nginx serving the UI. |
-| `postgres` | Primary transactional store (users, traces, datasets, evals, prompts, annotations). |
-| `clickhouse` | Analytics store for traces, spans, dashboards and evaluation queries. Fed from Postgres by an in-process outbox. |
-| `serving` | `ml` profile only. Embeddings and small-model inference. |
-| `code-executor` | `sandbox` profile only. nsjail sandbox for code evals; the app sends code evals to it while `COMPOSE_PROFILES` in `.env` includes `sandbox`. **Requires `privileged: true`.** |
+| Service         | Purpose                                                                                                                                                                                                                                                                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `app`           | Everything but the databases, under one process supervisor: the Django API with its Temporal worker, the Temporal dev server (SQLite in the `app-data` volume), Redis (in memory), object storage (in `app-data`), the fi-collector trace collector, the agentcc-gateway LLM proxy, the code-eval sandbox, and nginx serving the UI. |
+| `postgres`      | Primary transactional store (users, traces, datasets, evals, prompts, annotations).                                                                                                                                                                                                                                                  |
+| `clickhouse`    | Analytics store for traces, spans, dashboards and evaluation queries. Fed from Postgres by an in-process outbox.                                                                                                                                                                                                                     |
+| `serving`       | `ml` profile only. Embeddings and small-model inference.                                                                                                                                                                                                                                                                             |
+| `code-executor` | `sandbox` profile only. nsjail sandbox for code evals; the app sends code evals to it while `COMPOSE_PROFILES` in `.env` includes `sandbox`. **Requires `privileged: true`.**                                                                                                                                                        |
 
 ### Distributed
 
-| Service | Purpose |
-| --- | --- |
-| `frontend` | The React app served by nginx. |
-| `backend` | Django API: REST, gRPC and WebSockets. Reads and writes Postgres, ClickHouse, Redis and MinIO. |
-| `worker` | Temporal worker polling every queue except the exact-aggregation queue and those in `TEMPORAL_EXCLUDED_QUEUES` (default: the simulation runner's). With the `all` or `workers` profile, per-queue workers (`worker-default`, `worker-tasks-s`, `-l`, `-xl`, `worker-trace-ingestion`, `worker-agent-compass`, `worker-simulation-runner`) join it. |
-| `worker-exact-aggregation` | Single-slot worker for exact analytics, the admission boundary for expensive queries. |
-| `agentcc-gateway` | Go LLM proxy. Routes calls to OpenAI, Anthropic, Gemini, Bedrock, Vertex and others; retries, rate limits, logging. |
-| `serving` | Embeddings and small-model inference. |
-| `code-executor` | nsjail sandbox for code evals. **Requires `privileged: true`.** |
-| `fi-collector` | OTLP receiver: writes spans to ClickHouse. |
-| `property-catalog-kafka`, `fi-property-catalog-consumer` | The observed-attribute catalog: the collector publishes span attributes to Kafka, the consumer indexes them for filter suggestions. |
-| `postgres` | Primary transactional store. |
-| `clickhouse` | Analytics store for traces, spans, dashboards and evaluation queries. |
-| `redis` | Cache, rate limits, locks and live updates (the channel layer). Also the invalidation bus between the backend and fi-collector: the backend (`REDIS_URL`) and fi-collector (`FI_AUTH_REDIS_ADDR`) must point at the **same** Redis. A mismatch is a silent failure: key revocation and project-delete cache invalidation stop working, and the collector's auth cache only expires by TTL. |
-| `minio` | S3-compatible object storage (uploaded files, eval artifacts). The backend reaches it at `S3_ENDPOINT_URL` (a Docker host name); links returned to the browser use `MINIO_URL` (default `http://localhost:9005`). See [Opening the UI from another machine](#opening-the-ui-from-another-machine). |
-| `temporal` | Durable workflow server. Shares the main Postgres. |
-| `peerdb-*` (7 containers) | Postgres → ClickHouse change data capture. |
+| Service                                                  | Purpose                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `frontend`                                               | The React app served by nginx.                                                                                                                                                                                                                                                                                                                                                             |
+| `backend`                                                | Django API: REST, gRPC and WebSockets. Reads and writes Postgres, ClickHouse, Redis and MinIO.                                                                                                                                                                                                                                                                                             |
+| `worker`                                                 | Temporal worker polling every queue except the exact-aggregation queue and those in `TEMPORAL_EXCLUDED_QUEUES` (default: the simulation runner's). With the `all` or `workers` profile, per-queue workers (`worker-default`, `worker-tasks-s`, `-l`, `-xl`, `worker-trace-ingestion`, `worker-agent-compass`, `worker-simulation-runner`) join it.                                         |
+| `worker-exact-aggregation`                               | Single-slot worker for exact analytics, the admission boundary for expensive queries.                                                                                                                                                                                                                                                                                                      |
+| `agentcc-gateway`                                        | Go LLM proxy. Routes calls to OpenAI, Anthropic, Gemini, Bedrock, Vertex and others; retries, rate limits, logging.                                                                                                                                                                                                                                                                        |
+| `serving`                                                | Embeddings and small-model inference.                                                                                                                                                                                                                                                                                                                                                      |
+| `code-executor`                                          | nsjail sandbox for code evals. **Requires `privileged: true`.**                                                                                                                                                                                                                                                                                                                            |
+| `fi-collector`                                           | OTLP receiver: writes spans to ClickHouse.                                                                                                                                                                                                                                                                                                                                                 |
+| `property-catalog-kafka`, `fi-property-catalog-consumer` | The observed-attribute catalog: the collector publishes span attributes to Kafka, the consumer indexes them for filter suggestions.                                                                                                                                                                                                                                                        |
+| `postgres`                                               | Primary transactional store.                                                                                                                                                                                                                                                                                                                                                               |
+| `clickhouse`                                             | Analytics store for traces, spans, dashboards and evaluation queries.                                                                                                                                                                                                                                                                                                                      |
+| `redis`                                                  | Cache, rate limits, locks and live updates (the channel layer). Also the invalidation bus between the backend and fi-collector: the backend (`REDIS_URL`) and fi-collector (`FI_AUTH_REDIS_ADDR`) must point at the **same** Redis. A mismatch is a silent failure: key revocation and project-delete cache invalidation stop working, and the collector's auth cache only expires by TTL. |
+| `minio`                                                  | S3-compatible object storage (uploaded files, eval artifacts). The backend reaches it at `S3_ENDPOINT_URL` (a Docker host name); links returned to the browser use `MINIO_URL` (default `http://localhost:9005`). See [Opening the UI from another machine](#opening-the-ui-from-another-machine).                                                                                         |
+| `temporal`                                               | Durable workflow server. Shares the main Postgres.                                                                                                                                                                                                                                                                                                                                         |
+| `peerdb-*` (7 containers)                                | Postgres → ClickHouse change data capture.                                                                                                                                                                                                                                                                                                                                                 |
 
 The one-shot jobs (`postgres-schema-bootstrap`, `clickhouse-native-bootstrap`,
 `clickhouse-cdc-bootstrap`, `peerdb-temporal-init`, `peerdb-init` and four for
@@ -880,6 +892,16 @@ Your `config.yaml` is git-ignored. The example uses `${VAR}` interpolation so
 the real key never has to live in the file, but treat it as a secret anyway.
 The gateway runs as uid 65532 in Distributed, so a mounted config must be
 readable by that user (mode `0644`).
+
+### Gateway video job state
+
+Video generation is off by default. Before enabling it, configure the gateway's
+Redis with AOF (`appendfsync everysec`) or RDB snapshots and
+`maxmemory-policy noeviction` so job state survives restarts and memory pressure
+does not evict it. The gateway logs a warning when it can read a policy other
+than `noeviction`; managed Redis may deny that check. The default Standalone
+in-memory Redis is insufficient for durable video state. See the
+[video configuration](agentcc-gateway/docs/video-generation/configuration.md).
 
 ### Vertex AI
 
@@ -936,6 +958,7 @@ Helm, set `agentccGateway.allowPrivateProviderURLs=true`.
       extra_hosts:
         - "host.docker.internal:host-gateway"
   ```
+
 - **As a Compose service:** add it to `docker-compose.override.yml` and use its
   service name, for example `http://ollama:11434/v1`.
 
@@ -976,19 +999,52 @@ from the environment. On Helm the same settings are `secrets.mailgunApiKey`,
 
 ## Upgrading
 
+For installs **not enrolled in automatic updates**, the manual installer path is:
+
 ```bash
 git pull
 ./bin/install            # add --from-source if you run a branch from source
 ```
 
 Re-running the installer keeps your `.env` secrets, adds new keys from
-`.env.example`, stays on the setup `.env` records, pulls the new images and
-waits for the stack to be ready. Migrations run automatically on start.
+`.env.example`, stays on the setup `.env` records, pulls the images `.env`
+selects and waits for the stack to be ready. Migrations run automatically on
+start. An install that follows `:latest` (empty version keys) gets the new
+release this way; one whose version keys are set, by you or by `./bin/update`,
+keeps running those versions until you change the keys (or use
+`./bin/update`, below).
 
 On Helm: `helm upgrade futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z --namespace futureagi -f my-values.yaml --timeout 20m`,
 always with your values file (never `--reuse-values` across versions);
 the bootstrap Job migrates before any Deployment is rolled. See the
 [chart README](deploy/helm/futureagi/README.md#upgrading).
+
+**Automatic updates (Standalone, opt-in).** A Standalone install can opt in once to
+updates that run by themselves, migrations included, with a cold backup and an
+automatic restore if the new version fails. An install that opted in should not
+be upgraded with `git pull` and `./bin/install`: that stops its automatic updates.
+If you need manual changes, first complete the
+[safe handoff to manual operations](deploy/update/README.md#safe-handoff-to-manual-operations).
+See [Automatic updates](#automatic-updates-opt-in) below.
+
+**Signed updates with rollback.** `./bin/update` applies a signed release to
+a Docker Compose install. It backs up first, verifies every image digest
+against the release's Sigstore-signed manifest, waits for the stack the way
+`./bin/install` does, and can roll the update back. It changes only the image
+version keys in `.env`:
+
+```bash
+git fetch --tags && git checkout vX.Y.Z   # the release's compose files
+./bin/install --no-up -y                  # only if the release adds settings
+./bin/update check                        # what would happen; changes nothing
+./bin/update apply
+```
+
+The first update pins the version keys of an install that followed `:latest`;
+keep upgrading it with `./bin/update`. See
+[`deploy/update/README.md`](deploy/update/README.md) for the backup hook,
+production installs (a two-step update around the release's initialization
+jobs), rollback and exit codes.
 
 > **Upgrading from a release where `docker-compose.yml` was the Distributed
 > stack.** The root `docker-compose.yml` is now Standalone, and the old
@@ -1037,6 +1093,29 @@ asks. Unless you want that (see [Reset a password](#reset-a-password)), delete
 the line from your `.env` and run `docker compose up -d`. `./bin/install`
 warns while the line is there.
 
+**Simulation environment versioning.** `HARNESS_VERSIONING_ENABLED` is off
+by default. Before you turn it on, give the environments you already have
+their first versions (in Standalone, use `app` in place of `backend`):
+
+```bash
+docker compose exec backend python manage.py harness_versions_backfill --check
+docker compose exec -e SERVICE_TYPE=bootstrap -e STARTUP_DB_MUTATION_MODE=operator -e NO_STARTUP_DB_MUTATIONS=false backend python manage.py harness_versions_backfill
+```
+
+`--check` changes nothing and lists what the backfill would do; fix every
+error it reports first. The backfill writes to the database, so it runs as a
+one-off operator process: the three variables apply to that process only, and
+the running services keep `NO_STARTUP_DB_MUTATIONS=true`.
+
+On Helm: `kubectl -n futureagi exec deploy/futureagi-backend -c backend -- python manage.py harness_versions_backfill --check`, then `kubectl -n futureagi exec deploy/futureagi-backend -c backend -- env SERVICE_TYPE=bootstrap STARTUP_DB_MUTATION_MODE=operator NO_STARTUP_DB_MUTATIONS=false python manage.py harness_versions_backfill`.
+
+Then set `HARNESS_VERSIONING_ENABLED=true` in `.env` and run
+`docker compose up -d` (on Helm, set it in `config.extraEnv` and run
+`helm upgrade`). The backfill is safe to run again later, for
+example for environments that were busy the first time. See the
+[configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference)
+for the two flags that follow it.
+
 **Pinning versions.** In Standalone, `FUTURE_AGI_VERSION` tags the app image.
 In Distributed each image is versioned on its own: `FUTURE_AGI_VERSION` for
 the backend and workers, `FRONTEND_VERSION`, `AGENTCC_GATEWAY_VERSION`,
@@ -1052,6 +1131,106 @@ Downtime is about the time the app (or backend) takes to restart. To roll
 back, set the bumped variable(s) to the previous tag and re-run the same two
 commands. To pin an exact image digest, use a `docker-compose.override.yml`,
 never `FUTURE_AGI_VERSION`; see [Verifying an image](https://docs.futureagi.com/docs/self-hosting/images#verifying-an-image).
+
+### Automatic updates (opt-in)
+
+A Standalone install can opt in, once, to updates that run by themselves. They
+are **off** unless you choose them:
+
+```bash
+./bin/install --auto-update apply   # during an install; setup runs after the stack is ready
+./bin/update setup --mode apply     # on an existing install: prints what it will do, then asks
+```
+
+An interactive `./bin/install` also asks once, after stack readiness and the
+first-account step:
+`Opt in once to supported automatic updates? [y/N]`. `-y` alone never opts in.
+Answering `y` there is your consent: setup then prints the disclosure below and
+goes ahead without asking again. To read the disclosure before you agree, answer
+`N` and run `./bin/update setup --mode apply`. For an unattended opt-in,
+`./bin/update setup --mode apply --yes` acknowledges the same text:
+
+> Automatic updates stop Future AGI, take a cold backup, and start the new
+> version, which may migrate the database. Future AGI is unavailable while this
+> happens (usually several minutes, longer for large databases). If the new
+> version doesn't pass its health checks, the updater restores that backup and
+> the previous version automatically. Anything written to the new version before
+> a failed update is rolled back is discarded, in-flight jobs and the Redis cache
+> are reset, and calls already made to outside services (webhooks, model
+> providers) can't be undone. Some failures still need manual recovery: the
+> updater stops and says so instead of guessing.
+
+After you opt in, an owned cron entry or systemd timer runs
+`./bin/update run` every five minutes. Every six hours by default, it checks for
+a newer signed release using the stable channel and minor-jump limit by default;
+`bin/update setup` can choose a different channel or version policy. When a
+release qualifies, during the configured maintenance window (02:00-06:00 UTC by
+default) it stops Future AGI, takes a cold backup of the Postgres, ClickHouse and
+app data volumes into a private directory, and starts the new version, which runs
+its own migrations. It keeps the new version only if its health checks pass and
+it stays stable. The app answers with 503 while B boots, but may serve during the
+stability period before success is durably decided; if B is then rejected, its
+writes are rolled back. A rollout failure after the sealed backup normally
+restores the backup and previous version, then quarantines that exact release
+until you review it and clear the latch with `./bin/update retry`. A recovery
+failure is direction-specific: an unsealed attempt reconciles quiescence, a
+success already durably decided is finalized on B, and an incomplete sealed
+restore is retried from retained evidence. If the updater cannot prove which
+state is safe, it stops for operator review rather than guessing. A remains
+stopped until B boots or the verified previous version is restored.
+
+**Automatic apply requires published, signed exact-transition proof.** The
+release's signed manifest must carry proof that the upgrade from your exact
+installed version, layout and platform was rehearsed together with a restore.
+Merging the implementation or opting in does not qualify a release. Releases
+without usable proof, or whose estimated backup, migration and restore would not
+fit the remaining window or free disk space, stay notify-only for you to review
+and apply by hand. See [release eligibility](deploy/update/README.md#release-eligibility).
+
+Requirements: the shipped Standalone layout with published images, no optional
+profile and no extra service, volume or mount (the optional host-status overlay
+adds one),
+Python 3.9 or newer, Docker Compose v2, `cosign` v3 or newer on the host, and a
+running cron daemon for the installer's default scheduler. On an existing
+installation, setup can instead use an already-usable systemd manager. `apply`
+and `download` also need a Linux host with a local Docker daemon whose storage
+the updater can measure: Docker Desktop and other VM-backed or remote contexts
+are refused. Setup installs nothing and
+changes no global Docker or host setting. When something is missing it prints
+`Setup incomplete` with the reason and exits `3`; `./bin/install` still finishes
+and exits `3`. Distributed, production, Helm and native Windows installs are not
+supported. Choose `--window`, `--timezone`, `--check-interval`,
+`--backup-destination`, `--docker-context` or `--scheduler systemd` at setup:
+they cannot be changed afterwards. `--mode notify` and `--mode download` check (and
+cache images) without ever stopping anything.
+
+Once set up, leave the checkout as it is. Editing `.env`, a `git pull` that
+changes the Compose or bootstrap files, or a manual `./bin/update apply` makes later automatic
+checks refuse with `configuration_changed`, and there is no command yet that
+records the installation again.
+
+For diagnostics, set `ENROLLED_CONTEXT` to the exact context name in setup's
+`Verified Docker target` line; do not switch the global Docker context. Controls
+use private host state, while `run` already pins the enrolled context.
+
+```bash
+: "${ENROLLED_CONTEXT:?Set this to the verified context name printed by setup}"
+DOCKER_CONTEXT="$ENROLLED_CONTEXT" ./bin/update status
+./bin/update disable                   # stop new work; enable --yes turns it back on
+./bin/update pause --indefinite        # resume clears the pause
+./bin/update setup --deactivate --yes  # remove the scheduler for good; keeps backups
+```
+
+Disable and pause never interrupt a restore that has already started. Backups
+and the evidence of failed attempts are never deleted automatically. The app's
+**Settings > Updates** page needs the optional host-status mount, which an install
+set up this way cannot use yet; use the context-targeted host status above.
+A recorded disable or a clear status is not a recovery-completion check: follow
+[the safe handoff](deploy/update/README.md#safe-handoff-to-manual-operations)
+before manual changes, stops or uninstalling.
+See [automatic updates](deploy/update/README.md#automatic-updates-standalone) for
+every reason a release stays notify-only, the time and disk estimates, what to do
+when status says `recovery_required`, the budgets and the full command reference.
 
 ## Backups
 

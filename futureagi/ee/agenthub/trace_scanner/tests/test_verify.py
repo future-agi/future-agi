@@ -16,7 +16,9 @@ from unittest.mock import patch
 from ee.agenthub.trace_scanner import verify as V
 
 
-def _issue(brief="agent fabricated the timing figures", cat="Tool Output Misinterpretation"):
+def _issue(
+    brief="agent fabricated the timing figures", cat="Tool Output Misinterpretation"
+):
     return SimpleNamespace(brief=brief, category=cat, confidence="H")
 
 
@@ -46,13 +48,17 @@ TRACE = {
 
 def _resp(verdict, quote, i=1):
     return '{"verdicts": [{"i": %d, "verdict": "%s", "quote": "%s", "why": "x"}]}' % (
-        i, verdict, quote,
+        i,
+        verdict,
+        quote,
     )
 
 
 class TestVerifierFailsClosed:
     def test_confirm_with_a_real_quote_keeps_the_claim(self):
-        with patch.object(V, "_call", return_value=_resp("CONFIRM", "total 80.27 seconds")):
+        with patch.object(
+            V, "_call", return_value=_resp("CONFIRM", "total 80.27 seconds")
+        ):
             kept, rejected = V.verify_issues(TRACE, [_issue()])
         assert len(kept) == 1 and not rejected
 
@@ -82,7 +88,9 @@ class TestVerifierFailsClosed:
 
     def test_missing_verdict_for_a_claim_drops_that_claim(self):
         """Two claims sent, one verdict returned — the unanswered one dies."""
-        with patch.object(V, "_call", return_value=_resp("CONFIRM", "total 80.27 seconds", 1)):
+        with patch.object(
+            V, "_call", return_value=_resp("CONFIRM", "total 80.27 seconds", 1)
+        ):
             kept, rejected = V.verify_issues(TRACE, [_issue(), _issue("second claim")])
         assert len(kept) == 1
         assert rejected[0]["reason"] == "no_verdict_returned"
@@ -92,7 +100,9 @@ class TestVerifierFailsClosed:
         assert kept == [] and rejected[0]["reason"] == "no_raw_trace"
 
     def test_no_issues_means_no_verifier_call(self):
-        with patch.object(V, "_call", side_effect=AssertionError("should not be called")):
+        with patch.object(
+            V, "_call", side_effect=AssertionError("should not be called")
+        ):
             assert V.verify_issues(TRACE, []) == ([], [])
 
 
@@ -117,8 +127,13 @@ class TestVerifierReadsRawSpans:
 
         big = {
             "trace_id": "t",
-            "spans": [{"name": "n", "span_attributes": {"output.value": "x" * 500000},
-                       "child_spans": []}],
+            "spans": [
+                {
+                    "name": "n",
+                    "span_attributes": {"output.value": "x" * 500000},
+                    "child_spans": [],
+                }
+            ],
         }
         assert SCANNER_TRUNCATION_MARK in V._raw_trace_text(big)
 
@@ -135,10 +150,12 @@ class TestScannerMomentsAreGivenAsCoordinates:
         return SimpleNamespace(verbatim=verbatim, is_failure=is_failure, span=span)
 
     def test_failure_moment_is_marked_for_the_verifier(self):
-        text = V._moments_text([
-            self._km("total 80.27 seconds"),
-            self._km("The export took ~80 seconds.", is_failure=True),
-        ])
+        text = V._moments_text(
+            [
+                self._km("total 80.27 seconds"),
+                self._km("The export took ~80 seconds.", is_failure=True),
+            ]
+        )
         assert "total 80.27 seconds" in text
         assert "scanner marked this the failure" in text
         # Only the failure moment carries the marker.

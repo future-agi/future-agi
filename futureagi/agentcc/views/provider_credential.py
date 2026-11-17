@@ -5,7 +5,6 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.serializers.provider_credential import (
@@ -22,6 +21,7 @@ from agentcc.services.url_safety import (
     ensure_public_http_url,
     private_provider_urls_allowed,
 )
+from integrations.services.credentials import CredentialManager
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -32,6 +32,10 @@ _GATEWAY_SYNC_WARNING = (
 )
 
 _DEFAULT_API_PATH_PREFIX = "/v1"
+
+# The api_format of a structured-decision provider (TypeSafe, Perplexity
+# Decider, a custom System One endpoint), and the gateway's alias for it.
+_SYSTEM_ONE_API_FORMATS = ("systemone", "typesafe")
 
 
 def _join_api_endpoint(base_url, api_path_prefix, path):
@@ -147,9 +151,13 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         return self.partial_update(request, *args, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
+        # Let DRF retain the 404 for missing or out-of-organization objects.
+        # The mutation error handler below must not turn it into a 400.
+        instance = self.get_object()
         try:
-            instance = self.get_object()
-            serializer = AgentccProviderCredentialUpdateSerializer(data=request.data)
+            serializer = AgentccProviderCredentialUpdateSerializer(
+                instance, data=request.data
+            )
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
             try:
@@ -252,6 +260,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         api_format = None
         api_path_prefix = None
         saved_base_url = None
+        saved_models = []
 
         if provider_name:
             organization = getattr(request, "organization", None)
@@ -282,13 +291,14 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 saved_base_url = base_url
                 api_format = cred.api_format
                 api_path_prefix = (cred.extra_config or {}).get("api_path_prefix")
+                saved_models = list(cred.models_list or [])
 
         # The saved key only ever goes where it was saved for: a caller who can
         # use the credential but not read it must not be able to redirect it.
+        uses_saved_key = saved_base_url is not None and not request.data.get("api_key")
         requested_base_url = (request.data.get("base_url") or "").rstrip("/")
         if (
-            saved_base_url is not None
-            and not request.data.get("api_key")
+            uses_saved_key
             and requested_base_url
             and requested_base_url != saved_base_url
         ):
@@ -300,7 +310,12 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         # Raw values from request body override or fill gaps.
         base_url = (requested_base_url or base_url or "").rstrip("/")
         api_key = request.data.get("api_key") or api_key or ""
-        api_format = request.data.get("api_format") or api_format or "openai"
+        # The format decides the discovery URL and how the key is sent (the
+        # google branch puts it in the query string), so a saved key keeps the
+        # format it was saved with.
+        if not uses_saved_key:
+            api_format = request.data.get("api_format") or api_format
+        api_format = api_format or "openai"
         # Presence, not truthiness: "" is an explicit "no version segment", and
         # an `or` chain would silently swap it for the stored value.
         if "api_path_prefix" in request.data:
@@ -314,6 +329,12 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 else "api_key is required"
             )
             return self._gm.bad_request(msg)
+
+        # A decision provider is never probed: a listing call is not free on
+        # every decision vendor, and its models come from the preset or the
+        # user. What was saved is the list.
+        if api_format in _SYSTEM_ONE_API_FORMATS:
+            return self._gm.success_response({"models": saved_models})
 
         try:
             models = self._fetch_models_from_provider(
@@ -369,7 +390,16 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         name = (provider_name or "").lower()
 
         if name == "anthropic" or api_format == "anthropic":
-            url = f"{base_url or 'https://api.anthropic.com'}/v1/models"
+            # Anthropic's catalogue is always at /v1/models, so state "/v1" as
+            # the prefix rather than concatenating it: a base URL that already
+            # carries one must not produce "/v1/v1/models", and a trailing
+            # slash must not produce "//v1/models". Reachable from a custom
+            # provider, which can select the anthropic API format.
+            url = _join_api_endpoint(
+                base_url or "https://api.anthropic.com",
+                _DEFAULT_API_PATH_PREFIX,
+                "/models",
+            )
             resp = http.get(
                 url,
                 headers={
@@ -382,8 +412,23 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             data = resp.json()
             return sorted(m["id"] for m in data.get("data", []))
 
-        if name in ("google", "gemini", "google_gemini") or api_format in ("gemini", "google"):
-            url = "https://generativelanguage.googleapis.com/v1beta/models"
+        if name in ("google", "gemini", "google_gemini") or api_format in (
+            "gemini",
+            "google",
+        ):
+            # base_url is a Gemini-protocol host only in the google/gemini
+            # formats. The Google preset can also be saved in the openai format
+            # against Google's OpenAI-compatible base (".../v1beta/openai"); its
+            # key is still a Google key, so it is listed at Google's own host.
+            gemini_base_url = base_url if api_format in ("gemini", "google") else ""
+            # No prefix to de-duplicate: the gateway's Gemini provider always
+            # appends "/v1beta" to the base URL (gemini/translate.go buildURL),
+            # so a base already ending in it fails there and must fail here.
+            url = _join_api_endpoint(
+                gemini_base_url or "https://generativelanguage.googleapis.com",
+                "",
+                "/v1beta/models",
+            )
             resp = http.get(
                 url,
                 params={"key": api_key},
@@ -402,12 +447,15 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             return sorted(models)
 
         if name == "cohere":
-            # Cohere native: /v1/models with Bearer auth.
-            base = (base_url or "https://api.cohere.com").rstrip("/")
-            if base.endswith("/compatibility/v1"):
-                url = f"{base}/models"
-            else:
-                url = f"{base}/v1/models"
+            # Cohere native: /v1/models with Bearer auth. Stating "/v1" as the
+            # prefix subsumes the old "/compatibility/v1" special case — that
+            # base already ends in the prefix, so it lands on the identical URL
+            # — and stops any other base ending in "/v1" from doubling it.
+            url = _join_api_endpoint(
+                base_url or "https://api.cohere.com",
+                _DEFAULT_API_PATH_PREFIX,
+                "/models",
+            )
             resp = http.get(
                 url,
                 headers={"Authorization": f"Bearer {api_key}"},

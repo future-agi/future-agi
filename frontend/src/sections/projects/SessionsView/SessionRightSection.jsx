@@ -7,10 +7,10 @@ const SessionRightSection = React.forwardRef(
   ({ setOpenColumnConfigure }, columnConfigureRef) => {
     return (
       <Button
+        size="small"
         sx={{
           marginRight: 1.5,
           width: 30,
-          height: 30,
           margin: 0,
           minWidth: 0,
           "& .MuiButton-startIcon": {

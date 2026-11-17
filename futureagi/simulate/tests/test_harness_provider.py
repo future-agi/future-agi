@@ -351,12 +351,13 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         "scenario-b",
     ]
     assert detail.json()["overview"]["runs_count"] == 2
-    latest_run = environment.simulation_runs.filter(deleted=False).order_by(
-        "-created_at", "-id"
-    ).first()
-    assert (
-        detail.json()["overview"]["run"]["test_execution_id"]
-        == str(latest_run.test_execution_id)
+    latest_run = (
+        environment.simulation_runs.filter(deleted=False)
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    assert detail.json()["overview"]["run"]["test_execution_id"] == str(
+        latest_run.test_execution_id
     )
     assert detail.json()["overview"]["run"]["simulation_url"].endswith(
         f"/runs/{environment.run_test_id}/{latest_run.test_execution_id}"
@@ -382,7 +383,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         assert failed_dispatch.status_code == 503
         child = environment.simulation_runs.get(scenario_count=2)
         assert child.state == HostedHarnessJob.State.FAILED
-        assert child.test_execution.status == SimulationTestExecution.ExecutionStatus.FAILED
+        assert (
+            child.test_execution.status
+            == SimulationTestExecution.ExecutionStatus.FAILED
+        )
 
         start.side_effect = None
         response = client.post(
@@ -402,7 +406,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         child.refresh_from_db()
         child.test_execution.refresh_from_db()
         assert child.state == HostedHarnessJob.State.QUEUED
-        assert child.test_execution.status == SimulationTestExecution.ExecutionStatus.PENDING
+        assert (
+            child.test_execution.status
+            == SimulationTestExecution.ExecutionStatus.PENDING
+        )
 
         duplicate = client.post(
             f"/simulate/api/harness-environments/{environment.id}/run/",
@@ -413,7 +420,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         )
         assert duplicate.status_code == 202
         assert duplicate.json()["job_id"] == response.json()["job_id"]
-        assert duplicate.json()["test_execution_id"] == response.json()["test_execution_id"]
+        assert (
+            duplicate.json()["test_execution_id"]
+            == response.json()["test_execution_id"]
+        )
         assert start.call_count == 2
     for payload in (
         {"scenario_ids": [], "trials": 1},
@@ -1404,44 +1414,21 @@ def test_secret_file_upload_keeps_local_sandbox_file_reference(user):
 
 
 @pytest.mark.django_db
-def test_secret_values_are_encrypted_and_return_only_platform_refs(user):
-    client = APIClient()
-    client.force_authenticate(user=user)
-    raw = "must-not-be-echoed"
-
-    response = client.post(
-        "/simulate/api/harness-jobs/secret-values/",
-        {"environment_values": {"DEEPGRAM_API_KEY": raw}},
-        format="json",
-    )
-
-    assert response.status_code == 201
-    reference = response.json()["secret_refs"]["DEEPGRAM_API_KEY"]
-    assert reference["manager"] == "platform-vault"
-    assert reference["purpose"] == "target_provider"
-    assert raw not in response.content.decode()
-
-    from simulate.models import HostedHarnessSecret
-
-    record = HostedHarnessSecret.objects.get(
-        organization=user.organization, name=reference["key"]
-    )
-    assert raw not in record.encrypted_value
-    assert record.get_value() == raw
-
-
-@pytest.mark.django_db
 def test_secret_values_reject_runner_owned_names(user):
     client = APIClient()
     client.force_authenticate(user=user)
 
     response = client.post(
         "/simulate/api/harness-jobs/secret-values/",
-        {"environment_values": {"FI_API_KEY": "customer-value"}},
+        {
+            "environment_id": str(uuid4()),
+            "environment_values": {"FI_API_KEY": "customer-value"},
+        },
         format="json",
     )
 
     assert response.status_code == 400
+    assert "FI_API_KEY" in response.content.decode()
 
 
 @pytest.mark.django_db

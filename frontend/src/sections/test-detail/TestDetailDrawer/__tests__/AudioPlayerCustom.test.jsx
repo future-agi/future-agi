@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "src/utils/test-utils";
+import { render, screen } from "src/utils/test-utils";
 
 const captured = { trackUrls: null, singleUrl: null };
 
@@ -149,10 +149,63 @@ describe("StereoMultiTrackPlayer track selection", () => {
     expect(captured.singleUrl).toBe(COMBINED);
     expect(captured.trackUrls).toBeNull();
   });
+
+  it("reports the recording unavailable when the stereo split fails and nothing else can play", () => {
+    // The split is the only source: with it gone both track URLs are empty,
+    // and the multi-track player would wait on them forever.
+    Object.assign(stereo, { error: "Failed to fetch stereo audio: 403" });
+    render(
+      <StereoMultiTrackPlayer
+        recordings={{ stereo: "https://example.test/stereo.wav" }}
+        id="call-1"
+      />,
+    );
+
+    expect(screen.getByText("Recording unavailable")).toBeInTheDocument();
+    expect(captured.trackUrls).toBeNull();
+  });
+
+  it("falls back to the mono tracks when the stereo split fails", () => {
+    Object.assign(stereo, { error: "Failed to fetch stereo audio: 403" });
+    render(
+      <StereoMultiTrackPlayer
+        recordings={{
+          stereo: "https://example.test/stereo.wav",
+          assistant: "https://example.test/assistant.wav",
+        }}
+        id="call-1"
+      />,
+    );
+
+    expect(
+      screen.queryByText("Recording unavailable"),
+    ).not.toBeInTheDocument();
+    expect(captured.trackUrls.map(({ url }) => url)).toEqual([
+      undefined,
+      "https://example.test/assistant.wav",
+    ]);
+  });
 });
 
 describe("AudioPlayerCustom picks the renderer from the recording shape", () => {
   beforeEach(resetCaptured);
+
+  it("shows recording unavailable for the project module when the detail has no URLs", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AudioPlayerCustom
+          data={{ module: "project", recording_available: true }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Recording unavailable")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Fetching the recording"),
+    ).not.toBeInTheDocument();
+    expect(captured.trackUrls).toBeNull();
+    expect(captured.singleUrl).toBeNull();
+  });
 
   it.each(["retell", "bland"])(
     "sends a single-URL %s call to the same single-track bar",

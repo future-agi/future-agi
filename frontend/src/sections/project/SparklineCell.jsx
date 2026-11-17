@@ -18,7 +18,7 @@ const SparklineCell = ({ data }) => {
           alignItems: "center",
           px: 1,
           color: "text.disabled",
-          fontSize: 13,
+          fontSize: 12,
         }}
       >
         {totalVolume > 0 ? totalVolume.toLocaleString() : "-"}
@@ -41,7 +41,7 @@ const SparklineCell = ({ data }) => {
       <Typography
         variant="body2"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: 500,
           color: "text.primary",
           minWidth: 32,

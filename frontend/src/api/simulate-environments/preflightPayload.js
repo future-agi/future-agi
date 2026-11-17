@@ -136,6 +136,10 @@ function envelope(draft, name) {
     Math.max(1, Math.trunc(Number(draft.parallelism) || 1)),
   );
   if (parallelism > 1) payload.runtime = { parallelism };
+  // Only code sources have an agent the platform can observe once it reads it.
+  if (draft.observabilityEnabled === true && (draft.kind === "repo" || draft.kind === "upload")) {
+    payload.metadata.observability_enabled = true;
+  }
   const domains = parseEgressDomains(draft.egress);
   if (domains.length) {
     payload.security = {
@@ -199,6 +203,15 @@ function platformPayload(draft, name) {
       phone_number: phoneNumber,
       target_system_prompt: prompt,
       ...(contact ? { inbound: true, target_speaks_first: Boolean(contact.agentSpeaksFirst) } : {}),
+    };
+  } else if (connector === PREFLIGHT_CONNECTOR.LIVEKIT) {
+    const prompt = String(draft.prompt || "").trim();
+    if (!prompt) return { skipped: "LiveKit needs the agent's system prompt" };
+    config = {
+      agent_name: draft.agentId,
+      livekit_url: String(draft.livekitUrl || "").trim(),
+      target_system_prompt: prompt,
+      ...callBehaviour(contact),
     };
   } else {
     const idKey = connector === PREFLIGHT_CONNECTOR.VAPI ? "assistant_id" : "agent_id";

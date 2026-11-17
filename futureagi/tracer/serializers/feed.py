@@ -197,6 +197,16 @@ class FeedDetailApiResponseSerializer(serializers.Serializer):
     result = FeedDetailCoreSerializer()
 
 
+class FeedRedirectSerializer(serializers.Serializer):
+    requested_cluster_id = serializers.CharField()
+    resolved_cluster_id = serializers.CharField()
+
+
+class FeedRedirectApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = FeedRedirectSerializer()
+
+
 # ---------------------------------------------------------------------------
 # Overview tab
 # ---------------------------------------------------------------------------
@@ -309,10 +319,10 @@ class TracesAggregatesSerializer(serializers.Serializer):
     total_traces = serializers.IntegerField()
     failing_traces = serializers.IntegerField()
     passing_traces = serializers.IntegerField()
-    avg_score = serializers.FloatField()
+    avg_score = serializers.FloatField(allow_null=True)
     p50_latency = serializers.IntegerField()
     p95_latency = serializers.IntegerField()
-    avg_turns = serializers.FloatField()
+    avg_turns = serializers.FloatField(allow_null=True)
 
 
 class TracesListRowSerializer(serializers.Serializer):

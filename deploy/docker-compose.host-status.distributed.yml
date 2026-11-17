@@ -1,0 +1,18 @@
+# Optional, explicit host reporting opt-in. Never include this in the default stack.
+# Run ./bin/install --host-status-help before selecting this overlay.
+# Production order: Distributed base, production overlay, then this overlay.
+# Do not put this environment or volume in shared worker/init-service anchors.
+# Mount only the dedicated host-owned public slot, NOT .futureagi-updates,
+# retained env files, journals, the public parent (other slots), or Docker sockets.
+services:
+  backend:
+    environment:
+      FI_HOST_UPDATE_STATUS_FILE: /run/futureagi-host-update/status.json
+      FI_HOST_UPDATE_STATUS_SLOT: ${FI_HOST_UPDATE_STATUS_SLOT:?select initialized reporting slot}
+    volumes:
+      - type: bind
+        source: ${FI_HOST_UPDATE_STATUS_DIR:?initialize host status reporting first}
+        target: /run/futureagi-host-update
+        read_only: true
+        bind:
+          create_host_path: false

@@ -2,6 +2,7 @@ import React from "react";
 import { createTheme, ThemeProvider } from "@mui/material/styles";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, userEvent, waitFor } from "src/utils/test-utils";
+import { palette } from "src/theme/palette";
 
 const {
   getMock,
@@ -70,7 +71,7 @@ vi.mock("src/routes/hooks", () => ({
   useParams: () => ({ observeId: "project-1" }),
 }));
 vi.mock("src/routes/hooks/use-url-state", () => ({
-  useUrlState: () => ["day", vi.fn()],
+  useUrlState: () => ["day", vi.fn(), vi.fn()],
 }));
 vi.mock("src/auth/hooks", () => ({
   useAuthContext: () => ({ role: "viewer" }),
@@ -523,7 +524,8 @@ describe("user page lists one id held by two projects (real AG Grid)", () => {
 
     expect(style(traceCopies[0])).toBeNull();
     expect(style(traceCopies[1])).toEqual({
-      backgroundColor: "rgba(120, 87, 252, 0.08)",
+      // Design system: the open row takes the theme's selected-row tint.
+      backgroundColor: palette("light").action.selected,
     });
   });
 
@@ -566,7 +568,11 @@ describe.each(["trace", "span"])("%s grid theme retention", (kind) => {
   const themedSubject = (subject, { color = "#123456", weight = 500, spacing = 8 } = {}) => (
     <ThemeProvider
       theme={createTheme({
-        palette: { text: { primary: color } },
+        // Start from the app palette: the grids read palette.border.subtle.
+        palette: {
+          ...palette("light"),
+          text: { ...palette("light").text, primary: color },
+        },
         typography: { fontWeightMedium: weight },
         spacing,
       })}
@@ -746,11 +752,10 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
     act(() => window.dispatchEvent(new Event(OBSERVE_LIST_REFRESH_EVENT)));
     expect(params.api.refreshServerSide).not.toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
-    expect(screen.getByRole("button", { name: "page 2" })).toHaveAttribute(
-      "aria-current",
-      "true",
-    );
-    expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Go to page 2" }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Go to page 2" })).toBeDisabled();
     // The page button itself does not prefetch; AG Grid requests page two only
     // after performing the explicit pagination transition.
     expect(getMock).toHaveBeenCalledTimes(1);
@@ -764,17 +769,16 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
       rowCount: 28,
     });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "page 2" })).toHaveAttribute(
-        "aria-current",
-        "true",
-      ),
+      expect(
+        screen.getByRole("button", { name: "Go to page 2" }),
+      ).toHaveAttribute("aria-current", "page"),
     );
     await waitFor(() =>
       expect(screen.queryByText("Loading page…")).not.toBeInTheDocument(),
     );
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Go to previous page" }),
+      screen.getByRole("button", { name: "Previous page" }),
     );
     expect(finalPageParams.api.paginationGoToPage).toHaveBeenCalledWith(0);
     expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
@@ -830,7 +834,7 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
     await getRows(firstPage);
     await userEvent.click(screen.getByRole("button", { name: "Go to page 2" }));
     expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
-    expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Go to page 2" })).toBeDisabled();
 
     const secondPage = makeParams(25, 50);
     gridState.api = secondPage.api;
@@ -844,7 +848,7 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
       expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
       expect(gridState.props.loading).toBe(false);
     });
-    expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Go to page 2" })).toBeDisabled();
 
     const renderedSecondPageRow =
       kind === "trace"
@@ -1638,9 +1642,7 @@ describe.each(["trace", "span"])("%s grid loading lifecycle", (kind) => {
     expect(params.fail).not.toHaveBeenCalled();
     if (kind === "trace") {
       expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
-      expect(gridState.props.noRowsOverlayComponent().props.children).toBe(
-        "No traces found",
-      );
+      expect(gridState.props.noRowsOverlayComponent()).toBe("No traces found");
     }
   });
 
@@ -2057,9 +2059,7 @@ describe("trace grid empty-state lifecycle", () => {
     });
 
     await waitFor(() => expect(gridState.props.loading).toBe(false));
-    expect(gridState.props.noRowsOverlayComponent().props.children).toBe(
-      "No traces found",
-    );
+    expect(gridState.props.noRowsOverlayComponent()).toBe("No traces found");
     expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
   });
 });

@@ -125,11 +125,16 @@ def test_opted_out_cycle_collects_and_sends_no_heartbeat(monkeypatch):
     from tfc.deployment_telemetry import sender
 
     monkeypatch.setenv("FUTURE_AGI_TELEMETRY_DISABLED", "true")
+    instance_id = uuid4()
 
     with (
         patch.object(sender, "is_self_hosted_deployment", return_value=True),
         patch.object(sender, "_log_disclosure"),
-        patch.object(sender, "ensure_registration", return_value=(False, uuid4())),
+        patch.object(
+            sender,
+            "ensure_registration",
+            return_value=(False, instance_id),
+        ),
         patch.object(sender, "clear_buffer") as clear_buffer,
         patch.object(sender, "collect_counts") as collect_counts,
         patch.object(sender, "store_window") as store_window,
@@ -137,7 +142,7 @@ def test_opted_out_cycle_collects_and_sends_no_heartbeat(monkeypatch):
     ):
         assert sender.run_telemetry_cycle() == {"skipped": True, "reason": "disabled"}
 
-    clear_buffer.assert_called_once_with()
+    clear_buffer.assert_called_once_with(instance_id=str(instance_id))
     collect_counts.assert_not_called()
     store_window.assert_not_called()
     flush.assert_not_called()

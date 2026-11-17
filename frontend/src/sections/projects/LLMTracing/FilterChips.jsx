@@ -4,6 +4,40 @@ import { Box, Button, Chip, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import _ from "lodash";
 
+// A chip's operator: comparisons as symbols, the rest in the filter panel's
+// words.
+const OP_LABELS = {
+  equals: "=",
+  not_equals: "≠",
+  is: "is",
+  is_not: "is not",
+  in: "is one of",
+  not_in: "is not one of",
+  contains: "contains",
+  not_contains: "not contains",
+  starts_with: "starts with",
+  ends_with: "ends with",
+  more_than: ">",
+  greater_than: ">",
+  greater_than_or_equal: "≥",
+  less_than: "<",
+  less_than_or_equal: "≤",
+  between: "between",
+  not_between: "not between",
+  is_null: "is null",
+  is_not_null: "is not null",
+};
+
+// Dates compare in time words, as the panel's date operators read.
+const DATE_OP_LABELS = {
+  equals: "on",
+  not_equals: "not on",
+  greater_than: "after",
+  greater_than_or_equal: "on or after",
+  less_than: "before",
+  less_than_or_equal: "on or before",
+};
+
 /**
  * Build a human-readable label from an extraFilter (snake_case API format).
  * { column_id, filter_config: { filter_type, filter_op, filter_value } }
@@ -13,22 +47,20 @@ function buildChipParts(filter, fieldLabelMap) {
   if (!field) return null;
 
   const op = filter?.filter_config?.filter_op || "";
-  const opLabel =
-    {
-      equals: "is",
-      not_equals: "is not",
-      contains: "contains",
-      not_contains: "not contains",
-      is: "is",
-      is_not: "is not",
-      in: "is one of",
-      not_in: "is not one of",
-      more_than: ">",
-      less_than: "<",
-      between: "between",
-    }[op] || op;
-
   const val = filter?.filter_config?.filter_value;
+  const type = filter?.filter_config?.filter_type;
+  // A list of one reads as plain (in)equality.
+  const single = Array.isArray(val)
+    ? val.length === 1
+    : !(typeof val === "string" && val.includes(","));
+  const opLabel =
+    ((type === "datetime" || type === "date") && DATE_OP_LABELS[op]) ||
+    (op === "in" && single
+      ? "="
+      : op === "not_in" && single
+        ? "≠"
+        : OP_LABELS[op] || op);
+
   const valueMap = fieldLabelMap?.[field];
   const resolveOne = (v) => {
     const k = String(v ?? "");
@@ -149,9 +181,9 @@ const FilterChips = ({
                   }}
                 >
                   <Typography
+                    variant="caption"
                     sx={{
                       flexShrink: 0,
-                      fontSize: 12,
                       color: "text.secondary",
                       maxWidth: 180,
                       overflow: "hidden",
@@ -162,22 +194,22 @@ const FilterChips = ({
                     {chip.parts.field}
                   </Typography>
                   <Typography
+                    variant="caption"
                     sx={{
                       flexShrink: 0,
-                      fontSize: 11,
                       color: "text.disabled",
                     }}
                   >
                     {chip.parts.op}
                   </Typography>
                   <Typography
+                    variant="caption"
+                    fontWeight={600}
                     sx={{
                       minWidth: 0,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
-                      fontSize: 12,
-                      fontWeight: 600,
                       color: "text.primary",
                     }}
                   >
@@ -186,13 +218,11 @@ const FilterChips = ({
                 </Box>
               }
               sx={{
-                height: 26,
                 maxWidth: "100%",
                 minWidth: 0,
                 bgcolor: "background.neutral",
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: "6px",
                 transition: (theme) =>
                   theme.transitions.create(
                     ["background-color", "border-color"],
@@ -212,7 +242,6 @@ const FilterChips = ({
                 },
                 "& .MuiChip-deleteIcon": {
                   flexShrink: 0,
-                  fontSize: 14,
                   color: "text.secondary",
                   "&:hover": { color: "text.primary" },
                 },
@@ -226,7 +255,7 @@ const FilterChips = ({
           component="button"
           aria-label="Add filter"
           onClick={(e) => onAddFilter?.(e.currentTarget)}
-          sx={(theme) => ({
+          sx={{
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -235,24 +264,18 @@ const FilterChips = ({
             border: "1px solid",
             borderColor: "divider",
             borderRadius: "4px",
-            bgcolor:
-              theme.palette.mode === "dark"
-                ? "rgba(255,255,255,0.04)"
-                : "background.paper",
+            bgcolor: "background.paper",
             color: "text.secondary",
             cursor: "pointer",
             p: 0,
             "&:hover": {
               color: "text.primary",
-              bgcolor:
-                theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.08)"
-                  : "action.hover",
+              bgcolor: "action.hover",
               borderColor: "text.disabled",
             },
-          })}
+          }}
         >
-          <Iconify icon="mdi:plus" width={14} />
+          <Iconify icon="solar:add-linear" width={14} />
         </Box>
       </Box>
 
@@ -271,8 +294,6 @@ const FilterChips = ({
           data-filter-chips-action="clear"
           onClick={onClearAll}
           sx={{
-            textTransform: "none",
-            fontSize: 12,
             color: "text.secondary",
             minWidth: "auto",
             p: 0,
@@ -286,9 +307,6 @@ const FilterChips = ({
             size="small"
             onClick={onSave}
             sx={{
-              textTransform: "none",
-              fontSize: 12,
-              fontWeight: 600,
               color: "primary.dark",
               minWidth: "auto",
               p: 0,

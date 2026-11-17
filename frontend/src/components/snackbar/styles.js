@@ -24,7 +24,7 @@ export const StyledNotistack = styled(MaterialDesignContent)(({ theme }) => {
       overflow: "hidden",
       color: theme.palette.text.primary,
       backgroundColor: theme.palette.background.paper,
-      border: `1px solid ${isLight ? theme.palette.border.default : theme.palette.border.default}`,
+      border: `1px solid ${theme.palette.border.default}`,
       borderRadius: 10,
       boxShadow: isLight
         ? `0 4px 12px 0 ${alpha(theme.palette.common.black, 0.08)}`

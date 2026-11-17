@@ -104,10 +104,14 @@ def test_mcp_error_responses_have_contracts():
         ("GET", "/mcp/health/", "500"): "MCPErrorResponse",
         ("GET", "/mcp/config/tool-groups/", "403"): "MCPErrorResponse",
         ("DELETE", "/mcp/sessions/{session_id}/", "404"): "MCPErrorResponse",
+        ("POST", "/mcp/oauth/token/", "429"): "MCPOAuthTokenErrorResponse",
     }
 
     for (method, path, status_code), definition_name in expected.items():
         assert _response_ref(_operation(path, method), status_code) == definition_name
+
+    retry_after = _operation("/mcp/oauth/token/", "POST")["responses"]["429"]
+    assert retry_after["headers"]["Retry-After"]["type"] == "integer"
 
 
 def test_mcp_oauth_token_validation_uses_oauth_error_shape(api_client):

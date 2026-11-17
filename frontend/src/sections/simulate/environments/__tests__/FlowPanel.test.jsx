@@ -14,7 +14,6 @@ vi.mock("react-router-dom", async () => {
 // The source panel runs the real preflight inline before Build enables.
 vi.mock("src/api/harness/harness", () => ({
   preflightHarnessJob: vi.fn(),
-  storeHarnessSecretValues: vi.fn(),
   createHarnessJob: vi.fn(),
   harnessIdempotencyKey: () => "idem-test",
   getHarnessJob: vi.fn(),

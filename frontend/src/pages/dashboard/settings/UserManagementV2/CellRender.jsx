@@ -116,7 +116,7 @@ const ChipCell = ({ value, styleMap }) => {
           py: "4px",
           gap: "8px",
           height: "24px",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           ...styles,
         }}
         direction={"row"}
@@ -197,17 +197,8 @@ export const WorkspaceChipsCell = ({ value }) => {
         tooltip: {
           sx: {
             maxWidth: 300,
-            bgcolor: "background.paper",
-            color: "text.primary",
-            border: "1px solid",
-            borderColor: "divider",
-            boxShadow: 3,
             "& .MuiTooltip-arrow": {
-              color: "background.paper",
-              "&::before": {
-                border: "1px solid",
-                borderColor: "divider",
-              },
+              "&::before": {},
             },
           },
         },
@@ -226,9 +217,7 @@ export const WorkspaceChipsCell = ({ value }) => {
           size="small"
           sx={{
             maxWidth: 160,
-            height: 24,
             typography: "s2",
-            fontWeight: "fontWeightMedium",
             bgcolor: (theme) => theme.palette.action.hover,
             color: "text.primary",
             "&:hover": {
@@ -242,9 +231,7 @@ export const WorkspaceChipsCell = ({ value }) => {
             size="small"
             variant="outlined"
             sx={{
-              height: 24,
               typography: "s2",
-              fontWeight: "fontWeightMedium",
               borderColor: "divider",
               color: "text.secondary",
             }}
@@ -307,7 +294,7 @@ export const ActionRender = (props) => {
             py: "4px",
             gap: "8px",
             height: "24px",
-            borderRadius: 0.5,
+            borderRadius: "4px",
             cursor: isDisabled ? "not-allowed" : "pointer",
           }}
           direction={"row"}
@@ -319,7 +306,7 @@ export const ActionRender = (props) => {
         >
           <CustomTooltip show={isDisabled} title={tooltipReason}>
             <Iconify
-              icon="uiw:more"
+              icon="solar:menu-dots-linear"
               sx={{
                 color: isDisabled ? "divider" : "text.primary",
               }}

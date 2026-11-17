@@ -28,6 +28,7 @@ eval_tags:
 - Agents
 - Conversation
 - Audio
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

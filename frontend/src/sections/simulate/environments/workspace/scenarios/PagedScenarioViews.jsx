@@ -20,6 +20,7 @@ import { SCENARIOS_COPY } from "./scenarios.constants";
 export default function PagedScenarioViews({
   pageData, selection, env, view, hiddenGroupIds, onHideGroup, onEdit, onRemove,
   page, onPageChange, query, filters, groupBy, showInspector, locked, rowHeight,
+  readout, onOpen,
 }) {
   const [inspect, setInspect] = useState(false);
   const { rows, total, pageCount, limit, pageGroups, pageIds, loading } = pageData;
@@ -71,8 +72,8 @@ export default function PagedScenarioViews({
 
       <Box ref={scrollRef} sx={scrollSx}>
         {isEmpty ? (
-          <Box sx={{ px: 2.5, py: 6, textAlign: "center" }}>
-            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          <Box sx={{ px: 3, py: 6, textAlign: "center" }}>
+            <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
               {allHidden ? SCENARIOS_COPY.allHidden : SCENARIOS_COPY.noMatch}
             </Typography>
           </Box>
@@ -83,6 +84,7 @@ export default function PagedScenarioViews({
             env={env}
             onEdit={onEdit}
             onRemove={onRemove}
+            onOpen={onOpen}
             onHideGroup={onHideGroup}
             selection={selection}
             pageIds={pageIds}
@@ -103,17 +105,24 @@ export default function PagedScenarioViews({
         )}
       </Box>
 
-      {/* Pager + range. Numbered buttons: one deterministic request per page.
-          A single page needs neither the pager nor the range line. */}
-      {pageCount > 1 && (
+      {/* Footer: what a search/filter/hidden group narrowed the suite to, with
+          its reset, then the page range and pager. Numbered buttons: one
+          deterministic request per page. An unfiltered single page needs none
+          of it. */}
+      {(pageCount > 1 || readout) && (
         <Stack
-          direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}
-          sx={{ px: 2, py: 1.5, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          direction="row" alignItems="center" flexWrap="wrap" gap={1}
+          sx={{ px: 2, py: 1, minHeight: 44, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
         >
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
-            Showing {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()} of {total.toLocaleString()}
-          </Typography>
+          {readout && <FilterReadout {...readout} />}
+          {pageCount > 1 && (
+            <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+              Showing {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()} of {total.toLocaleString()}
+            </Typography>
+          )}
+          {pageCount > 1 && (
           <Pagination
+            sx={{ ml: "auto" }}
             size="small"
             shape="rounded"
             count={pageCount}
@@ -122,6 +131,7 @@ export default function PagedScenarioViews({
             siblingCount={1}
             boundaryCount={1}
           />
+          )}
         </Stack>
       )}
 
@@ -129,14 +139,13 @@ export default function PagedScenarioViews({
       {showInspector && (
       <Box sx={{ px: 2, pb: 1.5, flexShrink: 0 }}>
         <Button
-          size="small" variant="text" onClick={() => setInspect((v) => !v)}
+          size="small" variant="text" color="inherit" onClick={() => setInspect((v) => !v)}
           startIcon={<Iconify icon={inspect ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"} width={14} />}
-          sx={{ typography: "s3", color: "text.subtitle", px: 0.5 }}
         >
           Backend calls (POC)
         </Button>
         <Collapse in={inspect}>
-          <Box sx={{ p: 1.5, borderRadius: 1, bgcolor: "background.neutral", border: "1px dashed", borderColor: "divider" }}>
+          <Box sx={{ p: 1.5, borderRadius: 1, bgcolor: "background.neutral", border: "1px solid", borderColor: "divider" }}>
             <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.5 }}>
               GET /scenarios - one request per page
             </Typography>
@@ -174,4 +183,38 @@ PagedScenarioViews.propTypes = {
   showInspector: PropTypes.bool,
   locked: PropTypes.bool,
   rowHeight: PropTypes.string,
+  onOpen: PropTypes.func,
+  // Set while a search, filter or hidden group narrows the list.
+  readout: PropTypes.shape({
+    shown: PropTypes.number,
+    total: PropTypes.number,
+    hiddenCount: PropTypes.number,
+    onlyGroupsHidden: PropTypes.bool,
+    onClear: PropTypes.func,
+  }),
+};
+
+// "N of M · N groups hidden" with its reset. "Show all" reads truer than
+// "Clear" when the only thing set is a hidden group.
+function FilterReadout({ shown, total, hiddenCount = 0, onlyGroupsHidden, onClear }) {
+  const hiddenSuffix = hiddenCount > 0
+    ? ` · ${hiddenCount} group${hiddenCount === 1 ? "" : "s"} hidden`
+    : "";
+  return (
+    <Stack direction="row" alignItems="center" spacing={0.5}>
+      <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+        {`${shown} of ${total}${hiddenSuffix}`}
+      </Typography>
+      <Button size="small" variant="text" color="inherit" onClick={onClear}>
+        {onlyGroupsHidden ? SCENARIOS_COPY.showAll : SCENARIOS_COPY.clearLabel}
+      </Button>
+    </Stack>
+  );
+}
+FilterReadout.propTypes = {
+  shown: PropTypes.number,
+  total: PropTypes.number,
+  hiddenCount: PropTypes.number,
+  onlyGroupsHidden: PropTypes.bool,
+  onClear: PropTypes.func,
 };

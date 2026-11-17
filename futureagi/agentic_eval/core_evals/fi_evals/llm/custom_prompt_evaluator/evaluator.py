@@ -397,12 +397,10 @@ class CustomPromptEvaluator(LLM):
         # Inject row_context when data injection is enabled (no mapping required)
         row_context = kwargs.get("row_context")
         if row_context and not required_keys:
-            from .context_window import fit_row_to_context
-
             rendered_prompt += "\n\n## Data\n"
             if isinstance(row_context, (dict, list)):
-                rendered_prompt += fit_row_to_context(
-                    row_context, max_chars=_MAX_CONTEXT_CHARS
+                rendered_prompt += fit_to_context(
+                    row_context, max_total_chars=_MAX_CONTEXT_CHARS
                 )
             else:
                 ctx_str = str(row_context)
@@ -439,11 +437,16 @@ class CustomPromptEvaluator(LLM):
         )
 
         gt_blocks = kwargs.get("ground_truth_blocks") or []
+        feedback_blocks = kwargs.get("few_shots") or []
+        if isinstance(feedback_blocks, str):
+            feedback_blocks = [{"type": "text", "text": feedback_blocks}]
 
-        # GT exemplars first, then the case text, then case media.
-        if media_blocks or gt_blocks:
+        if media_blocks or gt_blocks or feedback_blocks:
             user_content = (
-                gt_blocks + [{"type": "text", "text": user_text}] + media_blocks
+                gt_blocks
+                + feedback_blocks
+                + [{"type": "text", "text": user_text}]
+                + media_blocks
             )
         else:
             user_content = user_text

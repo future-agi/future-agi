@@ -1,13 +1,47 @@
-import { Button, Typography } from "@mui/material";
+import { Button, Typography, useTheme } from "@mui/material";
 import Box from "@mui/material/Box/Box";
 import PropTypes from "prop-types";
 import React, { useMemo } from "react";
 import { useAuthContext } from "src/auth/hooks";
 import SvgColor from "src/components/svg-color";
 import { menuesConstant } from "./../constant";
+import { statusColors } from "src/utils/runStatus";
+
+// Each setup step's state, as a role in the one status map.
+const STEP_ROLE = {
+  complete: "success",
+  active: "info",
+  incomplete: "neutral",
+};
+
+const stepColors = (theme, status) => {
+  const role = STEP_ROLE[status] || "neutral";
+  if (role === "neutral") {
+    return {
+      iconColor: theme.palette.text.primary,
+      titleColor: theme.palette.text.primary,
+      iconBackgroundColor: theme.palette.background.neutral,
+      hoverIconBackgroundColor: theme.palette.background.neutral,
+      borderColor: theme.palette.divider,
+      hoverColor: "",
+      backgroundColor: "",
+    };
+  }
+  const c = statusColors(theme, role);
+  return {
+    iconColor: c.fg,
+    titleColor: theme.palette.text.primary,
+    iconBackgroundColor: c.bg,
+    hoverIconBackgroundColor: c.bg,
+    borderColor: c.solid,
+    hoverColor: role === "success" ? c.bg : "",
+    backgroundColor: "",
+  };
+};
 
 const InitialSetup = ({ currentLabel, setCurrentLabel, data }) => {
-  const { menusList, keySelector, statusColor } = menuesConstant;
+  const theme = useTheme();
+  const { menusList, keySelector } = menuesConstant;
   const { user } = useAuthContext();
 
   const menus = useMemo(() => {
@@ -74,20 +108,18 @@ const InitialSetup = ({ currentLabel, setCurrentLabel, data }) => {
               : item.label !== "inviteTeamMembers";
           })
           ?.map((item, index) => {
-            const color = statusColor[item.status || "incomplete"];
+            const color = stepColors(theme, item.status || "incomplete");
             return (
               <Button
                 key={index}
                 fullWidth
                 sx={{
                   display: "flex",
-                  px: "12px",
                   flexDirection: "row",
                   justifyContent: "flex-start",
                   border: `1px solid`,
                   borderColor: color.borderColor,
                   bgcolor: color.backgroundColor,
-                  borderRadius: "4px",
                   "&:hover": {
                     bgcolor: color.hoverColor,
                     "& span div": {
@@ -105,11 +137,10 @@ const InitialSetup = ({ currentLabel, setCurrentLabel, data }) => {
                     pb={"12px"}
                   >
                     <SvgColor
+                      width={16}
                       src={item.icon}
                       sx={{
                         color: color.iconColor,
-                        height: "16px",
-                        width: "16px",
                         mb: "2px",
                       }}
                     />

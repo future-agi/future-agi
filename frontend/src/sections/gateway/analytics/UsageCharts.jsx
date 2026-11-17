@@ -2,7 +2,6 @@ import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
-  Card,
   Grid,
   Typography,
   Skeleton,
@@ -10,9 +9,11 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from "@mui/material";
+import Section from "src/components/section";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsUsage } from "./hooks/useAnalyticsUsage";
+import { monoSeriesColors } from "src/theme/data-colors";
 import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
 
 // ---------------------------------------------------------------------------
@@ -39,17 +40,6 @@ function computeGranularity(start, end) {
 // Chart option builders
 // ---------------------------------------------------------------------------
 
-function groupPalette(theme) {
-  return [
-    theme.palette.primary.main,
-    theme.palette.secondary.main,
-    theme.palette.warning.main,
-    theme.palette.info.main,
-    theme.palette.success.main,
-    theme.palette.error.main,
-  ];
-}
-
 function buildRequestChartOptions(theme, _series) {
   return {
     chart: {
@@ -58,7 +48,7 @@ function buildRequestChartOptions(theme, _series) {
       zoom: { enabled: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: groupPalette(theme),
+    colors: monoSeriesColors(theme),
     dataLabels: { enabled: false },
     stroke: { curve: "smooth", width: 2 },
     fill: {
@@ -73,12 +63,12 @@ function buildRequestChartOptions(theme, _series) {
     xaxis: {
       type: "datetime",
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
       },
     },
     yaxis: {
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
         formatter: (val) => {
           if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`;
           if (val >= 1_000) return `${(val / 1_000).toFixed(1)}K`;
@@ -109,7 +99,7 @@ function buildRequestChartOptions(theme, _series) {
   };
 }
 
-function buildTokenChartOptions(theme, isGrouped) {
+function buildTokenChartOptions(theme) {
   return {
     chart: {
       type: "area",
@@ -118,9 +108,7 @@ function buildTokenChartOptions(theme, isGrouped) {
       zoom: { enabled: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: isGrouped
-      ? groupPalette(theme)
-      : [theme.palette.info.main, theme.palette.warning.main],
+    colors: monoSeriesColors(theme),
     dataLabels: { enabled: false },
     stroke: { curve: "smooth", width: 2 },
     fill: {
@@ -135,12 +123,12 @@ function buildTokenChartOptions(theme, isGrouped) {
     xaxis: {
       type: "datetime",
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
       },
     },
     yaxis: {
       labels: {
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
         formatter: (val) => {
           if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`;
           if (val >= 1_000) return `${(val / 1_000).toFixed(1)}K`;
@@ -274,8 +262,8 @@ const UsageCharts = ({ start, end, gatewayId }) => {
   );
 
   const tokenChartOptions = useMemo(
-    () => buildTokenChartOptions(theme, isGrouped),
-    [theme, isGrouped],
+    () => buildTokenChartOptions(theme),
+    [theme],
   );
 
   const handleGroupByChange = (_event, newValue) => {
@@ -298,16 +286,7 @@ const UsageCharts = ({ start, end, gatewayId }) => {
           size="small"
         >
           {GROUP_BY_OPTIONS.map((opt) => (
-            <ToggleButton
-              key={opt.value}
-              value={opt.value}
-              sx={{
-                px: 1.5,
-                py: 0.25,
-                textTransform: "none",
-                fontSize: "0.8125rem",
-              }}
-            >
+            <ToggleButton key={opt.value} value={opt.value}>
               {opt.label}
             </ToggleButton>
           ))}
@@ -317,7 +296,7 @@ const UsageCharts = ({ start, end, gatewayId }) => {
       <Grid container spacing={3}>
         {/* Requests over time */}
         <Grid item xs={12} md={6}>
-          <Card sx={{ p: 3 }}>
+          <Section variant="panel" sx={{ p: 3 }}>
             <Typography variant="subtitle1" fontWeight={600} mb={2}>
               Requests Over Time
             </Typography>
@@ -346,12 +325,12 @@ const UsageCharts = ({ start, end, gatewayId }) => {
                 </Typography>
               </Box>
             )}
-          </Card>
+          </Section>
         </Grid>
 
         {/* Tokens over time */}
         <Grid item xs={12} md={6}>
-          <Card sx={{ p: 3 }}>
+          <Section variant="panel" sx={{ p: 3 }}>
             <Typography variant="subtitle1" fontWeight={600} mb={2}>
               Tokens Over Time
             </Typography>
@@ -380,7 +359,7 @@ const UsageCharts = ({ start, end, gatewayId }) => {
                 </Typography>
               </Box>
             )}
-          </Card>
+          </Section>
         </Grid>
       </Grid>
     </Box>

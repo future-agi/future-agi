@@ -18,6 +18,7 @@ import PropTypes from "prop-types";
 import Iconify from "../iconify";
 import { LoadingButton } from "@mui/lab";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemePromptWith } from "src/hooks/use-ag-theme";
 import "./grid.css";
 import DeleteAction from "./Renderers/DeleteAction";
@@ -38,6 +39,7 @@ import AddRowStatusPanel from "./AddRowStatusPanel";
 // import PlaceholdersList from "./PlaceholdersList";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const VARIABLE_DRAWER_THEME_PARAMS = { wrapperBorderRadius: "4px" };
 
@@ -562,21 +564,15 @@ const VariableDrawerChild = React.forwardRef(
                   startIcon={
                     <SvgColor
                       src="/assets/icons/navbar/hugeicons.svg"
-                      sx={{
-                        width: "16px",
-                        height: "16px",
-                        color: "text.primary",
-                      }}
+                      width="16px"
+                      sx={{ color: "text.primary" }}
                     />
                   }
                   onClick={onOpenImportDatasetDrawer}
                   sx={{
                     color: "text.primary",
                     border: "1px solid",
-                    fontSize: "12px",
-                    fontWeight: 400,
                     borderColor: "divider",
-                    paddingX: 3,
                   }}
                 >
                   Import Dataset
@@ -598,8 +594,8 @@ const VariableDrawerChild = React.forwardRef(
               </ShowComponent>
 
               {/* Close Button */}
-              <IconButton onClick={handleClose} sx={{ px: 0.5, py: 0 }}>
-                <Iconify icon="mingcute:close-line" color="text.primary" />
+              <IconButton onClick={handleClose}>
+                <Iconify icon="solar:close-linear" color="text.primary" />
               </IconButton>
             </Box>
           </Box>
@@ -757,7 +753,6 @@ const VariableDrawerChild = React.forwardRef(
               variant="contained"
               color="error"
               onClick={() => handleCloseConfirmation(true)}
-              sx={{ paddingX: "24px" }}
             >
               Confirm
             </Button>
@@ -787,6 +782,7 @@ const VariableDrawer = ({
   onOpenImportDatasetDrawer,
 }) => {
   const childRef = useRef(null);
+  const covered = useDrawerCovered(open);
 
   const handleDrawerClose = () => {
     if (childRef.current?.handleClose) {
@@ -802,13 +798,14 @@ const VariableDrawer = ({
       anchor="right"
       open={open}
       onClose={handleDrawerClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
           width: "85vw",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

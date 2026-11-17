@@ -57,7 +57,12 @@ def _fetch_url_bytes(url):
                 url=stripped[:120],
             )
             return None
-        ct = (response.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
+        ct = (
+            (response.headers.get("Content-Type", "") or "")
+            .split(";")[0]
+            .strip()
+            .lower()
+        )
         if ct in _REJECTED_CONTENT_TYPES:
             logger.warning(
                 "image_preprocess_rejected_content_type",
@@ -67,7 +72,9 @@ def _fetch_url_bytes(url):
             return None
         return response.content, ct or "application/octet-stream"
     except Exception as e:
-        logger.warning("image_preprocess_fetch_failed", url=stripped[:120], error=str(e))
+        logger.warning(
+            "image_preprocess_fetch_failed", url=stripped[:120], error=str(e)
+        )
         return None
 
 
@@ -312,7 +319,9 @@ def _preprocess_fid(inputs):
         fake_pil = _parse_image_list(fake_images)
 
         if len(real_pil) < 2 or len(fake_pil) < 2:
-            inputs["_fid_error"] = f"FID requires at least 2 images per set (got {len(real_pil)} real, {len(fake_pil)} fake)"
+            inputs["_fid_error"] = (
+                f"FID requires at least 2 images per set (got {len(real_pil)} real, {len(fake_pil)} fake)"
+            )
             return inputs
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -472,6 +481,51 @@ def _preprocess_dead_air_detection(inputs):
         dead_air_pct=round(dead_air_percentage, 2),
         max_gap_ms=round(max_gap_ms, 0),
     )
+    return inputs
+
+
+@register_preprocessor("audio_signal_metrics")
+def _preprocess_audio_signal_metrics(inputs):
+    audio_value = inputs.get("input_audio")
+    if audio_value is None or audio_value == "":
+        inputs["_audio_metrics_error"] = "Missing input_audio"
+        return inputs
+
+    try:
+        from tfc.utils.storage import audio_bytes_from_url_or_base64
+    except ImportError as exc:
+        logger.warning(
+            "audio_metrics_preprocess_import_failed", error=str(exc), exc_info=True
+        )
+        inputs["_audio_metrics_error"] = f"Audio loader unavailable: {exc}"
+        return inputs
+
+    try:
+        audio_bytes = audio_bytes_from_url_or_base64(
+            audio_value,
+            min_duration_seconds=None,
+            pad_silence=False,
+        )
+    except Exception as exc:
+        logger.warning(
+            "audio_metrics_preprocess_load_failed", error=str(exc), exc_info=True
+        )
+        inputs["_audio_metrics_error"] = f"Could not load audio: {exc}"
+        return inputs
+
+    try:
+        from evaluations.engine.audio_metrics import analyze_audio
+
+        metrics = analyze_audio(audio_bytes)
+    except (ValueError, RuntimeError, EOFError, OSError) as exc:
+        logger.warning(
+            "audio_metrics_preprocess_analysis_failed", error=str(exc), exc_info=True
+        )
+        inputs["_audio_metrics_error"] = f"Could not analyse audio: {exc}"
+        return inputs
+
+    inputs["_audio_average_pitch_hz"] = metrics.average_pitch_hz
+    inputs["_audio_estimated_snr_db"] = metrics.estimated_snr_db
     return inputs
 
 

@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Stack, Typography, Collapse, Chip, Tooltip } from "@mui/material";
+import { Box, Stack, Typography, Collapse, Tooltip } from "@mui/material";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
 
@@ -60,6 +61,9 @@ function entrypointsByTool(env) {
 
 function SchemaCard({ schema, totalRows }) {
   const [openTable, setOpenTable] = useState(null);
+  // The chevron's slot only exists when some table can open; otherwise the
+  // icons would sit indented from the header for a chevron nobody sees.
+  const anyExpandable = schema.some((t) => t.cols?.length);
   return (
     <SectionCard
       title="World state · database"
@@ -81,15 +85,17 @@ function SchemaCard({ schema, totalRows }) {
                 alignItems="center"
                 spacing={1.5}
                 onClick={expandable ? () => setOpenTable(open ? null : t.name) : undefined}
-                sx={{ px: 2.5, py: 1.375, cursor: expandable ? "pointer" : "default", "&:hover": expandable ? { bgcolor: "action.hover" } : {} }}
+                sx={{ px: 1.5, minHeight: ROW_HEIGHT.default, cursor: expandable ? "pointer" : "default", "&:hover": expandable ? { bgcolor: "action.hover" } : {} }}
               >
-                <Iconify
-                  icon={open ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"}
-                  width={13}
-                  sx={{ color: "text.subtitle", flexShrink: 0, visibility: expandable ? "visible" : "hidden" }}
-                />
-                <Iconify icon="solar:database-linear" width={15} sx={{ color: "#2563EB", flexShrink: 0 }} />
-                <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: MONO, minWidth: 140 }}>{t.name}</Typography>
+                {anyExpandable && (
+                  <Iconify
+                    icon={open ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"}
+                    width={13}
+                    sx={{ color: "text.subtitle", flexShrink: 0, visibility: expandable ? "visible" : "hidden" }}
+                  />
+                )}
+                <Iconify icon="solar:database-linear" width={15} sx={{ color: "text.secondary", flexShrink: 0 }} />
+                <Typography sx={{ typography: "s1", fontWeight: 500, fontFamily: MONO, minWidth: 140 }}>{t.name}</Typography>
                 <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }} noWrap>
                   {[expandable ? `${t.cols.length} fields` : null, t.note].filter(Boolean).join(" · ")}
                 </Typography>
@@ -99,11 +105,11 @@ function SchemaCard({ schema, totalRows }) {
               </Stack>
               {expandable && (
                 <Collapse in={open}>
-                  <Box sx={{ px: 2.5, py: 1.5, bgcolor: "background.neutral", borderTop: "1px solid", borderColor: "divider" }}>
+                  <Box sx={{ px: 1.5, py: 1.5, bgcolor: "background.neutral", borderTop: "1px solid", borderColor: "divider" }}>
                     <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: 0.5, columnGap: 1.5 }}>
                       {t.cols.map((c) => (
                         <Box key={c.name} sx={{ display: "contents" }}>
-                          <Typography sx={{ typography: "s2", fontFamily: MONO, fontWeight: 600 }}>{c.name}</Typography>
+                          <Typography sx={{ typography: "s1", fontFamily: MONO, fontWeight: 500 }}>{c.name}</Typography>
                           <Typography sx={{ typography: "s3", fontFamily: MONO, color: "text.subtitle" }}>{c.type}</Typography>
                         </Box>
                       ))}
@@ -142,23 +148,24 @@ function ToolsCard({ tools, entrypoints }) {
               ? `${entry.service ? `${entry.service} ` : ""}${entry.method || "POST"} /${entry.endpoint}`
               : null;
           return (
-            <Stack key={tool.name} direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 1.375 }}>
-              <Iconify icon="solar:code-linear" width={15} sx={{ color: "#7857FC", flexShrink: 0 }} />
-              <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: MONO, minWidth: 220 }}>{tool.name}</Typography>
+            <Stack key={tool.name} direction="row" alignItems="center" spacing={1.5} sx={{ px: 1.5, minHeight: ROW_HEIGHT.default }}>
+              <Iconify icon="solar:code-linear" width={15} sx={{ color: "text.secondary", flexShrink: 0 }} />
+              <Typography sx={{ typography: "s1", fontWeight: 500, fontFamily: MONO, minWidth: 220 }}>{tool.name}</Typography>
               <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }} noWrap>
                 {tool.desc}
               </Typography>
               {runsAt && (
                 <Tooltip arrow title={runsAt}>
-                  <Chip
-                    size="small"
-                    label={runsAt}
+                  <Box
+                    component="span"
                     sx={{
-                      height: 18, maxWidth: 320, borderRadius: 0.5, color: "text.subtitle",
-                      border: "1px solid", borderColor: "divider", bgcolor: "transparent",
-                      "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 600, fontFamily: MONO },
+                      px: 0.75, height: 18, maxWidth: 320, borderRadius: "4px", color: "text.secondary", bgcolor: "action.selected",
+                      typography: "s3", fontWeight: 500, fontFamily: MONO,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block", lineHeight: "18px",
                     }}
-                  />
+                  >
+                    {runsAt}
+                  </Box>
                 </Tooltip>
               )}
             </Stack>

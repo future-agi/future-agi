@@ -1,17 +1,19 @@
 import structlog
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.views.eval_runner import EvaluationRunner
-from sdk.utils.helpers import _get_api_call_type
+from sdk.utils.helpers import _emit_jev_usage, _get_api_call_type, _is_jev_evaluator
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.temporal import temporal_activity
 from tracer.models.external_eval_config import (
     ExternalEvalConfig,
     PlatformChoices,
     StatusChoices,
 )
-from tfc.constants.api_calls import APICallStatusChoices
+
+logger = structlog.get_logger(__name__)
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -22,7 +24,7 @@ def _run_external_platform_evaluation(
     run_params, eval_model, eval_instance, external_eval_config, runner
 ):
     """
-    This is a simplified version of _run_evaluation from tracer/utils/eval.py
+    This is a simplified version of _execute_evaluation from tracer/utils/eval.py
     It runs the evaluation and returns the result.
     """
     result = eval_instance.run(**run_params)
@@ -46,12 +48,14 @@ def _run_external_platform_evaluation(
 
 
 def _log_and_deduct_cost_for_external_eval(
-    config: ExternalEvalConfig, is_futureagi_eval: bool
+    config: ExternalEvalConfig, is_futureagi_eval: bool, emit_usage: bool = True
 ):
     log_config = config.config if config.config else {}
     log_config["is_futureagi_eval"] = is_futureagi_eval
 
-    api_call_type = _get_api_call_type(config.model)
+    api_call_type = _get_api_call_type(
+        config.model, template=config.eval_template, runtime_config=config.config
+    )
 
     # Pre-check: enforce free tier limits
     try:
@@ -80,6 +84,18 @@ def _log_and_deduct_cost_for_external_eval(
         if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
             raise ValueError("API call not allowed : ", api_call_log_row.status)
 
+    # A Jev run is billed only after it succeeds, at the flat Jev fee.
+    if emit_usage:
+        _emit_external_eval_usage(config)
+
+    return api_call_log_row
+
+
+def _emit_external_eval_usage(config: ExternalEvalConfig):
+    """The up-front usage event for a non-Jev external eval run."""
+    log_config = config.config if config.config else {}
+    api_call_type = _get_api_call_type(config.model)
+
     # Dual-write: emit usage event for new billing system
     try:
         try:
@@ -93,7 +109,9 @@ def _log_and_deduct_cost_for_external_eval(
         try:
             from ee.usage.utils.event_properties import token_usage_properties
         except ImportError:
-            token_usage_properties = lambda token_usage: {}
+
+            def token_usage_properties(token_usage):
+                return {}
 
         if emit is not None and UsageEvent is not None:
             emit(
@@ -109,8 +127,6 @@ def _log_and_deduct_cost_for_external_eval(
             )
     except Exception:
         pass  # Metering failure must not break the action
-
-    return api_call_log_row
 
 
 def _execute_composite_on_external_platform(config: ExternalEvalConfig):
@@ -135,7 +151,25 @@ def _execute_composite_on_external_platform(config: ExternalEvalConfig):
             f"Composite {parent.id} has no children — cannot run externally."
         )
 
-    _log_and_deduct_cost_for_external_eval(config, futureagi_eval=False)
+    from evaluations.engine.instance import reject_unknown_jev_model
+    from model_hub.utils.composite_execution import resolve_child_binding
+    from model_hub.utils.jev_templates import binding_model
+
+    # An unknown Jev model on any child fails before anything is logged,
+    # billed or run.
+    for link in child_links:
+        runtime_config, model = resolve_child_binding(
+            link, config.config or {}, config.model
+        )
+        reject_unknown_jev_model(
+            binding_model(link.child, model=model, runtime_config=runtime_config)
+        )
+    # Each child bills itself through run_eval_func (a Jev child at the flat Jev
+    # fee once it succeeds), so the composite adds no event of its own, as on
+    # every other composite path.
+    _log_and_deduct_cost_for_external_eval(
+        config, is_futureagi_eval=False, emit_usage=False
+    )
 
     outcome = execute_composite_children_sync(
         parent=parent,
@@ -188,7 +222,18 @@ def _execute_evaluation_on_external_platform(config: ExternalEvalConfig):
         )
 
     futureagi_eval = True if eval_type_id in FUTUREAGI_EVAL_TYPES else False
-    _log_and_deduct_cost_for_external_eval(config, futureagi_eval)
+    from evaluations.engine.instance import reject_unknown_jev_model
+    from model_hub.utils.jev_templates import binding_model
+    from tfc.ee_gates import is_jev_model
+
+    model = binding_model(
+        eval_template, model=config.model, runtime_config=config.config
+    )
+    # An unknown Jev model fails before anything is logged, billed or run.
+    reject_unknown_jev_model(model)
+    api_call_log_row = _log_and_deduct_cost_for_external_eval(
+        config, futureagi_eval, emit_usage=False
+    )
 
     runner = EvaluationRunner(
         eval_type_id,
@@ -204,12 +249,28 @@ def _execute_evaluation_on_external_platform(config: ExternalEvalConfig):
 
     eval_class = get_eval_class(eval_type_id)
 
-    eval_instance = runner._create_eval_instance(
-        config=config.config or {},
-        eval_class=eval_class,
-        model=config.model,
-        runtime_config=config.config,
-    )
+    try:
+        eval_instance = runner._create_eval_instance(
+            config=config.config or {},
+            eval_class=eval_class,
+            model=config.model,
+            runtime_config=config.config,
+        )
+    except Exception as exc:
+        from tfc.ee_gates import jev_error_message
+
+        # Nothing was built to say what would have run. A Jev rejection bills
+        # nothing; otherwise a binding that names no Jev model is billed up
+        # front, as it always was.
+        if not is_jev_model(model) and jev_error_message(exc) is None:
+            _emit_external_eval_usage(config)
+        raise
+    # Billed by the evaluator that runs, not by a second copy of the engine's
+    # model rule: a Jev run emits nothing until it succeeds, and any other run
+    # keeps its up-front event.
+    jev = _is_jev_evaluator(eval_instance)
+    if not jev:
+        _emit_external_eval_usage(config)
 
     param_keys = []
     param_values = []
@@ -227,6 +288,21 @@ def _execute_evaluation_on_external_platform(config: ExternalEvalConfig):
         external_eval_config=config,
         runner=runner,
     )
+    if jev:
+        try:
+            _emit_jev_usage(
+                eval_instance,
+                org_id=str(config.organization.id),
+                run_id=(
+                    str(api_call_log_row.log_id)
+                    if api_call_log_row is not None
+                    else str(config.id)
+                ),
+            )
+        except Exception:
+            # Metering failure must not break the action, but a successful
+            # run left unbilled is logged.
+            logger.warning("jev_usage_emit_failed", exc_info=True)
 
     config.eval_results = eval_result
     config.save()
@@ -262,9 +338,11 @@ def run_external_eval_config(config_id):
         logger.info(f"Successfully processed external eval config: {config.id}")
 
     except Exception as e:
+        from tfc.ee_gates import jev_error_message
+
         logger.exception(f"Failed to process external eval config {config.id}: {e}")
         config.status = StatusChoices.FAILED
-        config.error_message = str(e)
+        config.error_message = jev_error_message(e) or str(e)
         config.save()
 
 
@@ -279,6 +357,7 @@ def _send_eval_result(config: ExternalEvalConfig, value: str, reason: str):
 
 def _send_langfuse_eval_result(config: ExternalEvalConfig, value, reason: str):
     from langfuse import Langfuse  # lazy
+
     langfuse = Langfuse(
         secret_key=config.credentials.get("langfuse_secret_key"),
         public_key=config.credentials.get("langfuse_public_key"),

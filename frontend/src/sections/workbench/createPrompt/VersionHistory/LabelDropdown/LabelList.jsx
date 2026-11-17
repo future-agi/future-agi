@@ -67,7 +67,6 @@ const LabelList = ({
                 mb: 0.25,
                 px: 1,
                 py: 0.5,
-                minHeight: "unset",
               }}
             >
               <PromptLabel
@@ -78,7 +77,7 @@ const LabelList = ({
               />
               {selected && (
                 <Iconify
-                  icon="mdi:check"
+                  icon="solar:check-linear"
                   sx={{ width: 16, height: 16, color: "text.secondary" }}
                 />
               )}

@@ -250,8 +250,10 @@ const AgentPromptRenderer = ({
       sx={{
         border: "1px solid ",
         padding: "10px 16px",
-        borderRadius: "5px",
-        backgroundColor: errorMessage ? "red.o5" : "background.default",
+        borderRadius: "6px",
+        backgroundColor: errorMessage
+          ? "status.danger.bg"
+          : "background.default",
         borderColor: errorMessage ? "error.main" : "divider",
         display: "flex",
         flexDirection: "column",
@@ -331,9 +333,6 @@ const AgentPromptRenderer = ({
             onClick={onRemove}
             sx={{
               width: 22,
-              height: 22,
-              padding: "3px",
-              borderRadius: "2px",
               backgroundColor: "background.default",
               border: "1px solid",
               borderColor: "divider",
@@ -415,13 +414,7 @@ const AgentPromptRenderer = ({
             customTrigger={
               <Button
                 startIcon={
-                  <SvgColor
-                    sx={{
-                      height: 20,
-                      width: 20,
-                    }}
-                    src="/assets/icons/ic_add.svg"
-                  />
+                  <SvgColor width={20} src="/assets/icons/ic_add.svg" />
                 }
                 variant="outlined"
                 size={"small"}
@@ -445,7 +438,7 @@ const AgentPromptRenderer = ({
             sx={{
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: 0.5,
+              borderRadius: "4px",
               padding: "12px 8px",
               backgroundColor: "background.paper",
             }}
@@ -486,15 +479,9 @@ const AgentPromptRenderer = ({
                 />
                 <Button
                   size="small"
-                  sx={{ color: "blue.500", bgcolor: "background.paper" }}
+                  sx={{ color: "status.info.fg", bgcolor: "background.paper" }}
                   startIcon={
-                    <SvgColor
-                      sx={{
-                        height: 16,
-                        width: 16,
-                      }}
-                      src="/assets/icons/ic_reload.svg"
-                    />
+                    <SvgColor width={16} src="/assets/icons/ic_reload.svg" />
                   }
                   onClick={() => {
                     refetchVersions();
@@ -522,7 +509,6 @@ const AgentPromptRenderer = ({
                   variant="outlined"
                   sx={{
                     bgcolor: "background.paper",
-                    px: 1.5,
                     borderColor: "border.light",
                   }}
                   onClick={() => {

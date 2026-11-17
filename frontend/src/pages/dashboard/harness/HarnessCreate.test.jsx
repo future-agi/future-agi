@@ -19,7 +19,6 @@ vi.mock("src/api/harness/harness", () => ({
   createHarnessJob: (...args) => createHarnessJob(...args),
   preflightHarnessJob: (...args) => preflightHarnessJob(...args),
   listHarnessJobs: vi.fn(async () => ({ jobs: [] })),
-  storeHarnessSecretValues: vi.fn(async () => ({ secret_refs: {} })),
   uploadHarnessSecretFile: vi.fn(),
   uploadHarnessSource: vi.fn(),
 }));
@@ -141,5 +140,20 @@ describe("the call limit field on the page", () => {
 
     await vi.waitFor(() => expect(createHarnessJob).toHaveBeenCalled());
     expect(submittedConfig()).not.toHaveProperty("voice_call_timeout_seconds");
+  });
+
+  it("sends credential values with the create request", async () => {
+    await openForm();
+    await userEvent.type(
+      screen.getByLabelText(/Paste additional \.env values/i),
+      "CUSTOM_API_KEY=typed-value",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Use values/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Run end to end/i }));
+
+    await vi.waitFor(() => expect(createHarnessJob).toHaveBeenCalled());
+    const body = createHarnessJob.mock.calls[0][0];
+    expect(body.credential_values).toEqual({ CUSTOM_API_KEY: "typed-value" });
+    expect(JSON.stringify(body.agent)).not.toContain("typed-value");
   });
 });

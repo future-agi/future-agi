@@ -581,7 +581,31 @@ test('OBS-E2E-008: native and custom voice filters select only the current proje
       await page.getByRole('button', { name: 'Filter', exact: true }).click();
       await page.getByRole('button', { name: 'Property', exact: true }).first().click();
       const field = c.leaf.column_id, config = c.leaf.filter_config;
+      const propertyMark = captures.length;
       await page.getByPlaceholder('Search properties...').fill(field);
+      // Load-bearing sync: at dev a07b523ac, unifiedCatalogSearchLoading in
+      // frontend/src/sections/projects/LLMTracing/TraceFilterPanel.jsx:1962,2068
+      // and isRemoteCatalogSearchPending in frontend/src/hooks/useDashboards.js:769
+      // cover debounce + background fetching. readCapture's cache path alone can
+      // precede a replacement request; closing the picker would then abort it.
+      const propertySearch = page.getByRole('status').filter({ hasText: 'Searching property catalog' });
+      await expect(propertySearch).toBeVisible({ timeout: UI_READY });
+      await expect(propertySearch).toBeHidden({ timeout: UI_READY });
+      await expect(page.getByRole('status').filter({ hasText: 'Loading properties' })).toBeHidden({ timeout: UI_READY });
+      // Same captured All-search wire as UI 1b's checkPropertySearch below;
+      // frontend/src/hooks/useDashboards.js:656-670 builds it from
+      // frontend/src/sections/projects/LLMTracing/TraceFilterPanel.jsx:1838-1844
+      // at dev a07b523ac (All category, search page size 20).
+      const propertyQuery = { cursor_mode: true, page_size: 20, source: 'voice_calls',
+        project_ids: currentProject.id, per_eval_config: true, search: field };
+      const cachedProperty = [...provenReads].find(x => x.document === document && x.path === METRICS
+        && isDeepStrictEqual(x.query, propertyQuery));
+      const property = await readCapture(propertyMark, METRICS,
+        x => x.query.category === undefined && (x.query.search ?? '') === field, cachedProperty);
+      expect([property.method, property.credential]).toStrictEqual(['POST', openScope.credential]);
+      expect(property.query).toStrictEqual(propertyQuery);
+      expect((property.body as MetricPage).result)
+        .toMatchObject({ query_complete: true, query_status: 'complete', has_more: false, next_cursor: null });
       await page.locator(`[data-filter-property-option=${JSON.stringify(field)}][data-filter-property-category="${config.col_type === 'SPAN_ATTRIBUTE' ? 'attribute' : 'system'}"]`).click();
       const mark = captures.length;
       const panel = page.locator('.MuiPopover-paper:visible').filter({ has: page.getByRole('tab', { name: 'Basic', exact: true }) });

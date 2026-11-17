@@ -10,13 +10,15 @@ from simulate.services.hosted_sandbox import (
     DaytonaSandboxRuntimeProvider,
     E2BSandboxRuntimeProvider,
     SandboxCommandRequest,
+    SandboxFileNotFoundError,
     SandboxLaunchSpec,
+    SandboxNotFoundError,
     SandboxProviderConfigurationError,
     SandboxProviderError,
     sandbox_provider_name,
     sandbox_runtime_reference,
 )
-from simulate.services.hosted_sandbox.e2b import E2BProcess
+from simulate.services.hosted_sandbox.e2b import E2BFilesystem, E2BProcess
 
 
 def _spec(**overrides) -> SandboxLaunchSpec:
@@ -369,6 +371,21 @@ def test_e2b_process_fails_when_command_disappears_without_exit_marker(monkeypat
         SandboxProviderError, match="disappeared without an exit marker"
     ):
         process.get_session_command("alk-harness", "99:missing")
+
+
+def test_e2b_reports_a_missing_file_apart_from_a_missing_sandbox(monkeypatch):
+    """A caller treats a missing sandbox as gone; a missing file in a live one is not that."""
+    monkeypatch.setitem(sys.modules, "e2b", _fake_e2b_module())
+    raw = _E2BSandbox()
+    files = E2BFilesystem(raw, "svc-control")
+
+    with pytest.raises(SandboxFileNotFoundError) as missing:
+        files.download_file("/work/builder-cost.json")
+    assert not isinstance(missing.value, SandboxNotFoundError)
+    assert isinstance(missing.value, SandboxProviderError)
+
+    raw.files.values["/work/builder-cost.json"] = b"{}"
+    assert files.download_file("/work/builder-cost.json") == b"{}"
 
 
 def test_e2b_template_capacity_fails_closed(settings):

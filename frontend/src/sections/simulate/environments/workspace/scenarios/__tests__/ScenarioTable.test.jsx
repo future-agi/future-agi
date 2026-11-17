@@ -52,6 +52,17 @@ describe("ScenarioTable — bulk-action selection", () => {
   });
 });
 
+describe("ScenarioTable — pinned checkbox column", () => {
+  it("keeps the header and row checkboxes pinned to the left edge while the table scrolls sideways", () => {
+    const { boxes } = renderTable();
+    boxes.forEach((b) => {
+      const cell = b.closest("th, td");
+      expect(getComputedStyle(cell).position).toBe("sticky");
+      expect(getComputedStyle(cell).left).toBe("0px");
+    });
+  });
+});
+
 describe("ScenarioTable — hide group", () => {
   it("calls onHideGroup with the section id when the group's eye is clicked", () => {
     const onHideGroup = vi.fn();
@@ -71,4 +82,36 @@ describe("ScenarioTable — hide group", () => {
     fireEvent.click(screen.getByRole("button", { name: "Hide this group" }));
     expect(onHideGroup).toHaveBeenCalledWith("g1");
   });
+});
+
+describe("ScenarioTable — opening a row", () => {
+  const served = [
+    { ...rows[0], id: "a", number: 1 },
+    { ...rows[1], id: "b", number: 2 },
+    { ...rows[2], id: "c", number: 3 },
+  ];
+
+  it("opens a row on click, but not from its checkbox or its actions", () => {
+    const onOpen = vi.fn();
+    const { boxes } = renderTable({ rows: served, onOpen });
+    fireEvent.click(screen.getByText(served[1].name || served[1].title));
+    expect(onOpen).toHaveBeenCalledWith(served[1]);
+
+    onOpen.mockClear();
+    fireEvent.click(boxes[1]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit scenario" })[0]);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("opens a focused row with Enter", () => {
+    const onOpen = vi.fn();
+    renderTable({ rows: served, onOpen });
+    const row = screen.getByRole("row", { name: `Open ${served[0].name || served[0].title}` });
+    row.focus();
+    fireEvent.keyDown(row, { key: "Enter" });
+    expect(onOpen).toHaveBeenCalledWith(served[0]);
+  });
+
+
+
 });
