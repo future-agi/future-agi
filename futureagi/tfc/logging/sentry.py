@@ -322,6 +322,8 @@ def _strip_raw_span_frame_vars(event: dict) -> dict | None:
     None, which drops the event, when the stacks cannot be walked, because
     they may hold a batch that cannot be removed.
     """
+    # Inline, like every sentry_sdk import here: settings imports this module in
+    # every process, and the SDK (~75 ms) loads only when Sentry is on.
     from sentry_sdk.utils import iter_event_frames
 
     try:
