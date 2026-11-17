@@ -78,6 +78,15 @@ import {
   getQueryReadMessage,
 } from "src/utils/queryReadState";
 import { useExactTraceAttributeProperties } from "./useExactTraceAttributeProperties";
+import { OBSERVE_SKILL_COPY, SKILL_COL_TYPE } from "./skillFilters";
+import { useSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
+import { useRuntimeFilterValues } from "src/api/skills/runtime";
+import {
+  EVIDENCE,
+  LOAD_FAILED,
+  LOADED,
+  versionName,
+} from "src/sections/skills/runtime/runtimeCopy";
 import {
   normalizeVoiceCallStatus,
   VOICE_CALL_FILTER_FIELDS,
@@ -272,6 +281,135 @@ export const getTraceFilterFields = (tab) => {
   return BASE_TRACE_FILTER_FIELDS;
 };
 
+// Skill-trace fields (SKILL-TRACES §6.3, §7.1, UX-12), shown under "Skills"
+// on the trace and span tabs while the skillTraces flag is on. Each is a
+// `SKILL` filter item; items from this panel form correlation group 0 (one
+// load that matches all of them). Skill and Version pick ids from the
+// runtime filter-values read; the rest take typed or fixed values. Operators
+// are narrowed to what the server accepts for each column.
+const skillChoices = (entries) =>
+  entries.map(([value, label]) => ({ value, label }));
+export const getSkillFilterFields = (tab) => {
+  if (tab !== "trace" && tab !== "spans") return [];
+  const fields = OBSERVE_SKILL_COPY.fields;
+  const skillField = (value, extra) => ({
+    value,
+    label: fields[value],
+    type: "string",
+    category: "skills",
+    apiColType: SKILL_COL_TYPE,
+    ...extra,
+  });
+  return [
+    skillField("skill.id", {
+      operators: ["in", "not_in"],
+      runtimeValues: "skill.name",
+      allowCustomValue: false,
+    }),
+    skillField("skill.version_id", {
+      operators: ["in", "not_in"],
+      runtimeValues: "skill.version_id",
+      allowCustomValue: false,
+    }),
+    skillField("skill.requested_label", {
+      operators: ["in"],
+      runtimeValues: "skill.requested_label",
+    }),
+    skillField("skill.agent", { operators: ["in"], runtimeValues: "skill.agent" }),
+    skillField("skill.service", {
+      operators: ["in"],
+      runtimeValues: "skill.service",
+    }),
+    skillField("skill.evidence", {
+      operators: ["in"],
+      choices: skillChoices(Object.entries(EVIDENCE)),
+    }),
+    skillField("skill.load_result", {
+      operators: ["in"],
+      choices: skillChoices([
+        ["loaded", LOADED],
+        ["failed", LOAD_FAILED],
+      ]),
+    }),
+    skillField("skill.digest", { operators: ["in"] }),
+    ...(tab === "spans"
+      ? [
+          skillField("skill.in_scope", {
+            operators: ["in"],
+            runtimeValues: "skill.version_id",
+            allowCustomValue: false,
+          }),
+        ]
+      : []),
+  ];
+};
+
+/** Picker options from the runtime filter-values read (§6.6 endpoint 5). */
+export const skillValueOptions = (data, field) => {
+  const list = Array.isArray(data) ? data : data?.values ?? data?.results ?? [];
+  return list
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      if (field === "skill.name") {
+        const value = entry.skillId ?? entry.id ?? null;
+        if (!value) return null;
+        return {
+          value,
+          label: OBSERVE_SKILL_COPY.skillOption(
+            entry.name ?? entry.label ?? entry.value,
+            entry.productionVersion ?? null,
+          ),
+        };
+      }
+      if (field === "skill.version_id") {
+        const value = entry.versionId ?? entry.value ?? null;
+        if (!value) return null;
+        const label = Number.isInteger(entry.version)
+          ? OBSERVE_SKILL_COPY.versionOption(entry.version, entry.labelsNow || [])
+          : entry.label ?? value;
+        return {
+          value,
+          label: entry.skillName ? `${entry.skillName} ${label}` : label,
+        };
+      }
+      const value = entry.value ?? null;
+      if (value === null || value === undefined) return null;
+      return { value, label: entry.label ?? String(value) };
+    })
+    .filter(Boolean);
+};
+
+/**
+ * Renders nothing; reads endpoint 5 for one Skills field while its picker is
+ * open, and reports picker options to `onChange`. Mounted only for `SKILL`
+ * fields, so no other picker depends on the Skills API.
+ */
+function SkillValueOptionsProbe({ projectId, field, search, onChange }) {
+  const query = useRuntimeFilterValues({
+    projectId,
+    field,
+    q: search || undefined,
+  });
+  const failed = query.isError;
+  const pending = query.isPending && query.fetchStatus !== "idle";
+  const options = useMemo(
+    () => (query.data ? skillValueOptions(query.data, field) : []),
+    [query.data, field],
+  );
+  useEffect(() => {
+    onChange({ options, loading: pending, error: failed });
+  }, [options, pending, failed, onChange]);
+  useEffect(() => () => onChange(null), [onChange]);
+  return null;
+}
+
+SkillValueOptionsProbe.propTypes = {
+  projectId: PropTypes.string,
+  field: PropTypes.string.isRequired,
+  search: PropTypes.string,
+  onChange: PropTypes.func.isRequired,
+};
+
 // Map a static trace field to a picker property. In spans view the root
 // "Trace Name" field is reused as "Span Name" — remap its id so the picker
 // fires a distinct span_name request instead of duplicating the name request.
@@ -308,7 +446,11 @@ export const toStaticFilterProperty = (
     ...(field.allowCustomValue !== undefined
       ? { allowCustomValue: field.allowCustomValue }
       : {}),
+    ...(field.operators ? { operators: field.operators } : {}),
+    ...(field.runtimeValues ? { runtimeValues: field.runtimeValues } : {}),
   };
+  // Skill fields are not in the dashboard property registry.
+  if (property.apiColType === SKILL_COL_TYPE) return property;
   return attachPropertyRegistryIdentity(property, source, propertyNamespace, {
     suppliedRegistryId: field.registryId || field.property_id,
   });
@@ -325,12 +467,18 @@ export function mergeTraceFilterProperties({
   propertyNamespace,
   dynamicProperties = [],
   filterFields = [],
+  skillTraces = false,
 }) {
   const effectivePropertyNamespace =
     propertyNamespace || defaultPropertyNamespace(tab, source);
-  const staticProps = getTraceFilterFields(
+  const staticFields = getTraceFilterFields(
     effectivePropertyNamespace === "users" ? "users" : tab,
-  ).map((field) =>
+  );
+  const skillFieldDefs =
+    skillTraces && source === "traces" && effectivePropertyNamespace !== "users"
+      ? getSkillFilterFields(tab)
+      : [];
+  const staticProps = [...staticFields, ...skillFieldDefs].map((field) =>
     toStaticFilterProperty(
       field,
       isSpansView,
@@ -478,6 +626,12 @@ const CATEGORIES = [
   },
   { key: "attribute", label: "Attributes", icon: "solar:code-linear" },
 ];
+// Added while the skillTraces flag is on (SKILL-TRACES §7.1).
+const SKILLS_CATEGORY = {
+  key: "skills",
+  label: OBSERVE_SKILL_COPY.group,
+  icon: "solar:book-bookmark-linear",
+};
 
 function mapCategory(raw) {
   if (!raw) return "system";
@@ -3062,6 +3216,14 @@ function ValuePicker({
     propertyCategory !== "annotation" &&
     Array.isArray(property?.choices) &&
     property.choices.length > 0;
+  // Skills fields (SKILL-TRACES §7.1) read their values from the runtime
+  // filter-values read (endpoint 5), never the dashboard catalog.
+  const runtimeValuesField =
+    property?.apiColType === SKILL_COL_TYPE && !hasStaticChoices
+      ? property?.runtimeValues || null
+      : null;
+  const isSkillField = property?.apiColType === SKILL_COL_TYPE;
+  const [skillValues, setSkillValues] = useState(null);
 
   const metricType = (() => {
     if (propertyCategory === "system") return "system_metric";
@@ -3157,6 +3319,7 @@ function ValuePicker({
         : undefined,
     enabled:
       !hasStaticChoices &&
+      !isSkillField &&
       !isSessionFreeTextField &&
       Boolean(anchorEl) &&
       !customSearchValueTooLong &&
@@ -3183,9 +3346,11 @@ function ValuePicker({
   // intentionally publish no suggestions and accept an exact typed value.
   const rawOptions = hasStaticChoices
     ? property.choices
-    : isSessionFreeTextField
-      ? []
-      : dashboardOptions;
+    : isSkillField
+      ? skillValues?.options || []
+      : isSessionFreeTextField
+        ? []
+        : dashboardOptions;
   const isCanonicalVoiceStatus =
     propertyId === "call_status" && property?.apiColType === "SYSTEM_METRIC";
   // Keep the picker on the same canonical vocabulary as the rendered voice
@@ -3208,18 +3373,24 @@ function ValuePicker({
     ? false
     : hasStaticChoices
       ? false
-      : isSessionFreeTextField
-        ? false
-        : dashLoading;
+      : isSkillField
+        ? Boolean(skillValues?.loading)
+        : isSessionFreeTextField
+          ? false
+          : dashLoading;
   const readState = customSearchValueTooLong
     ? "complete"
     : hasStaticChoices
       ? "complete"
-      : isSessionFreeTextField
-        ? "complete"
-        : dashError
+      : isSkillField
+        ? skillValues?.error
           ? "error"
-          : dashboardReadState;
+          : "complete"
+        : isSessionFreeTextField
+          ? "complete"
+          : dashError
+            ? "error"
+            : dashboardReadState;
   const readMessage = getFilterValueReadMessage(readState);
   const refetchOptions = retryDashboardOptions || refetchDashboardOptions;
 
@@ -3317,6 +3488,14 @@ function ValuePicker({
 
   return (
     <>
+      {runtimeValuesField && anchorEl && (
+        <SkillValueOptionsProbe
+          projectId={projectId}
+          field={runtimeValuesField}
+          search={backendValueSearch}
+          onChange={setSkillValues}
+        />
+      )}
       <Box
         data-filter-value-trigger={property?.id || ""}
         onClick={(e) => setAnchorEl(e.currentTarget)}
@@ -4438,6 +4617,10 @@ const TraceFilterPanel = ({
   defaultRow: defaultRowOverride,
   isSimulator = false,
   freeSoloValues = false,
+  // Offer the Skills fields (SKILL-TRACES §7.1) when the skillTraces flag is
+  // on. Panels whose filters are not sent to the list APIs (the trace
+  // drawer's client-side span filter) pass false.
+  skillFields = true,
   isSpansView = false,
   attributeSource: attributeSourceOverride,
   catalogError: externalCatalogError = false,
@@ -4450,6 +4633,8 @@ const TraceFilterPanel = ({
   catalogCategoryCountsExact: externalCatalogCategoryCountsExact = false,
 }) => {
   const { observeId: routeObserveId } = useParams();
+  const skillTracesFlag = useSkillTracesEnabled();
+  const skillTraces = skillTracesFlag && skillFields;
   const observeId = projectIdProp || routeObserveId;
   const skipDynamicProperties = Boolean(propertiesOverride);
   const effectivePropertyNamespace =
@@ -4523,6 +4708,7 @@ const TraceFilterPanel = ({
       propertyNamespace: effectivePropertyNamespace,
       dynamicProperties,
       filterFields,
+      skillTraces,
     });
     return propertyFilter ? merged.filter(propertyFilter) : merged;
   }, [
@@ -4534,9 +4720,16 @@ const TraceFilterPanel = ({
     source,
     tab,
     isSpansView,
+    skillTraces,
   ]);
   const propsLoading = skipDynamicProperties ? false : dynamicPropsLoading;
-  const effectiveCategories = categoriesOverride ?? CATEGORIES;
+  const hasSkillProperties = useMemo(
+    () => properties.some((property) => property.category === "skills"),
+    [properties],
+  );
+  const effectiveCategories =
+    categoriesOverride ??
+    (hasSkillProperties ? [...CATEGORIES, SKILLS_CATEGORY] : CATEGORIES);
   const effectiveDefaultRow = defaultRowOverride || DEFAULT_ROW;
   const [activeTab, setActiveTab] = useState("basic");
   const [aiQuery, setAiQuery] = useState("");
@@ -5742,6 +5935,7 @@ TraceFilterPanel.propTypes = {
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,
   freeSoloValues: PropTypes.oneOfType([PropTypes.bool, PropTypes.func]),
+  skillFields: PropTypes.bool,
   isSpansView: PropTypes.bool,
   attributeSource: PropTypes.oneOf(["traces", "spans"]),
   catalogError: PropTypes.bool,

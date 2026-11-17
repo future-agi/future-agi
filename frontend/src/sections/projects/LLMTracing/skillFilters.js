@@ -110,6 +110,10 @@ export const OBSERVE_SKILL_COPY = Object.freeze({
     errorType: "Error type",
     yes: "Yes",
     no: "No",
+    digestCopied: "Digest copied",
+    rootFileYes: "SKILL.md or the whole skill",
+    rootFileNo: "A supporting file first",
+    ranAfterLoadingTruncated: "Only the first 32 loaded versions are listed.",
   }),
   context: "Agent context",
   connectedApp: "Connected app",
@@ -139,6 +143,12 @@ export const OBSERVE_SKILL_COPY = Object.freeze({
     title: "Traces matching these filters",
     error: "Couldn't load the numbers for these traces.",
     loading: "Loading the numbers for these traces",
+  }),
+  invalidSkillFilter: Object.freeze({
+    root_status_alone: "Failed requests needs a skill filter beside it.",
+    version_without_skill: "Choose a skill for this version.",
+    failed_group_column: "A failed load has no version, evidence or contents to filter by.",
+    loaded_and_failed: "A skill filter can show loaded or failed loads, not both.",
   }),
   savedViewBlocked:
     "This view can't be saved yet: saved views don't keep more than one skill filter or a version range.",
@@ -195,7 +205,7 @@ const MAX_VALUES = 1000;
 const MAX_VALUE_UTF8_BYTES = 16384;
 const MAX_GROUP = 2147483647;
 const MAX_VERSION = 4294967295;
-const ITEM_KEYS = new Set(["column_id", "group", "display_name", "property_id", "filter_config", "id"]);
+const ITEM_KEYS = new Set(["column_id", "group", "display_name", "property_id", "filter_config", "id", "_meta"]);
 const CONFIG_KEYS = new Set(["col_type", "filter_type", "filter_op", "filter_value"]);
 
 const UUID_RE =
@@ -257,10 +267,12 @@ function canonicalSkillItem(item) {
   const group = skillGroupOf(item);
   const displayName = item.display_name;
   const config = item.filter_config;
+  const valueLabel = item._meta?.valueLabel;
   return {
     column_id: item.column_id,
     ...(typeof displayName === "string" && displayName ? { display_name: displayName } : {}),
     ...(group ? { group } : {}),
+    ...(typeof valueLabel === "string" && valueLabel ? { _meta: { valueLabel } } : {}),
     filter_config: {
       col_type: SKILL_COL_TYPE,
       filter_type: config.filter_type,
@@ -462,7 +474,8 @@ export function serializeFiltersWithSkills(filters, serializeOthers) {
   const skills = list
     .filter(isSkillFilterItem)
     .map((item) => {
-      const { id, ...rest } = item;
+      // UI-only keys (row id, chip labels, picker identity) never persist.
+      const { id, _meta, registryId, ...rest } = item;
       return exactSkillItem(rest);
     })
     .filter(Boolean);
@@ -572,14 +585,16 @@ const valueText = (item, labels = {}) => {
 
 /**
  * Text of one Skill chip. `labels` maps column_id → { value: label } (for
- * example skill ids to names, version ids to "v3"). Items may carry their own
- * `display_name` from the server link; it wins over ids.
+ * example skill ids to names, version ids to "v3"). An item added from a
+ * Skills cell carries its value's label in `_meta.valueLabel` (a UI-only key
+ * the serializers strip); it wins over ids. `display_name` is the field's
+ * name in this codebase, never a value, so it is not used here.
  *
  * Returns `{ text, tooltip, negative, failed }`.
  */
 export function skillGroupChipText(items = [], labels = {}) {
   const byColumn = (columnId) => items.find((item) => item.column_id === columnId);
-  const label = (item) => (item ? item.display_name || valueText(item, labels) : null);
+  const label = (item) => (item ? item._meta?.valueLabel || valueText(item, labels) : null);
   const skill = byColumn("skill.id") || byColumn("skill.name");
   const version = byColumn("skill.version_id") || byColumn("skill.version");
   // The chip leads with what was loaded: the skill and version, else the
@@ -692,9 +707,9 @@ export function chipFilterItems(skill, existingFilters = []) {
   const name = skill.name || OBSERVE_SKILL_COPY.unknownSkill;
   return items.map((item) =>
     item.column_id === "skill.version_id"
-      ? { ...item, display_name: versionName(skill.version) }
+      ? { ...item, _meta: { valueLabel: versionName(skill.version) } }
       : item.column_id === "skill.id"
-        ? { ...item, display_name: name }
+        ? { ...item, _meta: { valueLabel: name } }
         : item,
   );
 }
@@ -798,3 +813,172 @@ export function parseSkillPhrase(text) {
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Span attributes (§3.1, §3.2): read on the client from the span already in
+// the trace detail, with no extra request.
+
+const attr = (attributes, key) => {
+  if (!attributes || typeof attributes !== "object") return undefined;
+  if (key in attributes) return attributes[key];
+  // Some payloads nest dotted keys; walk them as a fallback.
+  return key.split(".").reduce((node, part) => (node && typeof node === "object" ? node[part] : undefined), attributes);
+};
+const attrText = (attributes, key) => {
+  const value = attr(attributes, key);
+  return typeof value === "string" && value ? value : null;
+};
+const attrInt = (attributes, key) => {
+  const value = attr(attributes, key);
+  const number = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  return Number.isInteger(number) ? number : null;
+};
+const attrBool = (attributes, key) => {
+  const value = attr(attributes, key);
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  return null;
+};
+const attrList = (attributes, key) => {
+  let value = attr(attributes, key);
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string" && item) : [];
+};
+
+export const SKILL_LOAD_SPAN = "skill.load";
+export const CONTEXT_LOAD_SPAN = "context.load";
+
+/**
+ * The identity a `skill.load` span carries (§3.1), or null for other spans.
+ * A failed load (status ERROR) has a reported name, a selector and an error
+ * type, and never an id, version or digest.
+ */
+export function skillLoadIdentity(span) {
+  if (!span || span.name !== SKILL_LOAD_SPAN) return null;
+  const attributes = { ...(span.metadata || {}), ...(span.span_attributes || span.eval_attributes || {}) };
+  const failed = span.status === "ERROR";
+  return {
+    failed,
+    skillId: failed ? null : attrText(attributes, "fi.skill.id"),
+    name: attrText(attributes, "fi.skill.name"),
+    versionId: failed ? null : attrText(attributes, "fi.skill.version_id"),
+    version: failed ? null : attrInt(attributes, "fi.skill.version"),
+    digest: failed ? null : attrText(attributes, "fi.skill.digest"),
+    requestedLabel: attrText(attributes, "fi.skill.requested_label"),
+    requestedVersion: attrInt(attributes, "fi.skill.requested_version"),
+    via: attrText(attributes, "fi.skill.load.via"),
+    evidence: attrText(attributes, "fi.skill.load.evidence"),
+    cached: attrBool(attributes, "fi.skill.load.cached"),
+    rootFile: attrBool(attributes, "fi.skill.load.root_file"),
+    files: attrInt(attributes, "fi.skill.files"),
+    bytes: attrInt(attributes, "fi.skill.bytes"),
+    errorType: failed ? attrText(attributes, "error.type") : null,
+    agent: attrText(attributes, "gen_ai.agent.name"),
+    contextName: attrText(attributes, "fi.context.name"),
+  };
+}
+
+/**
+ * "Ran after loading" for any span (§3.2): `fi.skills.refs` ("name@v3") with
+ * the matching version ids, in first-load order, plus whether the list was
+ * cut at 32. Empty for spans with no skill attributes.
+ */
+export function ranAfterLoading(span) {
+  if (!span) return { refs: [], truncated: false };
+  const attributes = { ...(span.metadata || {}), ...(span.span_attributes || span.eval_attributes || {}) };
+  const refs = attrList(attributes, "fi.skills.refs");
+  const versionIds = attrList(attributes, "fi.skills.version_ids");
+  const skillIds = attrList(attributes, "fi.skills.ids");
+  return {
+    refs: refs.map((ref, index) => {
+      const match = /^(.*)@v(\d+)$/.exec(ref);
+      return {
+        ref,
+        name: match ? match[1] : ref,
+        version: match ? Number(match[2]) : null,
+        versionId: isUuid(versionIds[index]) ? versionIds[index] : null,
+        skillId: isUuid(skillIds[index]) ? skillIds[index] : null,
+      };
+    }),
+    truncated: attrBool(attributes, "fi.skills.truncated") === true,
+  };
+}
+
+/** The chip text for one "Ran after loading" ref ("refund-policy v3"). */
+export const ranAfterLoadingChip = ({ name, version, ref }) =>
+  version === null || version === undefined ? ref : `${name} ${versionName(version)}`;
+
+/**
+ * The trace's skills read (§6.6 endpoint 7), validated. Unknown shapes read
+ * as nothing loaded. `coverage.spanIdsBeforeFirstLoad` lists spans that
+ * started before the first load, for the span pane's "?" hint.
+ */
+export function mapTraceSkillsDetail(value) {
+  const body = value && typeof value === "object" ? value : {};
+  const text = (item) => (typeof item === "string" && item ? item : null);
+  const ids = (list) => (Array.isArray(list) ? list.filter((item) => typeof item === "string" && item) : []);
+  const skills = (Array.isArray(body.skills) ? body.skills : [])
+    .filter((row) => row && typeof row === "object")
+    .map((row) => ({
+      skillId: isUuid(row.skill_id) ? row.skill_id : null,
+      name: text(row.name),
+      versionId: isUuid(row.version_id) ? row.version_id : null,
+      version: Number.isInteger(row.version) ? row.version : null,
+      requestedLabel: text(row.requested_label),
+      requestedVersion: Number.isInteger(row.requested_version) ? row.requested_version : null,
+      agent: text(row.agent),
+      agentKey:
+        Array.isArray(row.agent_key) && row.agent_key.length === 3 && row.agent_key.every((part) => typeof part === "string")
+          ? row.agent_key
+          : null,
+      evidence: text(row.evidence),
+      loads: Number.isInteger(row.loads) ? row.loads : null,
+      digestStatus: row.digest_status === "mismatch" ? "mismatch" : "verified",
+      spanIds: ids(row.span_ids),
+    }));
+  const failed = (Array.isArray(body.failed) ? body.failed : [])
+    .filter((row) => row && typeof row.skill_name === "string")
+    .map((row) => ({ skillName: row.skill_name, errorType: text(row.error_type), spanId: text(row.span_id) }));
+  const contextBody = Array.isArray(body.contexts) ? body.contexts[0] : body.context;
+  const context = contextBody && typeof contextBody === "object" && (isUuid(contextBody.context_id) || isUuid(contextBody.id))
+    ? {
+        id: contextBody.context_id ?? contextBody.id,
+        name: text(contextBody.name),
+        version: Number.isInteger(contextBody.version) ? contextBody.version : null,
+        bindingId: isUuid(contextBody.binding_id) ? contextBody.binding_id : null,
+        bindingName: text(contextBody.binding_name),
+      }
+    : null;
+  const linkedNotLoaded = (Array.isArray(body.linked_not_loaded) ? body.linked_not_loaded : [])
+    .map((row) => (typeof row === "string" ? row : text(row?.name)))
+    .filter(Boolean);
+  const coverage = body.coverage && typeof body.coverage === "object" ? body.coverage : {};
+  return {
+    skills,
+    failed,
+    context,
+    linkedNotLoaded,
+    coverage: {
+      spanIdsBeforeFirstLoad: ids(coverage.span_ids_before_first_load ?? coverage.before_first_load_span_ids),
+      firstSkillName: skills[0]?.name ?? null,
+    },
+    empty: !skills.length && !failed.length && !context,
+  };
+}
+
+/** "Skills: refund-policy v3, tone v1 · 1 failed to load" (§7.2, UX-13). */
+export const traceSkillsChipText = (detail) => {
+  if (!detail || detail.empty) return null;
+  const names = detail.skills.map((row) => `${row.name || OBSERVE_SKILL_COPY.unknownSkill} ${versionName(row.version)}`);
+  if (!names.length && detail.failed.length) return OBSERVE_SKILL_COPY.failedOnlyChip(detail.failed.length);
+  if (!names.length && detail.context) {
+    return `${OBSERVE_SKILL_COPY.context}: ${detail.context.name || OBSERVE_SKILL_COPY.shortId(detail.context.id)}`;
+  }
+  return OBSERVE_SKILL_COPY.traceChip({ names, failed: detail.failed.length });
+};

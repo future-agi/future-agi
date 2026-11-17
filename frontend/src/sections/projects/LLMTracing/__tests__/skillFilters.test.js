@@ -44,7 +44,7 @@ describe("normalizeSkillItem", () => {
     expect(normalizeSkillItem(item("skill.version_id", "equals", V3, { group: 0 }))).toEqual(item("skill.version_id", "equals", V3));
   });
 
-  it("keeps a non-default group and the server's display name", () => {
+  it("keeps a non-default group and the field's display name", () => {
     expect(normalizeSkillItem(item("skill.id", "equals", SKILL, { group: 2, display_name: "refund-policy" }))).toEqual({
       ...item("skill.id", "equals", SKILL),
       group: 2,
@@ -286,8 +286,12 @@ describe("skillGroupChipText", () => {
   it("shows failed loads and failed requests in their words", () => {
     expect(skillGroupChipText([item("skill.id", "equals", SKILL), item("skill.load_result", "equals", "failed")], labels).text)
       .toBe("refund-policy · load failed");
-    expect(skillGroupChipText([item("skill.id", "equals", SKILL, { display_name: "refund-policy" }), item("skill.version_id", "equals", V3, { display_name: "v3" }), item("skill.root_status", "equals", "error")]).text)
+    expect(skillGroupChipText([item("skill.id", "equals", SKILL, { _meta: { valueLabel: "refund-policy" } }), item("skill.version_id", "equals", V3, { _meta: { valueLabel: "v3" } }), item("skill.root_status", "equals", "error")]).text)
       .toBe("refund-policy v3 · failed requests");
+  });
+
+  it("never reads the field name in display_name as a value", () => {
+    expect(skillGroupChipText([item("skill.version_id", "equals", V3, { display_name: "Version" })], labels).text).toBe("v3");
   });
 
   it("falls back to a short id, never a mangled one", () => {
@@ -296,7 +300,7 @@ describe("skillGroupChipText", () => {
 
   it("leads a connected-app link with its context", () => {
     expect(skillGroupChipText([
-      item("skill.context_id", "equals", CTX, { display_name: "support-agent" }),
+      item("skill.context_id", "equals", CTX, { _meta: { valueLabel: "support-agent" } }),
       item("skill.binding_id", "equals", EVENT),
     ]).text).toBe("support-agent · Connected app: 66666666…");
   });
@@ -334,7 +338,7 @@ describe("chipFilterItems", () => {
   it("adds the chip's version as a new group with readable names", () => {
     const existing = [item("skill.id", "equals", SKILL)];
     const items = chipFilterItems({ skill_id: SKILL, version_id: V3, version: 3, name: "refund-policy" }, existing);
-    expect(items.map((entry) => [entry.column_id, entry.group, entry.display_name])).toEqual([
+    expect(items.map((entry) => [entry.column_id, entry.group, entry._meta?.valueLabel])).toEqual([
       ["skill.id", 1, "refund-policy"],
       ["skill.version_id", 1, "v3"],
     ]);

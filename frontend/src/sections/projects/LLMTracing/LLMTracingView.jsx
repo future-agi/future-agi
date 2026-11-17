@@ -212,6 +212,7 @@ import {
   parseSkillSource,
   reconcileSkillItems,
   savedViewNeedsSkillContract,
+  validateSkillGroups,
 } from "./skillFilters";
 import { formatDate } from "src/utils/report-utils";
 import { useSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
@@ -825,23 +826,38 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // The filter panel rebuilds every item from its rows, which would drop a
   // SKILL item's correlation group and may change its operator. Restore the
   // items the person did not change (skillFilters.reconcileSkillItems).
+  // Skill items that break a server group rule are not applied: the list
+  // keeps its last valid filters and the person is told what to change.
+  const applyReconciledFilters = useCallback(
+    (previous, next, apply) => {
+      const out = reconcileSkillItems(previous, next, {
+        grain: selectedTab === "spans" ? "span" : "trace",
+      });
+      const check = validateSkillGroups(out || []);
+      if (!check.ok) {
+        enqueueSnackbar(
+          OBSERVE_SKILL_COPY.invalidSkillFilter[check.reason] ||
+            OBSERVE_SKILL_COPY.invalidSkillFilter.failed_group_column,
+          { variant: "warning" },
+        );
+        return;
+      }
+      apply(out);
+    },
+    [selectedTab],
+  );
   const applyPanelExtraFilters = useCallback(
-    (next) =>
-      setExtraFilters((prev) =>
-        reconcileSkillItems(prev, next, {
-          grain: selectedTab === "spans" ? "span" : "trace",
-        }),
-      ),
-    [setExtraFilters, selectedTab],
+    (next) => applyReconciledFilters(extraFilters, next, setExtraFilters),
+    [applyReconciledFilters, extraFilters, setExtraFilters],
   );
   const applyPanelCompareExtraFilters = useCallback(
     (next) =>
-      setCompareExtraFilters((prev) =>
-        reconcileSkillItems(prev, next, {
-          grain: selectedTab === "spans" ? "span" : "trace",
-        }),
+      applyReconciledFilters(
+        compareExtraFilters,
+        next,
+        setCompareExtraFilters,
       ),
-    [setCompareExtraFilters, selectedTab],
+    [applyReconciledFilters, compareExtraFilters, setCompareExtraFilters],
   );
   const metricFilters = useMemo(() => {
     const mf = [];
