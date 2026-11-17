@@ -285,7 +285,7 @@ def _settle(
     by_token = {
         token: document for document in documents for token in _tokens(document)
     }
-    taken: list[dict] = []
+    taken: set[str] = set()
     for case in cases:
         key = scenario_key_for(case)
         document = by_token.get(_token(key))
@@ -293,7 +293,7 @@ def _settle(
         if document is None or proposal is None:
             _block([case], _with_reply(NO_SCENARIO, last_words))
             continue
-        taken.append(document)
+        taken |= _tokens(document)
         object_key = archives.suite_key(
             environment.organization_id, environment.id, proposal
         )
@@ -324,16 +324,55 @@ def _settle(
         drafted=sum(c.status == EvidenceImportCase.Status.DRAFTED for c in cases),
         blocked=sum(c.status == EvidenceImportCase.Status.BLOCKED for c in cases),
     )
-    unmatched = _unmatched(environment, split.suite, documents, taken)
-    if unmatched:
-        # A builder that drafts under names of its own, or leaves what it wrote out
-        # of the index, blocks its cases while its reply says it drafted them;
-        # these keys tell that from a turn that wrote nothing.
-        logger.warning(
-            "evidence_draft_unmatched",
-            environment=str(environment.id),
-            scenarios=unmatched,
+    # A diagnostic: run once the landing commits, so a failure loses only it.
+    transaction.on_commit(
+        lambda: _report_unmatched(environment, split.suite, taken), robust=True
+    )
+
+
+def _report_unmatched(
+    environment: HostedHarnessJob, suite: dict[str, bytes], taken: set[str]
+) -> None:
+    """Warn with the keys of the scenarios the turn added to the suite it started
+    from that no case took. A builder that drafts under names of its own, or
+    leaves what it wrote out of the index (cases are matched against the index
+    alone), blocks its cases while its reply says it drafted them; these keys
+    tell that from a turn that wrote nothing. The keys are model text written
+    from the evidence, so they are redacted like the builder's reply."""
+    basis = drafts.fresh_draft(environment, "suite") or environment.suite_version
+    started = drafts._piece_files(environment, "suite", basis) if basis else {}
+    seen = taken | {
+        token for document in _scenarios_in(started) for token in _tokens(document)
+    }
+    keys = sorted(
+        str(
+            document.get("scenario_key")
+            or document.get("name")
+            or document.get("folder")
         )
+        for document in _scenarios_in(suite)
+        if _tokens(document) and not _tokens(document) & seen
+    )
+    if not keys:
+        return
+    found = find_pii(keys)
+    found = found if found is not None else find_pii_basic(keys)
+    logger.warning(
+        "evidence_draft_unmatched",
+        environment=str(environment.id),
+        scenarios=[redact(key, hits) for key, hits in zip(keys, found, strict=True)],
+    )
+
+
+def _scenarios_in(suite: dict[str, bytes]) -> list[dict]:
+    """The suite's scenarios: those its index lists, then each folder it leaves
+    out."""
+    indexed = suite_documents(suite)
+    listed = {token for document in indexed for token in _tokens(document)}
+    folders = suite_documents(
+        {path: data for path, data in suite.items() if path != "scenarios.json"}
+    )
+    return indexed + [one for one in folders if not _tokens(one) & listed]
 
 
 def _tokens(document: dict) -> set[str]:
@@ -346,37 +385,6 @@ def _tokens(document: dict) -> set[str]:
         )
         if spelling
     }
-
-
-def _unmatched(
-    environment: HostedHarnessJob,
-    suite: dict[str, bytes],
-    documents: list[dict],
-    taken: list[dict],
-) -> list[str]:
-    """The keys of the scenarios the turn added to the suite it started from
-    that no case took. Cases are matched against the suite's index alone, so a
-    scenario folder the index leaves out counts too, under its folder name."""
-    basis = drafts.fresh_draft(environment, "suite") or environment.suite_version
-    started = ((basis.documents or {}).get("scenarios") or []) if basis else []
-    known = {token for document in started for token in _tokens(document)}
-    listed = {token for document in documents for token in _tokens(document)}
-    indexed = [
-        str(
-            document.get("scenario_key")
-            or document.get("name")
-            or document.get("folder")
-        )
-        for document in documents
-        if not any(document is one for one in taken) and not _tokens(document) & known
-    ]
-    folders = {
-        parts[1]
-        for parts in (path.split("/") for path in suite)
-        if len(parts) == 3 and parts[0] == "scenarios" and parts[2] == "scenario.json"
-    }
-    seen = listed | known
-    return sorted([*indexed, *(one for one in folders if _token(one) not in seen)])
 
 
 def _added_checks(environment, basis, files, prepared) -> list[dict] | None:
