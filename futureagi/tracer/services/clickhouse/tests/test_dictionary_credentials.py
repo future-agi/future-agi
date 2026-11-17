@@ -478,7 +478,8 @@ def test_migration_0078_applies_dictionaries_with_credentials(local_apply, monke
     monkeypatch.delenv("CH_PASSWORD")
     monkeypatch.setattr(v2, "get_v2_config", lambda: dict(V2_CONFIG))
     migration.forwards(None, None)
-    _v2_dictionaries_applied_with_credentials(local_apply.client)
+    # 0078 applies the whole packaged schema, so the 028 repair runs too.
+    _v2_dictionaries_applied_with_credentials(local_apply.client, passes=2)
 
 
 # ---------------------------------------------------------------------------
