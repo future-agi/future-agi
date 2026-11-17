@@ -548,7 +548,7 @@ async def _run_activity(next_interceptor, secret_values, before=None):
         max_breadcrumbs=100,
         include_source_context=True,
         include_local_variables=True,
-        max_value_length=16_384,
+        max_value_length=_configured_max_value_length(),
     )
     interceptor = SentryActivityInboundInterceptor(next_interceptor)
     activity_input = ExecuteActivityInput(
@@ -674,6 +674,14 @@ class _CollectingTransport(Transport):
                 self.sent.append(item.payload.json)
 
 
+def _configured_max_value_length():
+    """The `max_value_length` init_sentry hands the SDK, so a test client cuts
+    strings where the real one does."""
+    with pytest.MonkeyPatch.context() as patch:
+        seen, _ = _init_sentry_kwargs(patch)
+    return seen["max_value_length"]
+
+
 def _sent_through_client(action, **overrides):
     """Run `action` under a client configured like init_sentry; return what it sent."""
     sent = []
@@ -691,7 +699,7 @@ def _sent_through_client(action, **overrides):
         "max_breadcrumbs": 100,
         "include_source_context": True,
         "include_local_variables": True,
-        "max_value_length": _MAX_FORMATTED,
+        "max_value_length": _configured_max_value_length(),
     }
     options.update(overrides)
     client = sentry_sdk.Client(**options)
@@ -914,7 +922,14 @@ def _init_sentry_kwargs(monkeypatch):
 def test_init_sentry_ignores_the_scrub_logger_and_wires_the_hooks(monkeypatch):
     seen, ignored = _init_sentry_kwargs(monkeypatch)
     assert sentry_module.SCRUB_LOGGER_NAME in ignored
-    assert seen["max_value_length"] == _MAX_FORMATTED
+    # Well above the final cap, so a key name that follows a long text is still
+    # in view of the scrub; the hooks cut every string to the cap afterwards.
+    assert seen["max_value_length"] == 262_144
+    assert seen["max_value_length"] > _MAX_FORMATTED
+    long_text = "x" * 50_000
+    assert len(seen["before_send"]({"extra": {"k": long_text}}, {})["extra"]["k"]) == (
+        _MAX_FORMATTED
+    )
     event = {"type": "transaction", "spans": [{"data": {"q": "token=leak"}}]}
     out = seen["before_send_transaction"](event, {})
     assert out["spans"][0]["data"] == {"q": _REDACTED}
@@ -1704,3 +1719,210 @@ def test_llm_span_usage_data_survives_the_transaction_hook():
         "gen_ai.usage.output_tokens": 7,
         "gen_ai.usage.api_key": _REDACTED,
     }
+
+
+# A template that names a key, a template that mixes an f-string with `%s`, and
+# strings cut before the scrub (TH-9835)
+
+
+def test_a_template_that_names_a_key_loses_every_argument():
+    event = {
+        "logentry": {
+            "message": "calling with api_key=%s",
+            "params": ["sk-1"],
+            "formatted": "calling with api_key=sk-1",
+        }
+    }
+    _scrub_event(event)
+    assert event["logentry"]["params"] == [_REDACTED]
+    assert event["logentry"]["message"] == "calling with api_key=%s"
+    assert "sk-1" not in json.dumps(event)
+
+
+def test_a_template_that_names_a_key_loses_every_named_argument():
+    event = {
+        "logentry": {
+            "message": "calling %(url)s with api_key=%(k)s",
+            "params": {"url": "https://example.test", "k": "sk-1"},
+        }
+    }
+    _scrub_event(event)
+    assert event["logentry"]["params"] == {"url": _REDACTED, "k": _REDACTED}
+    assert "sk-1" not in json.dumps(event)
+
+
+def test_a_real_log_call_with_a_key_in_its_template_leaks_nothing():
+    secret = secrets.token_hex(16)
+
+    def action():
+        logging.getLogger("probe").error("api_key=%s", secret)
+
+    sent = _sent_through_client(action)
+    assert sent
+    assert secret not in json.dumps(sent, default=str)
+    assert sent[0]["logentry"]["message"] == "api_key=%s"
+    assert sent[0]["logentry"]["params"] == [_REDACTED]
+
+
+def test_the_logging_modules_frames_lose_the_arguments_of_a_key_naming_template():
+    frame = {
+        "module": "logging",
+        "function": "error",
+        "vars": {"self": "<Logger probe>", "msg": "'api_key=%s'", "args": "('sk-1',)"},
+    }
+    other = {
+        "module": "app.views",
+        "function": "error",
+        "vars": {"msg": "'api_key=%s'", "args": "('sk-1',)"},
+    }
+    event = {"exception": {"values": [{"stacktrace": {"frames": [frame, other]}}]}}
+    _scrub_event(event)
+    assert frame["vars"]["args"] == _REDACTED
+    assert frame["vars"]["self"] == "<Logger probe>"
+    assert "sk-1" not in json.dumps(frame)
+
+
+def test_the_logging_modules_frames_keep_the_arguments_of_a_plain_template():
+    frame = {
+        "module": "logging",
+        "function": "error",
+        "vars": {"msg": "'took %d ms'", "args": "(12,)"},
+    }
+    event = {"stacktrace": {"frames": [frame]}}
+    _scrub_event(event)
+    assert frame["vars"] == {"msg": "'took %d ms'", "args": "(12,)"}
+
+
+def test_a_template_that_mixes_an_fstring_secret_with_a_percent_s_leaks_nothing():
+    secret = secrets.token_hex(16)
+
+    def action():
+        logging.getLogger("probe").error(f"token {secret} for %s", "bob")
+
+    sent = _sent_through_client(action)
+    assert sent
+    assert secret not in json.dumps(sent, default=str)
+    assert sent[0]["logentry"]["message"] == _REDACTED
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "onboarding aws_onboard:{s} for %s",
+        "posting to https://hooks.slack.com/services/{s} for %s",
+        "connecting to postgres://app:{s}@db:5432/app for %s",
+    ],
+)
+def test_a_template_with_a_cache_key_or_a_secret_value_loses_it(template):
+    secret = secrets.token_hex(16)
+    line = template.format(s=secret)
+
+    def action():
+        logging.getLogger("probe").error(line, "bob")
+
+    sent = _sent_through_client(action)
+    assert sent
+    assert secret not in json.dumps(sent, default=str)
+
+
+def test_a_plain_template_with_arguments_is_kept_whole():
+    def action():
+        logging.getLogger("probe").error("user %s hit %d errors", "bob", 3)
+
+    sent = _sent_through_client(action)
+    assert sent[0]["logentry"]["message"] == "user %s hit %d errors"
+    assert sent[0]["logentry"]["params"] == ["bob", 3]
+    assert sent[0]["logentry"]["formatted"] == "user bob hit 3 errors"
+
+
+@dataclass
+class _LongInput:
+    # The key name comes after the long text in the repr.
+    system_prompt: str
+    user_api_key: str
+
+
+def test_a_key_after_a_long_text_is_found_through_the_configured_limit():
+    secret = secrets.token_hex(16)
+
+    def action():
+        holder = _LongInput(system_prompt="prompt text " * 2_000, user_api_key=secret)
+        logging.getLogger("probe").error("failed")
+        return holder
+
+    sent = _sent_through_client(action)
+    payload = json.dumps(sent, default=str)
+    assert secret not in payload
+    # Built here, so the test's own source lines in the event do not match it.
+    assert "prompt text " * 2 not in payload
+    [frame_vars] = [
+        f["vars"]
+        for f in iter_event_frames(sent[0])
+        if "holder" in (f.get("vars") or {})
+    ]
+    assert frame_vars["holder"] == _REDACTED
+
+
+def test_a_long_harmless_string_is_capped_in_the_sent_event():
+    def action():
+        blob = "x" * 100_000
+        logging.getLogger("probe").error("failed")
+        return blob
+
+    sent = _sent_through_client(action)
+    [frame_vars] = [
+        f["vars"] for f in iter_event_frames(sent[0]) if "blob" in (f.get("vars") or {})
+    ]
+    assert len(frame_vars["blob"]) == _MAX_FORMATTED
+    assert frame_vars["blob"].endswith("...")
+    assert max(len(s) for s in _strings_in(sent)) <= _MAX_FORMATTED
+
+
+def _strings_in(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings_in(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _strings_in(item)
+
+
+def test_both_hooks_cap_every_string_to_the_final_limit():
+    long_text = "y" * 50_000
+    error = sentry_module._get_before_send()(
+        {
+            "extra": {"a": [{"b": long_text}]},
+            "breadcrumbs": {"values": [{"message": "m", "data": {"d": long_text}}]},
+            "exception": {
+                "values": [
+                    {"stacktrace": {"frames": [{"vars": {"v": long_text}}]}}
+                ]
+            },
+        },
+        {},
+    )
+    transaction = sentry_module._get_before_send_transaction()(
+        {
+            "type": "transaction",
+            "extra": {"a": long_text},
+            "spans": [{"op": "x", "data": {"d": long_text}, "description": "q"}],
+        },
+        {},
+    )
+    for event in (error, transaction):
+        strings = list(_strings_in(event))
+        assert strings
+        assert max(len(s) for s in strings) == _MAX_FORMATTED
+    assert error["extra"]["a"][0]["b"] == "y" * (_MAX_FORMATTED - 3) + "..."
+
+
+def test_the_final_cap_counts_bytes_like_the_sdk():
+    out = sentry_module._get_before_send()({"extra": {"k": "\u00e9" * 20_000}}, {})
+    cut = out["extra"]["k"]
+    assert len(cut.encode("utf-8")) <= _MAX_FORMATTED
+    assert cut.endswith("...")
+    # A text that fits is left alone.
+    short = sentry_module._get_before_send()({"extra": {"k": "\u00e9" * 8_000}}, {})
+    assert short["extra"]["k"] == "\u00e9" * 8_000

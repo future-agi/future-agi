@@ -365,7 +365,123 @@ def _scrub_strings(value: Any, depth: int = 0) -> Any:
     return value
 
 
-_MAX_FORMATTED = 16_384  # init_sentry's max_value_length, which ran before this
+# The longest string an event may carry when it leaves the process. The hooks
+# cut every string to this after scrubbing (`_cap_strings`), and a rebuilt log
+# line is cut to it too.
+_MAX_FORMATTED = 16_384
+
+# What init_sentry hands the SDK as `max_value_length`. The SDK cuts each string
+# before `before_send` runs, so a limit near the final cap would send the front
+# of a long repr whose key name comes later (a system prompt, then
+# `user_api_key=...`) with nothing in view to match. 256 KB keeps such a name in
+# view for any realistic repr while the scrub's cost per string stays bounded
+# (every check on a string is linear).
+_SDK_MAX_VALUE_LENGTH = 262_144
+
+# A `%` conversion in a log template, with its optional `(name)` mapping key.
+_FORMAT_SPEC = re.compile(
+    r"%(?:\([^)]*\))?[#0\- +]*(?:\d+|\*)?(?:\.(?:\d+|\*))?[hlL]?[diouxXeEfFgGcrsa]"
+)
+_KEY_MENTION = re.compile(
+    "|".join(
+        re.escape(k) for k in sorted(SENSITIVE_KEY_SUBSTRINGS, key=len, reverse=True)
+    )
+)
+# What may stand between a key name and a `%` conversion that is its value:
+# the rest of the name, then separators such as `=`, `: ` or `='`.
+_LABEL_THEN_SPEC = re.compile("[\\w-]*[\\s:=\"'(\\[{,]*\x00")
+
+
+def _template_text(template: str) -> str:
+    """A log template with each `%` conversion made a NUL, and `%%` dropped, so
+    a mapping key inside a conversion (`%(api_key)s`) is not read as a name."""
+    return _FORMAT_SPEC.sub("\x00", template.replace("%%", ""))
+
+
+def _names_key_in_template(template: str) -> bool:
+    return _mentions_sensitive_key(_template_text(template))
+
+
+def _template_leaks(template: str) -> bool:
+    """True if a log template carries a value of its own: a key name followed by
+    anything but a `%` conversion (`token abc for %s` is an f-string's secret,
+    where `api_key=%s` is a label for an argument), or a credential by shape."""
+    text = _template_text(template)
+    if (
+        any(marker in text for marker in _SAML_VALUE_MARKERS)
+        or any(marker in text for marker in _SECRET_URL_MARKERS)
+        or _URL_PASSWORD.search(text)
+    ):
+        return True
+    lowered = _COUNT_PHRASE.sub(" ", _COUNT_FIELD.sub(" ", text.lower()))
+    # Each mention is read once, and the scan resumes after its label, so a text
+    # made of key names cannot make this quadratic.
+    position = 0
+    while (mention := _KEY_MENTION.search(lowered, position)) is not None:
+        label = _LABEL_THEN_SPEC.match(lowered, mention.end())
+        if label is None:
+            return True
+        position = label.end()
+    return False
+
+
+def _scrub_template(template: str) -> str:
+    """The template of a log call that has arguments. It is kept whole so events
+    group, unless the text itself holds a secret."""
+    if _template_leaks(template):
+        return _REDACTED
+    return _TOKEN_KEY_PREFIX.sub(r"\1:" + _REDACTED, template)
+
+
+def _redact_all(params: Any) -> Any:
+    """Every argument replaced, keeping the shape `%` formatting expects."""
+    if isinstance(params, dict):
+        return {k: _REDACTED for k in params}
+    if isinstance(params, (list, tuple)):
+        return [_REDACTED for _ in params]
+    return _REDACTED
+
+
+def _cap_string(value: str) -> str:
+    # Like the SDK: the limit is in UTF-8 bytes, and a cut ends in "...".
+    if len(value) * 4 <= _MAX_FORMATTED:
+        return value
+    raw = value.encode("utf-8", errors="replace")
+    if len(raw) <= _MAX_FORMATTED:
+        return value
+    return raw[: _MAX_FORMATTED - 3].decode("utf-8", errors="ignore") + "..."
+
+
+def _cap_strings(value: Any) -> Any:
+    """The event with every string cut to `_MAX_FORMATTED`; the last step of the
+    hooks, once the scrub has read the strings whole."""
+    if isinstance(value, str):
+        return _cap_string(value)
+    if isinstance(value, dict):
+        return {k: _cap_strings(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_cap_strings(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_cap_strings(v) for v in value)
+    return value
+
+
+def _scrub_frame_vars(frame: dict) -> None:
+    """Scrub a frame's local variables. In the logging module's frames `args`
+    holds the call's arguments as one repr, and `msg` its template: when the
+    template names a key, the arguments go."""
+    local_vars = frame["vars"]
+    scrubbed = _scrub_strings(local_vars)
+    module = frame.get("module")
+    if (
+        isinstance(module, str)
+        and (module == "logging" or module.startswith("logging."))
+        and "args" in local_vars
+        and isinstance(local_vars.get("msg"), str)
+        and _names_key_in_template(local_vars["msg"])
+    ):
+        scrubbed["args"] = _REDACTED
+    frame["vars"] = scrubbed
 
 
 def _formatted(message: Any, params: Any) -> str:
@@ -451,8 +567,18 @@ def _scrub_event(event: dict) -> None:
     logentry = event.get("logentry")
     if isinstance(logentry, dict):
         params = logentry.get("params")
+        template = logentry.get("message")
         if params is not None:
-            logentry["params"] = _scrub_strings(params)
+            # A template that names a key (`api_key=%s`) says what its bare
+            # arguments are, so none of them is kept.
+            if (
+                params
+                and isinstance(template, str)
+                and _names_key_in_template(template)
+            ):
+                logentry["params"] = _redact_all(params)
+            else:
+                logentry["params"] = _scrub_strings(params)
             # Rebuilt only when an argument was scrubbed: the line as logged is
             # kept otherwise.
             if logentry["params"] != params and logentry.get("formatted") is not None:
@@ -463,10 +589,15 @@ def _scrub_event(event: dict) -> None:
         if isinstance(formatted, str):
             logentry["formatted"] = _scrub_text(formatted)
         # With no arguments the message is the logged text itself (an f-string,
-        # or a structlog line with its fields as JSON), not a template.
+        # or a structlog line with its fields as JSON), not a template. With
+        # them it is kept so events group, unless it holds a secret of its own,
+        # as when an f-string was logged with a `%s` left in it.
         message = logentry.get("message")
-        if not logentry.get("params") and isinstance(message, str):
-            logentry["message"] = _scrub_text(message)
+        if isinstance(message, str):
+            if logentry.get("params"):
+                logentry["message"] = _scrub_template(message)
+            else:
+                logentry["message"] = _scrub_text(message)
 
     # Breadcrumbs carry whatever the caller logged, such as a Temporal
     # activity's input. The shape is a list or a dict with a "values" list.
@@ -497,7 +628,7 @@ def _scrub_event(event: dict) -> None:
     # ACS candidate-store path, which leaves the raw assertion in a view frame.
     for frame in _event_frames(event):
         if isinstance(frame.get("vars"), dict):
-            frame["vars"] = _scrub_strings(frame["vars"])
+            _scrub_frame_vars(frame)
 
 
 def _event_frames(event: dict) -> list:
@@ -663,7 +794,7 @@ def _get_before_send() -> Callable:
 
         # 4. Scrub secrets/PII from the surviving event.
         _scrub_event(event)
-        return event
+        return _cap_strings(event)
 
     return before_send
 
@@ -727,7 +858,7 @@ def _get_before_send_transaction() -> Callable:
             for span in event.get("spans") or []:
                 if isinstance(span, dict):
                     _scrub_span(span)
-            return event
+            return _cap_strings(event)
         except Exception as exc:
             _scrub_logger.error("sentry_scrub_failed: %s", type(exc).__name__)
             return None
@@ -888,8 +1019,10 @@ def init_sentry(
             # large uploads/payloads don't dominate the event volume or leak.
             max_request_body_size="medium",
             max_breadcrumbs=100,
-            # Bounds each captured string, and so the cost of scrubbing it.
-            max_value_length=_MAX_FORMATTED,
+            # Bounds each captured string, and so the cost of scrubbing it. Kept
+            # far above _MAX_FORMATTED: the hooks scrub strings whole, then cut
+            # each to _MAX_FORMATTED.
+            max_value_length=_SDK_MAX_VALUE_LENGTH,
             attach_stacktrace=True,  # Attach stack traces to all messages
             include_source_context=True,  # Include source code context
             include_local_variables=True,  # Capture local variables for debugging
