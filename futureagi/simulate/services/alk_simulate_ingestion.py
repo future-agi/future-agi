@@ -52,6 +52,7 @@ from simulate.utils.ended_reason import to_canonical_ended_reason
 from simulate.utils.processing_outcomes import (
     SILENT_AGENT_SKIP_REASON,
     build_skipped_eval_output_payload,
+    is_silent_agent_skip,
     set_processing_skip_metadata,
 )
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
@@ -1868,12 +1869,19 @@ def _skip_harness_evals_without_agent(call_execution: CallExecution) -> bool:
     harness entry becomes a skipped payload, and the call is marked
     ``processing_skipped`` so its outcome reads inconclusive. Entries from any
     other source are left alone. Run it once the transcript rows are stored.
-    Returns True when the call was marked skipped.
+    Returns True when the call was marked skipped. A call that turns out to have
+    an agent message loses an earlier silent-agent mark.
     """
     from simulate.services.test_executor import conversation_presence_signals
 
     _, has_agent_message, _ = conversation_presence_signals(call_execution)
     if has_agent_message:
+        # A transcript stored later (recovery, a replacing receipt) can answer a
+        # call an earlier apply marked silent; drop that mark, never the executor's.
+        if is_silent_agent_skip(call_execution.call_metadata):
+            call_execution.call_metadata = set_processing_skip_metadata(
+                call_execution.call_metadata, skipped=False
+            )
         return False
 
     outputs = dict(call_execution.eval_outputs or {})

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.test import override_settings
 from django.utils import timezone as django_timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient
 
 from simulate.models import (
@@ -2217,8 +2218,10 @@ _ANSWERED = [
 ]
 
 
-def _begin_hosted_scenario(organization, *, key, modality):
-    job, _ = create_hosted_job(organization, _payload(), idempotency_key=key)
+def _begin_hosted_scenario(organization, workspace, *, key, modality):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=key, workspace=workspace
+    )
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     client = APIClient()
     provision = client.post(
@@ -2304,6 +2307,15 @@ def _ingest_hosted(job, capability, receipt, content=None, **kwargs):
     storage = MagicMock()
     if content is not None:
         storage.get_object.return_value.read.return_value = content
+    # The endpoint's serializer parses the call's timestamps before ingestion.
+    parsed = {
+        **receipt,
+        "call": {
+            **receipt["call"],
+            "started_at": parse_datetime(receipt["call"]["started_at"]),
+            "ended_at": parse_datetime(receipt["call"]["ended_at"]),
+        },
+    }
     with (
         patch(
             "simulate.services.hosted_harness_ingestion.get_storage_client",
@@ -2311,7 +2323,7 @@ def _ingest_hosted(job, capability, receipt, content=None, **kwargs):
         ),
         patch("simulate.services.hosted_harness_ingestion.transaction.on_commit"),
     ):
-        ingest_result_receipt(capability.attempt, receipt, **kwargs)
+        ingest_result_receipt(capability.attempt, parsed, digest_body=receipt, **kwargs)
     call = CallExecution.objects.get(
         hosted_registration__job=job, hosted_registration__scenario_key="hosted-one"
     )
@@ -2320,9 +2332,11 @@ def _ingest_hosted(job, capability, receipt, content=None, **kwargs):
 
 
 @pytest.mark.django_db
-def test_hosted_silent_receipt_is_not_counted_as_a_completed_scenario(organization):
+def test_hosted_silent_receipt_is_not_counted_as_a_completed_scenario(
+    organization, workspace
+):
     job, capability, scenario_id = _begin_hosted_scenario(
-        organization, key="hosted-silent-count", modality="text"
+        organization, workspace, key="hosted-silent-count", modality="text"
     )
     receipt = _hosted_receipt(job, capability, scenario_id, modality="text")
 
@@ -2331,3 +2345,36 @@ def test_hosted_silent_receipt_is_not_counted_as_a_completed_scenario(organizati
     assert call.call_metadata["processing_skipped"] is True
     assert job.completed_count == 0
     assert HostedHarnessReceipt.no_workspace_objects.get(job=job).status == "passed"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("modality", ["text", "voice"])
+def test_recovered_transcript_restores_the_pass_of_a_call_the_agent_answered(
+    organization, workspace, modality
+):
+    from simulate.services.run_results_v3 import call_outcome
+
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization, workspace, key=f"hosted-recovery-{modality}", modality=modality
+    )
+    receipt = _hosted_receipt(job, capability, scenario_id, modality=modality)
+    silent = _ingest_hosted(job, capability, receipt)
+    assert silent.call_metadata["processing_skipped"] is True
+    assert call_outcome(silent, {}) == "inconclusive"
+
+    digest, content = _store_transcript_artifact(job, _ANSWERED)
+    call = _ingest_hosted(
+        job,
+        capability,
+        receipt,
+        content,
+        recovered_artifact_ids=[f"sha256:{digest}"],
+    )
+
+    (output,) = call.eval_outputs.values()
+    assert output["output"] == "Passed"
+    assert output["status"] == "completed"
+    assert call.call_metadata["processing_skipped"] is False
+    assert call.call_metadata["processing_skip_reason"] is None
+    assert call_outcome(call, {}) == "passed"
+    assert job.completed_count == 1

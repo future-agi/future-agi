@@ -7079,3 +7079,89 @@ class TestSilentAgentHarnessEvals:
         assert call.eval_outputs["native-id"] == native
         assert call.eval_outputs["harness-id"]["status"] == "skipped"
         assert call.eval_outputs["harness-id"]["source"] == "harness"
+
+
+def _agent_answers_later(call, *, voice):
+    """Store the agent's turn that an earlier apply did not have."""
+    from simulate.models.test_execution import CallTranscript
+    from simulate.services.alk_simulate_ingestion import _store_alk_chat_messages
+
+    turn = {
+        "speaker_role": "assistant",
+        "content": "Sorry, I am here now. How can I help?",
+        "start_time_ms": 7000,
+        "end_time_ms": 10000,
+    }
+    if voice:
+        CallTranscript.objects.create(
+            call_execution=call,
+            speaker_role="assistant",
+            content=turn["content"],
+            start_time_ms=turn["start_time_ms"],
+            end_time_ms=turn["end_time_ms"],
+        )
+    else:
+        _store_alk_chat_messages(call, [turn])
+
+
+def _apply_harness_verdicts(call):
+    from simulate.services.alk_simulate_ingestion import (
+        _apply_harness_evaluation_outputs,
+        _skip_harness_evals_without_agent,
+    )
+
+    _apply_harness_evaluation_outputs(call)
+    _skip_harness_evals_without_agent(call)
+    call.save(update_fields=["eval_outputs", "call_metadata"])
+    call.refresh_from_db()
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestSilentAgentMarkFollowsTheTranscript:
+    @pytest.mark.parametrize(
+        ("fixture_name", "voice"), [("text_run_test", False), ("run_test", True)]
+    )
+    def test_a_later_agent_turn_restores_the_pass(
+        self, auth_client, request, fixture_name, voice
+    ):
+        from simulate.services.run_results_v3 import call_outcome
+
+        call = _ingest_with_harness_pass(
+            auth_client,
+            request.getfixturevalue(fixture_name),
+            _customer_only_transcript(),
+        )
+        assert call.call_metadata["processing_skipped"] is True
+        assert call_outcome(call, {}) == "inconclusive"
+
+        _agent_answers_later(call, voice=voice)
+        _apply_harness_verdicts(call)
+
+        (output,) = call.eval_outputs.values()
+        assert output["output"] == "Passed"
+        assert output["status"] == "completed"
+        assert call.call_metadata["processing_skipped"] is False
+        assert call.call_metadata["processing_skip_reason"] is None
+        assert call_outcome(call, {}) == "passed"
+
+    def test_an_executor_skip_is_left_alone_when_the_agent_spoke(
+        self, auth_client, text_run_test
+    ):
+        from simulate.utils.processing_outcomes import set_processing_skip_metadata
+
+        call = _ingest_with_harness_pass(
+            auth_client, text_run_test, _answered_transcript()
+        )
+        call.call_metadata = set_processing_skip_metadata(
+            call.call_metadata, skipped=True, reason="Call too short to process."
+        )
+        call.save(update_fields=["call_metadata"])
+
+        _apply_harness_verdicts(call)
+
+        assert call.call_metadata["processing_skipped"] is True
+        assert call.call_metadata["processing_skip_reason"] == (
+            "Call too short to process."
+        )
