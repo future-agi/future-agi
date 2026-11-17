@@ -24,11 +24,74 @@ import Section from "src/components/section";
 import StatusBadge from "src/components/status-badge";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { paths } from "src/routes/paths";
-import { fDateTime } from "src/utils/format-time";
+import { fDate, fDateTime } from "src/utils/format-time";
 import { TestExecutionConfiguration } from "./TestRunResults";
+import TechnicalDetails from "../components/TechnicalDetails";
 import { canAttachRun } from "../utils/evidence";
 
-function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId, recordedWith = "It is saved when you confirm." }) {
+// Plain counts: "1 test case", "2 test cases" (UXF-11: no "(s)").
+// eslint-disable-next-line react-refresh/only-export-components -- shared wording helper for this module's tests.
+export const plural = (count, one, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+const STATUS_WORDS = {
+  queued: "Queued",
+  pending: "Queued",
+  running: "Running",
+  cancelling: "Stopping",
+  cancelled: "Stopped",
+  failed: "Failed",
+  completed: "Completed",
+  expired: "Expired",
+};
+const statusWord = (status) =>
+  STATUS_WORDS[status] ||
+  (status ? `${status.charAt(0).toUpperCase()}${status.slice(1).replaceAll("_", " ")}` : "Not reported");
+const visibilityWord = (visibility) =>
+  visibility === "private" ? "Private" : "Shared with workspace";
+
+/**
+ * The one-line conclusion of an evidence row (UXF-11), for example
+ * "Passed: 1 of 1 test case, no regressions. Shared with workspace, 16 Nov."
+ * It only restates what the server reported. "Passed" is said only when the
+ * run's own decision is "works on examples" with no regressed case; while that
+ * decision is not loaded the line states the counts it has.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- the summary sentence is tested on its own.
+export function evidenceSummary(row, decision) {
+  const cases = row.selectedCases ?? 0;
+  const testCases = plural(cases, "test case");
+  const regressed = decision?.regressedCases ?? row.answerRegressions ?? 0;
+  let outcome;
+  if (isActiveSkillJob(row.status)) outcome = `${statusWord(row.status)}: ${testCases}.`;
+  else if (row.status !== "completed") outcome = `${statusWord(row.status)}: ${testCases}.`;
+  else if (decision?.state === "works_on_examples" && regressed === 0)
+    outcome = `Passed: ${cases} of ${testCases}, no regressions.`;
+  else if (decision?.state === "needs_changes")
+    outcome = regressed > 0
+      ? `Needs changes: ${regressed} of ${testCases} regressed.`
+      : `Needs changes: some expectations failed in ${testCases}.`;
+  else if (decision?.state === "inconclusive")
+    outcome = `Incomplete: some expectations in ${testCases} couldn't be checked.`;
+  else if (decision?.state === "routing_only")
+    outcome = `Skill selection matched in ${testCases}; answers weren't graded.`;
+  else if (decision?.state === "diagnostic")
+    outcome = `Diagnostic check of ${testCases}; not independent evidence.`;
+  else
+    outcome = regressed > 0
+      ? `Completed: ${regressed} of ${testCases} regressed.`
+      : `Completed: ${testCases}, no regressions.`;
+  const when = row.createdAt ? fDate(row.createdAt, "d MMM") : "";
+  return `${outcome} ${visibilityWord(row.visibility)}${when ? `, ${when}` : ""}.`;
+}
+
+const runOption = (run) =>
+  `${fDateTime(run.createdAt)} · ${plural(run.selectedCases ?? 0, "test case")} · ${statusWord(run.status)} · ${visibilityWord(run.visibility)}`;
+
+// variant "full" (default): the evidence picker of the Tests and publish flows.
+// variant "summary": one summary line with counts, model, temperature and token
+// limit under "Technical details" (Move label, UXF-11). Both keep the warnings,
+// the attach control and the attached state visible.
+function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId, recordedWith = "It is saved when you confirm.", variant = "full" }) {
+  const summaryVariant = variant === "summary";
   const evidence = useSkillTestEvidence(skillId, candidate);
   const skill = useSkill(skillId);
   const [inspectId, setInspectId] = useState(null);
@@ -70,6 +133,43 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId, recor
         onRetry={evidence.refetch}
       />
     );
+  const coverage = row
+    ? row.currentness.content
+      ? `Checked this content · ${row.suiteCases === null ? `${plural(row.selectedCases, "ad hoc test case")}` : `${row.selectedCases} of ${plural(row.suiteCases, "saved test case")}`}`
+      : "The draft changed after this check."
+    : "";
+  const counts = row && (
+    <Typography variant={summaryVariant ? "s3" : "s1"} color={summaryVariant ? "text.secondary" : undefined}>
+      {plural(row.answerRegressions, "answer regression")} (including mixed) ·{" "}
+      {plural(row.routingFailures, "skill-selection failure")} ·{" "}
+      {plural(row.deliveryFailures, "file-delivery failure")} ·{" "}
+      {plural(row.errorAttempts, "attempt with an error", "attempts with an error")}
+    </Typography>
+  );
+  const execution = detail.isLoading ? (
+    <ContentSkeleton
+      variant="rows"
+      rows={2}
+      label="Loading the test settings"
+    />
+  ) : detail.isError ? (
+    <ErrorState
+      title="Could not load the test settings"
+      onRetry={detail.refetch}
+    />
+  ) : (
+    detail.data && (
+      <>
+        <Typography variant="s3" color="text.secondary">
+          {detail.data.counts.graded} of {plural(detail.data.counts.planned, "attempt")} graded ·{" "}
+          {detail.data.counts.incomplete} incomplete · {detail.data.counts.notStarted} not started
+        </Typography>
+        <TestExecutionConfiguration
+          configuration={detail.data.executionConfiguration}
+        />
+      </>
+    )
+  );
   return (
     <Section
       title={<Typography component="span" variant="m3">Test evidence</Typography>}
@@ -101,7 +201,7 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId, recor
             <TextField
               select
               size="small"
-              label="Inspect test evidence"
+              label={summaryVariant ? "Test run" : "Inspect test evidence"}
               value={row?.runId ?? ""}
               onChange={(event) => {
                 setInspectId(event.target.value);
@@ -110,28 +210,34 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId, recor
             >
               {runs.map((run) => (
                 <MenuItem key={run.runId} value={run.runId}>
-                  {fDateTime(run.createdAt)} · {run.selectedCases} test cases ·{" "}
-                  {run.status} · {run.visibility}
+                  {runOption(run)}
                 </MenuItem>
               ))}
             </TextField>
             {row && (
               <>
-                <Stack direction="row" spacing={1} flexWrap="wrap">
-                  <StatusBadge status={row.status} />
-                  <Typography variant="s1">
-                    {row.currentness.content
-                      ? `Checked this exact content · ${row.suiteCases === null ? `${row.selectedCases} ad hoc ${row.selectedCases === 1 ? 'test case' : 'test cases'}` : `${row.selectedCases} of ${row.suiteCases} saved ${row.suiteCases === 1 ? 'test case' : 'test cases'}`}`
-                      : "The draft changed after this check."}
+                {summaryVariant ? (
+                  <Typography variant="s1" data-testid="evidence-summary">
+                    {evidenceSummary(row, detail.data?.decision)}
                   </Typography>
-                </Stack>
-                <Typography variant="s3" color="text.secondary">
-                  {row.repetitions} attempt(s) per arm ·{" "}
-                  {fDateTime(row.createdAt)} ·{" "}
-                  {row.visibility === "private"
-                    ? "Private evidence"
-                    : "Shared with workspace"}
-                </Typography>
+                ) : (
+                  <>
+                    <Stack direction="row" spacing={1} flexWrap="wrap">
+                      <StatusBadge status={row.status} />
+                      <Typography variant="s1">{coverage}</Typography>
+                    </Stack>
+                    <Typography variant="s3" color="text.secondary">
+                      {plural(row.repetitions, "attempt")} per version ·{" "}
+                      {fDateTime(row.createdAt)} ·{" "}
+                      {row.visibility === "private"
+                        ? "Private evidence"
+                        : "Shared with workspace"}
+                    </Typography>
+                  </>
+                )}
+                {summaryVariant && !row.currentness.content && (
+                  <Alert severity="warning">The draft changed after this check.</Alert>
+                )}
                 {row.validity === "diagnostic" && (
                   <Alert severity="warning">
                     Diagnostic evidence. Reused or bundled test cases may
@@ -162,43 +268,27 @@ function EvidenceContent({ skillId, candidate, onSelectRun, selectedRunId, recor
                     Competitor targets changed after this run.
                   </Typography>
                 )}
-                <Typography variant="s1">
-                  {row.answerRegressions} answer regressions (including mixed) ·{" "}
-                  {row.routingFailures} routing failures ·{" "}
-                  {row.deliveryFailures} delivery failures · {row.errorAttempts}{" "}
-                  error attempts
-                </Typography>
+                {!summaryVariant && counts}
                 {row.answerRegressions > 0 && (
                   <Alert severity="warning">
                     {row.answerRegressions === 1
-                      ? "One regression needs review."
-                      : "Answer regressions need review."}
+                      ? "One regression needs a look before you continue."
+                      : `${row.answerRegressions} regressions need a look before you continue.`}
                   </Alert>
                 )}
-                {detail.isLoading ? (
-                  <ContentSkeleton
-                    variant="rows"
-                    rows={2}
-                    label="Loading frozen execution configuration"
-                  />
-                ) : detail.isError ? (
-                  <ErrorState
-                    title="Could not load frozen execution configuration"
-                    onRetry={detail.refetch}
-                  />
-                ) : (
-                  detail.data && (
-                    <>
+                {summaryVariant ? (
+                  <TechnicalDetails title="Technical details">
+                    <Stack spacing={1}>
+                      <Typography variant="s3" color="text.secondary">{coverage}</Typography>
                       <Typography variant="s3" color="text.secondary">
-                        {detail.data.counts.graded}/{detail.data.counts.planned}{" "}
-                        runs graded · {detail.data.counts.incomplete}{" "}
-                        incomplete · {detail.data.counts.notStarted} not started
+                        {plural(row.repetitions, "attempt")} per version · {fDateTime(row.createdAt)}
                       </Typography>
-                      <TestExecutionConfiguration
-                        configuration={detail.data.executionConfiguration}
-                      />
-                    </>
-                  )
+                      {counts}
+                      {execution}
+                    </Stack>
+                  </TechnicalDetails>
+                ) : (
+                  execution
                 )}
                 <Stack direction="row" spacing={1} flexWrap="wrap">
                   <Button
@@ -308,6 +398,8 @@ EvidenceContent.propTypes = {
   selectedRunId: PropTypes.string,
   // Says when the attachment is saved; empty when the dialog says it beside its action.
   recordedWith: PropTypes.string,
+  /** "summary": one summary line, details under "Technical details" (Move label). */
+  variant: PropTypes.oneOf(["full", "summary"]),
 };
 
 export default function TestEvidence(props) {

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import PropTypes from 'prop-types';
 import { Link as RouterLink } from 'react-router-dom';
-import { Alert, Box, Button, Checkbox, FormControl, FormControlLabel, FormLabel, Radio, RadioGroup, MenuItem, Pagination, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
+import { Alert, Box, Button, FormControl, FormControlLabel, FormLabel, Radio, RadioGroup, MenuItem, Pagination, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Tooltip, Typography } from '@mui/material';
 import { useSkillTestingOptions, useSkillV11Scope, isActiveSkillJob } from 'src/api/skills/testing';
 import {
   useContextTestSuite, useSaveContextTestSuite,
@@ -17,7 +17,11 @@ import IdentityChip from '../components/IdentityChip';
 import VersionLabel from '../components/VersionLabel';
 import TechnicalDetails from '../components/TechnicalDetails';
 import TestCaseEditor from '../tests/TestCaseEditor';
-import TestInventoryReview from '../tests/TestInventoryReview';
+import TestInventoryReview, { centsUp, providerName, sendSentence } from '../tests/TestInventoryReview';
+import Acknowledgment, { useAcknowledgment } from '../components/Acknowledgment';
+import { RowActionsCell } from '../components/RowActions';
+import { rowLinkProps, stackedTableSx } from '../components/responsiveTable';
+import { requestReleaseFor, TEST_CASE_APPROVED, TEST_CASE_NEEDS_APPROVAL } from '../utils/terms';
 import { AuthoringError, useAuthoringOperation } from '../editor/HotfixHeadReview';
 import ContextNativePanel, { InProductionAction } from './ContextNativePanel';
 import ResultConclusionCard from '../tests/ResultConclusionCard';
@@ -27,8 +31,9 @@ import { answerConclusion, passedAll } from '../utils/conclusions';
 import { reviewComposerUrl } from '../utils/review-links';
 import { paths } from 'src/routes/paths';
 
-// The one Tests panel for an agent context. One scroll, two sections, each with its own
-// loading, error and empty states so a failure in one never hides the other:
+// The one Tests panel for an agent context, in the shared sub-tabs (Results, Run a test, Cases;
+// tests/TestsSubTabs.jsx, UXF-04). Each part keeps its own loading, error and empty states so a
+// failure in one never hides the other:
 //   - Regression cases and the application test: retained, reviewed examples captured from
 //     Observe, plus the pinned application target, matched native run, per-cell grades,
 //     ship/hold decision and human disagreement (ContextNativePanel).
@@ -40,42 +45,53 @@ import { paths } from 'src/routes/paths';
 // Palette/depth/surfaces: neutral, flat sections and tables; status roles only for outcomes.
 // Typography/spacing: m3/s1/s3, 12px groups and standard dense table rows.
 // Reject a single green run badge as a release verdict, editable identity JSON,
-// and automatically accepted provider consent. Each preview owns a fresh review.
+// and automatically accepted provider consent. Each preview owns a fresh tick (UXF-03: one send tick
+// bound to the preview fingerprint; a saved, approved test case asks no second tick).
 // Last-used test settings are a per-viewer convenience: a person testing several contexts
 // in a row keeps the same request, model, ceiling and reference. Nothing is pre-attested.
 // Keyed by the organization/workspace/user identity so one login never prefills another's request text.
 const lastTestKey = (identity) => `skills.contextTest.last:${identity}`;
 const readLastTest = (identity) => { try { const value = JSON.parse(window.localStorage.getItem(lastTestKey(identity)) || '{}'); return value && typeof value === 'object' ? value : {}; } catch { return {}; } };
 const writeLastTest = (identity, value) => { try { window.localStorage.setItem(lastTestKey(identity), JSON.stringify(value)); } catch { /* Storage is optional. */ } };
-const PROVIDERS = { openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google', azure: 'Azure', bedrock: 'Amazon Bedrock', mistral: 'Mistral' };
-const providerName = (value) => PROVIDERS[String(value || '').toLowerCase()] || (value ? String(value).charAt(0).toUpperCase() + String(value).slice(1) : 'Not reported');
 const emptyReview = () => ({ fingerprint: '', reviewedAllFiles: false, noKnownAnswerKeys: false, classifications: [], falsePositiveSecretFindings: [] });
 
+
+// Saved cases an answer check can use as they are: approved, with at least one check (the server
+// refuses a saved case without either).
+const usableCase = (item) => Boolean(item.reviewed && item.checks?.length);
 
 function RegressionCases({ contextId, version, versions, canWrite, skills, productionVersion, seed, children, state, answerHistory, renderAnswer, answerRunId, historyPagination, latestAnswer, draftHandoff }) {
   const suite = useContextTestSuite(contextId);
   const save = useSaveContextTestSuite(contextId);
   const [editor, setEditor] = useState(null);
   const [error, setError] = useState('');
-  if (suite.isLoading) return <Stack spacing={3}><ContentSkeleton variant="panel" label="Loading test cases" />{typeof children === 'function' ? children(false) : children}</Stack>;
-  if (suite.isError) return <Stack spacing={3}><ErrorState title="Couldn't load test cases" onRetry={suite.refetch} />{typeof children === 'function' ? children(false) : children}</Stack>;
-  if (!suite.data) return <EmptyState title="Select an authenticated workspace" description="Test cases stay scoped to their context and workspace." />;
-  const changed = editor && editor.revision !== suite.data.revision;
+  if (!suite.isLoading && !suite.isError && !suite.data) return <EmptyState title="Select an authenticated workspace" description="Test cases stay scoped to their context and workspace." />;
+  const cases = suite.data?.cases || [];
+  const changed = editor && editor.revision !== suite.data?.revision;
+  const open = (item) => { setError(''); setEditor({ value: item, revision: suite.data.revision, cases: suite.data.cases }); };
+  const savedCases = cases.filter(usableCase);
+  const answerForm = typeof children === 'function' ? (primary, onEngage) => children(primary, onEngage, { savedCases, suiteRevision: suite.data?.revision ?? null }) : children;
+  const casesSection = suite.isLoading ? <ContentSkeleton variant="panel" label="Loading test cases" />
+    : suite.isError ? <ErrorState title="Couldn't load test cases" onRetry={suite.refetch} />
+      : <Section title={<Typography component="span" variant="m3">Test cases</Typography>} description={<Typography component="span" variant="s3">To turn a failure into a test case, open the trace in Tracing and choose Save as test case.</Typography>}
+        actions={<Button size="small" variant="outlined" component={RouterLink} to={paths.dashboard.observe} disabled={!canWrite}>Add test case from a trace</Button>}>
+        {!cases.length ? <EmptyState title="No test cases yet" description="Save one from a trace, then approve its redaction and expected behavior. Cases that already work belong here too." /> : <TableContainer>
+          <Table size="small" aria-label="Context regression cases" sx={stackedTableSx}><TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Test case</TableCell><TableCell>Approval</TableCell><TableCell>Checks</TableCell><TableCell aria-label="Actions" /></TableRow></TableHead>
+            <TableBody>{cases.map((item) => {
+              const primary = { label: !item.checks.length ? 'Add checks' : item.reviewed ? 'Open test case' : 'Approve test case', onClick: () => open(item), disabled: !canWrite, reason: 'Only a workspace author can edit test cases.' };
+              const link = rowLinkProps(primary);
+              return <TableRow key={item.id} {...link} sx={[...(link.sx ? [link.sx] : []), { height: ROW_HEIGHT.default }]}>
+                <TableCell><Stack spacing={0.5}><Typography component="div" variant="s1">{item.title}</Typography><Typography component="div" variant="s3" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.prompt}</Typography></Stack></TableCell>
+                <TableCell>{item.reviewed ? TEST_CASE_APPROVED : TEST_CASE_NEEDS_APPROVAL}</TableCell><TableCell>{item.checks.length ? item.checks.length : <StatusBadge status="warning" label="No checks yet" />}</TableCell>
+                <RowActionsCell name={item.title} primary={primary} />
+              </TableRow>;
+            })}</TableBody></Table>
+        </TableContainer>}
+      </Section>;
   return <Stack spacing={1.5}>
-    <ContextNativePanel contextId={contextId} versions={versions} viewed={version} cases={suite.data.cases} canWrite={canWrite} productionVersion={productionVersion} seed={seed} state={state} answerHistory={answerHistory} renderAnswer={renderAnswer} answerRunId={answerRunId} historyPagination={historyPagination} latestAnswer={latestAnswer} draftHandoff={draftHandoff} reviewedCases={<Stack spacing={1.5}>
-    <Section title={<Typography component="span" variant="m3">Test cases</Typography>} description={<Typography component="span" variant="s3">To turn a failure into a test case, open the trace in Tracing and choose Save as test case.</Typography>}
-      actions={<Button size="small" variant="outlined" component={RouterLink} to={paths.dashboard.observe} disabled={!canWrite}>Add test case from a trace</Button>}>
-      {!suite.data.cases.length ? <EmptyState title="No test cases yet" description="Save one from a trace, then review its redaction and expected behavior. Cases that already work belong here too." /> : <TableContainer>
-        <Table size="small" aria-label="Context regression cases"><TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>Test case</TableCell><TableCell>Review</TableCell><TableCell>Checks</TableCell><TableCell>Action</TableCell></TableRow></TableHead>
-          <TableBody>{suite.data.cases.map((item) => <TableRow key={item.id} hover sx={{ height: ROW_HEIGHT.default }}>
-            <TableCell><Stack spacing={0.5}><Typography component="div" variant="s1">{item.title}</Typography><Typography component="div" variant="s3" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.prompt}</Typography></Stack></TableCell>
-            <TableCell>{item.reviewed ? 'Reviewed' : 'Needs review'}</TableCell><TableCell>{item.checks.length ? item.checks.length : <StatusBadge status="warning" label="No checks yet" />}</TableCell>
-            <TableCell><Button size="small" variant="outlined" disabled={!canWrite} onClick={() => { setError(''); setEditor({ value: item, revision: suite.data.revision, cases: suite.data.cases }); }}>{!item.checks.length ? 'Add checks' : item.reviewed ? 'Open' : 'Review case'}</Button></TableCell>
-          </TableRow>)}</TableBody></Table>
-      </TableContainer>}
-    </Section></Stack>}>{children}</ContextNativePanel>
+    <ContextNativePanel contextId={contextId} versions={versions} viewed={version} cases={cases} casesState={suite.isLoading ? 'loading' : suite.isError ? 'error' : undefined} onRetryCases={suite.refetch} canWrite={canWrite} productionVersion={productionVersion} seed={seed} state={state} answerHistory={answerHistory} renderAnswer={renderAnswer} answerRunId={answerRunId} historyPagination={historyPagination} latestAnswer={latestAnswer} draftHandoff={draftHandoff} reviewedCases={casesSection}>{answerForm}</ContextNativePanel>
     {editor && <TestCaseEditor open subjectKind="agent_context" initialCase={editor.value} applicationBehavior={{ skills }} canSave={canWrite && !changed} isSaving={save.isPending}
-      error={changed ? 'The test cases changed. Close and reopen this case after reviewing the latest ones; your edits were not submitted.' : error}
+      error={changed ? 'The test cases changed. Close and reopen this case after checking the latest ones; your edits were not submitted.' : error}
       onClose={() => { if (!save.isPending) setEditor(null); }}
       onSave={async (value) => {
         if (changed) return;
@@ -161,13 +177,13 @@ function Results({ contextId, runId, contextName, versions = [], canWrite, onRun
   const heading = `Answer check · ${tested}${reference ? ` vs v${reference}` : ''}`;
   const composer = canWrite ? reviewComposerUrl({ kind: 'agent_context', subjectId: contextId, name: contextName, candidateId: versionId, number: candidate.version, digest: candidate.digest, label: 'production', evidence: [{ source: 'skills_text', sourceId: runId }] }) : undefined;
   // With an application registered, proving the repair there is the stronger next step, so it leads;
-  // the release review stays one click away. Without one, the release review leads.
+  // the release request stays one click away. Without one, the release request leads.
   const verifyFirst = hasTarget && Boolean(onRunApplication);
   const lead = secondary ? 'outlined' : 'contained';
-  const request = <Button key="request" color="primary" variant={verifyFirst ? 'outlined' : lead} disabled={!canWrite} href={composer}>Request release review</Button>;
+  const request = <Button key="request" color="primary" variant={verifyFirst ? 'outlined' : lead} disabled={!canWrite} href={composer}>{requestReleaseFor(candidate.version)}</Button>;
   const verify = verifyFirst && <Button key="verify" color="primary" variant={lead} onClick={onRunApplication}>Test v{candidate.version} on the application</Button>;
   const setUp = !hasTarget && applicationAvailable && onRunApplication && <Button key="setup" variant="outlined" onClick={onRunApplication}>Set up application test</Button>;
-  const hint = canWrite ? 'This run stays private until you share it in the release review. An answer check alone doesn\u2019t prove an application repair.' : 'Only a workspace author can request a release review.';
+  const hint = canWrite ? 'This run stays private until you share it in the release request. An answer check alone doesn\u2019t prove an application repair.' : 'Only a workspace author can request a release.';
   return <Stack spacing={1.5}>
     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }} justifyContent="space-between" sx={{ minWidth: 0 }}>
       <Typography component="h2" variant="m3">{heading}</Typography>
@@ -194,7 +210,7 @@ function Results({ contextId, runId, contextName, versions = [], canWrite, onRun
           {variant.attempts.map((item) => { const [status, label] = attemptBadge(item, running); return <Stack key={item.id} direction="row" spacing={1} alignItems="center" flexWrap="wrap">
             <StatusBadge status={status} label={label} role={baseline && item.answer_verdict === 'pass' ? 'neutral' : undefined} />
             {baseline && fixing && item.answer_verdict === 'fail' && <Typography variant="s3" color="text.secondary">expected</Typography>}
-            <Button size="small" variant="outlined" aria-label={`Inspect ${armLabel(variant.variant)} attempt ${item.repeat_index + 1}`} onClick={() => setAttemptId(item.id)}>Inspect</Button>
+            <Button size="small" variant="text" color="inherit" aria-label={`Inspect ${armLabel(variant.variant)} attempt ${item.repeat_index + 1}`} onClick={() => setAttemptId(item.id)}>Inspect</Button>
           </Stack>; })}
         </Stack>; })}
       </Stack>;
@@ -210,18 +226,27 @@ function Results({ contextId, runId, contextName, versions = [], canWrite, onRun
 Results.propTypes = { secondary: PropTypes.bool, contextId: PropTypes.string.isRequired, runId: PropTypes.string.isRequired, contextName: PropTypes.string, versions: PropTypes.array, canWrite: PropTypes.bool, onRunApplication: PropTypes.func, onReady: PropTypes.func, hasTarget: PropTypes.bool, applicationAvailable: PropTypes.bool, productionVersion: PropTypes.number, newerDraft: PropTypes.bool };
 
 const isLimit = (value) => /^\d+(\.\d{1,8})?$/.test(value) && Number(value) > 0;
-function WholeContextTests({ contextName, contextId, candidate, scopeKey, identity, state, source, primary, onStarted, onEngage, versions = [], productionVersion }) {
+function WholeContextTests({ contextName, contextId, candidate, scopeKey, identity, state, source, primary, onStarted, onEngage, versions = [], productionVersion, savedCases = [], suiteRevision = null }) {
   const [last] = useState(() => readLastTest(identity));
   const [prompt, setPrompt] = useState(typeof last.prompt === 'string' ? last.prompt : '');
   const [expected, setExpected] = useState(typeof last.expected === 'string' ? last.expected : '');
   const [chosenModel, setModel] = useState(typeof last.model === 'string' ? last.model : '');
   const [limit, setLimit] = useState(typeof last.limit === 'string' ? last.limit : '');
   const [reference, setReference] = useState(typeof last.reference === 'string' ? last.reference : '');
-  const [reviewedCase, setReviewedCase] = useState(false);
+  // UXF-03: a saved test case was approved when it was saved (`reviewed`, bound to its revision), so it
+  // asks no tick here. A new request keeps its own tick, bound to the exact request and answer text.
+  const [caseMode, setCaseMode] = useState(null);
+  const [chosenCase, setChosenCase] = useState('');
+  // A saved case is the default whenever one can run; with none, a new request is the only choice.
+  const mode = (caseMode ?? 'saved') === 'saved' && savedCases.length ? 'saved' : 'new';
+  const savedCase = savedCases.find((item) => item.id === chosenCase) || savedCases[0] || null;
+  const caseIdentity = prompt.trim() && expected.trim() ? JSON.stringify([prompt, expected]) : null;
+  const caseAck = useAcknowledgment(caseIdentity);
   const [preview, setPreview] = useState(null);
   const [configuration, setConfiguration] = useState(null);
+  // What the preview was built from; a different case, suite revision or request needs a new preview.
+  const [configurationKey, setConfigurationKey] = useState(null);
   const [inventory, setInventory] = useState({ review: emptyReview(), complete: false });
-  const [providerConsent, setProviderConsent] = useState(false);
   // Settings last used for this same context show as one line ("gpt-4o-mini · up to $2") behind Change.
   // A first test in a context (even with values carried over from another one) shows the fields, so the
   // model and ceiling are seen where they are first needed.
@@ -234,7 +259,7 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
   const create = useCreateContextTest(contextId);
   const operation = useAuthoringOperation(scopeKey);
   const locked = operation.pending || operation.uncertain || prepare.isPending;
-  const invalidate = () => { setPreview(null); setInventory({ review: emptyReview(), complete: false }); setProviderConsent(false); };
+  const invalidate = () => { setPreview(null); setConfigurationKey(null); setInventory({ review: emptyReview(), complete: false }); };
   const change = (setter) => (event) => { setter(event.target.value); invalidate(); onEngage?.(); };
   const validLimit = isLimit(limit);
   const showSettings = editSettings || !model || !validLimit;
@@ -244,7 +269,15 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
   const comparison = reference && referenceChoices.some((item) => String(item.number) === reference) ? reference : '';
   const validReference = !comparison || (/^[1-9]\d*$/.test(comparison) && Number.isSafeInteger(Number(comparison)));
   const currentCandidate = candidate && configuration && JSON.stringify(candidate) === JSON.stringify(configuration.candidate);
+  const selectionKey = mode === 'saved' ? JSON.stringify(['saved', suiteRevision, savedCase?.id ?? null]) : JSON.stringify(['new', prompt, expected]);
+  const currentSelection = configurationKey === selectionKey;
+  // A new suite revision (someone edited the saved cases) drops the preview built from the old one.
+  useEffect(() => { if (mode === 'saved') { setPreview(null); setConfigurationKey(null); setInventory({ review: emptyReview(), complete: false }); } }, [suiteRevision, mode]);
+  const caseReady = mode === 'saved' ? Boolean(savedCase && suiteRevision) : Boolean(prompt.trim() && expected.trim() && caseAck.acknowledged);
+  const sendReady = Boolean(preview && inventory.complete && !inventory.diagnostic && inventory.review.fingerprint === preview.fingerprint);
+  const fileCount = useMemo(() => (preview?.inventory || []).reduce((total, bundle) => total + bundle.files.length, 0), [preview]);
   const launch = async () => {
+    if (!sendReady || !currentSelection) return;
     const result = await operation.run((input, extra) => create.mutateAsync({ ...input, ...extra }), { configuration, expectedFingerprint: preview.fingerprint, inventoryReview: inventory.review });
     if (result) { onStarted(result.id); invalidate(); }
   };
@@ -252,13 +285,16 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
     invalidate();
     const config = {
       harness: 'contexts-text-v1.2', candidate,
-      cases: { kind: 'ad_hoc', cases: [{ id: crypto.randomUUID(), title: 'Reviewed context regression', source_group_id: 'manual-context-test', prompt, fixtures: [], expected_trigger: null,
-        checks: [{ id: crypto.randomUUID(), kind: 'contains', critical: true, config: { text: expected, case_sensitive: false } }], reviewed: reviewedCase }] },
+      // A saved case is sent by reference, exactly { kind, suite_revision, case_ids }; the server checks its approval.
+      cases: mode === 'saved' ? { kind: 'saved', suite_revision: suiteRevision, case_ids: [savedCase.id] }
+        : { kind: 'ad_hoc', cases: [{ id: crypto.randomUUID(), title: AD_HOC_TITLE, source_group_id: 'manual-context-test', prompt, fixtures: [], expected_trigger: null,
+          checks: [{ id: crypto.randomUUID(), kind: 'contains', critical: true, config: { text: expected, case_sensitive: false } }], reviewed: caseAck.acknowledged }] },
       baselines: comparison ? [{ kind: 'version', version: Number(comparison) }] : [{ kind: 'without_context' }], competitors: [],
       model: { model_id: model, temperature: 0, max_output_tokens: 1024 }, judge: null,
       profile: 'quick', repetitions: 1, limits: { max_total_tokens: options.data.limits.profiles.quick.maxTotalTokens, max_estimated_cost_usd: limit }, purpose: 'regression', parent_run_id: null,
     };
     setConfiguration(config);
+    setConfigurationKey(selectionKey);
     writeLastTest(identity, { prompt, expected, model, limit, reference: comparison, contextId });
     try { setPreview(await prepare.mutateAsync(config)); } catch { /* The mutation error is rendered below. */ }
   };
@@ -270,9 +306,25 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
       ? <Stack direction="row" spacing={0.5} alignItems="center"><Typography variant="s1">{`Testing your saved draft (revision ${candidate.revision})`}</Typography><VersionLabel compact digest={candidate.digest} label="draft" /></Stack>
       : <Typography variant="s1">Testing <VersionLabel number={candidate.version} digest={candidate.digest} sx={{ typography: 's1', fontWeight: 600 }} /></Typography>}
     <Stack spacing={1.5}>
-      <TextField size="small" label="Test request" multiline minRows={3} value={prompt} onChange={(event) => { change(setPrompt)(event); setReviewedCase(false); }} disabled={locked} />
-      <TextField size="small" label="Expected answer contains" value={expected} onChange={(event) => { change(setExpected)(event); setReviewedCase(false); }} disabled={locked} helperText="The answer must contain this text." />
-      <FormControlLabel control={<Checkbox checked={reviewedCase} disabled={locked} onChange={(event) => { setReviewedCase(event.target.checked); invalidate(); onEngage?.(); }} />} label="I reviewed this request and its expected answer." />
+      <FormControl>
+        <FormLabel id="context-test-case-mode" sx={{ color: 'text.primary' }}>Test case</FormLabel>
+        <RadioGroup row aria-labelledby="context-test-case-mode" value={mode} onChange={(event) => { setCaseMode(event.target.value); invalidate(); onEngage?.(); }}>
+          {savedCases.length ? <FormControlLabel value="saved" disabled={locked} control={<Radio size="small" />} label="Use a saved test case" />
+            : <Tooltip title="No approved test case with checks yet. Add one in Cases." describeChild><span><FormControlLabel value="saved" disabled control={<Radio size="small" />} label="Use a saved test case" /></span></Tooltip>}
+          <FormControlLabel value="new" disabled={locked} control={<Radio size="small" />} label="Write a new request" />
+        </RadioGroup>
+      </FormControl>
+      {mode === 'saved' && savedCase ? <Stack spacing={1}>
+        <TextField select size="small" label="Saved test case" value={savedCase.id} onChange={(event) => { setChosenCase(event.target.value); invalidate(); onEngage?.(); }} disabled={locked} sx={{ maxWidth: 480 }}>
+          {savedCases.map((item) => <MenuItem key={item.id} value={item.id}>{item.title}</MenuItem>)}
+        </TextField>
+        <Typography variant="s3" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{savedCase.prompt}</Typography>
+        <Stack direction="row" spacing={1} alignItems="center"><StatusBadge status="completed" label={TEST_CASE_APPROVED} /><Typography variant="s3" color="text.secondary">Approved when it was saved, so it needs no tick here.</Typography></Stack>
+      </Stack> : <>
+        <TextField size="small" label="Test request" multiline minRows={3} value={prompt} onChange={change(setPrompt)} disabled={locked} />
+        <TextField size="small" label="Expected answer contains" value={expected} onChange={change(setExpected)} disabled={locked} helperText="The answer must contain this text." />
+        <Acknowledgment acknowledgment={caseAck} disabled={locked} label="I checked this request and its expected answer." changedNote="The request or answer changed. Check it again." />
+      </>}
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
         {showSettings && <>
           <TextField select size="small" label="Task model" value={model} onChange={change(setModel)} disabled={locked} sx={{ minWidth: 200 }}>
@@ -290,24 +342,24 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
         <Button size="small" variant="text" aria-label="Change model and cost limit" disabled={locked} onClick={() => setEditSettings(true)}>Change</Button>
       </Stack>}
       <AuthoringError error={prepare.error || operation.error} />
-      <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant={primary && !preview ? "contained" : "outlined"} disabled={locked || !candidate || !prompt.trim() || !expected.trim() || !reviewedCase || !options.data?.enabled || !options.data?.models.some((item) => item.modelId === model && item.canRun) || !validLimit || !validReference} onClick={preflight}>Preview answer check</Button>
-      <Typography variant="s3" color="text.secondary">{locked ? 'Wait for the current operation to finish.' : !candidate ? 'Choose a saved draft or published version.' : !options.data?.enabled || !model ? 'A runnable model must be enabled for this workspace.' : !prompt.trim() || !expected.trim() ? 'Add a request and the answer text to check.' : !reviewedCase ? 'Tick the reviewed-case acknowledgment to continue.' : !validLimit ? 'Enter a positive maximum cost.' : !validReference ? 'Choose a published version to compare with.' : 'Preview the files before starting the test.'}</Typography>
+      <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant={primary && !preview ? "contained" : "outlined"} disabled={locked || !candidate || !caseReady || !options.data?.enabled || !options.data?.models.some((item) => item.modelId === model && item.canRun) || !validLimit || !validReference} onClick={preflight}>Preview answer check</Button>
+      <Typography variant="s3" color="text.secondary">{locked ? 'Wait for the current operation to finish.' : !candidate ? 'Choose a saved draft or published version.' : !options.data?.enabled || !model ? 'A runnable model must be enabled for this workspace.' : mode === 'saved' && !caseReady ? 'Choose a saved test case.' : mode === 'new' && (!prompt.trim() || !expected.trim()) ? 'Add a request and the answer text to check.' : !caseReady ? 'Tick that you checked the request and answer to continue.' : !validLimit ? 'Enter a positive maximum cost.' : !validReference ? 'Choose a published version to compare with.' : 'Preview the files before starting the test.'}</Typography>
     </Stack>
     {preview && <Stack spacing={1.5}>
-      <Typography variant="m3">Up to {preview.attemptCount} runs · at most ${(Math.ceil(Number(preview.estimate.upperBoundUsd) * 100) / 100).toFixed(2)}</Typography>
+      <Typography variant="m3">Up to {preview.attemptCount} runs · at most {centsUp(preview.estimate.upperBoundUsd)}</Typography>
       <Typography variant="s3">Test runs are private and don’t change production. The task provider, {providerName(preview.providerDisclosure.taskProvider)}, receives the files and request below.</Typography>
-      {!currentCandidate && <Alert severity="warning">The saved version changed. Preview and review the new compiled context before running.</Alert>}
-      <TestInventoryReview subjectName={contextName} subjectKind="agent_context" subjectId={contextId} preview={preview} value={inventory.review} onChange={setInventory} disabled={locked || !currentCandidate} consentHeading="Before this runs">
-        <FormControlLabel control={<Checkbox checked={providerConsent} disabled={locked || !currentCandidate} onChange={(event) => setProviderConsent(event.target.checked)} />} label="I acknowledge provider processing of this reviewed context and test request." />
-      </TestInventoryReview>
-      <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant={primary ? "contained" : "outlined"} disabled={locked || !currentCandidate || !inventory.complete || !providerConsent} onClick={launch}>Run answer check</Button>
-      {(!inventory.complete || !providerConsent) && <Typography variant="s3" color="text.secondary">Review all files and findings, then confirm provider processing to run this test.</Typography>}
+      {(!currentCandidate || !currentSelection) && <Alert severity="warning">{!currentCandidate ? 'The saved version changed. Preview and check the new compiled context before running.' : 'The test case changed. Preview again before running.'}</Alert>}
+      <TestInventoryReview subjectName={contextName} subjectKind="agent_context" subjectId={contextId} preview={preview} value={inventory.review} onChange={setInventory} disabled={locked || !currentCandidate || !currentSelection} consentHeading="Before this runs"
+        sendLabel={sendSentence({ fileCount, what: mode === 'saved' ? 'the test case' : 'the request', provider: providerName(preview.providerDisclosure.taskProvider), upTo: centsUp(preview.estimate.upperBoundUsd) })} />
+      {inventory.review.reviewedAllFiles && inventory.diagnostic && <Alert severity="warning">A flagged file is marked as evaluation material or overlaps the test case, so this answer check can't run. Edit the context so it is no longer sent, then preview again.</Alert>}
+      <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant={primary ? "contained" : "outlined"} disabled={locked || !currentCandidate || !currentSelection || !sendReady} onClick={launch}>Run answer check</Button>
+      {!sendReady && <Typography variant="s3" color="text.secondary">Classify any flagged files and check any secret findings, then tick to send this test.</Typography>}
     </Stack>}
     {operation.uncertain && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const receipt = await operation.retry(); if (receipt) { onStarted(receipt.id); invalidate(); } }}>Recover original context test</Button>}
 
   </Stack>;
 }
-WholeContextTests.propTypes = { onEngage: PropTypes.func, versions: PropTypes.array, productionVersion: PropTypes.number, contextName: PropTypes.string, primary: PropTypes.bool, onStarted: PropTypes.func.isRequired, contextId: PropTypes.string.isRequired, candidate: PropTypes.object, scopeKey: PropTypes.string.isRequired, identity: PropTypes.string.isRequired, state: PropTypes.string, source: PropTypes.object };
+WholeContextTests.propTypes = { savedCases: PropTypes.array, suiteRevision: PropTypes.number, onEngage: PropTypes.func, versions: PropTypes.array, productionVersion: PropTypes.number, contextName: PropTypes.string, primary: PropTypes.bool, onStarted: PropTypes.func.isRequired, contextId: PropTypes.string.isRequired, candidate: PropTypes.object, scopeKey: PropTypes.string.isRequired, identity: PropTypes.string.isRequired, state: PropTypes.string, source: PropTypes.object };
 
 function Tests({ contextName, contextId, version, versions, canWrite, skills, productionVersion, seed, candidate, scopeKey, identity, state, source, onOpenSavedDraft, openSavedDraftDisabled }) {
   const [answerRunId, setAnswerRunId] = useState(null);
@@ -316,11 +368,11 @@ function Tests({ contextName, contextId, version, versions, canWrite, skills, pr
   const latestAnswers = useContextTestRuns(contextId, 1);
   return <Stack spacing={3}>
     <RegressionCases draftHandoff={Boolean(source?.testingDraft)} contextId={contextId} version={version} versions={versions} canWrite={canWrite} skills={skills} productionVersion={productionVersion} seed={seed} state={state} answerHistory={history} latestAnswer={latestAnswers.data?.results[0]} answerRunId={answerRunId} renderAnswer={(id, actions) => <Results key={id} contextId={contextId} runId={id} contextName={contextName} versions={versions} canWrite={canWrite} onRunApplication={actions?.onRunApplication} onReady={actions?.onReady} secondary={Boolean(actions?.secondary)} hasTarget={Boolean(actions?.hasTarget)} applicationAvailable={Boolean(actions?.applicationAvailable)} productionVersion={productionVersion} newerDraft={Boolean(source?.draftAvailable)} />} historyPagination={history.data?.total_pages > 1 ? <Pagination page={historyPage} count={history.data.total_pages} onChange={(_, value) => setHistoryPage(value)} /> : null}>
-    {(primary, onEngage) => <Stack spacing={2}>
+    {(primary, onEngage, suiteInfo) => <Stack spacing={2}>
       <Section title={<Typography component="span" variant="m3">Check answers</Typography>} />
       {source && !onOpenSavedDraft && <CandidateSource source={source} />}
       {onOpenSavedDraft ? <SavedDraftHandoff onOpen={onOpenSavedDraft} disabled={openSavedDraftDisabled} />
-        : <WholeContextTests contextName={contextName} contextId={contextId} candidate={candidate} scopeKey={scopeKey} identity={identity} state={state} source={source} primary={primary} onEngage={onEngage} onStarted={setAnswerRunId} versions={versions} productionVersion={productionVersion} />}
+        : <WholeContextTests contextName={contextName} contextId={contextId} candidate={candidate} scopeKey={scopeKey} identity={identity} state={state} source={source} primary={primary} onEngage={onEngage} onStarted={setAnswerRunId} versions={versions} productionVersion={productionVersion} savedCases={suiteInfo?.savedCases} suiteRevision={suiteInfo?.suiteRevision} />}
     </Stack>}
     </RegressionCases>
   </Stack>;
