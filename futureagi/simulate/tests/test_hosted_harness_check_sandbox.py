@@ -651,8 +651,10 @@ def test_a_message_sent_after_the_check_starts_when_its_publish_never_settles(
         )
         return recover_stalled_conversations(schedule)
 
-    # The last pass before the wait ends, and the next one, a backoff later.
-    last = PLATFORM_LANDING_WAIT_SECONDS - 1
+    # The last pass before the wait ends, and the next one, a backoff later. The held
+    # pass sits well inside the bound: the bound is read from the wall clock again
+    # when the sweep runs, so a slow runner must not carry it past the bound.
+    last = PLATFORM_LANDING_WAIT_SECONDS - 10
     held = sweep(last, last_asked=last - RUNTIME_RETRY_BACKOFF_SECONDS - 1)
     released = sweep(last + RUNTIME_RETRY_BACKOFF_SECONDS + 1, last_asked=last)
 
@@ -750,7 +752,7 @@ def test_a_settled_check_starts_the_waiting_chat(
 
 
 @pytest.mark.parametrize("provider", ["present", "already_gone", "provider_down"])
-def test_the_stop_step_deletes_the_sandbox(monkeypatch, caplog, provider):
+def test_the_stop_step_deletes_the_sandbox(monkeypatch, provider):
     deleted = []
 
     class Provider:
@@ -771,16 +773,13 @@ def test_the_stop_step_deletes_the_sandbox(monkeypatch, caplog, provider):
         lambda: Provider(),
     )
 
-    with caplog.at_level(logging.ERROR, logger="simulate.hosted_harness_gateway"):
-        result = nudge_tasks.stop_harness_nudge_sandbox._original_func(
-            str(uuid4()), "sandbox-check"
-        )
-
-    assert result == "stopped"
+    stop = nudge_tasks.stop_harness_nudge_sandbox._original_func
+    if provider == "provider_down":
+        # A provider that is down must fail the activity so Temporal retries it.
+        with pytest.raises(RuntimeError, match="provider down"):
+            stop(str(uuid4()), "sandbox-check")
+        assert deleted == []
+        return
+    result = stop(str(uuid4()), "sandbox-check")
+    assert result == ("stopped" if provider == "present" else "gone")
     assert deleted == (["sandbox-check"] if provider == "present" else [])
-    failures = [
-        record
-        for record in caplog.records
-        if "retired conversation sandbox deletion failed" in record.getMessage()
-    ]
-    assert len(failures) == (1 if provider == "provider_down" else 0)
