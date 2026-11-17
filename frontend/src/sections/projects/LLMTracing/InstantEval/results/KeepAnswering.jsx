@@ -4,6 +4,7 @@ import { Alert, Button, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { isUUID } from "src/utils/utils";
 import {
   LiveTaskUnchecked,
   createContinuousTask,
@@ -27,6 +28,9 @@ export default function KeepAnswering({
   const [state, setState] = useState({ step: "idle" });
   const start = async () => {
     setState({ step: "working" });
+    let createAttempted = false;
+    const creationUnconfirmed =
+      "Creation unconfirmed. Check Tasks before creating another.";
     try {
       const existing = await findContinuousTask({
         projectId,
@@ -39,23 +43,31 @@ export default function KeepAnswering({
         setState({ step: "done", taskId: existing.id, existed: true });
         return;
       }
+      createAttempted = true;
       const taskId = await createContinuousTask({
         projectId,
         items: run.items,
         scopeFilters: run.scopeFilters || [],
         unit,
       });
+      if (typeof taskId !== "string" || !isUUID(taskId)) {
+        setState({ step: "error", error: creationUnconfirmed });
+        return;
+      }
       setState({ step: "done", taskId });
     } catch (error) {
       setState({
         step: "error",
-        // Nothing was started when the check couldn't be made; it says why.
+        // Lookup failures precede create; after a create attempt an unreadable
+        // acknowledgement cannot tell us whether a task was saved.
         error:
           error instanceof LiveTaskUnchecked
             ? error.message
             : getSafeActionErrorMessage(
                 error,
-                "The live task could not be created.",
+                createAttempted
+                  ? creationUnconfirmed
+                  : "Could not check for an existing task. No new task was created.",
               ),
       });
     }
@@ -74,8 +86,8 @@ export default function KeepAnswering({
         }
       >
         {state.existed
-          ? `These questions are already being answered for new ${noun.plural} that match this view.`
-          : `Live. New ${noun.plural} that match this view will be answered as they arrive.`}
+          ? "A matching task is already saved. Check its status on the task page."
+          : "Task saved. Check its status on the task page."}
       </Alert>
     );
   if (state.step === "confirm" || state.step === "working")

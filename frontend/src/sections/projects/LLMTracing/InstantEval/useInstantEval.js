@@ -439,7 +439,8 @@ export async function createContinuousTask({
     row_type: unit === "spans" ? "spans" : "traces",
     sampling_rate: 100,
   });
-  return result(response)?.id;
+  // A task id is an acknowledgement of saving, not of workflow startup.
+  return response?.data?.status === true ? result(response)?.id : undefined;
 }
 
 /**

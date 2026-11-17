@@ -8,6 +8,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
+import { STATUS_META } from "../../runs.constants";
 import {
   Bar,
   BarChart,
@@ -45,6 +46,7 @@ const OUTCOME_ROLES = {
   failed: "danger",
   error: "warning",
   inconclusive: "neutral",
+  no_score: "neutral",
   true: "success",
   false: "danger",
   positive: "success",
@@ -170,6 +172,7 @@ const pieLabel = (label) =>
     failed: "Failed",
     error: "Error",
     inconclusive: "Inconclusive",
+    no_score: STATUS_META.no_score.label,
     positive: "Positive",
     neutral: "Neutral",
     negative: "Negative",
@@ -177,7 +180,8 @@ const pieLabel = (label) =>
 export function Donut({ data, onOpen }) {
   const theme = useTheme();
   if (!data?.total) return <NoMeasurement />;
-  const emptyHeadline = Boolean(data.headline) && data.headline.share == null;
+  const { headline } = data;
+  const emptyHeadline = Boolean(headline) && headline.share == null;
   return (
     <Box sx={{ px: 1.5, pb: 2 }}>
       <Box sx={{ height: 165, position: "relative" }}>
@@ -220,7 +224,7 @@ export function Donut({ data, onOpen }) {
           justifyContent="center"
         >
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            {data.headline ? pieLabel(data.headline.label) : "Calls"}
+            {headline ? pieLabel(headline.label) : "Calls"}
           </Typography>
           <Typography
             sx={{
@@ -229,8 +233,8 @@ export function Donut({ data, onOpen }) {
               color: emptyHeadline ? "text.disabled" : "text.primary",
             }}
           >
-            {data.headline
-              ? format(data.headline.share, "percent")
+            {headline
+              ? format(headline.share, "percent")
               : number(data.total, 0)}
           </Typography>
         </Stack>
