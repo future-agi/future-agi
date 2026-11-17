@@ -170,6 +170,55 @@ _PROJECT_USER_GRAPH_READ_SETTINGS = {
 }
 
 
+# ProjectView.list's trace_count uses the same rollup and default window as the
+# Observe trace list's count (TraceListQueryBuilderV2.build_count_query): distinct
+# traces in the last 30 days. Traces ingested through the collector live only in
+# ClickHouse, so a PostgreSQL count misses them; that count is kept only as a
+# fallback when the rollup cannot be read.
+_PROJECT_TRACE_COUNT_WINDOW_DAYS = 30
+
+
+def _project_trace_counts(project_ids):
+    """Return {project_id: distinct traces in the last 30 days}, or None."""
+    if not project_ids:
+        return {}
+    try:
+        service = V2AnalyticsQueryService()
+        if not service.supports_per_query_read_settings:
+            raise RuntimeError("trace counts require enforced per-query limits")
+        now = timezone.now()
+        result = service.execute_ch_query(
+            """
+            SELECT
+                toString(project_id) AS project_id_text,
+                uniqExactMerge(uniq_traces_state) AS trace_count
+            FROM trace_count_rollup
+            PREWHERE project_id IN %(pids)s
+              AND hour >= toStartOfHour(toDateTime(%(start)s, 'UTC'))
+              AND hour < toStartOfHour(toDateTime(%(end)s, 'UTC')) + INTERVAL 1 HOUR
+            GROUP BY project_id
+            """,
+            {
+                "pids": list(project_ids),
+                "start": (
+                    now - timedelta(days=_PROJECT_TRACE_COUNT_WINDOW_DAYS)
+                ).strftime("%Y-%m-%d %H:%M:%S"),
+                "end": now.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            timeout_ms=ReadDeadline.start(_PROJECT_ACTIVITY_TIMEOUT_MS).remaining_ms(),
+            settings=_PROJECT_ACTIVITY_READ_SETTINGS,
+        )
+        counts = dict.fromkeys(project_ids, 0)
+        for row in result.data:
+            pid = row["project_id_text"]
+            if pid in counts:
+                counts[pid] = int(row["trace_count"])
+        return counts
+    except Exception as e:
+        logger.warning(f"project trace counts unavailable from ClickHouse: {e}")
+        return None
+
+
 def _bounded_project_user_action(*, log_event: str, unavailable_message: str):
     """Start a project user-action wall before runtime request validation."""
 
@@ -331,9 +380,18 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             # Serialize data
             serializer = self.get_serializer(paginated_queryset, many=True)
 
-            # Add trace_count and run_count to serialized data
+            # trace_count: distinct traces in the last 30 days, as the Observe
+            # trace list counts them; the PostgreSQL count only if ClickHouse
+            # cannot be read.
+            ch_counts = _project_trace_counts(
+                [str(project.id) for project in paginated_queryset]
+            )
             for data, project in zip(serializer.data, paginated_queryset, strict=False):
-                data["trace_count"] = project.trace_count
+                data["trace_count"] = (
+                    ch_counts[str(project.id)]
+                    if ch_counts is not None
+                    else project.trace_count
+                )
                 data["run_count"] = project.run_count or 0
 
             return self._gm.success_response(
