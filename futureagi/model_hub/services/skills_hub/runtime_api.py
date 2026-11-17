@@ -498,7 +498,12 @@ def compare_metrics(before, after):
     result = []
     for name in ("failed_requests", "latency_p95", "cost_per_trace", "traces"):
         a, b = metric_value(before, name), metric_value(after, name)
-        result.append({"metric": name, "before": a, "after": b, "delta": b - a if not low and a is not None and b is not None else None,
+        delta = None
+        if not low and a is not None and b is not None:
+            # Rates render as percentage points; latency/cost/count render as
+            # relative percentages. A zero baseline has no finite relative delta.
+            delta = b - a if name == "failed_requests" else (b - a) / a if a else None
+        result.append({"metric": name, "before": a, "after": b, "delta": delta,
                        "low_sample": low, "before_traces": before["traces"], "after_traces": after["traces"],
                        "before_count": before["failed_requests"]["count"] if name == "failed_requests" else None,
                        "after_count": after["failed_requests"]["count"] if name == "failed_requests" else None,

@@ -233,7 +233,7 @@ def test_completed_move_flags_same_agent_regression(user, organization, workspac
         for index in range(30):
             row = load(project, version, start_time=at)
             rows.extend([row, span(str(project.pk), row["trace_id"], id="root", parent_span_id="", name="request", span_attributes={},
-                                   start_time=at - timedelta(seconds=1), status="ERROR" if version == v2 and index < 3 else "OK", latency_ms=100)])
+                                   start_time=at - timedelta(seconds=1), status="ERROR" if version == v2 and index < 3 else "OK", latency_ms=130 if version == v2 else 100)])
     seed_ch_spans(rows, client=live_service, version_from_created_at=True)
     response = get(user, organization, workspace, {"resource_id": str(hub_skill.pk), "event_id": str(event.pk), "window": "1h"}, "comparison")
     assert response.status_code == 200, response.data
@@ -241,6 +241,7 @@ def test_completed_move_flags_same_agent_regression(user, organization, workspac
     assert result["verdict"] == "worse" and result["trigger"]["metric"] == "failed_requests"
     assert result["trigger"]["agents"] == 1 and result["primary_action"] == "review_failed"
     assert result["same_agents"]["metrics"][0]["delta"] == pytest.approx(.1)
+    assert next(row for row in result["same_agents"]["metrics"] if row["metric"] == "latency_p95")["delta"] == pytest.approx(.3)
     assert result["links"]["after"]["failed_requests"]["source"]["event_id"] == str(event.pk)
     library_query = {"from": (END - timedelta(days=7)).isoformat(), "to": END.isoformat(), "group_by": "skill", "skill_ids": str(hub_skill.pk)}
     library = get(user, organization, workspace, library_query)
