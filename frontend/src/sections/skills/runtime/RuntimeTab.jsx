@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Stack, Typography } from '@mui/material';
 import ContentSkeleton from 'src/components/content-skeleton';
 import MetricStrip from 'src/components/metric-strip';
+import RuntimePagination, { useRuntimePagination } from './RuntimePagination';
 import { runtimeErrorKind, useSkillRuntime } from 'src/api/skills/runtime';
 import TechnicalDetails from 'src/sections/skills/components/TechnicalDetails';
 import { AuthorizedProjectPicker } from 'src/sections/skills/governance/AdoptionPanel';
@@ -73,7 +74,8 @@ export default function RuntimeTab({ skill, versions = [], productionVersion, vi
   const [windowValue, setWindowValue] = useState(DEFAULT_WINDOW);
   const [projectIds, setProjectIds] = useState([]);
   const [agent, setAgent] = useState(null);
-  const query = useSkillRuntime(skill.id, { window: windowValue, projectIds });
+  const paging = useRuntimePagination([skill.id, windowValue, projectIds]);
+  const query = useSkillRuntime(skill.id, { window: windowValue, projectIds, cursor: paging.cursor });
   const errorKind = query.isError ? runtimeErrorKind(query.error) : null;
   const data = query.data;
   const rows = data?.rows ?? [];
@@ -119,17 +121,19 @@ export default function RuntimeTab({ skill, versions = [], productionVersion, vi
               <LoadedByTable
                 skill={skill}
                 rows={rows}
-                allVersions={versions}
+                allVersions={paging.page === 1 && !data.nextCursor ? versions : []}
                 productionVersion={productionVersion}
                 viewingVersion={viewingVersion}
                 onOpenAgent={(row) => setAgent(agentPanelInput(row.agent))}
               />
             </>
           )}
+
           <RuntimeNotes coverage={data.coverage} truncated={data.truncated} incomplete={incomplete} noEvals={noEvals} />
           <AboutRuntimeData />
         </>
       )}
+      <RuntimePagination paging={paging} query={query} />
       <AgentPanel open={Boolean(agent)} onClose={() => setAgent(null)} agent={agent} window={windowValue} />
     </Stack>
   );

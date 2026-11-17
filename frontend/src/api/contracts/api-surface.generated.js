@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1275,
+  endpointCount: 1277,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -757,6 +757,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/skills/archived/{resource_id}/restore-review/": ["get"],
       "/model-hub/skills/archived/{resource_id}/restore/": ["post"],
       "/model-hub/skills/checks/": ["post"],
+      "/model-hub/skills/comparison/": ["get"],
       "/model-hub/skills/consumption/resolve/": ["get"],
       "/model-hub/skills/consumption/{resource_id}/versions/{number}/access-check/":
         ["post"],
@@ -917,6 +918,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/skills/spend-policy/": ["get", "put"],
       "/model-hub/skills/templates/": ["get"],
       "/model-hub/skills/testing-options/": ["get"],
+      "/model-hub/skills/usage/": ["get"],
       "/model-hub/skills/version-safety/{version_id}/": ["get", "put"],
       "/model-hub/skills/{context_id}/versions/{number}/inspection/": ["get"],
       "/model-hub/skills/{context_id}/versions/{number}/inspection/files/": [
@@ -2333,6 +2335,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/skills/archived/{resource_id}/restore-review/": ["get"],
   "/model-hub/skills/archived/{resource_id}/restore/": ["post"],
   "/model-hub/skills/checks/": ["post"],
+  "/model-hub/skills/comparison/": ["get"],
   "/model-hub/skills/consumption/resolve/": ["get"],
   "/model-hub/skills/consumption/{resource_id}/versions/{number}/access-check/":
     ["post"],
@@ -2477,6 +2480,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/skills/spend-policy/": ["get", "put"],
   "/model-hub/skills/templates/": ["get"],
   "/model-hub/skills/testing-options/": ["get"],
+  "/model-hub/skills/usage/": ["get"],
   "/model-hub/skills/version-safety/{version_id}/": ["get", "put"],
   "/model-hub/skills/{context_id}/versions/{number}/inspection/": ["get"],
   "/model-hub/skills/{context_id}/versions/{number}/inspection/files/": ["get"],

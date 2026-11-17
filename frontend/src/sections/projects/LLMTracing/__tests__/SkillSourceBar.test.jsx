@@ -152,3 +152,30 @@ describe("SkillSourceBar", () => {
     expect(container.textContent).toBe("");
   });
 });
+
+it('switches a bounded snapshot both ways without refetching or widening the cohort', () => {
+  const project = '77777777-7777-4777-8777-777777777777';
+  const make = (side, version, token) => ({
+    project_id: project, from: '2026-11-01T11:00:00Z', to: '2026-11-01T12:00:00Z',
+    filters: [linkItem('skill.trace_cohort', token.repeat(64))],
+    source: { skill_id: SKILL, version_id: version, event_id: EVENT, metric: 'traces', side, window: '1h' },
+  });
+  const snapshot = { label: 'production', from_version: 3, to_version: 4,
+    links: { before: { traces: make('before', V3, 'a') }, after: { traces: make('after', V4, 'b') } } };
+  const source = parseSkillSource({ ...snapshot.links.after.traces.source, snapshot });
+  expect(source).not.toBeNull();
+  const before = otherSideLink({ source, move: null });
+  expect(before.link.filters[0].filter_config.filter_value).toBe('a'.repeat(64));
+  const after = otherSideLink({ source: parseSkillSource(before.link.source), move: null });
+  expect(after.link.filters[0].filter_config.filter_value).toBe('b'.repeat(64));
+  expect(after.href.length).toBeLessThan(6000);
+  render(<SkillSourceBar source={source} />);
+  expect(hooks.comparison.mock.calls.at(-1)[1].enabled).toBe(false);
+  expect(screen.getByRole('link', { name: 'Compare with v3 before the move' })).toBeInTheDocument();
+});
+
+it('rejects snapshot descriptors with arbitrary URLs or mixed project sets', () => {
+  const source = { skill_id: SKILL, version_id: V4, event_id: EVENT, metric: 'traces', side: 'after', window: '1h' };
+  expect(parseSkillSource({ ...source, snapshot: { label: 'production', from_version: 3, to_version: 4,
+    links: { before: { traces: { url: 'https://example.invalid' } }, after: {} } } })).toBeNull();
+});

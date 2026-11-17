@@ -24,10 +24,10 @@ import {
 // itself (the switch hands the other side's link to the list view), and the
 // list view hides it as soon as the person edits the filters or dates.
 //
-// The move window: the §6.6 `source` object carries no window yet, so the
-// bar reads one only from `source.window`. Without it the bar leaves the
-// window out of its sentence and offers no before/after switch, because a
-// comparison read at a guessed window would hand back links for other dates.
+// New runtime links carry the window and a bounded before/after snapshot.
+// Switching preserves the selected project and same-agent cohort even if the
+// comparison changes or its agent rows are on a later page. Older links without
+// a window never guess one; only the legacy windowed shape refetches a move.
 
 const COPY = OBSERVE_SKILL_COPY.sourceBar;
 
@@ -68,14 +68,17 @@ export function sourceBarText({ source, skillName, version, contextName, move })
 
 /** The matching other-side link from the endpoint-3 response, or null. */
 export function otherSideLink({ source, move }) {
-  if (!move || !source?.side || !source.window || !move.links) return null;
+  const snapshot = source?.snapshot;
+  const comparison = snapshot ? { links: snapshot.links, fromVersion: snapshot.from_version, toVersion: snapshot.to_version } : move;
+  if (!comparison || !source?.side || !source.window || !comparison.links) return null;
   const other = source.side === "after" ? "before" : "after";
   const key = comparisonMetricKey(source.metric);
-  const link = move.links?.[other]?.[key];
+  const target = comparison.links?.[other]?.[key];
+  const link = snapshot && target ? { ...target, source: { ...target.source, snapshot } } : target;
   if (!link) return null;
   const href = buildSkillTraceLink({ link, kind: "all" });
   if (!href) return null;
-  const version = other === "before" ? move.fromVersion : move.toVersion;
+  const version = other === "before" ? comparison.fromVersion : comparison.toVersion;
   return {
     href,
     link,
@@ -148,7 +151,7 @@ export default function SkillSourceBar({ source, sortNotApplied = false, linkUnr
   const comparison = useSkillComparison(skillId, {
     eventId: source?.eventId ?? undefined,
     window: source?.window || "24h",
-    enabled: Boolean(skillId && source?.eventId && source?.side && source?.window),
+    enabled: Boolean(skillId && source?.eventId && source?.side && source?.window && !source?.snapshot),
   });
 
   if (!source && !linkUnreadable) return null;
@@ -175,13 +178,15 @@ export default function SkillSourceBar({ source, sortNotApplied = false, linkUnr
     : null;
   const skillName = skill.data?.name ?? null;
   const contextName = context.data?.context?.name ?? null;
-  const move = comparison.isError ? null : comparison.data ?? null;
+  const move = source.snapshot
+    ? { label: source.snapshot.label, fromVersion: source.snapshot.from_version, toVersion: source.snapshot.to_version, links: source.snapshot.links }
+    : comparison.isError ? null : comparison.data ?? null;
   const resolving = (skillId && skill.isPending && skill.fetchStatus !== "idle") ||
     (contextId && !skillId && context.isPending && context.fetchStatus !== "idle");
   const text = sourceBarText({ source, skillName, version, contextName, move });
   const backHref = skillId
     ? runtimeTabUrl({ kind: "skill", id: skillId, eventId: source.eventId, window: source.window || undefined })
-    : runtimeTabUrl({ kind: "agent_context", id: contextId });
+    : runtimeTabUrl({ kind: "agent_context", id: contextId, eventId: source.eventId, window: source.window || undefined });
   const backName = skillId ? skillName : contextName;
   const switchLink = otherSideLink({ source, move });
 
@@ -252,6 +257,12 @@ SkillSourceBar.propTypes = {
     side: PropTypes.oneOf(["before", "after", null]),
     agentKey: PropTypes.array,
     window: PropTypes.string,
+    snapshot: PropTypes.shape({
+      label: PropTypes.string,
+      from_version: PropTypes.number,
+      to_version: PropTypes.number,
+      links: PropTypes.object,
+    }),
   }),
   sortNotApplied: PropTypes.bool,
   linkUnreadable: PropTypes.bool,

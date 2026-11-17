@@ -6,6 +6,7 @@ import ContentSkeleton from 'src/components/content-skeleton';
 import Section from 'src/components/section';
 import StatusBadge from 'src/components/status-badge';
 import { paths } from 'src/routes/paths';
+import RuntimePagination, { useRuntimePagination } from './RuntimePagination';
 import { runtimeErrorKind, useSkillComparison, useSkillRuntimeSeries } from 'src/api/skills/runtime';
 import { stackedTableSx } from 'src/sections/skills/components/responsiveTable';
 import { buildSkillTraceLink, runtimeTabUrl } from 'src/sections/skills/utils/traces';
@@ -66,9 +67,12 @@ function sideValue({ item, side, links, showLinks }) {
   const traces = item[`${side}Traces`];
   const count = item[`${side}Count`];
   const low = Boolean(item.lowSample);
-  const text = low && item.metric === 'failed_requests' && count != null ? lowSampleCount(count, traces ?? 0) : formatMetric(item.metric, value);
+  const denominator = item[`${side}Denominator`] ?? traces;
+  const baseText = low && item.metric === 'failed_requests' && count != null ? lowSampleCount(count, denominator ?? 0) : formatMetric(item.metric, value);
+  const coverage = item[`${side}Coverage`];
+  const text = String(item.metric).startsWith('eval:') && coverage != null ? `${baseText} · ${formatPercent(coverage)} evaluated` : baseText;
   const link = showLinks ? links?.[side]?.[item.metric] : null;
-  return <TraceNumber link={link} kind={linkKind(item.metric)} lowSample={low} traces={traces} what={`${metricPhrase(item.metric, item.name)} ${side}`}>{text}</TraceNumber>;
+  return <TraceNumber link={link} projects={link?.projects} kind={linkKind(item.metric)} lowSample={low} traces={traces} what={`${metricPhrase(item.metric, item.name)} ${side}`}>{text}</TraceNumber>;
 }
 
 /** before → after, with a delta only when the sample rule is met (UX-16). */
@@ -173,7 +177,7 @@ export function MoveCardBody({ data, subjectKind = 'skill', subjectId, title, on
         <Stack spacing={0.5} data-section="same-agents">
           <Typography variant="s1" sx={{ fontWeight: 500 }}>{SAME_AGENTS}</Typography>
           {data.sameAgents.agents > 0 && <Typography variant="s3" color="text.secondary">{sameAgentsLead(data.sameAgents.agents)}</Typography>}
-          <MetricRows label={SAME_AGENTS} metrics={data.sameAgents.metrics} trigger={data.trigger} links={data.links} showDeltas={showDeltas} soFarText={soFarText} />
+          <MetricRows label={SAME_AGENTS} metrics={data.sameAgents.metrics} trigger={data.trigger} links={data.sameAgents.links ?? data.links} showDeltas={showDeltas} soFarText={soFarText} />
         </Stack>
       )}
 
@@ -208,12 +212,13 @@ export function MoveCardBody({ data, subjectKind = 'skill', subjectId, title, on
           <Typography variant="s1" sx={{ fontWeight: 500 }}>{ADOPTION}</Typography>
           <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 0, listStyle: 'none' }}>
             {data.adoption.map((row) => {
-              const contextAction = ['pinned_in_context', 'waiting_for_context_release'].includes(row.notMovedReason) && row.context?.id;
+              const contexts = row.contexts || (row.context ? [row.context] : []);
+              const contextAction = ['pinned_in_context', 'waiting_for_context_release'].includes(row.notMovedReason);
               return (
                 <Stack component="li" key={JSON.stringify(row.agent?.key ?? row.agent?.name)} direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 0.25, sm: 1.5 }} alignItems={{ sm: 'center' }} data-reason={row.notMovedReason}>
                   <Box sx={{ minWidth: 0, flex: '0 1 40%' }}><AgentName agent={row.agent} /></Box>
                   <Typography variant="s1">{notMovedText({ reason: row.notMovedReason, fromVersion: data.fromVersion, toVersion: data.toVersion, contextName: row.context?.name, cached: row.cached })}</Typography>
-                  {contextAction && <Link component={RouterLink} to={paths.dashboard.skills.contextDetail(row.context.id)} variant="s3">{OPEN_CONTEXT}</Link>}
+                  {contextAction && contexts.map((context) => <Link key={context.versionId || context.id} component={RouterLink} to={paths.dashboard.skills.contextDetail(context.id)} variant="s3">{OPEN_CONTEXT}{contexts.length > 1 ? `: ${context.name}` : ''}</Link>)}
                 </Stack>
               );
             })}
@@ -255,7 +260,8 @@ MoveCardBody.propTypes = {
  * secondary action goes to the Versions tab.
  */
 export default function ProductionMoveCard({ skillId, eventId, window: moveWindow = '24h', onRollback, projectIds = [] }) {
-  const query = useSkillComparison(skillId, { eventId, window: moveWindow });
+  const paging = useRuntimePagination([skillId, eventId, moveWindow, projectIds]);
+  const query = useSkillComparison(skillId, { eventId, window: moveWindow, projectIds, cursor: paging.cursor });
   const versions = query.data ? [query.data.fromVersionId, query.data.toVersionId].filter(Boolean) : [];
   const series = useSkillRuntimeSeries(skillId, {
     window: '7d',
@@ -273,9 +279,11 @@ export default function ProductionMoveCard({ skillId, eventId, window: moveWindo
         <RuntimeQueryState query={query} errorKind={errorKind} errorTitle={MOVE_CARD_ERROR} deniedText={CANT_OPEN_PROJECT} loadingLabel="Loading this move" compact />
       ) : query.data ? (
         <MoveCardBody data={query.data} subjectId={skillId} onRollback={onRollback}>
+
           {series.data && <MoveSeries series={series.data} movedAt={query.data.movedAt} metric={query.data.trigger?.metric || 'failed_requests'} />}
         </MoveCardBody>
       ) : null}
+      <RuntimePagination paging={paging} query={query} />
     </Section>
   );
 }

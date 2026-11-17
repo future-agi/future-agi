@@ -2,6 +2,7 @@ import PropTypes from 'prop-types';
 import { Stack, Typography } from '@mui/material';
 import ContentSkeleton from 'src/components/content-skeleton';
 import Section from 'src/components/section';
+import RuntimePagination, { useRuntimePagination } from './RuntimePagination';
 import { runtimeErrorKind, useContextComparison } from 'src/api/skills/runtime';
 import { MoveCardBody } from './ProductionMoveCard';
 import { RuntimeQueryState } from './RuntimeParts';
@@ -13,8 +14,9 @@ import { CANT_OPEN_PROJECT, CHANGED_SKILLS, MOVE_CARD_ERROR, changedSkillLine, c
  * between the two context versions listed under it. Shown on the context
  * Runtime tab and on the context release receipt.
  */
-export default function ContextReleaseCard({ contextId, eventId, window: moveWindow = '24h', onRollback, variant = 'card' }) {
-  const query = useContextComparison(contextId, { eventId, window: moveWindow });
+export default function ContextReleaseCard({ contextId, eventId, projectIds = [], window: moveWindow = '24h', onRollback, variant = 'card' }) {
+  const paging = useRuntimePagination([contextId, eventId, moveWindow, projectIds]);
+  const query = useContextComparison(contextId, { eventId, window: moveWindow, projectIds, cursor: paging.cursor });
   const errorKind = query.isError ? runtimeErrorKind(query.error) : null;
   const body = (() => {
     if (query.isPending && query.fetchStatus !== 'idle') return <ContentSkeleton variant="panel" label="Loading this release" />;
@@ -41,13 +43,15 @@ export default function ContextReleaseCard({ contextId, eventId, window: moveWin
       </MoveCardBody>
     );
   })();
-  if (variant === 'plain') return body;
-  return <Section variant="panel" aria-label="Context release" data-card="context-release">{body}</Section>;
+  const content = <>{body}<RuntimePagination paging={paging} query={query} /></>;
+  if (variant === 'plain') return content;
+  return <Section variant="panel" aria-label="Context release" data-card="context-release">{content}</Section>;
 }
 
 ContextReleaseCard.propTypes = {
   contextId: PropTypes.string.isRequired,
   eventId: PropTypes.string,
+  projectIds: PropTypes.array,
   window: PropTypes.string,
   onRollback: PropTypes.func,
   variant: PropTypes.oneOf(['card', 'plain']),

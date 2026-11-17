@@ -48,7 +48,7 @@ afterEach(() => {
 describe('ContextRuntimeView', () => {
   it('reads the viewed context version with one window and Projects, and no version selector of its own', () => {
     show();
-    expect(hooks.context).toHaveBeenLastCalledWith('ctx-1', { window: '7d', projectIds: [], versionId: 'ctx-v2' });
+    expect(hooks.context).toHaveBeenLastCalledWith('ctx-1', { window: '7d', projectIds: [], versionId: 'ctx-v2', cursor: undefined });
     expect(screen.getAllByRole('combobox')).toHaveLength(1);
     expect(screen.getByRole('group', { name: 'Projects' })).toBeInTheDocument();
   });
@@ -68,7 +68,7 @@ describe('ContextRuntimeView', () => {
 
   it('lists the release card with the skills that changed', () => {
     show();
-    expect(hooks.comparison).toHaveBeenCalledWith('ctx-1', { eventId: 'release-1', window: '24h' });
+    expect(hooks.comparison).toHaveBeenCalledWith('ctx-1', { eventId: 'release-1', window: '24h', projectIds: [], cursor: undefined });
     const card = document.querySelector('[data-card="context-release"]');
     expect(within(card).getByText('Released v4 (was v3) · 24 hours each side')).toBeInTheDocument();
     expect(within(card).getByText('refund-policy: v3 → v4')).toBeInTheDocument();
@@ -119,4 +119,16 @@ describe('ContextRuntimeView', () => {
     show();
     expect(screen.getAllByText((_, node) => node?.getAttribute?.('aria-label') === text || node?.textContent === text).length).toBeGreaterThan(0);
   });
+});
+
+it('pages both context rows and comparison agents independently', () => {
+  hooks.context.mockReturnValue(success({ ...DATA, nextCursor: 'context-two' }));
+  hooks.comparison.mockReturnValue(success({ ...RELEASE, nextCursor: 'compare-two' }));
+  show();
+  const buttons = screen.getAllByRole('button', { name: 'Next page' });
+  fireEvent.click(buttons[0]);
+  expect(hooks.comparison.mock.calls.at(-1)[1].cursor).toBe('compare-two');
+  expect(hooks.context.mock.calls.at(-1)[1].cursor).toBeUndefined();
+  fireEvent.click(buttons[1]);
+  expect(hooks.context.mock.calls.at(-1)[1].cursor).toBe('context-two');
 });

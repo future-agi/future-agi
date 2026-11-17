@@ -24,7 +24,7 @@ afterEach(() => {
 describe('AgentPanel', () => {
   it('reads endpoint 8 by the agent key and the caller window', () => {
     show();
-    expect(hooks.agent).toHaveBeenCalledWith({ projectId: 'p1', service: 'refund-agent-svc', agent: 'refund-agent', window: '24h', from: undefined, to: undefined, enabled: true });
+    expect(hooks.agent).toHaveBeenCalledWith({ projectId: 'p1', service: 'refund-agent-svc', agent: 'refund-agent', window: '24h', from: undefined, to: undefined, enabled: true, cursor: undefined });
   });
 
   it('heads with the agent, project, service, context and connected app', () => {
@@ -32,7 +32,7 @@ describe('AgentPanel', () => {
     const panel = screen.getByRole('dialog', { name: 'refund-agent' });
     expect(within(panel).getByText('acme-support-production')).toBeInTheDocument();
     expect(within(panel).getByText('refund-agent-svc')).toBeInTheDocument();
-    expect(within(panel).getByRole('link', { name: 'support-agent v2' })).toHaveAttribute('href', '/dashboard/skills/contexts/ctx-1');
+    expect(within(panel).getByRole('link', { name: 'support-agent v2' })).toHaveAttribute('href', '/dashboard/skills/contexts/ctx-1?version=2');
     expect(within(panel).getByText('Connected app')).toBeInTheDocument();
   });
 
@@ -70,4 +70,13 @@ describe('AgentPanel', () => {
     show({ open: false });
     expect(hooks.agent.mock.calls.at(-1)[0].enabled).toBe(false);
   });
+});
+
+it('pages skills without losing the agent scope', () => {
+  hooks.agent.mockReturnValue(success({ rows, nextCursor: 'agent-two' }));
+  show();
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(hooks.agent.mock.calls.at(-1)[0]).toMatchObject({ projectId: 'p1', agent: 'refund-agent', cursor: 'agent-two' });
+  fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+  expect(hooks.agent.mock.calls.at(-1)[0].cursor).toBeUndefined();
 });

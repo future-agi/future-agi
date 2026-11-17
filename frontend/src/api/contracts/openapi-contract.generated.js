@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1275,
+  endpointCount: 1277,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -26181,6 +26181,154 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/model-hub/skills/comparison/": {
+      get: {
+        operationId: "model-hub_skills_runtime_comparison_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          resource_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          kind: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["skill", "agent_context"],
+              default: "skill",
+            },
+          },
+          event_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          label: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 40,
+              default: "production",
+            },
+          },
+          window: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 5,
+              default: "24h",
+            },
+          },
+          project_ids: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 1900,
+            },
+          },
+          as_of: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          before_from: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          before_to: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          after_from: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          after_to: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          cursor: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 2048,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 100,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsRuntimeComparisonResultResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/model-hub/skills/consumption/resolve/": {
       get: {
         operationId: "model-hub_skills_consumption_resolve_list",
@@ -32652,6 +32800,193 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           503: {
             $ref: "#/definitions/SkillsHubV11Error",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/model-hub/skills/usage/": {
+      get: {
+        operationId: "model-hub_skills_runtime_usage_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          to: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          cursor: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 2048,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 100,
+            },
+          },
+          resource_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          kind: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["skill", "agent_context"],
+              default: "skill",
+            },
+          },
+          group_by: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["skill", "version", "agent", "context"],
+              default: "version",
+            },
+          },
+          project_ids: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 1900,
+            },
+          },
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          version_ids: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 7400,
+            },
+          },
+          skill_ids: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 7400,
+            },
+          },
+          context_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          label: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 40,
+            },
+          },
+          service: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 256,
+            },
+          },
+          agent: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 256,
+            },
+          },
+          projection: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["table", "series"],
+              default: "table",
+            },
+          },
+          metric: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 50,
+              default: "failed_requests",
+            },
+          },
+          bucket: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["hour", "day"],
+              default: "day",
+            },
+          },
+          from: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsRuntimeUsageResultResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -98414,6 +98749,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsRuntimeComparisonResultResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/RuntimeComparisonResult",
+        },
+      },
+    },
     SkillsRuntimeConfigurationResponse: {
       required: ["status", "result"],
       type: "object",
@@ -98437,6 +98785,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/RuntimeFilterValuesResult",
+        },
+      },
+    },
+    SkillsRuntimeUsageResultResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/RuntimeUsageResult",
         },
       },
     },
@@ -133533,6 +133894,217 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RuntimeComparisonResult: {
+      required: [
+        "event_id",
+        "label",
+        "from_version",
+        "to_version",
+        "from_version_id",
+        "to_version_id",
+        "moved_at",
+        "window",
+        "before_cut_at",
+        "ends_at",
+        "complete",
+        "verdict",
+        "trigger",
+        "so_far",
+        "collecting",
+        "same_agents",
+        "all_agents",
+        "control",
+        "by_agent",
+        "adoption",
+        "changed_skills",
+        "links",
+        "primary_action",
+        "next_cursor",
+        "truncated",
+        "totals_note",
+      ],
+      type: "object",
+      properties: {
+        event_id: {
+          title: "Event id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        from_version: {
+          title: "From version",
+          type: "integer",
+          "x-nullable": true,
+        },
+        to_version: {
+          title: "To version",
+          type: "integer",
+          "x-nullable": true,
+        },
+        from_version_id: {
+          title: "From version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        to_version_id: {
+          title: "To version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        moved_at: {
+          title: "Moved at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        window: {
+          title: "Window",
+          type: "string",
+          minLength: 1,
+        },
+        before_cut_at: {
+          title: "Before cut at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        ends_at: {
+          title: "Ends at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        complete: {
+          title: "Complete",
+          type: "boolean",
+        },
+        verdict: {
+          title: "Verdict",
+          type: "string",
+          enum: [
+            "watching",
+            "worse_so_far",
+            "worse",
+            "better",
+            "no_change",
+            "not_enough_data",
+          ],
+        },
+        trigger: {
+          title: "Trigger",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          "x-nullable": true,
+        },
+        so_far: {
+          title: "So far",
+          type: "boolean",
+        },
+        collecting: {
+          title: "Collecting",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          "x-nullable": true,
+        },
+        same_agents: {
+          title: "Same agents",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        all_agents: {
+          title: "All agents",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        control: {
+          title: "Control",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          "x-nullable": true,
+        },
+        by_agent: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        adoption: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        changed_skills: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        links: {
+          title: "Links",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        primary_action: {
+          title: "Primary action",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+        totals_note: {
+          title: "Totals note",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     SkillsContextRuntimeConfiguration: {
       required: ["configuration"],
       type: "object",
@@ -133561,6 +134133,167 @@ export const OPENAPI_CONTRACT = Object.freeze({
         truncated: {
           title: "Truncated",
           type: "boolean",
+        },
+      },
+    },
+    RuntimeUsageResult: {
+      required: [
+        "rows",
+        "summary",
+        "coverage",
+        "diagnosis",
+        "failed_loads",
+        "mismatch",
+        "move",
+        "next_cursor",
+        "totals_note",
+        "truncated",
+      ],
+      type: "object",
+      properties: {
+        rows: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        summary: {
+          title: "Summary",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        coverage: {
+          title: "Coverage",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        diagnosis: {
+          title: "Diagnosis",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        failed_loads: {
+          title: "Failed loads",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        mismatch: {
+          title: "Mismatch",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          "x-nullable": true,
+        },
+        move: {
+          title: "Move",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          "x-nullable": true,
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        totals_note: {
+          title: "Totals note",
+          type: "string",
+          minLength: 1,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+        agent: {
+          title: "Agent",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          "x-nullable": true,
+        },
+        contexts: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        links_summary: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        linked_not_loaded: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        loaded_not_linked: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        series: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        markers: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
         },
       },
     },

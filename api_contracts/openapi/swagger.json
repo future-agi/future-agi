@@ -47207,6 +47207,198 @@
             },
             "parameters": []
         },
+        "/model-hub/skills/comparison/": {
+            "get": {
+                "operationId": "model-hub_skills_runtime_comparison_list",
+                "description": "Compare a label move or two explicit windows, same agents first.",
+                "parameters": [
+                    {
+                        "name": "resource_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "kind",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "skill",
+                            "agent_context"
+                        ],
+                        "default": "skill"
+                    },
+                    {
+                        "name": "event_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "label",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "production",
+                        "maxLength": 40,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "window",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "pattern": "^(?:[1-9][0-9]*)(?:h|d)$",
+                        "default": "24h",
+                        "maxLength": 5,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "project_ids",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 1900,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "as_of",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    {
+                        "name": "before_from",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    {
+                        "name": "before_to",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    {
+                        "name": "after_from",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    {
+                        "name": "after_to",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    {
+                        "name": "cursor",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 2048,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 100,
+                        "maximum": 100,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "410": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "428": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsRuntimeComparisonResultResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/model-hub/skills/consumption/resolve/": {
             "get": {
                 "operationId": "model-hub_skills_consumption_resolve_list",
@@ -60607,6 +60799,248 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/SkillsTestingOptionsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Skills"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/model-hub/skills/usage/": {
+            "get": {
+                "operationId": "model-hub_skills_runtime_usage_list",
+                "description": "Shared, cursor-paged runtime cohorts; loads never imply use.",
+                "parameters": [
+                    {
+                        "name": "to",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    {
+                        "name": "cursor",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 2048,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 100,
+                        "maximum": 100,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "resource_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "kind",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "skill",
+                            "agent_context"
+                        ],
+                        "default": "skill"
+                    },
+                    {
+                        "name": "group_by",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "skill",
+                            "version",
+                            "agent",
+                            "context"
+                        ],
+                        "default": "version"
+                    },
+                    {
+                        "name": "project_ids",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 1900,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "version_ids",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 7400,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "skill_ids",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 7400,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "context_version_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "label",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 40,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "service",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 256
+                    },
+                    {
+                        "name": "agent",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 256
+                    },
+                    {
+                        "name": "projection",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "table",
+                            "series"
+                        ],
+                        "default": "table"
+                    },
+                    {
+                        "name": "metric",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "pattern": "^(?:traces|failed_requests|latency_p95|cost_per_trace|eval:[0-9a-f-]{36})$",
+                        "default": "failed_requests",
+                        "maxLength": 50,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "bucket",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "hour",
+                            "day"
+                        ],
+                        "default": "day"
+                    },
+                    {
+                        "name": "from",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                ],
+                "responses": {
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "410": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "428": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsConflictError"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsChecksError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsRuntimeUsageResultResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SkillsError"
                         }
                     },
                     "default": {
@@ -152861,6 +153295,233 @@
                 }
             }
         },
+        "RuntimeComparisonResult": {
+            "required": [
+                "event_id",
+                "label",
+                "from_version",
+                "to_version",
+                "from_version_id",
+                "to_version_id",
+                "moved_at",
+                "window",
+                "before_cut_at",
+                "ends_at",
+                "complete",
+                "verdict",
+                "trigger",
+                "so_far",
+                "collecting",
+                "same_agents",
+                "all_agents",
+                "control",
+                "by_agent",
+                "adoption",
+                "changed_skills",
+                "links",
+                "primary_action",
+                "next_cursor",
+                "truncated",
+                "totals_note"
+            ],
+            "type": "object",
+            "properties": {
+                "event_id": {
+                    "title": "Event id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "from_version": {
+                    "title": "From version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "to_version": {
+                    "title": "To version",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "from_version_id": {
+                    "title": "From version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "to_version_id": {
+                    "title": "To version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "moved_at": {
+                    "title": "Moved at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "window": {
+                    "title": "Window",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "before_cut_at": {
+                    "title": "Before cut at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "ends_at": {
+                    "title": "Ends at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "complete": {
+                    "title": "Complete",
+                    "type": "boolean"
+                },
+                "verdict": {
+                    "title": "Verdict",
+                    "type": "string",
+                    "enum": [
+                        "watching",
+                        "worse_so_far",
+                        "worse",
+                        "better",
+                        "no_change",
+                        "not_enough_data"
+                    ]
+                },
+                "trigger": {
+                    "title": "Trigger",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "so_far": {
+                    "title": "So far",
+                    "type": "boolean"
+                },
+                "collecting": {
+                    "title": "Collecting",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "same_agents": {
+                    "title": "Same agents",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "all_agents": {
+                    "title": "All agents",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "control": {
+                    "title": "Control",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "by_agent": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "adoption": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "changed_skills": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "links": {
+                    "title": "Links",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "primary_action": {
+                    "title": "Primary action",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean"
+                },
+                "totals_note": {
+                    "title": "Totals note",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "SkillsRuntimeComparisonResultResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/RuntimeComparisonResult"
+                }
+            }
+        },
         "SkillsContextSelector": {
             "type": "object",
             "properties": {
@@ -167726,6 +168387,183 @@
                 },
                 "result": {
                     "$ref": "#/definitions/SkillsHubV11TestingOptions"
+                }
+            }
+        },
+        "RuntimeUsageResult": {
+            "required": [
+                "rows",
+                "summary",
+                "coverage",
+                "diagnosis",
+                "failed_loads",
+                "mismatch",
+                "move",
+                "next_cursor",
+                "totals_note",
+                "truncated"
+            ],
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "coverage": {
+                    "title": "Coverage",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "diagnosis": {
+                    "title": "Diagnosis",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "failed_loads": {
+                    "title": "Failed loads",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "mismatch": {
+                    "title": "Mismatch",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "move": {
+                    "title": "Move",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "totals_note": {
+                    "title": "Totals note",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean"
+                },
+                "agent": {
+                    "title": "Agent",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "contexts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "links_summary": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "linked_not_loaded": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "loaded_not_linked": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "series": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "markers": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                }
+            }
+        },
+        "SkillsRuntimeUsageResultResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/RuntimeUsageResult"
                 }
             }
         },

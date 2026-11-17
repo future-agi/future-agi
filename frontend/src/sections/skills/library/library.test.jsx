@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   isViewer: false, canAdmin: true, restoreReady: false, canArchive: true, list: vi.fn(), templates: vi.fn(), create: vi.fn(), archive: vi.fn(),
   assistEnabled: true, canMove: true, preview: vi.fn(), importSkills: vi.fn(), download: vi.fn(), refetch: vi.fn(),
 }));
+vi.mock("src/api/skills/runtime", () => ({ useLibraryRuntime: () => ({ data: { rows: [] }, isPending: false, isError: false, fetchStatus: 'idle' }) }));
 vi.mock("src/api/skills", () => ({
   // The generated contract decides whether the archive confirm promises a way back.
   archivedSkillsReady: () => api.restoreReady,

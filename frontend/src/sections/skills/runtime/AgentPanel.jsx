@@ -6,6 +6,7 @@ import Iconify from 'src/components/iconify';
 import EmptyState from 'src/components/empty-state';
 import StatusBadge from 'src/components/status-badge';
 import { paths } from 'src/routes/paths';
+import RuntimePagination, { useRuntimePagination } from './RuntimePagination';
 import { runtimeErrorKind, useRuntimeAgent } from 'src/api/skills/runtime';
 import { stackedTableSx } from 'src/sections/skills/components/responsiveTable';
 import { MetricCell, columnLabel, topEvalConfig } from './LoadedByTable';
@@ -32,7 +33,9 @@ const COLUMNS = ['traces', 'failed', 'p95', 'cost', 'topEval', 'last'];
  */
 export default function AgentPanel({ open, onClose, agent, window: windowValue = '7d', from, to }) {
   const titleId = useId();
+  const paging = useRuntimePagination([agent?.projectId, agent?.service, agent?.agentName, windowValue, from, to, open]);
   const query = useRuntimeAgent({
+    cursor: paging.cursor,
     projectId: agent?.projectId,
     service: agent?.service ?? '',
     agent: agent?.agentName ?? '',
@@ -65,12 +68,12 @@ export default function AgentPanel({ open, onClose, agent, window: windowValue =
         <Stack component="dl" spacing={0.5} sx={{ m: 0, '& dt': { color: 'text.secondary', typography: 's3' }, '& dd': { m: 0, typography: 's1' } }}>
           {header.projectName && <Stack direction="row" spacing={1}><dt>{PROJECT}</dt><dd>{header.projectName}</dd></Stack>}
           {header.service && !header.service.startsWith('unknown_service') && <Stack direction="row" spacing={1}><dt>{SERVICE}</dt><dd>{header.service}</dd></Stack>}
-          {header.context?.id && (
-            <Stack direction="row" spacing={1}>
+          {(header.contexts || (header.context ? [header.context] : [])).map((context) => (
+            <Stack key={context.versionId || context.id} direction="row" spacing={1}>
               <dt>{CONTEXT}</dt>
-              <dd><Link component={RouterLink} to={paths.dashboard.skills.contextDetail(header.context.id)} underline="hover">{header.context.name}{header.context.version != null ? ` ${versionName(header.context.version)}` : ''}</Link></dd>
+              <dd><Link component={RouterLink} to={`${paths.dashboard.skills.contextDetail(context.id)}${context.version != null ? `?version=${context.version}` : ''}`} underline="hover">{context.name}{context.version != null ? ` ${versionName(context.version)}` : ''}</Link></dd>
             </Stack>
-          )}
+          ))}
           {header.bindingId && <StatusBadge status="connected" role="info" variant="badge" label={CONNECTED_APP_BADGE} />}
         </Stack>
         <RuntimeQueryState query={query} errorKind={errorKind} errorTitle={RUNTIME_ERROR} deniedText={CANT_OPEN_PROJECT} loadingLabel="Loading this agent's skills" rows={4} />
@@ -107,8 +110,10 @@ export default function AgentPanel({ open, onClose, agent, window: windowValue =
                 })}
               </TableBody>
             </Table>
+
           </Stack>
         )}
+        <RuntimePagination paging={paging} query={query} />
       </Stack>
     </Drawer>
   );
