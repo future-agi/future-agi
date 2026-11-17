@@ -1656,7 +1656,7 @@
 
 **Goal:** A user changes named providers without saving a connection under the previous provider’s protocol
 
-**Spec:** `flows/gateway/provider-format.spec.ts:17`
+**Spec:** `flows/gateway/provider-format.spec.ts:19`
 
 **Tags:** —
 
