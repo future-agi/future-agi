@@ -24,12 +24,12 @@ const CompareNavigateButtons = ({
           width={14}
         />
       </IconButton>
-      <Typography fontSize="13px" color="text.primary">
-        <Typography component="span" fontWeight={600} fontSize="13px">
+      <Typography fontSize="12px" color="text.primary">
+        <Typography component="span" fontWeight={600} fontSize="12px">
           {currentCount}
         </Typography>{" "}
         {" of "}
-        <Typography component="span" fontWeight={600} fontSize="13px">
+        <Typography component="span" fontWeight={600} fontSize="12px">
           {totalCount}
         </Typography>{" "}
         {" Row"}

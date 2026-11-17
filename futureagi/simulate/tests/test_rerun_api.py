@@ -410,9 +410,7 @@ class TestCallExecutionRerunView:
         rerun_saved_job.assert_called_once_with(
             str(job_id),
             {
-                "environment_values": {
-                    "LIVEKIT_URL": "wss://example.invalid"
-                },
+                "environment_values": {"LIVEKIT_URL": "wss://example.invalid"},
                 "secret_refs": {},
                 "only": [],
             },
@@ -466,9 +464,7 @@ class TestRerunParallelismAdmission:
         HARNESS_PARALLEL_SNAPSHOT_DIGESTS=[],
         ALK_DAYTONA_DOCKERFILE="",
     )
-    def test_saved_w4_job_reruns_at_w1_when_flag_off(
-        self, db, organization, workspace
-    ):
+    def test_saved_w4_job_reruns_at_w1_when_flag_off(self, db, organization, workspace):
         from simulate.services.hosted_harness import register_attempt
 
         job = self._saved_w4_job(organization, workspace)
@@ -2349,7 +2345,6 @@ class TestTestExecutionRuntimeContracts:
             execution.refresh_from_db()
             assert execution.status == TestExecution.ExecutionStatus.COMPLETED
 
-
     def _suite_eval_on_a_finished_harness_run(self, run_test, test_execution):
         self._hosted_job_for(test_execution, HostedHarnessJob.State.COMPLETED)
         template = EvalTemplate.objects.create(
@@ -2733,9 +2728,7 @@ class TestTestExecutionDeleteView:
 class TestEvalExplanationSummaryRefreshView:
     """Tests for POST /simulate/test-executions/<uuid>/eval-explanation-summary/refresh/"""
 
-    URL_TEMPLATE = (
-        "/simulate/test-executions/{}/eval-explanation-summary/refresh/"
-    )
+    URL_TEMPLATE = "/simulate/test-executions/{}/eval-explanation-summary/refresh/"
 
     @patch(
         "simulate.views.run_test.run_eval_summary_task.apply_async",
@@ -2798,7 +2791,10 @@ class TestOptimiserAnalysisRefreshView:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data["status"] is True
-        assert response.data["result"]["status"] == AgentOptimiserRun.OptimiserStatus.FAILED
+        assert (
+            response.data["result"]["status"]
+            == AgentOptimiserRun.OptimiserStatus.FAILED
+        )
         mock_task.delay.assert_called_once()
 
         run = AgentOptimiserRun.objects.order_by("-created_at").first()

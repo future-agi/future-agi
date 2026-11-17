@@ -7,9 +7,7 @@ def _repo_root():
 
 
 def _swagger():
-    with (
-        _repo_root() / "api_contracts" / "openapi" / "swagger.json"
-    ).open() as f:
+    with (_repo_root() / "api_contracts" / "openapi" / "swagger.json").open() as f:
         return json.load(f)
 
 
@@ -37,10 +35,7 @@ def _body_ref(operation):
 
 
 def _response_ref(operation, status_code="200"):
-    return (
-        operation["responses"][status_code]["schema"]["$ref"]
-        .rsplit("/", 1)[-1]
-    )
+    return operation["responses"][status_code]["schema"]["$ref"].rsplit("/", 1)[-1]
 
 
 def test_simulator_agent_mutations_have_body_contracts():
@@ -69,9 +64,12 @@ def test_simulator_agent_endpoints_have_response_contracts():
 
     for operation_key, definition_name in expected.items():
         method, path, *status_code = operation_key
-        assert _response_ref(
-            _operation(path, method), status_code[0] if status_code else "200"
-        ) == definition_name
+        assert (
+            _response_ref(
+                _operation(path, method), status_code[0] if status_code else "200"
+            )
+            == definition_name
+        )
 
 
 def test_simulator_agent_contract_debt_stays_burned_down():

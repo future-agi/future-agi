@@ -539,7 +539,9 @@ async def run_multiturn(ws_uri, conv_id, messages, timeout_per_turn=120):
         "status": (
             "PASS"
             if turns_passed == total_turns
-            else "PARTIAL" if turns_passed > 0 else "FAIL"
+            else "PARTIAL"
+            if turns_passed > 0
+            else "FAIL"
         ),
         "turns_passed": turns_passed,
         "total_turns": total_turns,
@@ -552,14 +554,14 @@ async def run_multiturn(ws_uri, conv_id, messages, timeout_per_turn=120):
 
 async def run_tests(tests, token, group_name):
     results = []
-    suffix = f"-t{random.randint(1000,9999)}"
+    suffix = f"-t{random.randint(1000, 9999)}"
 
     for i, (group, test_id, messages) in enumerate(tests):
         # Uniquify resource names
         messages = [m.replace("mt-", f"mt{suffix}-") for m in messages]
 
         print(
-            f"\n  [{i+1}/{len(tests)}] {group}/{test_id} ({len(messages)} turns)",
+            f"\n  [{i + 1}/{len(tests)}] {group}/{test_id} ({len(messages)} turns)",
             flush=True,
         )
 
@@ -573,7 +575,9 @@ async def run_tests(tests, token, group_name):
         emoji = (
             "✅"
             if result["status"] == "PASS"
-            else "⚠️" if result["status"] == "PARTIAL" else "❌"
+            else "⚠️"
+            if result["status"] == "PARTIAL"
+            else "❌"
         )
         print(
             f"    {emoji} {result['status']} | {result['turns_passed']}/{result['total_turns']} turns | {result['total_tools']} tools | {len(result['unique_tools'])} unique",
@@ -599,13 +603,13 @@ def print_summary(results, name):
     passed_turns = sum(r["turns_passed"] for r in results)
     total_tool_calls = sum(r["total_tools"] for r in results)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(
         f"{name}: {passed}/{total} conversations passed | {partial} partial | {failed} failed"
     )
-    print(f"Turns: {passed_turns}/{total_turns} ({passed_turns*100//total_turns}%)")
+    print(f"Turns: {passed_turns}/{total_turns} ({passed_turns * 100 // total_turns}%)")
     print(f"Total tool calls: {total_tool_calls}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     if failed + partial > 0:
         print("\n❌ FAILURES/PARTIAL:")
