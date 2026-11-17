@@ -75,10 +75,6 @@ class SandboxConflictError(SandboxProviderError):
     pass
 
 
-class SandboxFileNotFoundError(SandboxProviderError):
-    pass
-
-
 class SandboxProviderConfigurationError(SandboxProviderError):
     def __init__(self, message: str) -> None:
         super().__init__(message, status_code=422)

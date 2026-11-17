@@ -95,15 +95,24 @@ def test_sync_at_a_new_head_makes_a_draft_from_production(
     assert production.status == "active"
 
 
-def test_sync_refuses_an_unreachable_branch(auth_client, agent, production):
+@pytest.mark.parametrize(
+    "head_status, http_status, code",
+    [
+        ("error", status.HTTP_503_SERVICE_UNAVAILABLE, "source_unreachable"),
+        ("rate_limited", status.HTTP_429_TOO_MANY_REQUESTS, "github_rate_limited"),
+    ],
+)
+def test_sync_refuses_a_branch_it_cannot_read(
+    auth_client, agent, production, head_status, http_status, code
+):
     with patch(
         "simulate.services.harness_agent_changes.github_head",
-        return_value=HeadResult("rate_limited"),
+        return_value=HeadResult(head_status),
     ):
         response = _change(auth_client, agent, kind="sync")
 
-    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-    assert response.json()["code"] == "source_unreachable"
+    assert response.status_code == http_status
+    assert response.json()["code"] == code
 
 
 def test_a_change_needs_the_fields_of_its_kind(auth_client, agent, production):
