@@ -643,8 +643,14 @@ class LLM:
     def _catalog_cost(self) -> Dict[str, Any]:
         """The session's cost, each call priced at the rates in force for it."""
         buckets = list(self.__dict__.get("_usage_buckets", {}).values())
-        if len(buckets) < 2:
+        if not buckets:
             return calculate_total_cost(self.model_name, self.token_usage)
+        if len(buckets) == 1:
+            # The one price in force since the session's first call, not "now":
+            # a call with no usage must not reprice what was billed before it.
+            return calculate_total_cost(
+                self.model_name, self.token_usage, at=buckets[0]["at"]
+            )
 
         parts = [
             calculate_total_cost(self.model_name, bucket["usage"], at=bucket["at"])

@@ -269,7 +269,6 @@ class TypedDecisionEvaluator(LLM):
             value = "Fail" if failure else "Pass"
         reason = self._reason(answer, value, len(levels) if levels else None)
         usage = response["usage"]
-        self._usage_buckets = {}
         self.token_usage = {
             "prompt_tokens": usage["input_tokens"],
             "completion_tokens": usage["output_tokens"],

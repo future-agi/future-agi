@@ -91,16 +91,15 @@ def test_calls_before_a_price_change_keep_the_old_rate(clock):
 def test_a_session_with_no_price_change_costs_what_it_always_did(clock):
     llm = _session(DATED_MODEL)
 
-    for prompt_tokens, completion_tokens in ((1_000, 200), (50_000, 7_000), (3, 4)):
-        _call(
-            llm,
-            clock,
-            datetime(2026, 12, 30, 9, 0, 0, tzinfo=UTC),
-            prompt_tokens,
-            completion_tokens,
-        )
+    # One token in and one out, three times. Priced call by call, each call's prompt
+    # cost rounds to 0.000001 and the three add to 0.000003; priced as one total it
+    # is 0.000002. Only a single bucket gives the total's figure.
+    for _ in range(3):
+        _call(llm, clock, datetime(2026, 12, 30, 9, 0, 0, tzinfo=UTC), 1, 1)
 
+    assert len(llm._usage_buckets) == 1
     assert llm.cost == calculate_total_cost(DATED_MODEL, llm.token_usage)
+    assert llm.cost["prompt_cost"] == 0.000002
 
 
 def test_a_model_with_no_dated_price_costs_what_it_always_did(clock):
@@ -110,3 +109,17 @@ def test_a_model_with_no_dated_price_costs_what_it_always_did(clock):
     _call(llm, clock, AFTER_MIDNIGHT, 10, 10)
 
     assert llm.cost == calculate_total_cost(UNDATED_MODEL, llm.token_usage)
+
+
+def test_a_call_with_no_usage_does_not_reprice_the_session(clock):
+    llm = _session(DATED_MODEL)
+
+    _call(llm, clock, BEFORE_MIDNIGHT, 2_000_000, 200_000)
+    clock["at"] = AFTER_MIDNIGHT
+    response = SimpleNamespace(usage=None)
+    llm._update_token_usage(response)
+    llm._update_cost(response)
+
+    old = _cost(2_000_000, 200_000, _scheduled_per_1m("2026-01-01"))
+    assert llm.cost["total_cost"] == round(sum(old), 6)
+    assert llm.cost["total_cost"] == pytest.approx(2.25, abs=0.001)

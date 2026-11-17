@@ -117,6 +117,7 @@ def test_the_backend_ci_runs_when_the_gateway_schedule_changes():
         ),
         pytest.param(_one_row_file(input_cost_per_token=True), id="price-bool"),
         pytest.param(_one_row_file(output_cost_per_token="7.5e-7"), id="price-string"),
+        pytest.param(json.dumps({"": [_row()]}), id="empty-model-key"),
     ],
 )
 def test_the_loader_refuses_a_bad_file(tmp_path, content):
@@ -162,8 +163,23 @@ def _schedule_file(rows):
         ),
         pytest.param(
             [{k: v for k, v in _row().items() if k != "from"}],
-            ("row 0", "from", "missing"),
+            ("row 0 is missing its 'from' date.",),
             id="missing-date",
+        ),
+        pytest.param(
+            [_row(surprise=1)],
+            ("row 0", "surprise", "unknown"),
+            id="unknown-field",
+        ),
+        pytest.param(
+            [_row(input_cost_per_token=float("inf"))],
+            ("row 0", "input_cost_per_token", "finite"),
+            id="infinite-price",
+        ),
+        pytest.param(
+            [_row(output_cost_per_token=float("nan"))],
+            ("row 0", "output_cost_per_token", "finite"),
+            id="nan-price",
         ),
         pytest.param(
             [_row(input_cost_per_token_batches=0)],

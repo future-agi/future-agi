@@ -5,6 +5,7 @@ holds only futureagi/. futureagi/tests/test_price_schedule.py keeps them equal.
 """
 
 import json
+import math
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -60,6 +61,10 @@ def load_price_schedule(
 
     schedule = {}
     for key, rows in data.items():
+        if not key:
+            raise PriceScheduleError(
+                f"The dated price file {path} has an empty model key."
+            )
         if not isinstance(rows, list):
             raise PriceScheduleError(
                 f"The dated price file {path} entry {key!r} must hold a list of rows."
@@ -73,8 +78,13 @@ def load_price_schedule(
             where = f"The dated price file {path} entry {key!r} row {index}"
             if not isinstance(row, dict):
                 raise PriceScheduleError(f"{where} must be an object.")
+            unknown = sorted(set(row) - {"from", *_PRICE_FIELDS})
+            if unknown:
+                raise PriceScheduleError(
+                    f"{where} has an unknown field {unknown[0]!r}."
+                )
             if "from" not in row:
-                raise PriceScheduleError(f"{where} is missing from.")
+                raise PriceScheduleError(f"{where} is missing its 'from' date.")
             value = row["from"]
             try:
                 if not isinstance(value, str) or not _DATE.fullmatch(value):
@@ -97,9 +107,13 @@ def load_price_schedule(
                 price = row[field]
                 if isinstance(price, bool) or not isinstance(price, int | float):
                     raise PriceScheduleError(f"{where}: {field} must be a number.")
-                if not price > 0:
+                try:
+                    billable = math.isfinite(price) and price > 0
+                except OverflowError:  # an integer too large for a float
+                    billable = False
+                if not billable:
                     raise PriceScheduleError(
-                        f"{where}: {field} must be a positive price."
+                        f"{where}: {field} must be a finite, positive price."
                     )
                 rate_name = _BILLED_RATE_NAMES.get(field)
                 if rate_name:
