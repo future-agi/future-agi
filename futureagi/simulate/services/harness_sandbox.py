@@ -116,7 +116,14 @@ class HarnessSandboxClient:
         **kwargs: Any,
     ) -> Any:
         headers = dict(kwargs.pop("headers", {}))
-        if authenticated and self.token:
+        sends_token = bool(authenticated and self.token)
+        if sends_token:
+            # Checked before the call: the HTTP stack's own errors for a bad header value
+            # quote the header, and a token with a trailing newline gets past requests' check.
+            if not _valid_header_token(self.token):
+                raise HarnessSandboxUnavailable(
+                    "ALK sandbox token is not a valid HTTP header value"
+                ) from None
             headers["Authorization"] = f"Bearer {self.token}"
         try:
             response = requests.request(
@@ -126,28 +133,20 @@ class HarnessSandboxClient:
                 timeout=kwargs.pop("timeout", (5, 30)),
                 **kwargs,
             )
-        except (requests.exceptions.InvalidHeader, UnicodeError):
-            # These errors quote the Authorization header, so none of their text is kept.
-            raise HarnessSandboxUnavailable(
-                "ALK sandbox token is not a valid HTTP header value"
-            ) from None
         except requests.RequestException as exc:
             raise HarnessSandboxUnavailable(
                 f"ALK sandbox is unavailable at {self.base_url}: {exc}"
             ) from exc
-        except ValueError:
-            # http.client raises a bare ValueError quoting the header for a token with a
-            # trailing line break.
-            raise HarnessSandboxUnavailable(
-                "ALK sandbox token is not a valid HTTP header value"
-            ) from None
-        if response.status_code in (401, 403):
+        if response.status_code == 401:
             # The frontend treats any 401 as an expired session, so a token
-            # mismatch with the sandbox must reach the browser as a 503.
-            if self.token:
+            # mismatch with the sandbox must reach the browser as a 503. A 403 is the
+            # sandbox's own refusal (a path outside its allowed roots) and passes through.
+            if sends_token:
                 reason = "rejected the platform's token"
-            else:
+            elif authenticated:
                 reason = "requires a token, and ALK_HARNESS_SANDBOX_TOKEN is not set"
+            else:
+                reason = "refused an unauthenticated request"
             raise HarnessSandboxUnavailable(
                 f"ALK sandbox {reason} ({response.status_code})"
             )
@@ -163,6 +162,18 @@ class HarnessSandboxClient:
                 f"ALK sandbox returned {response.status_code}: {message}"
             )
         return response.json()
+
+
+def _valid_header_token(token: str) -> bool:
+    """A token that fits in an Authorization header as-is: Latin-1, no line breaks, and no
+    leading or trailing space."""
+    if token != token.strip() or "\r" in token or "\n" in token:
+        return False
+    try:
+        token.encode("latin-1")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 __all__ = [
