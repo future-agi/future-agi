@@ -704,3 +704,24 @@ def test_a_run_of_another_organization_is_not_found(
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert clickhouse.calls == []
+
+
+@pytest.mark.parametrize(
+    "instrumentation, measured",
+    [("none", True), ("traceai", False), ("opentelemetry", False)],
+)
+def test_a_run_is_measured_automatically_only_when_its_agent_names_no_tracing(
+    execution, job, version, hidden_project, instrumentation, measured
+):
+    # A self-traced agent's own spans can carry prompt and reply text, so a notice that
+    # promises none must never show for it.
+    store_agent(
+        agent_version_id=version.id,
+        agent=source_agent(instrumentation=instrumentation),
+        sdk_version="0.2.3",
+    )
+
+    source = run_traces_v3.run_traces_source(execution)
+
+    assert source is not None
+    assert source.measured_automatically is measured

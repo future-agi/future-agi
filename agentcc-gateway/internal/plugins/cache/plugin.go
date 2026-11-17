@@ -146,6 +146,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 
 	// L1: Check exact-match cache.
 	if resp, ok := p.store.Get(key); ok {
+		resp = restoreCarriage(rc, resp)
 		rc.Response = resp
 		rc.Flags.CacheHit = true
 		rc.Metadata["cache_status"] = "hit_exact"
@@ -164,7 +165,8 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
 			if result := p.semanticStore.Search(vec, rc.Metadata["cache_semantic_partition"]); result != nil {
-				rc.Response = result.Response
+				resp := restoreCarriage(rc, result.Response)
+				rc.Response = resp
 				rc.Flags.CacheHit = true
 				rc.Metadata["cache_status"] = "hit_semantic"
 				rc.Metadata["cache_similarity"] = strconv.FormatFloat(result.Similarity, 'f', 4, 64)
@@ -173,7 +175,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 					p.edgeHandler.SetHeaders(rc, "HIT")
 				}
 
-				return pipeline.ResultShortCircuit(result.Response)
+				return pipeline.ResultShortCircuit(resp)
 			}
 		}
 	}
@@ -230,7 +232,10 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	ttl := p.resolveTTL(rc)
-	p.store.Set(key, rc.Response, ttl)
+	// Store a copy marked with the attempt's route; rc.Response itself is
+	// still to be sent to this caller and must not gain the reserved field.
+	stored := withCarriage(rc.Response, rc.ResponsesCarriage)
+	p.store.Set(key, stored, ttl)
 
 	// Also store in semantic cache (L2).
 	if p.semanticStore != nil && rc.Request != nil && fp == "" {
@@ -243,7 +248,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			if partition == "" {
 				partition = semanticPartition(cacheNamespace(rc), rc.Request)
 			}
-			p.semanticStore.Set(key, vec, partition, rc.Response, ttl)
+			p.semanticStore.Set(key, vec, partition, stored, ttl)
 		}
 	}
 

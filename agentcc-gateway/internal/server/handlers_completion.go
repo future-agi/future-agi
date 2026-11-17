@@ -242,6 +242,7 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 		if err != nil {
 			return err
 		}
+		recordServedBy(rc, provider)
 		nativeResp = resp
 		text, finish := "", ""
 		if len(resp.Choices) > 0 {
@@ -293,6 +294,7 @@ func (h *Handlers) handleCompletionNonStream(ctx context.Context, w http.Respons
 		if err != nil {
 			return err
 		}
+		recordServedBy(rc, provider)
 		rc.Response = resp
 		rc.ResolvedModel = resp.Model
 		return nil
@@ -337,6 +339,8 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		// short-circuited and the provider was never called.
 		if chunks == nil {
 			h.recordProviderOutcome(ctx, provider, time.Since(upstreamStart), models.ErrInternal("no stream from provider"))
+		} else {
+			recordServedBy(rc, provider)
 		}
 		return nil
 	}
