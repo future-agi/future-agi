@@ -48,10 +48,14 @@ def version_contract(
         agent_version_id=agent_version_id or job.agent_version_id,
         suite_version_id=suite_version_id or job.suite_version_id,
     )
-    if sealed:
-        return sealed
-    recorded = recorded_contract(version.documents)
+    recorded = sealed or recorded_contract(version.documents)
     if recorded:
+        from simulate.services.harness_versioning.versions import PROVED_ORIGINS
+
+        # A full build's version reaches each tool as that build sealed it; anything else (a save's reseal, a
+        # version no build sealed) sealed or recorded the author's entries again.
+        if getattr(version, "origin", "") in PROVED_ORIGINS:
+            return recorded
         return _reached_as_built(
             job, version, recorded, agent_version_id, suite_version_id
         )
