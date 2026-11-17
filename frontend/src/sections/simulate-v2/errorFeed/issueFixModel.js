@@ -1205,7 +1205,7 @@ export const fixStatusOf = (
       improver: coder.improver,
     };
   }
-  const { ending, beforeSearch } = improvementOutcome(record);
+  const { ending, beforeSearch, reason } = improvementOutcome(record);
   /* While it runs, the PRD's own phases: Reproducing → Searching → Verifying. */
   if (ending.key === "running")
     return {
@@ -1222,10 +1222,18 @@ export const fixStatusOf = (
       ...(inconclusive && { detail: `${inconclusive} inconclusive` }),
     };
   }
+  /* Kartik's endings (#77): Failed names one of four reasons. */
   if (ending.key === "failed")
-    return { ...at, key: "no-fix", label: "Failed for infrastructure reasons" };
+    return {
+      ...at,
+      key: "no-fix",
+      label: "Failed",
+      ...(reason && { detail: reason.label.toLowerCase() }),
+    };
   if (ending.key === "no-fix")
-    return { ...at, key: "no-fix", label: "No improvement" };
+    return { ...at, key: "no-fix", label: "No safe improvement" };
+  if (ending.key === "too-few")
+    return { ...at, key: "no-fix", label: "Too few failing scenarios" };
   /* Stopped by a person: nothing was checked, so nothing to review. */
   if (ending.key === "stopped")
     return { ...at, key: "stopped", label: "Stopped" };
@@ -1236,7 +1244,7 @@ export const fixStatusOf = (
     return {
       ...at,
       key: "over-budget",
-      label: "Baseline not established",
+      label: "Stopped at budget",
       detail: "the budget ran out before the baseline",
     };
   /* Recurrence is the record's own (shippedStateOf reads it); a caller's
@@ -1259,10 +1267,10 @@ export const fixStatusOf = (
       recheck: true,
       label: `Needs re-check on ${behind.prod}`,
     };
-  if (ending.key === "budget") return { ...at, key: "ready", label: "Stopped" };
-  /* Stopped once two runs in a row didn't beat the best; the best was verified. */
-  if (ending.key === "stopped-early")
-    return { ...at, key: "ready", label: "Stopped early" };
+  if (ending.key === "budget")
+    return { ...at, key: "ready", label: "Stopped at budget" };
+  /* Stopped once tries in a row didn't beat the best; the best was verified.
+     Not an ending of its own (Kartik, #77) — Ready for review. */
   if (ending.key === "suggestion")
     return { ...at, key: "ready", label: "Suggestion only" };
   /* The PRD's name. It sits in its own Fix column on the Error Feed, apart

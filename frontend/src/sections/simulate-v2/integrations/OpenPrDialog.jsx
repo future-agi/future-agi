@@ -79,7 +79,12 @@ export default function OpenPrDialog({
   patchText,
   validation,
 }) {
-  const limited = ["likely", "few"].includes(validation?.key);
+  /* Proven on the targets only is weaker still: a draft too. */
+  const limited = ["likely", "few", "targets"].includes(validation?.key);
+  const limitedLabel =
+    validation?.key === "targets"
+      ? "Proven on the targets only"
+      : "Limited validation";
   const integrations = useIntegrations();
   const [installOpen, setInstallOpen] = useState(false);
   const { setAgentValues } = useConnectedAgents();
@@ -134,7 +139,7 @@ export default function OpenPrDialog({
     setBase(def.ref || "main");
     setTitle(
       draft?.title ||
-        `${limited ? "[Limited validation] " : ""}${
+        `${limited ? `[${limitedLabel}] ` : ""}${
           summary?.headline
             ? `Fix: ${summary.headline}`
             : `Fix ${files.length} issue${files.length === 1 ? "" : "s"} found in simulation`
@@ -181,10 +186,10 @@ export default function OpenPrDialog({
               "",
             ]),
         limited
-          ? "_Opened by Future AGI as a draft labelled Limited validation. Nothing changes in your agent until you merge._"
+          ? `_Opened by Future AGI as a draft labelled ${limitedLabel}. Nothing changes in your agent until you merge._`
           : "_Opened by Future AGI. Nothing changes in your agent until you merge._",
       ].join("\n"),
-    [files, summary, env, draft, proof, validation, limited],
+    [files, summary, env, draft, proof, validation, limited, limitedLabel],
   );
 
   const pr = {
@@ -587,7 +592,7 @@ export default function OpenPrDialog({
               </Typography>
               <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
                 {limited
-                  ? "Opens as a draft labelled Limited validation, never Verified. The title and description say so."
+                  ? `Opens as a draft labelled ${limitedLabel}, never Verified. The title and description say so.`
                   : `${validation.note}.`}
               </Typography>
             </Box>

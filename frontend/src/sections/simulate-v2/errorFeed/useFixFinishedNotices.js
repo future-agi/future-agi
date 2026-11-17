@@ -23,7 +23,7 @@ const ANNOUNCE_WITHIN_MS = 3 * 60 * 60 * 1000;
 
 const SAID = {
   ready: "is ready for review",
-  "stopped-early": "stopped early — its best change is ready for review",
+  "stopped-early": "is ready for review",
   budget: "stopped at its budget — its best change so far is ready for review",
   suggestion: "has a suggested change for you to review",
   "no-fix": "found no safe change — it says what to try next",

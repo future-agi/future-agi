@@ -198,6 +198,8 @@ export default function OptimizationRunView({
   const failedToRun = status === OPT_STATUS.FAILED || timedOut;
   /* A new goal improvement where nothing fell short of the goal. */
   const nothing = status === OPT_STATUS.NOTHING;
+  /* Too few of the issue's scenarios fail today to search on. */
+  const tooFew = status === OPT_STATUS.TOO_FEW;
   /* The goal is ambiguous or conflicts with a rule: a question, nothing to ship. */
   const clarify = status === OPT_STATUS.CLARIFY;
   /* Today's agent couldn't be measured inside the budget: no baseline. */
@@ -432,6 +434,8 @@ export default function OptimizationRunView({
               result: o.result || o.pendingResult,
               pendingResult: undefined,
               pendingEnding: undefined,
+              /* A failed one can be retried once (Kartik, #77). */
+              ...(failedToRun && { retries: (o.retries || 0) + 1 }),
               ...(notReproduced && {
                 reproduce: { ...o.reproduce, overridden: true },
               }),
@@ -808,7 +812,7 @@ export default function OptimizationRunView({
         />
       )}
 
-      {nothing && (
+      {(nothing || tooFew) && (
         <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, py: 2.5 }}>
           <Typography sx={{ typography: "s1", fontWeight: 600 }}>
             {outcome.ending.label}
@@ -821,7 +825,9 @@ export default function OptimizationRunView({
               maxWidth: 640,
             }}
           >
-            {`${outcome.headline} Nothing was searched and nothing was charged beyond measuring it. Pick another goal, or add harder scenarios for this one.`}
+            {tooFew
+              ? `${outcome.headline} Nothing was searched and nothing was charged beyond reproducing it.`
+              : `${outcome.headline} Nothing was searched and nothing was charged beyond measuring it. Pick another goal, or add harder scenarios for this one.`}
           </Typography>
           <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
             <Button
@@ -909,7 +915,9 @@ export default function OptimizationRunView({
       {failedToRun && !notReproduced && (
         <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, py: 2.5 }}>
           <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-            {outcome.ending.label}
+            {outcome.reason
+              ? `${outcome.ending.label} · ${outcome.reason.label}`
+              : outcome.ending.label}
           </Typography>
           <Typography
             sx={{
@@ -921,11 +929,13 @@ export default function OptimizationRunView({
           >
             {outcome.headline}
           </Typography>
-          <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-            <Button variant="outlined" size="small" onClick={continueAnyway}>
-              Try again
-            </Button>
-          </Stack>
+          {outcome.canRetry !== false && (
+            <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
+              <Button variant="outlined" size="small" onClick={continueAnyway}>
+                Retry once
+              </Button>
+            </Stack>
+          )}
         </Box>
       )}
 
@@ -1001,6 +1011,7 @@ export default function OptimizationRunView({
         !notReproduced &&
         !failedToRun &&
         !nothing &&
+        !tooFew &&
         !overBudget &&
         result && (
           <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>

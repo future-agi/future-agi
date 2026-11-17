@@ -779,9 +779,21 @@ export const buildImprovement = ({
       (typeof window !== "undefined" &&
         new URLSearchParams(window.location.search).get("improve") ===
           "clarify"));
+  /* Too few of the issue's scenarios fail today to search on (Kartik, #77).
+     Demo: ?improve=too-few on the page. */
+  const tooFew =
+    !!engine &&
+    !hold &&
+    !nothing &&
+    !clarify &&
+    (!!trigger?.tooFew ||
+      (typeof window !== "undefined" &&
+        new URLSearchParams(window.location.search).get("improve") ===
+          "too-few"));
   const by = kTime < kMoney ? "time" : "money";
-  const stopBefore = overBefore && !hold && !nothing && !clarify;
-  const infra = hold ? null : infraFailureOf(env, es, result.trials.length);
+  const stopBefore = overBefore && !hold && !nothing && !clarify && !tooFew;
+  const infra =
+    hold || tooFew ? null : infraFailureOf(env, es, result.trials.length);
   const proof = proofKindOf(es?.agent);
   /* Fresh variations the held-back set wrote are the improvement's too. */
   const pending = [...(issueScenarios || [])];
@@ -816,7 +828,9 @@ export const buildImprovement = ({
       ? OPT_STATUS.NOTHING
       : clarify
         ? OPT_STATUS.CLARIFY
-        : stopBefore
+        : tooFew
+          ? OPT_STATUS.TOO_FEW
+          : stopBefore
           ? OPT_STATUS.OVER_BUDGET
           : infra
             ? OPT_STATUS.FAILED

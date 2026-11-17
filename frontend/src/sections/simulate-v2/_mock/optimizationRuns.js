@@ -50,7 +50,20 @@ export const OPT_STATUS = {
      what they cost; none was checked on the held-back scenarios, so there's
      no winner and today's version stays. */
   STOPPED: "stopped",
+  /* Too few of the issue's scenarios fail today to search on (Kartik, #77):
+     it ends before searching. Demo: ?improve=too-few on the page. */
+  TOO_FEW: "too-few-failing",
 };
+
+/* The four reasons a Failed improvement gives (Kartik, #77). A failed one can
+   be retried once. */
+export const FAIL_REASONS = {
+  time: "Ran out of time",
+  start: "Couldn't start",
+  ours: "A problem on our side",
+  yours: "Something only you can change",
+};
+export const RETRY_LIMIT = 1;
 
 /**
  * Stop a running improvement where it is (`progress` from
@@ -765,6 +778,7 @@ export const improvementSpendParts = (
     [
       OPT_STATUS.NOT_REPRODUCED,
       OPT_STATUS.NOTHING,
+      OPT_STATUS.TOO_FEW,
       OPT_STATUS.OVER_BUDGET,
     ].includes(status)
   ) {
@@ -846,6 +860,7 @@ export const improvementTotalSpend = (
   const stoppedFirst = [
     OPT_STATUS.NOT_REPRODUCED,
     OPT_STATUS.NOTHING,
+    OPT_STATUS.TOO_FEW,
     OPT_STATUS.OVER_BUDGET,
   ].includes(status);
   if (stoppedFirst) {
@@ -1012,12 +1027,14 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /**
  * Everything an improvement run concluded, said once so the page, the Error
- * Feed chip and the lists agree. Endings: Ready for review, Stopped early
- * (no gain in the last two runs — the best was verified), No improvement,
- * Could not reproduce, Baseline not established (the baseline can't run or
- * exceeds the ceiling), Stopped, Infrastructure error, and Suggestion only
- * — for agents we can only call. Ready for review is then Verified,
- * Limited validation or Inconclusive (proofStrength).
+ * Feed chip and the lists agree. Endings, in Kartik's words (#77): Ready
+ * for review (also when the search stopped after tries in a row without
+ * gain — the best was verified), No safe improvement, Could not reproduce,
+ * Stopped at budget (also before searching, when today's agent can't be
+ * measured inside it), Stopped, Too few failing scenarios, and Failed with
+ * one of FAIL_REASONS. Suggestion only and Needs clarification stay until
+ * Kartik answers (#77). Ready for review is then Verified, Limited
+ * validation, Proven on the targets only or Inconclusive (proofStrength).
  */
 /** Started more than a day ago and still not finished — timed out. */
 export const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -1122,8 +1139,8 @@ const outcomeOf = (rec, { model } = {}) => {
   }
   if (record?.status === OPT_STATUS.NOTHING) {
     return {
-      ending: { key: "nothing", label: "Nothing to improve" },
-      headline: `Nothing to improve — every scenario already meets ${goalWords(record.nothing?.goal)}.`,
+      ending: { key: "nothing", label: "Could not reproduce" },
+      headline: `Could not reproduce — every scenario already meets ${goalWords(record.nothing?.goal)}.`,
     };
   }
   if (record?.status === OPT_STATUS.CLARIFY) {
@@ -1140,14 +1157,22 @@ const outcomeOf = (rec, { model } = {}) => {
         "The failure didn't happen on today's agent, so there was nothing to fix.",
     };
   }
+  if (record?.status === OPT_STATUS.TOO_FEW) {
+    const n = record.tooFew?.failing ?? 1;
+    return {
+      ending: { key: "too-few", label: "Too few failing scenarios" },
+      headline: `Too few failing scenarios — ${n === 0 ? "none" : `only ${n}`} of ${plural(record.tooFew?.total || record.reproduce?.total || n, "scenario")} from ${record.trigger?.issueId || "the issue"} fail${n === 1 ? "s" : ""} today, not enough to search on. Add scenarios that fail the same way, then fix again.`,
+      beforeSearch: true,
+    };
+  }
   if (record?.status === OPT_STATUS.OVER_BUDGET) {
     const s = record.stoppedAtBudget || {};
     return {
-      ending: { key: "budget", label: "Baseline not established" },
+      ending: { key: "budget", label: "Stopped at budget" },
       headline:
         s.by === "time"
-          ? `Baseline not established — measuring today's agent would take longer than the ${s.minutes}-minute time cap, so nothing was searched and no candidate was compared against a guess.`
-          : `Baseline not established — measuring today's agent would cost more than the ${creditsLabel(s.budget || 0)} budget, so nothing was searched and no candidate was compared against a guess.`,
+          ? `Stopped at budget — measuring today's agent would take longer than the ${s.minutes}-minute time cap, so nothing was searched and no candidate was compared against a guess.`
+          : `Stopped at budget — measuring today's agent would cost more than the ${creditsLabel(s.budget || 0)} budget, so nothing was searched and no candidate was compared against a guess.`,
       beforeSearch: true,
     };
   }
@@ -1168,23 +1193,26 @@ const outcomeOf = (rec, { model } = {}) => {
     const stage =
       record.infra?.stageLabel ||
       (grading ? "grading the held-back cases" : "running the candidates");
+    const cause = FAIL_REASONS[record.infra?.cause] ? record.infra.cause : "ours";
+    const yours = cause === "yours";
+    const canRetry = (record.retries || 0) < RETRY_LIMIT;
     return {
-      ending: {
-        key: "failed",
-        label: grading ? "Grading error" : "Infrastructure error",
-      },
+      ending: { key: "failed", label: "Failed" },
+      reason: { key: cause, label: FAIL_REASONS[cause] },
+      canRetry,
       stage,
-      headline: `Failed while ${stage}. ${record.infra?.reason || "The environment couldn't run the search."} ${grading ? "A grading problem" : "An infrastructure problem"}, not the agent — no run was counted as a pass or a fail, and the crashed runs aren't charged to the budget. Try again to retry the same stage.`,
+      headline: `${FAIL_REASONS[cause]}: failed while ${stage}. ${record.infra?.reason || "The environment couldn't run the search."} ${yours ? "It needs a change on your side before it can run" : "Not the agent"} — no run was counted as a pass or a fail, and the crashed runs aren't charged to the budget. ${canRetry ? "It can be retried once." : "It was already retried once — fix again to start a new one."}`,
     };
   }
   /* A run that's reported nothing for a day has stopped — the engine times
      it out as an infrastructure failure instead of showing it running. */
   if (record?.status === OPT_STATUS.RUNNING && staleSince(record)) {
     return {
-      ending: { key: "failed", label: "Infrastructure error" },
+      ending: { key: "failed", label: "Failed" },
+      reason: { key: "time", label: FAIL_REASONS.time },
+      canRetry: (record.retries || 0) < RETRY_LIMIT,
       stage: "reporting progress",
-      headline:
-        "Failed while reporting progress: it stopped more than a day ago and was timed out. An infrastructure problem, not the agent — nothing it hadn't finished was charged. Start it again to retry.",
+      headline: `${FAIL_REASONS.time}: it stopped reporting more than a day ago and was timed out. Not the agent — nothing it hadn't finished was charged. ${(record.retries || 0) < RETRY_LIMIT ? "It can be retried once." : "It was already retried once — fix again to start a new one."}`,
     };
   }
   if (record?.status === OPT_STATUS.RUNNING || !r)
@@ -1525,7 +1553,7 @@ const outcomeOf = (rec, { model } = {}) => {
   if (!winner) {
     return {
       ...base,
-      ending: { key: "no-fix", label: "No improvement" },
+      ending: { key: "no-fix", label: "No safe improvement" },
       headline: `No safe improvement — ${blockingVerdict(r).title.replace(/^No eligible winner — /, "")}.`,
     };
   }
@@ -1551,14 +1579,14 @@ const outcomeOf = (rec, { model } = {}) => {
       }[failedCheck.id] || failedCheck.label.toLowerCase();
     return {
       ...base,
-      ending: { key: "no-fix", label: "No improvement" },
+      ending: { key: "no-fix", label: "No safe improvement" },
       headline: `No safe improvement — the ${chosen ? "trial you chose" : "best trial"} ${why.replace(/^it /, "")}.`,
     };
   }
   if (blocking && !chosen) {
     return {
       ...base,
-      ending: { key: "no-fix", label: "No improvement" },
+      ending: { key: "no-fix", label: "No safe improvement" },
       headline: `No safe improvement — ${blocking.title.charAt(0).toLowerCase()}${blocking.title.slice(1)}.`,
     };
   }
@@ -1567,7 +1595,7 @@ const outcomeOf = (rec, { model } = {}) => {
   if (issue && issue.targets && !issue.fixed) {
     return {
       ...base,
-      ending: { key: "no-fix", label: "No improvement" },
+      ending: { key: "no-fix", label: "No safe improvement" },
       headline: `No fix for ${issue.id} — the best trial didn't fix it on any of the ${plural(issue.targets, "scenario")} where it failed.`,
     };
   }
@@ -1575,7 +1603,7 @@ const outcomeOf = (rec, { model } = {}) => {
   if (issue && issue.held && !issue.heldFixed) {
     return {
       ...base,
-      ending: { key: "no-fix", label: "No improvement" },
+      ending: { key: "no-fix", label: "No safe improvement" },
       headline: `No fix for ${issue.id} — the best trial fixed it on scenarios the search saw, but not on the ${issue.held === 1 ? "one" : issue.held} it never saw.`,
     };
   }
@@ -1593,7 +1621,7 @@ const outcomeOf = (rec, { model } = {}) => {
   ) {
     return {
       ...base,
-      ending: { key: "no-fix", label: "No improvement" },
+      ending: { key: "no-fix", label: "No safe improvement" },
       headline: `No safe improvement — the held-back gain (${r.heldScore - r.heldBase >= 0 ? "+" : "−"}${Math.abs(r.heldScore - r.heldBase)} pts) is within run-to-run noise (±${r.noise}).`,
     };
   }
@@ -1615,8 +1643,12 @@ const outcomeOf = (rec, { model } = {}) => {
     const s = r.stoppedEarly;
     return {
       ...base,
-      ending: { key: "stopped-early", label: "Stopped early" },
-      headline: `Stopped early — no gain beyond noise in the last ${noGainRunsOf(s)} trials, after ${s.after} of up to ${s.of}. Best: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
+      /* Not an ending of its own (Kartik, #77): it ends Ready for review. */
+      ending: {
+        key: "stopped-early",
+        label: base.strength?.label || "Ready for review",
+      },
+      headline: `The search stopped after ${noGainRunsOf(s)} trials in a row without gain (${s.after} of up to ${s.of}), then verified the best. Best: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
     };
   }
   if (record.stoppedAtBudget) {
@@ -1630,7 +1662,7 @@ const outcomeOf = (rec, { model } = {}) => {
       /* The user's stop is "Stopped"; a budget or time limit says so (improve §5). */
       ending: {
         key: "budget",
-        label: s.by === "time" ? "Stopped at time limit" : "Stopped at budget",
+        label: "Stopped at budget",
       },
       headline: `Stopped at the ${limit} after ${s.trials} of ${s.of} trials. Best so far: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
     };
@@ -1661,7 +1693,8 @@ export const suggestedFixOf = (record) => {
 
 /*
   How much the held-back result is worth: Verified, Limited validation (too
-  few held back to tell), or Inconclusive.
+  few held back to tell), Proven on the targets only (nothing held back —
+  Kartik, #77), or Inconclusive.
   "Fixed 3 of 4" reads as proof whatever the size of the set; this says what
   it's worth. Verified means better on at least HELD_BACK.minimum (4,
   improvementStart.js) untouched held-back scenarios with no protected
@@ -1673,8 +1706,8 @@ export const proofStrength = (r, issue, held) => {
   if (!r?.rsi || !r.winner) return null;
   if (r.split?.thin)
     return {
-      key: "few",
-      label: "Limited validation",
+      key: "targets",
+      label: "Proven on the targets only",
       note: "nothing could be held back, so this rests on scenarios the search saw",
     };
   /* What it had to fix where it never looked: the issue's held-back scenarios
