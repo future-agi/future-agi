@@ -144,11 +144,7 @@ def _nested_config(depth, kind="object"):
     # Exactly depth containers, including the config root (always an object).
     config = {"leaf": "kept"}
     for level in range(depth - 1):
-        config = (
-            [config]
-            if kind == "array" and level < depth - 2
-            else {"next": config}
-        )
+        config = [config] if kind == "array" and level < depth - 2 else {"next": config}
     return config
 
 
@@ -216,7 +212,9 @@ def test_actual_serializer_depth_failure_is_isolated_not_a_depth_policy(kind):
         _bulk_body(unprojected)
     opaque_sibling = {"name": "opaque-sibling", "config": _nested_config(200)}
     payload = _build_test_payload(_policy([raw, SIBLING, opaque_sibling]))
-    checks = json.loads(_client_body(payload))["guardrails"]["key_policies"][0]["checks"]
+    checks = json.loads(_client_body(payload))["guardrails"]["key_policies"][0][
+        "checks"
+    ]
     assert "configuration_error" not in checks["opaque-sibling"]
     assert checks["opaque-sibling"]["config"] == opaque_sibling["config"]
     assert checks["custom-static"] == {
@@ -382,15 +380,21 @@ def _numeric_checks():
 def _build_test_payload(policy, config=None):
     if config is None:
         config = SimpleNamespace(**dict.fromkeys(GatewayOrgConfig.model_fields))
-        config.guardrails = {"checks": {}, "pipeline_mode": "parallel", "fail_open": False}
+        config.guardrails = {
+            "checks": {},
+            "pipeline_mode": "parallel",
+            "fail_open": False,
+        }
     key = SimpleNamespace(id=uuid.UUID(KEY_ID), gateway_key_id="synthetic-key")
     with (
         patch(
-            "agentcc.services.config_push._load_guardrail_policies", return_value=[policy]
+            "agentcc.services.config_push._load_guardrail_policies",
+            return_value=[policy],
         ),
         patch("agentcc.services.config_push._assemble_providers", return_value={}),
         patch(
-            "agentcc.models.AgentccAPIKey.no_workspace_objects.filter", return_value=[key]
+            "agentcc.models.AgentccAPIKey.no_workspace_objects.filter",
+            return_value=[key],
         ),
     ):
         return _build_payload(ORG_ID, config)
