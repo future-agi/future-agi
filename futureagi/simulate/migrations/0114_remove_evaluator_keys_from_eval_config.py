@@ -132,6 +132,38 @@ def forwards(apps, schema_editor):
     )
 
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:model_hub_evaltemplate",
+        "postgres:simulate_eval_config",
+        "postgres:simulate_eval_config_removed_keys",
+    ],
+    "mitigation": (
+        "One pass over simulate_eval_config in primary-key pages of 500, reading "
+        "each page with its template through select_related; atomic=False, so no "
+        "lock is held across the table. Each changed row is written in its own "
+        "short transaction with a conditional update (only if config still equals "
+        "what was read), and what it removes, except the provider key and empty "
+        "values, is copied in the same transaction to the empty table "
+        "simulate_eval_config_removed_keys, created by 0113 with no foreign key. "
+        "model_hub_evaltemplate is only read. Rows without the leak signal lose "
+        "only the provider key. A run cut off halfway is safe to resume: cleaned "
+        "rows show no signal and make no second copy. simulate_eval_config is not "
+        "a registered high-volume table, so the normal bootstrap rehearsal applies. "
+        "Before release, run the read-only counts on a replica and check the run "
+        "time against the bootstrap job deadline; if it comes near that deadline, "
+        "run a reference-scale rehearsal first. The command "
+        "strip_eval_config_evaluator_keys repeats the clean-up after rollout, and "
+        "--restore puts copied values back."
+    ),
+    "reviewer": "cdileep23",
+    "review": "https://github.com/future-agi/future-agi/pull/3389#discussion_r4597642757",
+    "large_volume_rehearsal": True,
+}
+
+
 class Migration(migrations.Migration):
     # Each row is written in its own short transaction, so no lock is held over the
     # whole table and an interrupted run keeps the rows it already cleaned.
