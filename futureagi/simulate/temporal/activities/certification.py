@@ -9,6 +9,7 @@ behavior even across retries.
 from __future__ import annotations
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from simulate.temporal.activities.hosted_runner import _run_db
 from simulate.temporal.types.certification import (
@@ -144,7 +145,20 @@ async def certification_submit_case(
         )
         return CertificationSubmitOutput(hosted_harness_job_id=str(job.id))
 
-    return await _run_db(_submit)
+    try:
+        return await _run_db(_submit)
+    except Exception as exc:
+        from simulate.services.harness_usage import usage_limit_error
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        refusal = exc if isinstance(exc, HostedHarnessError) else usage_limit_error(exc)
+        if refusal is None or refusal.retryable:
+            raise
+        raise ApplicationError(
+            refusal.message,
+            type="CertificationConfigurationError",
+            non_retryable=True,
+        ) from exc
 
 
 @activity.defn(name="certification_submit_run")
@@ -156,6 +170,7 @@ async def certification_submit_run(
     from django.db import transaction
 
     from simulate.models import CertificationCase, HostedHarnessScenario, TestExecution
+    from simulate.services.certification import case_certification_metadata
     from simulate.services.hosted_harness import (
         HostedHarnessError,
         create_selected_harness_run,
@@ -166,7 +181,7 @@ async def certification_submit_run(
         with transaction.atomic():
             case = (
                 CertificationCase.no_workspace_objects.select_for_update(of=("self",))
-                .select_related("hosted_harness_job", "run_job")
+                .select_related("campaign", "hosted_harness_job", "run_job")
                 .get(id=input.case_id)
             )
             environment = case.hosted_harness_job
@@ -205,6 +220,11 @@ async def certification_submit_run(
                     scenario_keys=scenario_keys,
                     trials=1,
                     idempotency_key=f"{case.idempotency_key}:run",
+                    metadata_overrides={
+                        "certification": case_certification_metadata(
+                            case, case.campaign
+                        )
+                    },
                 )
                 case.run_job = run
                 case.save(update_fields=["run_job", "updated_at"])
@@ -254,7 +274,19 @@ async def certification_submit_run(
             raise
         return CertificationSubmitOutput(hosted_harness_job_id=str(run.id))
 
-    return await _run_db(_submit)
+    try:
+        return await _run_db(_submit)
+    except Exception as exc:
+        from simulate.services.harness_usage import usage_limit_error
+
+        refusal = exc if isinstance(exc, HostedHarnessError) else usage_limit_error(exc)
+        if refusal is None or refusal.retryable:
+            raise
+        raise ApplicationError(
+            refusal.message,
+            type="CertificationConfigurationError",
+            non_retryable=True,
+        ) from exc
 
 
 @activity.defn(name="certification_poll_case")
@@ -408,7 +440,7 @@ async def certification_record_case_result(
                 enqueue_notification(
                     campaign,
                     case,
-                    CertificationNotification.EventKind.STABLE_ASSERTION_FAILURE,
+                    CertificationNotification.EventKind.EXPLORATORY_EVALUATION_FAILURE,
                     {
                         "case_key": case.case_key,
                         "exploratory": True,

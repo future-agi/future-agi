@@ -56,7 +56,9 @@ def _deployment_id(identity):
 
 def test_deployment_identity_accepts_immutable_sidecar_images():
     identity = _deployment_identity()
-    identity["components"][0]["images"]["mesh"] = "repo/mesh@sha256:" + "3" * 64
+    identity["components"][0]["images"]["token-refresher"] = (
+        "repo/token-refresher@sha256:" + "3" * 64
+    )
     stable = {key: identity[key] for key in ("namespace", "helm_release", "components")}
     identity["release_digest"] = hashlib.sha256(
         json.dumps(stable, sort_keys=True, separators=(",", ":")).encode()
@@ -95,7 +97,7 @@ def _enabled_suite_doc():
                     {
                         "interaction": 1,
                         "scenario_ref": "scenarios:agent_one/turn1.yaml",
-                        "config_ref": "futureagi/simulate/certification/fixtures/test_agent.yaml",
+                        "config_ref": "simulate/certification/fixtures/test_agent.yaml",
                         "config_sha256": CONFIG_SHA,
                         "seed": 42,
                         "secret_ref_set": [],
@@ -103,7 +105,7 @@ def _enabled_suite_doc():
                     {
                         "interaction": 2,
                         "scenario_ref": "scenarios:agent_one/turn2.yaml",
-                        "config_ref": "futureagi/simulate/certification/fixtures/test_agent.yaml",
+                        "config_ref": "simulate/certification/fixtures/test_agent.yaml",
                         "config_sha256": CONFIG_SHA,
                         "seed": 43,
                         "secret_ref_set": [],
@@ -193,6 +195,45 @@ def test_create_admits_campaign_once_and_materializes_cases(auth_client, organiz
         assert CertificationCampaign.objects.count() == 1
         assert CertificationCase.objects.count() == 1
         assert start_wf.call_count == 2
+
+
+@pytest.mark.django_db(transaction=True)
+def test_workflow_start_failure_returns_retryable_service_error(
+    auth_client, organization
+):
+    settings = override_settings(
+        PRODUCTION_CERTIFICATION_ORG_ALLOWLIST=str(organization.id)
+    )
+    suite = patch(
+        "simulate.services.certification.load_suite",
+        return_value=_enabled_suite_doc(),
+    )
+    with (
+        settings,
+        suite,
+        patch(
+            "simulate.temporal.client.start_certification_workflow",
+            side_effect=RuntimeError("temporal unavailable"),
+        ),
+    ):
+        failed = _post(auth_client, organization)
+
+    assert failed.status_code == 503
+    assert failed.json()["error"] == "workflow_unavailable"
+    assert CertificationCampaign.objects.count() == 1
+
+    with (
+        settings,
+        suite,
+        patch(
+            "simulate.temporal.client.start_certification_workflow",
+            return_value="cert-wf-retried",
+        ) as start,
+    ):
+        retried = _post(auth_client, organization, idem="retry-key")
+
+    assert retried.status_code == 200
+    start.assert_called_once_with(retried.json()["id"])
 
 
 @pytest.mark.django_db(transaction=True)

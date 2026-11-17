@@ -104,7 +104,7 @@ export const PromptItem = styled(Box)(({ theme }) => ({
   padding: "12px 16px",
   minHeight: "72px",
   color: theme.palette.text.primary,
-  fontSize: "13px",
+  fontSize: "12px",
   fontWeight: theme.typography.fontWeightRegular,
   lineHeight: 1.6,
 }));

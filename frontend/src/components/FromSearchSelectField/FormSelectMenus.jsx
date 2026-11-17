@@ -137,8 +137,6 @@ const FormSelectMenus = ({
           // width: anchorWidth,
           "& .MuiPaper-root": {
             bgcolor: "background.paper",
-            border: "1px solid",
-            borderColor: "action.hover",
             p: "12px",
             maxHeight: `280px`,
             overflow: "hidden",

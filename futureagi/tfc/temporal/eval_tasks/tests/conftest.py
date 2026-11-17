@@ -112,6 +112,8 @@ def make_pending_entries(db, custom_eval_config):
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def workflow_environment():
     """In-memory Temporal server for the whole test session."""
-    env = await WorkflowEnvironment.start_local()
+    from tfc.temporal.eval_tasks.search_attributes import ALL_KEYS
+
+    env = await WorkflowEnvironment.start_local(search_attributes=ALL_KEYS)
     yield env
     await env.shutdown()

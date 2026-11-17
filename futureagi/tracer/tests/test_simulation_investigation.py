@@ -32,6 +32,7 @@ from tracer.services.grouping.control import claim_feature_jobs, claim_grouping_
 from tracer.services.grouping.feature_completion import complete_feature_job
 from tracer.services.simulation_diagnosis import _is_caller_fault
 from tracer.services.simulation_investigation import (
+    _CALLER_TEXT_LIMIT,
     SimulationInvestigationConflict,
     _tool_calls,
     simulation_evidence_page,
@@ -849,7 +850,7 @@ def test_debug_counts_calls_whose_own_analysis_ended_without_a_report(
     assert auth_client.get(url).status_code == 200
 
 
-def _hosted_run(organization, workspace, execution, catalogue=None):
+def _hosted_run(organization, workspace, execution, catalogue=None, **scenario_fields):
     """An environment job holding one authored scenario, and the run's child job."""
 
     def job(**fields):
@@ -873,12 +874,95 @@ def _hosted_run(organization, workspace, execution, catalogue=None):
         stage_outputs=[{"kind": "sub_goals", "data": {"sub_goals": catalogue or []}}]
     )
     job(environment=environment, run_test=execution.run_test)
-    HostedHarnessScenario.no_workspace_objects.create(
+    return HostedHarnessScenario.no_workspace_objects.create(
         job=environment,
         scenario_key="pin-booking",
         use_case="Book a guest ride",
         sub_goals=["exact_greeting", "spoken_pin_guidance"],
         tests="the agent books after a spoken PIN",
+        **scenario_fields,
+    )
+
+
+def test_debug_evidence_carries_the_simulated_callers_situation_and_persona(
+    auth_client, organization, workspace
+):
+    scenario = Scenarios.objects.create(
+        name="Fee disputes",
+        source="Billing support",
+        organization=organization,
+        workspace=workspace,
+    )
+    execution, call = _execution(
+        organization, workspace, scenario, "caller", CallExecution.CallStatus.COMPLETED
+    )
+    call.call_metadata = {"harness_scenario_key": "pin-booking"}
+    call.save(update_fields=["call_metadata"])
+    persona = {
+        "name": "Dana Reyes",
+        "personality": "impatient",
+        "communication_style": "direct",
+        "multilingual": True,
+        "metadata": {"first_language": "Spanish", "member_id": "M-1042"},
+    }
+    authored = _hosted_run(
+        organization,
+        workspace,
+        execution,
+        instruction="You want a late-cancellation fee removed.",
+        persona=persona,
+    )
+    auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
+    claim = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    def served():
+        return simulation_evidence_page(
+            attempt_id=claim["attempt_id"], lease_token=claim["lease_token"], cursor=0
+        )["calls"][0]
+
+    call_record = served()
+    assert call_record["situation"] == "You want a late-cancellation fee removed."
+    # The whole authored persona, including what the amend whitelist leaves out: the
+    # caller's name, whether it switches language, and its languages and identifiers.
+    assert call_record["persona"] == persona
+
+    # Any shape but a persona object is left out, so the worker never refuses the
+    # page over it.
+    for malformed in ("A busy office manager.", ["impatient"], {}):
+        authored.persona = malformed
+        authored.save(update_fields=["persona"])
+        assert served()["persona"] is None
+
+    # A blank instruction is no situation.
+    authored.instruction = "  \n\t "
+    authored.save(update_fields=["instruction"])
+    assert served()["situation"] is None
+
+    # Outsized authored values are cut, so one scenario cannot push the page past
+    # the payload limit. The persona stays an object with every key.
+    authored.instruction = "x" * 930_000
+    authored.persona = {**persona, "metadata": {"notes": "y" * 930_000}}
+    authored.save(update_fields=["instruction", "persona"])
+    call_record = served()
+    assert call_record["situation"] == (
+        "x" * _CALLER_TEXT_LIMIT
+        + f"... [{930_000 - _CALLER_TEXT_LIMIT} more characters]"
+    )
+    assert set(call_record["persona"]) == set(persona)
+    assert call_record["persona"]["name"] == "Dana Reyes"
+    assert call_record["persona"]["metadata"].endswith("more characters]")
+    assert len(json.dumps(call_record["persona"])) < 2 * _CALLER_TEXT_LIMIT
+
+    # A call with no authored scenario says it has none.
+    call.call_metadata = {}
+    call.save(update_fields=["call_metadata"])
+    call_record = served()
+    assert (call_record["goals"], call_record["situation"], call_record["persona"]) == (
+        None,
+        None,
+        None,
     )
 
 

@@ -948,10 +948,10 @@ const LabelPanel = forwardRef(function LabelPanel(
                 mt: 1,
                 maxHeight: 280,
                 overflow: "auto",
-                fontSize: 13,
+                fontSize: 12,
               }}
             >
-              <CellMarkdown text={instructions} fontSize={13} spacing={6} />
+              <CellMarkdown text={instructions} fontSize={12} spacing={6} />
             </Box>
           </Collapse>
           <Divider sx={{ mt: 2 }} />

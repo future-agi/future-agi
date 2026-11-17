@@ -21,6 +21,7 @@ from .chat_message import ChatMessageModel
 from .chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
 from .component_evaluation import ComponentEvaluation
 from .eval_config import SimulateEvalConfig
+from .evidence_import import EvidenceImport, EvidenceImportCase
 from .harness_environment_credentials import (
     HarnessCredentialFile,
     HarnessEnvironmentCredentials,
@@ -37,6 +38,7 @@ from .harness_versioning import (
 from .hosted_harness import (
     HostedHarnessArtifact,
     HostedHarnessAttempt,
+    HostedHarnessBuilderTurnUsage,
     HostedHarnessCleanupReceipt,
     HostedHarnessConversation,
     HostedHarnessConversationEvent,
@@ -70,6 +72,8 @@ from .trial_item_result import TrialItemResult
 __all__ = [
     "AgentFixCandidate",
     "AgentFixRun",
+    "EvidenceImport",
+    "EvidenceImportCase",
     "Scenarios",
     "AgentDefinition",
     "ProviderCredentials",
@@ -111,6 +115,7 @@ __all__ = [
     "TrialItemResult",
     "HostedHarnessArtifact",
     "HostedHarnessAttempt",
+    "HostedHarnessBuilderTurnUsage",
     "HostedHarnessCleanupReceipt",
     "HostedHarnessConversation",
     "HostedHarnessConversationEvent",

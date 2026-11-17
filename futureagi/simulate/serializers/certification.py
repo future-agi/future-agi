@@ -23,16 +23,35 @@ class CertificationCampaignCreateSerializer(serializers.Serializer):
     )
 
     def validate_deployment_identity(self, value):
-        # Reject anything that looks like raw secret material — identity is
-        # descriptive metadata (region, image digest, version), never tokens.
         import json
         import re
 
-        text = json.dumps(value)
-        if re.search(
-            r"(?i)(api[_-]?key|secret|password|token|bearer\s+[a-z0-9._-]{10,})",
-            text,
-        ):
+        credential_keys = {
+            "api_key",
+            "apikey",
+            "secret",
+            "client_secret",
+            "password",
+            "token",
+            "access_token",
+            "refresh_token",
+            "authorization",
+        }
+
+        def contains_credentials(item):
+            if isinstance(item, dict):
+                return any(
+                    str(key).lower().replace("-", "_") in credential_keys
+                    or contains_credentials(nested)
+                    for key, nested in item.items()
+                )
+            if isinstance(item, list):
+                return any(contains_credentials(nested) for nested in item)
+            return isinstance(item, str) and bool(
+                re.search(r"(?i)\bbearer\s+[a-z0-9._-]{10,}", item)
+            )
+
+        if contains_credentials(value):
             raise serializers.ValidationError(
                 "deployment_identity must not contain credentials or tokens"
             )

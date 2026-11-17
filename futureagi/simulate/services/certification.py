@@ -333,7 +333,14 @@ def create_campaign(
         CertificationState.FAILED,
     }
     if campaign.state not in terminal_states:
-        start_certification_workflow(str(campaign.id))
+        try:
+            start_certification_workflow(str(campaign.id))
+        except Exception as exc:
+            raise CertificationError(
+                "workflow_unavailable",
+                "the certification workflow could not be started; retry this request",
+                status_code=503,
+            ) from exc
     if created:
         logger.info(
             "certification_campaign_total",
@@ -350,12 +357,25 @@ def request_campaign_cancel(campaign) -> None:
         start_certification_workflow,
     )
 
-    campaign.cancel_requested_at = timezone.now()
-    if campaign.state in (CertificationState.RUNNING, CertificationState.PENDING):
-        campaign.state = CertificationState.CANCELING
-    campaign.save(
-        update_fields=["cancel_requested_at", "state", "finished_at", "updated_at"]
+    requested_at = timezone.now()
+    updated = (
+        type(campaign)
+        .no_workspace_objects.filter(
+            id=campaign.id,
+            state__in=(
+                CertificationState.PENDING,
+                CertificationState.RUNNING,
+                CertificationState.CANCELING,
+            ),
+        )
+        .update(
+            cancel_requested_at=requested_at,
+            state=CertificationState.CANCELING,
+            updated_at=requested_at,
+        )
     )
+    if not updated:
+        return
     start_certification_workflow(str(campaign.id))
     cancel_certification_workflow(str(campaign.id))
 
@@ -440,18 +460,7 @@ def build_case_job_payload(case, campaign) -> dict:
             "allow_bundle_download": True,
             "max_artifact_bytes": 0,
         },
-        "metadata": {
-            "certification": {
-                "campaign_id": str(campaign.id),
-                "case_key": case.case_key,
-                "suite_key": campaign.suite_key,
-                "suite_digest": campaign.suite_digest,
-                "deployment_id": campaign.deployment_id,
-                "run_test_id": spec["run_test_id"],
-                "production_call_authorization": spec["authorization"],
-                "interactions": interactions,
-            }
-        },
+        "metadata": {"certification": case_certification_metadata(case, campaign)},
     }
     serializer = HarnessJobCreateSerializer(data=payload)
     if not serializer.is_valid():
@@ -462,6 +471,20 @@ def build_case_job_payload(case, campaign) -> dict:
             status_code=422,
         )
     return serializer.validated_data
+
+
+def case_certification_metadata(case, campaign) -> dict:
+    spec = case.spec
+    return {
+        "campaign_id": str(campaign.id),
+        "case_key": case.case_key,
+        "suite_key": campaign.suite_key,
+        "suite_digest": campaign.suite_digest,
+        "deployment_id": campaign.deployment_id,
+        "run_test_id": spec["run_test_id"],
+        "production_call_authorization": spec["authorization"],
+        "interactions": spec["interactions"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -788,7 +811,6 @@ def detect_exploratory_failures(case) -> list[dict]:
             "receipt_id": failure["receipt_id"],
             "evaluation": failure["evaluation"],
             "status": failure["status"],
-            "exploratory": False,
         }
         for failure in _failed_receipt_sub_goals(case)
         if failure["evaluation"] not in stable

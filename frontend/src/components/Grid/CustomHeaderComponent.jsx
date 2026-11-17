@@ -13,7 +13,7 @@ const wrapperStyle = {
   paddingRight: "12px",
 };
 const textStyle = {
-  fontSize: "13px",
+  fontSize: "12px",
   color: "text.primary",
   fontWeight: 500,
   lineHeight: 1.4,

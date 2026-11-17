@@ -86,7 +86,7 @@ export default function MessageList({ onQuickAction, onFeedback }) {
             mb: 4,
             textAlign: "center",
             color: "text.disabled",
-            fontSize: 13,
+            fontSize: 12,
             maxWidth: 360,
             lineHeight: 1.6,
           }}

@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pytest
 from django.db import IntegrityError, transaction
 from django.utils import timezone
+from temporalio.exceptions import ApplicationError
 
 from simulate.models import (
     CallExecution,
@@ -42,10 +43,12 @@ from simulate.services.certification import (
     detect_exploratory_failures,
     detect_stable_behavior_failures,
     reconcile_case,
+    request_campaign_cancel,
 )
 from simulate.temporal.activities.certification import (
     certification_finalize_campaign,
     certification_record_case_result,
+    certification_submit_case,
     certification_submit_run,
 )
 from simulate.temporal.types.certification import (
@@ -286,6 +289,7 @@ def _campaign(organization, workspace):
             ],
             "agent": {"name": "Agent One"},
             "target": {"kind": "hosted_service", "ref": "x"},
+            "authorization": {"target_ownership": "futureagi"},
         },
     )
     return campaign, case
@@ -477,7 +481,7 @@ def test_reconcile_passes_only_with_complete_evidence(organization, workspace):
 def test_terminal_certification_provenance_must_match_submitted_job(
     organization, workspace
 ):
-    _campaign_row, case = _campaign(organization, workspace)
+    campaign, case = _campaign(organization, workspace)
     job = _job(organization, workspace)
     case.hosted_harness_job = job
     case.save(update_fields=["hosted_harness_job"])
@@ -727,8 +731,23 @@ def test_submit_run_reuses_one_authored_scenario_once(
     selected = []
     scheduled = []
 
-    def create_selected(environment_arg, *, scenario_keys, trials, idempotency_key):
-        selected.append((environment_arg.id, scenario_keys, trials, idempotency_key))
+    def create_selected(
+        environment_arg,
+        *,
+        scenario_keys,
+        trials,
+        idempotency_key,
+        metadata_overrides,
+    ):
+        selected.append(
+            (
+                environment_arg.id,
+                scenario_keys,
+                trials,
+                idempotency_key,
+                metadata_overrides,
+            )
+        )
         return run, True
 
     monkeypatch.setattr(
@@ -752,6 +771,18 @@ def test_submit_run_reuses_one_authored_scenario_once(
             ["authored-a"],
             1,
             f"{case.idempotency_key}:run",
+            {
+                "certification": {
+                    "campaign_id": str(_campaign_row.id),
+                    "case_key": case.case_key,
+                    "suite_key": _campaign_row.suite_key,
+                    "suite_digest": _campaign_row.suite_digest,
+                    "deployment_id": _campaign_row.deployment_id,
+                    "run_test_id": case.spec["run_test_id"],
+                    "production_call_authorization": case.spec["authorization"],
+                    "interactions": case.spec["interactions"],
+                }
+            },
         )
     ]
     assert scheduled == [str(run.id), str(run.id)]
@@ -917,7 +948,7 @@ def test_failed_terminal_receipts_are_stable_behavior_failures(
 
 @pytest.mark.django_db(transaction=True)
 def test_unreviewed_grade_failure_is_alert_only(organization, workspace):
-    _campaign_row, case = _campaign(organization, workspace)
+    campaign, case = _campaign(organization, workspace)
     job = _job(organization, workspace)
     case.hosted_harness_job = job
     case.save(update_fields=["hosted_harness_job"])
@@ -939,9 +970,97 @@ def test_unreviewed_grade_failure_is_alert_only(organization, workspace):
             "receipt_id": str(receipt.id),
             "evaluation": "tone",
             "status": "failed",
-            "exploratory": False,
         }
     ]
+
+    asyncio.run(
+        certification_record_case_result(
+            CertificationResultInput(case_id=str(case.id), outcome="completed")
+        )
+    )
+    notification = campaign.notifications.get()
+    assert notification.event_kind == "exploratory_evaluation_failure"
+    assert notification.payload["exploratory"] is True
+
+
+@pytest.mark.django_db(transaction=True)
+def test_cancel_does_not_overwrite_campaign_that_finished_concurrently(
+    organization, workspace, monkeypatch
+):
+    campaign, _case = _campaign(organization, workspace)
+    stale = CertificationCampaign.no_workspace_objects.get(id=campaign.id)
+    finished_at = timezone.now()
+    CertificationCampaign.no_workspace_objects.filter(id=campaign.id).update(
+        state=CertificationCampaign.State.COMPLETED,
+        finished_at=finished_at,
+    )
+    monkeypatch.setattr(
+        "simulate.temporal.client.start_certification_workflow",
+        lambda _campaign_id: pytest.fail("finished campaign must not be restarted"),
+    )
+    monkeypatch.setattr(
+        "simulate.temporal.client.cancel_certification_workflow",
+        lambda _campaign_id: pytest.fail("finished campaign must not be signaled"),
+    )
+
+    request_campaign_cancel(stale)
+
+    campaign.refresh_from_db()
+    assert campaign.state == CertificationCampaign.State.COMPLETED
+    assert campaign.finished_at == finished_at
+    assert campaign.cancel_requested_at is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_submission_validation_refusal_becomes_configuration_error(
+    organization, workspace, monkeypatch
+):
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    _campaign_row, case = _campaign(organization, workspace)
+    monkeypatch.setattr(
+        "simulate.services.certification.build_case_job_payload", lambda *_args: {}
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_submission.submit_hosted_harness_job",
+        lambda *_args: (_ for _ in ()).throw(
+            HostedHarnessError("invalid_target", "invalid target", status_code=422)
+        ),
+    )
+
+    with pytest.raises(ApplicationError) as raised:
+        asyncio.run(
+            certification_submit_case(CertificationCaseInput(case_id=str(case.id)))
+        )
+
+    assert raised.value.type == "CertificationConfigurationError"
+    assert raised.value.non_retryable is True
+
+
+@pytest.mark.django_db(transaction=True)
+def test_retryable_submission_failure_remains_retryable(
+    organization, workspace, monkeypatch
+):
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    _campaign_row, case = _campaign(organization, workspace)
+    outage = HostedHarnessError(
+        "scheduler_unavailable", "temporal down", status_code=503, retryable=True
+    )
+    monkeypatch.setattr(
+        "simulate.services.certification.build_case_job_payload", lambda *_args: {}
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_submission.submit_hosted_harness_job",
+        lambda *_args: (_ for _ in ()).throw(outage),
+    )
+
+    with pytest.raises(HostedHarnessError) as raised:
+        asyncio.run(
+            certification_submit_case(CertificationCaseInput(case_id=str(case.id)))
+        )
+
+    assert raised.value is outage
 
 
 @pytest.mark.django_db(transaction=True)

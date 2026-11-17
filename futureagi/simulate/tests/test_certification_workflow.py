@@ -54,6 +54,7 @@ class RecordingActivities:
         self.canceled = []
         self.poll_calls = {}
         self.recorded = []
+        self.recorded_details = []
         self.deliver_calls = 0
         self.finalized = False
         self.in_flight = 0
@@ -109,6 +110,7 @@ class RecordingActivities:
     @activity.defn(name="certification_record_case_result")
     async def record(self, input: CertificationResultInput):
         self.recorded.append((input.case_id, input.outcome))
+        self.recorded_details.append(input)
 
     @activity.defn(name="certification_deliver_notifications")
     async def deliver(self, _input: CertificationCampaignInput):
@@ -356,3 +358,101 @@ async def test_parent_history_does_not_grow_with_case_duration(
 
     assert result.cases_completed == 2
     assert len(history.events) < 200
+
+
+@pytest.mark.asyncio
+async def test_submission_refusal_is_recorded_as_configuration_failure(
+    temporal_test_server_options,
+):
+    acts = RecordingActivities(["case-refused"])
+
+    @activity.defn(name="certification_submit_case")
+    async def refused_submit(_input: CertificationCaseInput):
+        raise ApplicationError(
+            "invalid certification configuration",
+            type="CertificationConfigurationError",
+            non_retryable=True,
+        )
+
+    activities = [
+        refused_submit,
+        acts.poll,
+        acts.reconcile,
+        acts.record,
+        acts.cancel,
+    ]
+    async with await WorkflowEnvironment.start_time_skipping(
+        **temporal_test_server_options
+    ) as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE_RUNNER,
+            workflows=[CertificationCaseWorkflow],
+            activities=activities,
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            result = await env.client.execute_workflow(
+                CertificationCaseWorkflow.run,
+                CertificationCaseInput(case_id="case-refused"),
+                id=f"cert-case-{uuid.uuid4()}",
+                task_queue=QUEUE_RUNNER,
+            )
+
+    assert result == "failed"
+    assert acts.recorded == [("case-refused", "failed")]
+    assert acts.recorded_details[0].failure_class == "configuration"
+
+
+@pytest.mark.asyncio
+async def test_cancel_race_uses_terminal_job_state_when_workflow_already_closed(
+    temporal_test_server_options,
+):
+    acts = RecordingActivities(["case-race"], done_after=999_999)
+    reconciled = []
+
+    @activity.defn(name="certification_cancel_case")
+    async def closed_cancel(_input: CertificationCaseInput):
+        raise ApplicationError("workflow already closed", non_retryable=True)
+
+    @activity.defn(name="certification_poll_case")
+    async def completing_poll(_input: CertificationCaseInput):
+        calls = len(reconciled)
+        if calls == 0:
+            reconciled.append("polled")
+            return CertificationPollOutput(done=False, job_state="running")
+        return CertificationPollOutput(done=True, job_state="completed")
+
+    @activity.defn(name="certification_reconcile_case")
+    async def capture_reconcile(input: CertificationCaseInput):
+        reconciled.append(input.expected_terminal)
+        return CertificationReconcileOutput(ok=True, missing=[], failure_class=None)
+
+    activities = [
+        acts.submit,
+        completing_poll,
+        capture_reconcile,
+        acts.record,
+        closed_cancel,
+    ]
+    async with await WorkflowEnvironment.start_time_skipping(
+        **temporal_test_server_options
+    ) as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE_RUNNER,
+            workflows=[CertificationCaseWorkflow],
+            activities=activities,
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                CertificationCaseWorkflow.run,
+                CertificationCaseInput(case_id="case-race"),
+                id=f"cert-case-{uuid.uuid4()}",
+                task_queue=QUEUE_RUNNER,
+            )
+            await handle.signal("cancel")
+            result = await handle.result()
+
+    assert result == "completed"
+    assert reconciled[-1] == "completed"
+    assert acts.recorded == [("case-race", "completed")]
