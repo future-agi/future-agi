@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"reflect"
+	"time"
 )
 
 // ChatCompletionResponse represents an OpenAI-compatible chat completion response.
@@ -159,6 +160,14 @@ type StreamChunk struct {
 	// that sends its citations on the last chunk rather than in a whole
 	// response needs this to reach a streaming caller. See passthrough.go.
 	Extra map[string]json.RawMessage `json:"-"`
+
+	// Acknowledgement marks a chunk sent on the upstream's acknowledgement,
+	// before any output: the Responses route's response.created. It is sent
+	// at once, but the routing latency is measured to the next chunk.
+	Acknowledgement bool `json:"-"`
+	// ReceivedAt is when the provider read this chunk from upstream, if it
+	// records it, so latency is not stretched by a slow client downstream.
+	ReceivedAt time.Time `json:"-"`
 }
 
 func (c *StreamChunk) UnmarshalJSON(data []byte) error {
