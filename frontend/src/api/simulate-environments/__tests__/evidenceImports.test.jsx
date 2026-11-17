@@ -103,6 +103,96 @@ describe("useCreateEvidenceImport", () => {
     });
     expect(client.getQueryData(evidenceImportKey(ENV, IMPORT))).toEqual(made);
   });
+
+  it("a retry makes an earlier review read again when revisited, but not its own", async () => {
+    // Importing a blocked case's source again (B) supersedes the blocked case
+    // of the earlier import (A), so A's review read before is out of date.
+    const EARLIER = "33333333-3333-3333-3333-333333333333";
+    const blocked = bundle({
+      id: EARLIER,
+      cases: [{ id: "c1", status: "blocked" }],
+    });
+    const retried = bundle({
+      id: EARLIER,
+      cases: [{ id: "c1", status: "discarded" }],
+    });
+    axios.get.mockResolvedValueOnce({ data: blocked });
+    const first = renderHook(() => useEvidenceImport(ENV, EARLIER), {
+      wrapper,
+    });
+    await waitFor(() => expect(first.result.current.data).toEqual(blocked));
+    first.unmount();
+
+    const made = bundle();
+    axios.post.mockResolvedValue({ data: made });
+    const { result } = renderHook(() => useCreateEvidenceImport(), { wrapper });
+    await act(() =>
+      result.current.mutateAsync({
+        envId: ENV,
+        projectId: "p1",
+        sourceKind: "session",
+        ids: ["s1"],
+      }),
+    );
+
+    axios.get.mockResolvedValueOnce({ data: retried });
+    const revisit = renderHook(() => useEvidenceImport(ENV, EARLIER), {
+      wrapper,
+    });
+    await waitFor(() => expect(revisit.result.current.data).toEqual(retried));
+    // The new import's review is the one the create returned: opening it reads
+    // nothing, since its bundle re-reads the sources and runs redaction.
+    const opened = renderHook(() => useEvidenceImport(ENV, IMPORT), {
+      wrapper,
+    });
+    expect(opened.result.current.data).toEqual(made);
+    expect(axios.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("an earlier review still being read when a retry lands is read again", async () => {
+    // A's review is closed while its first read is under way; B is made, then
+    // that read answers. What it answers predates the retry, so A is read again
+    // on its next visit.
+    const EARLIER = "33333333-3333-3333-3333-333333333333";
+    const blocked = bundle({
+      id: EARLIER,
+      cases: [{ id: "c1", status: "blocked" }],
+    });
+    const retried = bundle({
+      id: EARLIER,
+      cases: [{ id: "c1", status: "discarded" }],
+    });
+    let answer;
+    axios.get.mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const first = renderHook(() => useEvidenceImport(ENV, EARLIER), {
+      wrapper,
+    });
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+    first.unmount();
+
+    axios.post.mockResolvedValue({ data: bundle() });
+    const { result } = renderHook(() => useCreateEvidenceImport(), { wrapper });
+    await act(() =>
+      result.current.mutateAsync({
+        envId: ENV,
+        projectId: "p1",
+        sourceKind: "session",
+        ids: ["s1"],
+      }),
+    );
+    await act(async () => answer({ data: blocked }));
+
+    axios.get.mockResolvedValueOnce({ data: retried });
+    const revisit = renderHook(() => useEvidenceImport(ENV, EARLIER), {
+      wrapper,
+    });
+    await waitFor(() => expect(revisit.result.current.data).toEqual(retried));
+    expect(axios.get).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("useEvidenceImport", () => {

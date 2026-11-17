@@ -2013,12 +2013,12 @@ def promote_conversation_checkpoint(
     archive = _authoring_archive(checkpoint)
     from simulate.services import agent_fix_variations, evidence_drafts
 
-    if evidence_drafts.is_evidence_command(command):
+    if command is not None and evidence_drafts.is_evidence_command(command):
         # An evidence turn read untrusted production text: its saves never reach
         # the environment; its scenarios become proposals on the import.
         evidence_drafts.land(environment, conversation, archive, command)
         return environment
-    if agent_fix_variations.is_fix_command(command):
+    if command is not None and agent_fix_variations.is_fix_command(command):
         # A fix's variations land in the fix's own suite version, never in the
         # environment's drafts or defaults.
         agent_fix_variations.land(environment, conversation, archive, command)

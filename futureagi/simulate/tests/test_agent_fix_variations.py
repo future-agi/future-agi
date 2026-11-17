@@ -1056,6 +1056,26 @@ class TestARunTheEnvironmentMovedOnFrom:
         )
         assert fix_run.failure["code"] == "fix_variations_source_moved"
 
+    def test_ends_a_fix_whose_run_was_deleted_while_the_builder_wrote(
+        self, environment, fix_run, storage
+    ):
+        body = _builder_save(environment)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(source_run=None)
+
+        with TestCase.captureOnCommitCallbacks(execute=True):
+            _land(fix_run, storage, body)
+
+        fix_run.refresh_from_db()
+        assert (fix_run.state, fix_run.suite_version_id) == (
+            AgentFixRun.State.FAILED,
+            None,
+        )
+        assert fix_run.failure["code"] == "fix_variations_failed"
+        assert (
+            "the run this epoch started from was deleted"
+            in (fix_run.failure["message"])
+        )
+
 
 def _open_draft(environment, piece):
     """Unsaved changes to one piece of the environment, on its current version."""

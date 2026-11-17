@@ -1089,7 +1089,8 @@ def _check_picks(
                 job=environment, id=pick, status=VersionStatus.ACTIVE
             )
             if piece == "suite" and pick != getattr(fix_run, "suite_version_id", None):
-                versions = versions.filter(fix_run__isnull=True)
+                # The model is HarnessSuiteVersion here; mypy checks both models.
+                versions = versions.filter(fix_run__isnull=True)  # type: ignore[misc]
             if not versions.exists():
                 raise _not_pickable(piece)
     if not agent_id or agent_id == defaults[0]:
