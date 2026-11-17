@@ -13,11 +13,12 @@ from typing import Any
 import structlog
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
+    CallExecution,
     HostedHarnessJob,
     RunTest,
     SimulateEvalConfig,
@@ -205,33 +206,92 @@ def regrade_mapping(config: SimulateEvalConfig) -> dict[str, str] | None:
     return {key: _SUITE_EVAL_REGRADE_SOURCES[key] for key in keys}
 
 
-def is_harness_run_test(run_test_id) -> bool:
-    """Whether a harness environment owns this run test.
+# Where both harness ingestions leave the checks a harness wrote during a call.
+_HARNESS_CHECKS_KEY = "harness_evaluations"
 
-    Only then can one of its configs be a result column the harness fills
-    itself; on any other run test the platform grades every config, as it
-    always has. Registering an environment's scenarios links its run test to
-    the job, and each run of that environment shares the link.
-    """
+
+def _owned_by_a_hosted_job(run_test_id) -> bool:
     return HostedHarnessJob.no_workspace_objects.filter(
         run_test_id=run_test_id
     ).exists()
 
 
-def harness_run_test_ids(run_test_ids) -> set:
-    """The run tests among ``run_test_ids`` a harness environment owns, in one query.
+def is_harness_run_test(run_test_id) -> bool:
+    """Whether a harness scored this run test's calls.
 
-    The same test as ``is_harness_run_test``, for a list page that would
-    otherwise ask once per run test.
+    Only then can one of its configs be a result column the harness fills
+    itself; on any other run test the platform grades every config, as it
+    always has. Registering an environment's scenarios links its run test to
+    a hosted job, and each run of that environment shares the link. A run
+    sent through the harness SDK has no job, but its calls carry the checks
+    the harness wrote, so a call holding that key makes it a harness run too,
+    whatever the key holds. The calls of a soft-deleted run still count: the
+    checks they hold are the harness's all the same.
+    """
+    if _owned_by_a_hosted_job(run_test_id):
+        return True
+    return CallExecution.objects.filter(
+        test_execution__run_test_id=run_test_id,
+        call_metadata__has_key=_HARNESS_CHECKS_KEY,
+    ).exists()
+
+
+def is_harness_call(call_execution, run_test_id) -> bool:
+    """Whether this call is graded as a harness run's call.
+
+    The grader asks once per call, so asking ``is_harness_run_test`` there
+    would scan the run test's calls once per call. The call's own metadata
+    answers the SDK half instead; a call that lost the key to a whole-call
+    re-run had its results cleared with it, so grading it as a call no
+    harness touched loses nothing.
+    """
+    metadata = call_execution.call_metadata
+    if isinstance(metadata, dict) and _HARNESS_CHECKS_KEY in metadata:
+        return True
+    return _owned_by_a_hosted_job(run_test_id)
+
+
+def harness_run_test_ids(run_test_ids) -> set:
+    """The run tests among ``run_test_ids`` that are harness runs, in three queries at most.
+
+    The test ``is_harness_run_test`` makes, for a list page that would
+    otherwise ask once per run test. A run test with no hosted job is asked
+    about its calls only when it holds a config with no mapping of its own:
+    ``call_metadata`` has no index, and only such a config can read a
+    different ``regradable`` or ``editable`` flag on a harness run, which is
+    all this answer feeds. Every other config has its own mapping, and both
+    flags come out the same either way.
     """
     ids = list(run_test_ids)
     if not ids:
         return set()
-    return set(
+    owned = set(
         HostedHarnessJob.no_workspace_objects.filter(run_test_id__in=ids)
         .order_by()
         .values_list("run_test_id", flat=True)
     )
+    left = [run_test_id for run_test_id in ids if run_test_id not in owned]
+    if not left:
+        return owned
+    with_a_result_column = set(
+        SimulateEvalConfig.objects.filter(run_test_id__in=left, deleted=False)
+        .filter(Q(mapping={}) | Q(mapping__isnull=True))
+        .order_by()
+        .values_list("run_test_id", flat=True)
+    )
+    if not with_a_result_column:
+        return owned
+    scored_through_the_sdk = RunTest.no_workspace_objects.filter(
+        id__in=with_a_result_column
+    ).filter(
+        Exists(
+            CallExecution.objects.filter(
+                test_execution__run_test_id=OuterRef("pk"),
+                call_metadata__has_key=_HARNESS_CHECKS_KEY,
+            )
+        )
+    )
+    return owned | set(scored_through_the_sdk.order_by().values_list("id", flat=True))
 
 
 def is_regrading_a_finished_harness_run(test_execution) -> bool:

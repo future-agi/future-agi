@@ -27,6 +27,7 @@ from simulate.services.harness_run_evals import (
     EVAL_QUEUED_KEY,
     parse_stamp,
 )
+from simulate.services.kept_harness_entry import end_without_verdict
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
 
 logger = structlog.get_logger(__name__)
@@ -485,7 +486,11 @@ def close_due_scoring(
                 "name": name,
                 "status": "timed_out",
             }
-        outputs[eval_id] = {**entry, "timestamp": now.isoformat()}
+        # A harness verdict kept under a re-grade's placeholder goes back as
+        # it was: the clock ended the grading, not the verdict.
+        outputs[eval_id] = end_without_verdict(
+            stored, {**entry, "timestamp": now.isoformat()}
+        )
     closed = meta.get(EVAL_COMPLETED_KEY) is not True and due.eval_side
     if closed:
         meta[EVAL_COMPLETED_KEY] = True

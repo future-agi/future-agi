@@ -854,3 +854,65 @@ class TestEditScenarioPromptsSerializer:
         serializer = EditScenarioPromptsSerializer(data=data)
         assert not serializer.is_valid()
         assert "prompts" in serializer.errors
+
+
+@pytest.mark.django_db
+def test_an_sdk_result_column_is_not_editable(
+    organization, workspace, agent_definition
+):
+    """A run sent through the harness SDK has no hosted job, but its calls
+    carry the harness's checks, so a config with no mapping of its own is a
+    result column the harness fills there too."""
+    from model_hub.models.evals_metric import EvalTemplate
+    from simulate.models import (
+        CallExecution,
+        RunTest,
+        Scenarios,
+        SimulateEvalConfig,
+        TestExecution,
+    )
+    from simulate.serializers.run_test import SimulateEvalConfigSimpleSerializer
+
+    run_test = RunTest.objects.create(
+        name="SDK run test",
+        organization=organization,
+        workspace=workspace,
+        agent_definition=agent_definition,
+    )
+    scenario = Scenarios.objects.create(
+        name="SDK scenario",
+        source="seed",
+        scenario_type=Scenarios.ScenarioTypes.DATASET,
+        organization=organization,
+        workspace=workspace,
+        agent_definition=agent_definition,
+    )
+    execution = TestExecution.objects.create(
+        run_test=run_test,
+        status=TestExecution.ExecutionStatus.COMPLETED,
+        total_scenarios=1,
+    )
+    CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status=CallExecution.CallStatus.COMPLETED,
+        call_metadata={
+            "harness_evaluations": [{"name": "ride_booked", "passed": True}]
+        },
+    )
+    column = SimulateEvalConfig.objects.create(
+        name="ride booked",
+        eval_template=EvalTemplate.objects.create(
+            name=f"column_{uuid.uuid4().hex[:8]}",
+            config={"required_keys": ["conversation"], "output": "Pass/Fail"},
+            owner="user",
+            organization=organization,
+        ),
+        run_test=run_test,
+        mapping={},
+    )
+
+    data = SimulateEvalConfigSimpleSerializer(column).data
+
+    assert data["editable"] is False
+    assert data["regradable"] is False

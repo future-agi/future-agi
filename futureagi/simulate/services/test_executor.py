@@ -137,9 +137,10 @@ from simulate.selectors.runs import user_executions
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
 from simulate.services.harness_evals import (
     effective_simulation_mapping,
-    is_harness_run_test,
+    is_harness_call,
     regrade_mapping,
 )
+from simulate.services.kept_harness_entry import end_without_verdict
 
 try:
     from ee.voice.services.conversation_metrics import ConversationMetricsCalculator
@@ -4526,10 +4527,11 @@ class TestExecutor:
 
             # Only a harness run holds result columns with no mapping of their
             # own, so the lookup is made once per call and only when one is
-            # among the configs.
+            # among the configs. It asks the call, not the run test: this runs
+            # once per call, and the run test's answer reads its other calls.
             harness_run = any(
                 not eval_config.mapping for eval_config in eval_configs
-            ) and is_harness_run_test(run_test.id)
+            ) and is_harness_call(call_execution, run_test.id)
 
             # Run each evaluation
             for eval_config in eval_configs:
@@ -4573,6 +4575,10 @@ class TestExecutor:
                             f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
                             f"on call execution {call_execution.id}"
                         )
+                    else:
+                        # A cancelled run is never swept, so no later writer
+                        # ends this cell: a kept harness verdict goes back now.
+                        self._put_back_kept_entry(call_execution, eval_config)
                 except Exception as e:
                     logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
                     traceback.print_exc()
@@ -4640,7 +4646,11 @@ class TestExecutor:
         if not removed:
             return
         for config_id in removed:
-            outputs.pop(config_id, None)
+            # A harness verdict the placeholder kept is the call's last word
+            # on that eval, so it goes back rather than with the placeholder.
+            kept = end_without_verdict(outputs.pop(config_id, None), None)
+            if kept is not None:
+                outputs[config_id] = kept
         call_execution.eval_outputs = outputs
         call_execution.save(update_fields=["eval_outputs"])
 
@@ -4664,15 +4674,18 @@ class TestExecutor:
                 and outputs[key].get("status") == "pending"
             ):
                 continue
-            outputs[key] = {
-                "reason": "Grading could not be started.",
-                "error": "error",
-                "name": eval_config.name,
-                "timestamp": timezone.now().isoformat(),
-                "output": None,
-                "output_type": derive_kpi_output_type(eval_config.eval_template),
-                "status": StatusType.FAILED.value,
-            }
+            outputs[key] = end_without_verdict(
+                outputs[key],
+                {
+                    "reason": "Grading could not be started.",
+                    "error": "error",
+                    "name": eval_config.name,
+                    "timestamp": timezone.now().isoformat(),
+                    "output": None,
+                    "output_type": derive_kpi_output_type(eval_config.eval_template),
+                    "status": StatusType.FAILED.value,
+                },
+            )
             failed = True
         if failed:
             call_execution.eval_outputs = outputs
@@ -4681,17 +4694,30 @@ class TestExecutor:
             call_execution, eval_config_ids=eval_config_ids
         )
 
+    def _put_back_kept_entry(self, call_execution, eval_config) -> None:
+        """Store the harness verdict a pending cell keeps, if it keeps one."""
+        outputs = call_execution.eval_outputs or {}
+        key = str(eval_config.id)
+        current = outputs.get(key)
+        restored = end_without_verdict(current, current)
+        if restored is not current:
+            outputs[key] = restored
+            call_execution.eval_outputs = outputs
+            call_execution.save(update_fields=["eval_outputs"])
+
     def _mark_eval_left_to_the_harness(self, call_execution, eval_config) -> None:
         """Mark a harness result column the platform can't grade as skipped."""
         call_execution.eval_outputs = call_execution.eval_outputs or {}
-        call_execution.eval_outputs[str(eval_config.id)] = (
+        key = str(eval_config.id)
+        call_execution.eval_outputs[key] = end_without_verdict(
+            call_execution.eval_outputs.get(key),
             build_skipped_eval_output_payload(
                 eval_name=eval_config.name,
                 reason=(
                     "The harness scores this evaluation during the call. "
                     "Only rerunning the call refreshes it."
                 ),
-            )
+            ),
         )
         call_execution.save(update_fields=["eval_outputs"])
 
@@ -4738,11 +4764,15 @@ class TestExecutor:
                     f"{call_execution.id} - skipped payload not written"
                 )
                 continue
-            call_execution.eval_outputs[str(eval_config.id)] = (
+            # A harness verdict kept under a re-grade's placeholder stays the
+            # cell's value: the skip judged the call, not that verdict.
+            key = str(eval_config.id)
+            call_execution.eval_outputs[key] = end_without_verdict(
+                call_execution.eval_outputs.get(key),
                 build_skipped_eval_output_payload(
                     eval_name=eval_config.name,
                     reason=reason,
-                )
+                ),
             )
 
         update_fields = ["call_metadata", "eval_outputs"]
@@ -5130,7 +5160,12 @@ class TestExecutor:
                 result column the harness fills is then graded with the
                 inputs the harness gives it, and the config is not changed.
         """
+        cell_at_entry = None
         try:
+            # Read once, before this function writes the cell: the column
+            # mismatch writes it and then raises into the error write, which
+            # must still see the placeholder to put a kept harness verdict back.
+            cell_at_entry = (call_execution.eval_outputs or {}).get(str(eval_config.id))
             close_old_connections()
 
             # Get the evaluation template
@@ -5333,9 +5368,11 @@ class TestExecutor:
                             "output": None,
                             "output_type": derive_kpi_output_type(eval_template),
                         }
-                        call_execution.eval_outputs[str(eval_config.id)] = error_result
-                        call_execution.eval_outputs[str(eval_config.id)]["status"] = (
-                            StatusType.FAILED.value
+                        call_execution.eval_outputs[str(eval_config.id)] = (
+                            end_without_verdict(
+                                cell_at_entry,
+                                {**error_result, "status": StatusType.FAILED.value},
+                            )
                         )
                         call_execution.save(update_fields=["eval_outputs"])
                         raise ValueError(error_message)
@@ -5436,6 +5473,9 @@ class TestExecutor:
                     "status": StatusType.COMPLETED.value,
                 }
                 call_execution.save(update_fields=["eval_outputs"])
+                # The fresh verdict is stored: a raise from here on must leave
+                # an error over it, never the harness verdict it replaced.
+                cell_at_entry = None
 
                 from model_hub.services.error_localizer_service import (
                     error_localizer_enabled,
@@ -5472,15 +5512,18 @@ class TestExecutor:
                 # must still close, and the person must see why.
                 if not call_execution.eval_outputs:
                     call_execution.eval_outputs = {}
-                call_execution.eval_outputs[str(eval_config.id)] = {
-                    "reason": REASON_EVAL_NO_RESULT,
-                    "error": "error",
-                    "name": eval_config.name,
-                    "timestamp": timezone.now().isoformat(),
-                    "output": None,
-                    "output_type": derive_kpi_output_type(eval_template),
-                    "status": StatusType.FAILED.value,
-                }
+                call_execution.eval_outputs[str(eval_config.id)] = end_without_verdict(
+                    cell_at_entry,
+                    {
+                        "reason": REASON_EVAL_NO_RESULT,
+                        "error": "error",
+                        "name": eval_config.name,
+                        "timestamp": timezone.now().isoformat(),
+                        "output": None,
+                        "output_type": derive_kpi_output_type(eval_template),
+                        "status": StatusType.FAILED.value,
+                    },
+                )
                 call_execution.save(update_fields=["eval_outputs"])
                 logger.warning(
                     "simulate_eval_no_result",
@@ -5503,9 +5546,8 @@ class TestExecutor:
                 "output": None,
                 "output_type": derive_kpi_output_type(eval_config.eval_template),
             }
-            call_execution.eval_outputs[str(eval_config.id)] = error_result
-            call_execution.eval_outputs[str(eval_config.id)]["status"] = (
-                StatusType.FAILED.value
+            call_execution.eval_outputs[str(eval_config.id)] = end_without_verdict(
+                cell_at_entry, {**error_result, "status": StatusType.FAILED.value}
             )
             call_execution.save(update_fields=["eval_outputs"])
 
