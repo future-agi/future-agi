@@ -223,14 +223,21 @@ def runs_as_wanted_agent(
 
 
 def _chat_lease(
-    conversation: HostedHarnessConversation, *, live: bool = False
+    conversation: HostedHarnessConversation,
+    *,
+    live: bool = False,
+    lock: bool = False,
 ) -> HostedHarnessConversationLease | None:
-    """The conversation's own sandbox lease, not released (nor expired, if live)."""
+    """The conversation's own sandbox lease, not released (nor expired, if live).
+
+    With ``lock`` the row is locked until the transaction ends; the caller holds the
+    conversation's lock already (the order is conversation, then lease).
+    """
     gone = HostedHarnessConversationLease.State
+    leases = HostedHarnessConversationLease.no_workspace_objects
     return (
-        HostedHarnessConversationLease.no_workspace_objects.filter(
-            conversation=conversation, attempt__isnull=True
-        )
+        (leases.select_for_update() if lock else leases)
+        .filter(conversation=conversation, attempt__isnull=True)
         .exclude(state__in=(gone.RELEASED, gone.EXPIRED) if live else (gone.RELEASED,))
         .first()
     )
@@ -444,9 +451,15 @@ def close_nudge(
     summary: dict | None = None,
     turn_event: Any = None,
     restore: bool = True,
+    lease_fence: tuple[Any, str] | None = None,
 ) -> None:
     """The one closer of a queued or running rebuild; the caller holds the
-    environment and the nudge."""
+    environment and the nudge.
+
+    ``lease_fence`` is the ``(id, provider_ref)`` of the chat sandbox lease this close
+    ends; the clean-up after the commit expires only that lease, so a restart that
+    claimed the chat meanwhile keeps its claim.
+    """
     snapshot = dict(nudge.draft_snapshot or {})
     started = bool(snapshot.get("taken_at"))
     if started and state != State.APPLIED and restore:
@@ -478,14 +491,24 @@ def close_nudge(
             _after_close,
             str(locked.id),
             dispatched=bool(nudge.command_message_id),
+            fence=lease_fence,
         )
     )
 
 
-def _expire_chat_lease(conversation: HostedHarnessConversation) -> str:
-    """Expire the conversation's own sandbox lease; its provider ref, if it had one."""
+def _expire_chat_lease(
+    conversation: HostedHarnessConversation,
+    fence: tuple[Any, str] | None = None,
+) -> str:
+    """Expire the conversation's own sandbox lease; its provider ref, if it had one.
+
+    With ``fence`` (the ``(id, provider_ref)`` a close saw), a lease claimed anew since
+    is left alone: nothing is expired, and no ref is returned to stop.
+    """
     lease = _chat_lease(conversation)
     if lease is None:
+        return ""
+    if fence is not None and (lease.id, str(lease.provider_ref or "")) != fence:
         return ""
     HostedHarnessConversationLease.no_workspace_objects.filter(id=lease.id).update(
         state=HostedHarnessConversationLease.State.EXPIRED, updated_at=timezone.now()
@@ -501,7 +524,12 @@ def _start_runtime(conversation_id: str) -> None:
     schedule_conversation_runtime(conversation_id, _public_base_url(None))
 
 
-def _after_close(environment_id: str, *, dispatched: bool) -> None:
+def _after_close(
+    environment_id: str,
+    *,
+    dispatched: bool,
+    fence: tuple[Any, str] | None = None,
+) -> None:
     """Hand the chat back: its sandbox stops, and it restarts for waiting messages."""
     from simulate.services.hosted_harness_conversation import (
         _ACTIVE_CONVERSATION_STATES,
@@ -520,7 +548,7 @@ def _after_close(environment_id: str, *, dispatched: bool) -> None:
                 )
                 if conversation is None:
                     return
-                ref = _expire_chat_lease(conversation)
+                ref = _expire_chat_lease(conversation, fence)
                 waiting = _unacked_commands(conversation).exists()
                 if conversation.state in _ACTIVE_CONVERSATION_STATES:
                     # The rebuild's turn (or its sandbox's start) is over.
@@ -1800,6 +1828,7 @@ def _close_if_open(
     With ``still``, the reason to close is checked again under the locks, against
     the locked conversation, and the rebuild is left open if it no longer holds.
     """
+    lease_fence = None
     with transaction.atomic():
         locked = nudges._head(environment_id, lock=True)
         nudge = _lock_nudge(locked, nudge_id) if locked is not None else None
@@ -1810,14 +1839,35 @@ def _close_if_open(
                     .filter(job_id=environment_id)
                     .first()
                 )
-                if not still(nudge, conversation, timezone.now()):
+                # The lease is locked after the conversation (the order restarts and
+                # renewals keep), so what ``still`` reads of it can't change until
+                # this commits.
+                lease = (
+                    _chat_lease(conversation, lock=True)
+                    if conversation is not None
+                    else None
+                )
+                now = timezone.now()
+                if not still(nudge, conversation, now):
                     return
+                if lease is not None:
+                    lease_fence = (lease.id, str(lease.provider_ref or ""))
+                    if _lease_lapsed(lease, now):
+                        # Ended here, not after the commit, so a renewal waiting on
+                        # the lock finds it expired and can't revive it.
+                        HostedHarnessConversationLease.no_workspace_objects.filter(
+                            id=lease.id
+                        ).update(
+                            state=HostedHarnessConversationLease.State.EXPIRED,
+                            updated_at=now,
+                        )
             close_nudge(
                 nudge,
                 locked=locked,
                 state=State.FAILED,
                 error=error or {"code": code},
                 turn_event=turn_event,
+                lease_fence=lease_fence,
             )
 
 
@@ -1848,9 +1898,15 @@ def _sandbox_gone(conversation: HostedHarnessConversation | None, now: Any) -> b
     also be stale, so a renewal already in flight, or a clock that runs ahead, can't
     end a live turn.
     """
+    lease = _chat_lease(conversation) if conversation is not None else None
+    return _lease_lapsed(lease, now)
+
+
+def _lease_lapsed(lease: HostedHarnessConversationLease | None, now: Any) -> bool:
+    """The lease is past ``expires_at`` (equal counts as past) and its heartbeat is
+    stale (older than ``RUNTIME_STALE_SECONDS``; exactly that old is not)."""
     from simulate.services.hosted_harness_conversation import RUNTIME_STALE_SECONDS
 
-    lease = _chat_lease(conversation) if conversation is not None else None
     if lease is None or lease.expires_at > now:
         return False
     return lease.heartbeat_at is None or (

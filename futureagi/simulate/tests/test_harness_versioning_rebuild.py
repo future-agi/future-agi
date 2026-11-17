@@ -2,10 +2,15 @@
 
 import json
 import logging
+import queue
+import threading
+import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from django.db import connection, transaction
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -4151,3 +4156,381 @@ class TestChatSandboxFence:
         assert _names(inline, nudge_tasks.stop_harness_nudge_sandbox.name) == [
             [str(conversation.id), "sandbox-old"]
         ]
+
+
+_WAIT_CAP_SECONDS = 30
+_POLL_SECONDS = 0.01
+
+
+def _wait_until(condition, what):
+    """Poll a condition (never a fixed delay); the cap only turns a hang into a failure."""
+    deadline = time.monotonic() + _WAIT_CAP_SECONDS
+    while not condition():
+        assert time.monotonic() < deadline, f"timed out waiting for {what}"
+        time.sleep(_POLL_SECONDS)
+
+
+def _waits_on_a_lock(pid):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select 1 from pg_stat_activity where pid = %s and wait_event_type = 'Lock'",
+            [pid],
+        )
+        return cursor.fetchone() is not None
+
+
+class _Side:
+    """The other side of a race: ``work`` runs on a thread of its own, on its own
+    database connection. ``pid`` is that connection's backend, known before ``work``
+    writes."""
+
+    def __init__(self, work):
+        self.pids = queue.Queue()
+        self.error = None
+        self.result = None
+
+        def run():
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("select pg_backend_pid()")
+                    self.pids.put(cursor.fetchone()[0])
+                self.result = work()
+            except BaseException as exc:  # noqa: BLE001 - re-raised by join
+                self.error = exc
+            finally:
+                connection.close()
+
+        self.thread = threading.Thread(target=run, daemon=True)
+        self.thread.start()
+        self.pid = self.pids.get(timeout=_WAIT_CAP_SECONDS)
+
+    def settled(self):
+        """Finished, or stopped on a row lock the caller holds."""
+        _wait_until(
+            lambda: not self.thread.is_alive() or _waits_on_a_lock(self.pid),
+            "the other side to finish or block on a lock",
+        )
+
+    def join(self):
+        self.thread.join(timeout=_WAIT_CAP_SECONDS)
+        assert not self.thread.is_alive(), "the other side never finished"
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def _renewing_gateway():
+    from unittest.mock import MagicMock
+
+    from simulate.services import hosted_harness_gateway as gateway_module
+
+    gateway = gateway_module.HostedHarnessGateway.__new__(
+        gateway_module.HostedHarnessGateway
+    )
+    gateway.client = MagicMock()
+    return gateway
+
+
+def _lease_of(conversation):
+    return HostedHarnessConversationLease.no_workspace_objects.get(
+        conversation=conversation
+    )
+
+
+def _lapsed(user, workspace, storage, key, auth_client, capture, **extra):
+    """A rebuild whose chat sandbox ran out of lease and went quiet."""
+    environment, nudge, conversation, reply = _rebuild_with_lease(
+        user,
+        workspace,
+        storage,
+        key,
+        auth_client,
+        capture,
+        lease_state="active",
+        expires_in=timedelta(minutes=-1),
+        heartbeat_age=timedelta(minutes=30),
+        **extra,
+    )
+    HostedHarnessConversation.no_workspace_objects.filter(id=conversation.id).update(
+        state="responding", active_invocation_id="turn-1"
+    )
+    return environment, nudge, conversation
+
+
+class TestLeaseExpiryRaces:
+    @pytest.mark.django_db(transaction=True)
+    def test_a_renewal_landing_after_the_closers_read_leaves_a_consistent_end(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+        monkeypatch,
+    ):
+        environment, nudge, conversation = _lapsed(
+            user,
+            workspace,
+            storage,
+            "r-renew-race",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        lease = _lease_of(conversation)
+        sides = []
+
+        def renew():
+            _renewing_gateway()._renew_chat_idle_window(lease)
+
+        original = rebuild._sandbox_gone
+
+        def read_then_renew(conv, now):
+            gone = original(conv, now)
+            if connection.in_atomic_block and not sides:
+                # The closer holds its locks and has read the lease: the renewal's
+                # provider call returns, and its commit tries to land now.
+                sides.append(_Side(renew))
+                sides[0].settled()
+            return gone
+
+        monkeypatch.setattr(rebuild, "_sandbox_gone", read_then_renew)
+        callbacks = []
+        monkeypatch.setattr(
+            rebuild, "_after_close", lambda *a, **k: callbacks.append((a, k))
+        )
+
+        rebuild.check_nudges(environment.id)
+        sides[0].join()
+
+        nudge.refresh_from_db()
+        lease.refresh_from_db()
+        renewed = lease.expires_at > timezone.now()
+        if nudge.state == "failed":
+            # The close won: the renewal was refused, and the lease is not alive.
+            assert (lease.state, renewed) == ("expired", False)
+        else:
+            assert (nudge.state, lease.state, renewed) == ("running", "active", True)
+
+    @pytest.mark.django_db(transaction=True)
+    def test_a_renewal_waiting_on_the_lease_cannot_revive_it_once_the_close_commits(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+        monkeypatch,
+    ):
+        environment, nudge, conversation = _lapsed(
+            user,
+            workspace,
+            storage,
+            "r-renew-after",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        lease = _lease_of(conversation)
+        sides = []
+        original = rebuild._sandbox_gone
+
+        def read_then_renew(conv, now):
+            gone = original(conv, now)
+            if connection.in_atomic_block and not sides:
+                sides.append(
+                    _Side(lambda: _renewing_gateway()._renew_chat_idle_window(lease))
+                )
+                sides[0].settled()
+            return gone
+
+        monkeypatch.setattr(rebuild, "_sandbox_gone", read_then_renew)
+        monkeypatch.setattr(rebuild, "_after_close", lambda *a, **k: None)
+
+        rebuild.check_nudges(environment.id)
+        sides[0].join()
+
+        lease.refresh_from_db()
+        assert lease.state == "expired"
+        assert lease.expires_at <= timezone.now()
+
+    def test_a_restart_claimed_before_the_old_cleanup_runs_is_kept(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, conversation = _lapsed(
+            user,
+            workspace,
+            storage,
+            "r-claim-race",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        with django_capture_on_commit_callbacks(execute=False) as cleanup:
+            rebuild.check_nudges(environment.id)
+        nudge.refresh_from_db()
+        assert nudge.state == "failed"
+
+        claim_ref = f"pending:{uuid.uuid4()}"
+        HostedHarnessConversationLease.no_workspace_objects.update_or_create(
+            conversation=conversation,
+            defaults={
+                "attempt": None,
+                "provider_ref": claim_ref,
+                "state": "starting",
+                "expires_at": timezone.now() + timedelta(minutes=10),
+                "heartbeat_at": timezone.now(),
+            },
+        )
+        for callback in cleanup:
+            callback()
+
+        lease = _lease_of(conversation)
+        assert (lease.state, lease.provider_ref) == ("starting", claim_ref)
+        assert _names(inline, "stop_harness_nudge_sandbox") == []
+
+    @pytest.mark.django_db(transaction=True)
+    def test_the_closer_holds_the_conversation_lock(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+        monkeypatch,
+    ):
+        # The clean-up after the commit locks the conversation too; it is left out so
+        # that only the closer's own lock can make it wait.
+        monkeypatch.setattr(rebuild, "_after_close", lambda *a, **k: None)
+        environment, nudge, conversation = _lapsed(
+            user,
+            workspace,
+            storage,
+            "r-lock-held",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        with connection.cursor() as cursor:
+            cursor.execute("select pg_backend_pid()")
+            closer_pid = cursor.fetchone()[0]
+        locked = threading.Event()
+        release = threading.Event()
+        closer_done = threading.Event()
+
+        def hold():
+            with transaction.atomic():
+                HostedHarnessConversation.no_workspace_objects.select_for_update().get(
+                    id=conversation.id
+                )
+                locked.set()
+                release.wait(timeout=_WAIT_CAP_SECONDS)
+
+        def watch():
+            _wait_until(
+                lambda: closer_done.is_set() or _waits_on_a_lock(closer_pid),
+                "the closer to block on the conversation lock",
+            )
+            blocked = not closer_done.is_set()
+            release.set()
+            return blocked
+
+        holder = _Side(hold)
+        assert locked.wait(timeout=_WAIT_CAP_SECONDS)
+        watcher = _Side(watch)
+        try:
+            rebuild.check_nudges(environment.id)
+        finally:
+            closer_done.set()
+            release.set()
+        holder.join()
+        assert watcher.join() is True, "the closer never waited for the conversation"
+
+        nudge.refresh_from_db()
+        assert (nudge.state, nudge.error) == ("failed", {"code": "rebuild_stuck"})
+
+
+class TestLeaseBoundaries:
+    def _state_at(self, args, expires_before, heartbeat_age):
+        """The rebuild's state after a check with the clock fixed, and the lease
+        ``expires_before`` before it ends and last beat ``heartbeat_age`` before it."""
+        user, workspace, storage, key, auth_client, capture = args
+        environment, nudge, conversation = _lapsed(
+            user, workspace, storage, key, auth_client, capture
+        )
+        fixed = timezone.now()
+        HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation=conversation
+        ).update(expires_at=fixed - expires_before, heartbeat_at=fixed - heartbeat_age)
+        with patch("django.utils.timezone.now", return_value=fixed):
+            with capture(execute=True):
+                rebuild.check_nudges(environment.id)
+        nudge.refresh_from_db()
+        return nudge.state
+
+    def test_a_lease_that_runs_out_exactly_now_has_run_out(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        state = self._state_at(
+            (
+                user,
+                workspace,
+                storage,
+                "r-edge-expiry",
+                auth_client,
+                django_capture_on_commit_callbacks,
+            ),
+            expires_before=timedelta(0),
+            heartbeat_age=timedelta(minutes=30),
+        )
+        assert state == "failed"
+
+    def test_a_heartbeat_exactly_the_stale_age_is_not_yet_quiet(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        inline,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.services.hosted_harness_conversation import (
+            RUNTIME_STALE_SECONDS,
+        )
+
+        state = self._state_at(
+            (
+                user,
+                workspace,
+                storage,
+                "r-edge-heartbeat",
+                auth_client,
+                django_capture_on_commit_callbacks,
+            ),
+            expires_before=timedelta(minutes=1),
+            heartbeat_age=timedelta(seconds=RUNTIME_STALE_SECONDS),
+        )
+        assert state == "running"
