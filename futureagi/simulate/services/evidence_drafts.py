@@ -239,7 +239,13 @@ def land(
             )
         )
         if cases:
-            _settle(environment, cases, archive, _last_words(conversation, command))
+            _settle(
+                environment,
+                cases,
+                archive,
+                _last_words(conversation, command),
+                started=payload.get("_starting_scenarios"),
+            )
         import_id = str(payload.get("_evidence_import_id") or "")
 
         def close() -> None:
@@ -258,7 +264,11 @@ def _settle(
     cases: list[EvidenceImportCase],
     archive: bytes,
     last_words: str,
+    *,
+    started: int | None,
 ) -> None:
+    """``started`` is how many scenarios the suite the turn started from held, as
+    its command keeps it; None for a command from before it was kept."""
     files = archives.read_archive(archive)
     basis = (
         drafts.fresh_draft(environment, "environment")
@@ -283,9 +293,15 @@ def _settle(
         return
     documents = suite_documents(split.suite)
     by_token = {
-        token: document for document in documents for token in _tokens(document)
+        _token(spelling): document
+        for document in documents
+        for spelling in (
+            document.get("scenario_key"),
+            document.get("name"),
+            document.get("folder"),
+        )
+        if spelling
     }
-    taken: set[str] = set()
     for case in cases:
         key = scenario_key_for(case)
         document = by_token.get(_token(key))
@@ -293,7 +309,6 @@ def _settle(
         if document is None or proposal is None:
             _block([case], _with_reply(NO_SCENARIO, last_words))
             continue
-        taken |= _tokens(document)
         object_key = archives.suite_key(
             environment.organization_id, environment.id, proposal
         )
@@ -318,73 +333,39 @@ def _settle(
                 "updated_at",
             ]
         )
+    drafted = sum(c.status == EvidenceImportCase.Status.DRAFTED for c in cases)
+    added = None if started is None else max(0, len(documents) - started)
+    # Counts only: a scenario's name is model text written from the evidence. A
+    # turn whose reply says it drafted while its cases block shows here as
+    # scenarios added that no case took, as folders a valid index leaves out (a
+    # suite without one is read from its folders), or as nothing added at all.
     logger.info(
         "evidence_draft_landed",
         environment=str(environment.id),
-        drafted=sum(c.status == EvidenceImportCase.Status.DRAFTED for c in cases),
+        evidence_import=str(cases[0].evidence_import_id),
+        started=started,
+        scenarios=len(documents),
+        added=added,
+        unmatched=None if added is None else max(0, added - drafted),
+        unindexed=max(0, _folders(split.suite) - len(documents)),
+        drafted=drafted,
         blocked=sum(c.status == EvidenceImportCase.Status.BLOCKED for c in cases),
     )
-    # A diagnostic: run once the landing commits, so a failure loses only it.
-    transaction.on_commit(
-        lambda: _report_unmatched(environment, split.suite, taken), robust=True
+
+
+def _folders(suite: dict[str, bytes]) -> int:
+    """How many scenario folders the suite holds: each one's scenario.json, at
+    the depth suite_documents reads folders from."""
+    return sum(
+        path.count("/") == 2 and path.endswith("/scenario.json") for path in suite
     )
 
 
-def _report_unmatched(
-    environment: HostedHarnessJob, suite: dict[str, bytes], taken: set[str]
-) -> None:
-    """Warn with the keys of the scenarios the turn added to the suite it started
-    from that no case took. A builder that drafts under names of its own, or
-    leaves what it wrote out of the index (cases are matched against the index
-    alone), blocks its cases while its reply says it drafted them; these keys
-    tell that from a turn that wrote nothing. The keys are model text written
-    from the evidence, so they are redacted like the builder's reply."""
+def _scenarios_at_start(environment: HostedHarnessJob) -> int:
+    """How many scenarios the suite a drafting sandbox starts from holds: the
+    suite draft over the saved suite, as the sandbox composes its workspace."""
     basis = drafts.fresh_draft(environment, "suite") or environment.suite_version
-    started = drafts._piece_files(environment, "suite", basis) if basis else {}
-    seen = taken | {
-        token for document in _scenarios_in(started) for token in _tokens(document)
-    }
-    keys = sorted(
-        str(
-            document.get("scenario_key")
-            or document.get("name")
-            or document.get("folder")
-        )
-        for document in _scenarios_in(suite)
-        if _tokens(document) and not _tokens(document) & seen
-    )
-    if not keys:
-        return
-    found = find_pii(keys)
-    found = found if found is not None else find_pii_basic(keys)
-    logger.warning(
-        "evidence_draft_unmatched",
-        environment=str(environment.id),
-        scenarios=[redact(key, hits) for key, hits in zip(keys, found, strict=True)],
-    )
-
-
-def _scenarios_in(suite: dict[str, bytes]) -> list[dict]:
-    """The suite's scenarios: those its index lists, then each folder it leaves
-    out."""
-    indexed = suite_documents(suite)
-    listed = {token for document in indexed for token in _tokens(document)}
-    folders = suite_documents(
-        {path: data for path, data in suite.items() if path != "scenarios.json"}
-    )
-    return indexed + [one for one in folders if not _tokens(one) & listed]
-
-
-def _tokens(document: dict) -> set[str]:
-    return {
-        _token(spelling)
-        for spelling in (
-            document.get("scenario_key"),
-            document.get("name"),
-            document.get("folder"),
-        )
-        if spelling
-    }
+    return len((basis.documents or {}).get("scenarios") or []) if basis else 0
 
 
 def _added_checks(environment, basis, files, prepared) -> list[dict] | None:
@@ -585,6 +566,9 @@ def start_drafting(
                 "_origin": ORIGIN,
                 "_evidence_import_id": str(locked.id),
                 "_case_ids": [str(case.id) for case in cases],
+                # Kept now, so an edit while the turn drafts never moves what
+                # the landing counts its added scenarios against.
+                "_starting_scenarios": _scenarios_at_start(environment),
                 **({"_author_id": str(user.id)} if user is not None else {}),
             },
         )

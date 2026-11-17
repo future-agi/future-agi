@@ -109,6 +109,10 @@ def _command(environment, cases, sequence):
             "_origin": evidence_drafts.ORIGIN,
             "_evidence_import_id": str(cases[0].evidence_import_id),
             "_case_ids": [str(case.id) for case in cases],
+            # As start_drafting keeps it: the scenarios the turn starts from.
+            "_starting_scenarios": len(
+                (environment.suite_version.documents or {}).get("scenarios") or []
+            ),
         },
     )
     return conversation, command
@@ -244,13 +248,29 @@ def test_the_last_save_keeps_each_case_as_a_proposal_and_nothing_else(
     assert lease.state == HostedHarnessConversationLease.State.EXPIRED
 
 
-def test_a_scenario_drafted_under_another_name_takes_no_case_and_is_logged(
-    environment, cases, storage, django_capture_on_commit_callbacks
+COUNTS = (
+    "started",
+    "scenarios",
+    "added",
+    "unmatched",
+    "unindexed",
+    "drafted",
+    "blocked",
+)
+
+
+def _counted(logs):
+    (landed,) = [one for one in logs if one["event"] == "evidence_draft_landed"]
+    return {count: landed[count] for count in COUNTS}
+
+
+def test_the_landing_counts_what_the_turn_added_and_no_case_took(
+    environment, cases, storage
 ):
-    """The builder drafted the second case under a name of its own, and wrote one
-    more scenario folder its index leaves out: that case is blocked, and once the
-    landing commits the log names both scenarios no case took. The suite the turn
-    started from and the drafted case are never reported."""
+    """The builder drafted the second case under a name of its own and wrote one
+    more folder its index leaves out. The landing counts against the suite the
+    turn started from (2 scenarios): 2 added, 1 that no case took, 1 folder out
+    of the index."""
     conversation, command = _command(environment, cases, 13)
     key_one = evidence_drafts.scenario_key_for(cases[0])
     unindexed = {
@@ -267,36 +287,65 @@ def test_a_scenario_drafted_under_another_name_takes_no_case_and_is_logged(
     )
     _end_turn(conversation, command, said="Drafted regression scenarios for both.")
 
-    with capture_logs() as logs, django_capture_on_commit_callbacks(execute=True):
+    with capture_logs() as logs:
         _promote(conversation, command, key, digest, 13)
 
     assert [c.status for c in _refreshed(cases)] == ["drafted", "blocked"]
-    assert [
-        one["scenarios"] for one in logs if one["event"] == "evidence_draft_unmatched"
-    ] == [["cancel-far-ahead-fee", "written_not_indexed"]]
+    assert _counted(logs) == {
+        "started": 2,
+        "scenarios": 4,
+        "added": 2,
+        "unmatched": 1,
+        "unindexed": 1,
+        "drafted": 1,
+        "blocked": 1,
+    }
 
 
-def test_a_failed_report_never_undoes_the_landing(
-    environment, cases, storage, django_capture_on_commit_callbacks
+def test_an_edit_during_the_turn_never_moves_its_start(
+    environment, cases, storage, user
 ):
-    """The report reads the suite the turn started from after the landing commits:
-    when that read fails, only the warning is lost."""
+    """The count the turn started from is kept on its command: someone's suite
+    edit while it drafts (a scenario dropped) changes nothing it reports."""
     conversation, command = _command(environment, cases, 14)
-    key_one = evidence_drafts.scenario_key_for(cases[0])
-    key, digest = _save(
-        conversation, command, storage, [key_one, "cancel_far_ahead_fee"]
-    )
+    _other_edit(environment, user)
+    key, digest = _save(conversation, command, storage, ["cancel_far_ahead_fee"])
     _end_turn(conversation, command)
+
+    with capture_logs() as logs:
+        _promote(conversation, command, key, digest, 14)
+
+    assert {k: v for k, v in _counted(logs).items() if k in ("started", "added")} == {
+        "started": 2,
+        "added": 1,
+    }
+
+
+@pytest.mark.parametrize("analyzer", ["missing", "finds nothing"])
+def test_the_landing_logs_no_name_the_builder_wrote(
+    environment, cases, storage, analyzer, django_capture_on_commit_callbacks
+):
+    """Scenario names are model text written from the evidence: no log line of a
+    landing carries one, whatever the redaction analyzer finds."""
+    conversation, command = _command(environment, cases, 15)
+    key, digest = _save(
+        conversation,
+        command,
+        storage,
+        ["refund_for_jane_doe", "call_back_jane_doe_at_example_com"],
+    )
+    _end_turn(conversation, command, said="Drafted both.")
+    found = None if analyzer == "missing" else [[], []]
 
     with (
         capture_logs() as logs,
-        patch.object(drafts, "_piece_files", side_effect=RuntimeError("gone")),
+        patch.object(evidence_drafts, "find_pii", return_value=found),
         django_capture_on_commit_callbacks(execute=True),
     ):
-        _promote(conversation, command, key, digest, 14)
+        _promote(conversation, command, key, digest, 15)
 
-    assert [c.status for c in _refreshed(cases)] == ["drafted", "blocked"]
-    assert not [one for one in logs if one["event"] == "evidence_draft_unmatched"]
+    assert [c.status for c in _refreshed(cases)] == ["blocked", "blocked"]
+    assert "jane" not in json.dumps(logs, default=str).lower()
 
 
 def test_an_injected_environment_change_keeps_nothing(environment, cases, storage):
