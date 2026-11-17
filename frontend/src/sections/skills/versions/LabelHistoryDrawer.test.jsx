@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, renderWithRouter, screen, waitFor } from "src/utils/test-utils";
 import axios from "src/utils/axios";
 import { endpoints } from "src/api/skills/endpoints";
-import LabelHistoryDrawer from "./LabelHistoryDrawer";
+import LabelHistoryDrawer, { howItWentHref } from "./LabelHistoryDrawer";
+import { setSkillTracesOverride } from "src/sections/skills/runtime/skillTracesFlag";
 
 vi.mock("src/utils/axios", () => ({ default: { get: vi.fn() } }));
 vi.mock("src/auth/hooks", () => ({ useAuthContext: () => ({ authenticated: true, user: { id: "reviewer" } }) }));
@@ -103,5 +104,29 @@ describe("LabelHistoryDrawer", () => {
     show({}, `/?state=${state}`);
     const text = { loading: "Loading label history", error: "Couldn't load label history.", empty: "No label changes yet" };
     expect(state === "loading" ? screen.getByRole("progressbar", { name: text[state] }) : screen.getByText(text[state])).toBeInTheDocument();
+  });
+
+  describe("How it went (skillTraces)", () => {
+    afterEach(() => setSkillTracesOverride(null));
+
+    it("links a production move that names its event to the move card", () => {
+      expect(howItWentHref("skill-1", { label: "production", toVersion: 2, eventId: "event-1" })).toBe("/dashboard/skills/skill-1?tab=runtime&move=event-1&window=24h");
+      expect(howItWentHref("skill-1", { label: "production", toVersion: 2, id: "event-2" })).toBe("/dashboard/skills/skill-1?tab=runtime&move=event-2&window=24h");
+      expect(howItWentHref("skill-1", { label: "staging", toVersion: 2, eventId: "event-1" })).toBeNull();
+      expect(howItWentHref("skill-1", { label: "production", toVersion: null, eventId: "event-1" })).toBeNull();
+      expect(howItWentHref("skill-1", { label: "production", toVersion: 2 })).toBeNull();
+    });
+
+    it("adds nothing with the flag off, and nothing while history rows carry no event id", async () => {
+      setSkillTracesOverride(false);
+      const view = show({ label: "production" });
+      await screen.findByText("production: v1 → v2");
+      expect(screen.queryByRole("link", { name: "How it went" })).not.toBeInTheDocument();
+      view.unmount();
+      setSkillTracesOverride(true);
+      show({ label: "production" });
+      await screen.findByText("production: v1 → v2");
+      expect(screen.queryByRole("link", { name: "How it went" })).not.toBeInTheDocument();
+    });
   });
 });

@@ -27,7 +27,7 @@ const listeners = new Set();
 
 function buildSetting() {
   try {
-    const value = import.meta.env?.VITE_SKILL_TRACES;
+    const value = import.meta.env.VITE_SKILL_TRACES;
     return ON_VALUES.has(String(value ?? "").trim().toLowerCase());
   } catch {
     return false;

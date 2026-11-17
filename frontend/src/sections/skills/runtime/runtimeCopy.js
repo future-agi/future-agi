@@ -12,7 +12,8 @@ export const formatCount = (value) =>
 export const formatPercent = (rate) => {
   if (rate === null || rate === undefined || !Number.isFinite(Number(rate))) return "—";
   const value = Number(rate) * 100;
-  return `${value === 0 || value >= 10 ? value.toFixed(0) : value.toFixed(1)}%`;
+  const rounded = value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
+  return `${rounded}%`;
 };
 export const formatMs = (ms) => {
   if (ms === null || ms === undefined || !Number.isFinite(Number(ms))) return "—";

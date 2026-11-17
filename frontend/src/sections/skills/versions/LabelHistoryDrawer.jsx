@@ -20,7 +20,7 @@ import useLabelHistoryPage from "./useLabelHistoryPage";
 // skillTraces on, a production move that names its event links to the move
 // card. The label-history response carries no event id yet (LabelEvent
 // serializer and mapLabelEvent), so the link appears only once it does.
-function howItWentHref(skillId, event) {
+export function howItWentHref(skillId, event) {
   const eventId = event.eventId ?? event.id;
   if (event.label !== "production" || event.toVersion == null || !eventId) return null;
   return runtimeTabUrl({ id: skillId, eventId, window: "24h" });
