@@ -469,7 +469,7 @@ const BatchJobsTab = ({ config, gatewayId }) => {
                 sx={{
                   "& .MuiInputBase-input": {
                     fontFamily: "monospace",
-                    fontSize: "13px",
+                    fontSize: "12px",
                   },
                 }}
               />

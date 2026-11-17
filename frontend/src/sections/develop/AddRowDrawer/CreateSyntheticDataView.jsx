@@ -28,6 +28,7 @@ import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import PropTypes from "prop-types";
 
 import { getSyntheticDefaultValues } from "./CreateSyntheticData/common";
+import { syntheticDataEventFields } from "./syntheticDataEventFields";
 import CreateSyntheticDatasetOptionModal from "./EditSyntheticData/CreateSyntheticDatasetOptionModal";
 import { useEditSyntheticDataStore } from "./EditSyntheticData/state";
 import { useDatasetOriginStore } from "../../develop-detail/states";
@@ -308,10 +309,10 @@ const CreateSyntheticDataView = ({
     }
 
     trackEvent(Events.createSyntheticDatasetClicked, {
-      [PropertyName.formFields]: {
-        ...payload,
-        ...(kb_id && { knowledgeBaseName: selectedKB }),
-      },
+      [PropertyName.formFields]: syntheticDataEventFields(payload, {
+        editMode,
+        datasetId: editMode ? dataset : undefined,
+      }),
     });
     setProcessingComplete(false);
 

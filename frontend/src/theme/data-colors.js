@@ -4,6 +4,15 @@
 
 export const seriesColors = (theme) => theme.palette.data;
 
+// Quieter single-family alternative: eight shades of the brand purple
+// (theme.palette.dataMono), for categorical charts such as cost by group.
+export const monoSeriesColors = (theme) => theme.palette.dataMono;
+
+// A readable label colour for text drawn on each of `colors`, e.g. bar data
+// labels.
+export const seriesLabelColors = (theme, colors) =>
+  colors.map((color) => theme.palette.getContrastText(color));
+
 /** The colour for series `index`, wrapping after the palette's length. */
 export const seriesColor = (theme, index) => {
   const palette = seriesColors(theme);

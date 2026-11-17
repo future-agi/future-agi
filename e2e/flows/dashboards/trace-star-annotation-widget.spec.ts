@@ -598,7 +598,11 @@ test('DASH-E2E-011: a saved trace annotation widget retains star ratings', {
         await page.getByPlaceholder('Untitled widget').press('Enter');
         await page.getByRole('combobox').filter({ hasText: 'Line' }).click(); await page.getByRole('option', { name: 'Table', exact: true }).click();
         await page.getByText('7D', { exact: true }).click(); await page.getByRole('combobox').filter({ hasText: 'Day' }).click();
-        await page.getByRole('option', { name: 'Day', exact: true }).click();
+        // MUI Grow moves the option during entry; activate it without pointer coordinates.
+        const dayOption = page.getByRole('listbox').getByRole('option', { name: 'Day', exact: true });
+        await dayOption.focus(); await dayOption.press('Enter');
+        await uiExpect(page.getByRole('combobox').filter({ hasText: 'Day' })).toHaveText('Day');
+        await uiExpect(page.getByRole('listbox')).toHaveCount(0);
       }, { timeout: UI_READY });
 
       await test.step('3 discover star annotation and Traces with exact scope', async () => {

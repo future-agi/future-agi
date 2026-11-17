@@ -78,7 +78,7 @@ export default function EmptyContent({
         <Typography
           component="span"
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             lineHeight: "20px",
             fontWeight: 600,
             color: "text.primary",

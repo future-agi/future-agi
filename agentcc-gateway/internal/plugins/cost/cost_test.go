@@ -507,8 +507,8 @@ func TestProcessResponse_KnownModel_NotMarkedUnpriced(t *testing.T) {
 
 	p.ProcessResponse(context.Background(), rc)
 
-	if got, ok := rc.Metadata["cost_source"]; ok {
-		t.Fatalf("priced model got cost_source=%q", got)
+	if got := rc.Metadata["cost_source"]; got != CostSourceCatalogue {
+		t.Fatalf("priced model got cost_source=%q, want %q", got, CostSourceCatalogue)
 	}
 }
 
@@ -666,8 +666,8 @@ func TestProcessResponse_PricedAudio_NotMarkedUnpriced(t *testing.T) {
 			if got := rc.Metadata["cost"]; got != tc.want {
 				t.Fatalf("Metadata[cost] = %q, want %q", got, tc.want)
 			}
-			if got, ok := rc.Metadata["cost_source"]; ok {
-				t.Fatalf("priced model got cost_source=%q", got)
+			if got := rc.Metadata["cost_source"]; got != CostSourceCatalogue {
+				t.Fatalf("priced model got cost_source=%q, want %q", got, CostSourceCatalogue)
 			}
 		})
 	}
@@ -777,5 +777,32 @@ func TestCostPlugin_DecisionOrgPricingByProviderQualifiedID(t *testing.T) {
 	p.ProcessResponse(context.Background(), rc)
 	if rc.Metadata["cost"] != "2.000000" || rc.Metadata["cost_source"] != "org_custom" {
 		t.Fatalf("cost = %q source = %q", rc.Metadata["cost"], rc.Metadata["cost_source"])
+	}
+}
+
+// A caller sending an entry's bare configured name is charged the
+// provider-qualified id's org price, which is the one GET /v1/decisions/models
+// lists, even when the bare name has a price of its own.
+func TestCostPlugin_DecisionOrgPricingBareCallerPrefersListedID(t *testing.T) {
+	for provider, bare := range map[string]string{"typesafe": "jev-1.13.0", "openrouter": "typesafe/jev-1.13"} {
+		t.Run(provider, func(t *testing.T) {
+			db := modeldb.New(modeldb.BundledModels, nil)
+			store := tenant.NewStore()
+			store.Set("org-1", &tenant.OrgConfig{CostTracking: &tenant.CostTrackingConfig{
+				Enabled: true,
+				CustomPricing: map[string]*tenant.CustomPricing{
+					bare:                  {InputPerMTok: 0.7},
+					provider + "/" + bare: {InputPerMTok: 0.9},
+				},
+			}})
+			p := New(true, func() *modeldb.ModelDB { return db }, store, nil)
+			rc := decisionRC(bare, bare, bare, 1_000_000, 0)
+			rc.Provider = provider
+			rc.Metadata[tenant.MetadataKeyOrgID] = "org-1"
+			p.ProcessResponse(context.Background(), rc)
+			if rc.Metadata["cost"] != "0.900000" || rc.Metadata["cost_source"] != "org_custom" {
+				t.Fatalf("cost = %q source = %q, want the listed 0.900000", rc.Metadata["cost"], rc.Metadata["cost_source"])
+			}
+		})
 	}
 }
