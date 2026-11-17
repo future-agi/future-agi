@@ -4,19 +4,21 @@ import { evidenceOutcome } from '../utils/review-display';
 // URL refs are hints, never authority: resolve annotation revisions from current
 // authorized options. Private, expired, wrong-candidate and wrong-target results
 // are never attached implicitly. A carried result wins over any suggestion.
+//
+// UXF-17: without a carried result, suggest only the newest settled Application
+// test that matches the target, never the weaker Answer check. A private
+// carried result is not returned here: the composer pre-ticks it and attaches
+// it only after the person confirms sharing it.
 export function suggestedEvidence(evidence, packet, carried = [], now = Date.now()) {
   const eligible = evidence.filter((ref) => !evidenceProblems(ref, packet, now).length);
   if (carried.length) return eligible.filter((ref) => carried.includes(evidenceKey(ref))).map(evidenceSelection);
-  return ['simulation_native', 'skills_text'].flatMap((source) => {
-    const records = eligible.filter((ref) => {
-      const outcome = evidenceOutcome(ref);
-      return ref.source === source && ref.status === 'completed' && outcome && outcome.status !== 'unknown';
-    });
-    const passed = records.filter((ref) => ['pass', 'passed'].includes(evidenceOutcome(ref)?.status));
-    const ranked = passed.length ? passed : records;
-    if (ranked.length === 1) return [evidenceSelection(ranked[0])];
-    // Missing timestamps cannot establish the latest among equal outcomes.
-    if (!ranked.length || ranked.some((ref) => !Number.isFinite(Date.parse(ref.completedAt)))) return [];
-    return [evidenceSelection([...ranked].sort((a, b) => Date.parse(b.completedAt) - Date.parse(a.completedAt))[0])];
+  // Eligibility already requires the run's configuration to match the target.
+  const records = eligible.filter((ref) => {
+    const outcome = evidenceOutcome(ref);
+    return ref.source === 'simulation_native' && ref.status === 'completed' && outcome && outcome.status !== 'unknown';
   });
+  if (records.length === 1) return [evidenceSelection(records[0])];
+  // Missing timestamps cannot establish which run is the newest.
+  if (!records.length || records.some((ref) => !Number.isFinite(Date.parse(ref.completedAt)))) return [];
+  return [evidenceSelection([...records].sort((a, b) => Date.parse(b.completedAt) - Date.parse(a.completedAt))[0])];
 }
