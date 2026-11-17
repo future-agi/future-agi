@@ -605,7 +605,9 @@ class TestResponseContract:
         )
         definitions = json.loads(swagger_path.read_text())["definitions"]
         observe = definitions["ObserveGraphDataResult"]["properties"]
-        assert observe["metric_statistic"]["enum"] == list(METRIC_STATISTIC_CHOICES)
+        # Skill-version cohorts publish exact root p95; ordinary Observe and
+        # the project chart bundle retain their existing mean-latency contract.
+        assert observe["metric_statistic"]["enum"] == [*METRIC_STATISTIC_CHOICES, "p95"]
         project = definitions["ProjectGraphDataResult"]["properties"]
         assert project["system_metric_statistics"]["additionalProperties"][
             "enum"

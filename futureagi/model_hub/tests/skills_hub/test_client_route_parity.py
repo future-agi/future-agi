@@ -62,8 +62,23 @@ def test_unknown_path_parameters_are_not_silently_substituted():
         concrete_path(PREFIX + "{unknown}/")
 
 
+def client_sources(directory):
+    # Negative contract fixtures deliberately name unmounted historical routes.
+    # Audit shipped registrations, not strings in the tests of those registrations.
+    return sorted(
+        source for source in directory.glob("*.js")
+        if not source.name.endswith((".test.js", ".spec.js"))
+    )
+
+
+def test_client_source_scan_excludes_negative_test_fixtures(tmp_path):
+    for name in ("endpoints.js", "runtime.js", "endpoints.test.js", "runtime.spec.js"):
+        (tmp_path / name).write_text("")
+    assert [source.name for source in client_sources(tmp_path)] == ["endpoints.js", "runtime.js"]
+
+
 def test_every_frontend_skills_registration_is_mounted():
-    files = sorted((ROOT / "frontend/src/api/skills").glob("*.js"))
+    files = client_sources(ROOT / "frontend/src/api/skills")
     assert files, "The frontend client sources must be present for this gate."
     templates = {
         template
