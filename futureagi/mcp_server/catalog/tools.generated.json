@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "952e01345cb2c1795cfe818ed20fa3f57e2cee22c18490caaaa8cfb09f2a9f8f",
+  "source_contract_sha256": "4f789a97aa2b00cd98cb4e2e60d2571ff7b4e18b4de77dd4ecf0568e768a9f3d",
   "tool_count": 111,
   "tools": [
     {
@@ -4660,30 +4660,6 @@
               }
             ]
           },
-          "start_time": {
-            "anyOf": [
-              {
-                "title": "Start time",
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "end_time": {
-            "anyOf": [
-              {
-                "title": "End time",
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "evals_details": {
             "anyOf": [
               {
@@ -4999,8 +4975,6 @@
             "run_type",
             "row_type",
             "status",
-            "start_time",
-            "end_time",
             "evals_details",
             "evals",
             "failed_spans"

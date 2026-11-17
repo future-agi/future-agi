@@ -68037,8 +68037,6 @@ export const TracerEvalTaskCreateBody = zod.object({
   status: zod
     .enum(["pending", "running", "completed", "failed", "paused", "deleted"])
     .optional(),
-  start_time: zod.string().datetime({ offset: true }).optional(),
-  end_time: zod.string().datetime({ offset: true }).optional(),
   evals_details: zod.object({}).passthrough().optional(),
   evals: zod.array(zod.string().uuid()),
   failed_spans: zod.object({}).passthrough().optional(),
@@ -72893,8 +72891,6 @@ export const TracerEvalTaskUpdateBody = zod.object({
   status: zod
     .enum(["pending", "running", "completed", "failed", "paused", "deleted"])
     .optional(),
-  start_time: zod.string().datetime({ offset: true }).optional(),
-  end_time: zod.string().datetime({ offset: true }).optional(),
   evals_details: zod.object({}).passthrough().optional(),
   evals: zod.array(zod.string().uuid()),
   failed_spans: zod.object({}).passthrough().optional(),
@@ -74007,8 +74003,6 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
   status: zod
     .enum(["pending", "running", "completed", "failed", "paused", "deleted"])
     .optional(),
-  start_time: zod.string().datetime({ offset: true }).optional(),
-  end_time: zod.string().datetime({ offset: true }).optional(),
   evals_details: zod.object({}).passthrough().optional(),
   evals: zod.array(zod.string().uuid()),
   failed_spans: zod.object({}).passthrough().optional(),
