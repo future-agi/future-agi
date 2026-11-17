@@ -1,22 +1,61 @@
-import { useEffect } from "react";
-import { Box, Stack, Tab, Tabs, Typography } from "@mui/material";
+import { useEffect, useState } from "react";
+import { Box, Button, Stack, Tab, Tabs, Typography } from "@mui/material";
+import Iconify from "src/components/iconify";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import useEnvironmentsTab from "./hooks/useEnvironmentsTab";
 import { resetEnvironmentsEntryState } from "./store/useEnvironmentsStore";
-import BuildEnvironmentTab from "./BuildEnvironmentTab";
 import MyEnvironmentsTab from "./MyEnvironmentsTab";
+import { useMyEnvironments } from "src/api/simulate-environments/environments";
+import { DEFAULT_PAGE_SIZE } from "./myEnvironments.constants";
 import PersonasTab from "./PersonasTab";
+import BuildEnvironmentDrawer from "./buildDrawer/BuildEnvironmentDrawer";
 import { ENTRY_TAB, ENVIRONMENTS_HEADER } from "./environmentOptions";
 
 const TAB_PANELS = {
-  [ENTRY_TAB.BUILD]: BuildEnvironmentTab,
   [ENTRY_TAB.MY]: MyEnvironmentsTab,
   [ENTRY_TAB.PERSONAS]: PersonasTab,
 };
 
+// "My Environments 37": how many there are in all, from the unfiltered first
+// page. It shares the list's query while the list shows that page; on a
+// filtered or later page, or on Personas, it is its own request and polls
+// like the list while anything is building.
+function MyEnvironmentsLabel() {
+  const { data, isSuccess } = useMyEnvironments({
+    page: 0,
+    pageSize: DEFAULT_PAGE_SIZE,
+  });
+  return (
+    <Stack direction="row" alignItems="center" spacing={0.75} component="span">
+      <span>My Environments</span>
+      {isSuccess && (
+        <Box
+          component="span"
+          sx={{
+            typography: "s2",
+            color: "text.secondary",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {data?.total ?? 0}
+        </Box>
+      )}
+    </Stack>
+  );
+}
+
 export default function EnvironmentsHome() {
-  const { tab, setTab } = useEnvironmentsTab();
+  const { tab, setTab, opensBuild } = useEnvironmentsTab();
   const TabPanel = TAB_PANELS[tab];
+  const [buildOpen, setBuildOpen] = useState(opensBuild);
+
+  // A link to the old Build tab opens the drawer over My Environments.
+  useEffect(() => {
+    if (!opensBuild) return;
+    setBuildOpen(true);
+    setTab(ENTRY_TAB.MY);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opensBuild]);
 
   const onTabChange = (next) => {
     // Keeps the event the old Personas menu item fired.
@@ -28,7 +67,7 @@ export default function EnvironmentsHome() {
     setTab(next);
   };
 
-  // The draft must survive the hop to the build page, so the matrix starts clean
+  // The draft must survive the hop to the workspace, so each visit starts clean
   // on mount instead of clearing on unmount. Only the entry/build slice is
   // cleared — adopted workspaces persist.
   useEffect(() => {
@@ -36,7 +75,15 @@ export default function EnvironmentsHome() {
   }, []);
 
   return (
-    <Box sx={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
+    <Box
+      sx={{
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        overflow: "hidden",
+      }}
+    >
       <Stack
         direction={{ xs: "column", sm: "row" }}
         justifyContent="space-between"
@@ -44,7 +91,13 @@ export default function EnvironmentsHome() {
         spacing={2}
         sx={{ px: 2, pt: 2, pb: 1.5, flexShrink: 0 }}
       >
-        <Stack direction="row" alignItems="flex-start" spacing={1.5} flex={1} minWidth={0}>
+        <Stack
+          direction="row"
+          alignItems="flex-start"
+          spacing={1.5}
+          flex={1}
+          minWidth={0}
+        >
           <Box>
             <Typography sx={{ typography: "m1", fontWeight: 600 }}>
               {ENVIRONMENTS_HEADER.title}
@@ -54,18 +107,41 @@ export default function EnvironmentsHome() {
             </Typography>
           </Box>
         </Stack>
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
+          onClick={() => setBuildOpen(true)}
+          sx={{ flexShrink: 0 }}
+        >
+          Build environment
+        </Button>
       </Stack>
 
       {/* Tab rail — the theme's tabs, unstyled, over one divider. */}
-      <Box sx={{ px: 2, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
-        <Tabs sx={{ boxShadow: "none" }} value={tab} onChange={(_, v) => onTabChange(v)}>
-          <Tab value={ENTRY_TAB.BUILD} disableRipple label="Build environment" />
-          <Tab value={ENTRY_TAB.MY} disableRipple label="My Environments" />
+      <Box
+        sx={{ px: 2, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
+      >
+        <Tabs
+          sx={{ boxShadow: "none" }}
+          value={tab}
+          onChange={(_, v) => onTabChange(v)}
+        >
+          <Tab
+            value={ENTRY_TAB.MY}
+            disableRipple
+            label={<MyEnvironmentsLabel />}
+          />
           <Tab value={ENTRY_TAB.PERSONAS} disableRipple label="Personas" />
         </Tabs>
       </Box>
 
-      <TabPanel />
+      <TabPanel onBuild={() => setBuildOpen(true)} />
+      <BuildEnvironmentDrawer
+        open={buildOpen}
+        onClose={() => setBuildOpen(false)}
+      />
     </Box>
   );
 }
