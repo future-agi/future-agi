@@ -16,8 +16,10 @@ import TestCaseEditor from "./TestCaseEditor";
 import TestRunSetup from "./TestRunSetup";
 import TestRunResults from "./TestRunResults";
 import TestAttemptDrawer from "./TestAttemptDrawer";
-import TestEvidence from "./TestEvidence";
+import TestEvidence, { evidenceSummary } from "./TestEvidence";
 import EditorTestsPanel from "./EditorTestsPanel";
+import TestInventoryReview, { centsUp, providerName, sendSentence } from "./TestInventoryReview";
+import { RETIRED_TERMS } from "../utils/terms";
 
 const api = vi.hoisted(() => ({
   scope: {},
@@ -405,27 +407,18 @@ const configure = async () => {
     target: { value: "1.00" },
   });
 };
+// UXF-03: the two file statements and provider consent are one tick.
+const SEND = /^Send (this file|these \d+ files) and 1 test case to Fixture, up to \$\d+\.\d{2}\. (It contains|They contain) no answer keys or grading material\.$/;
 const reviewPlan = async () => {
   fireEvent.click(
     screen.getByRole("button", { name: "Preview work and spend" }),
   );
   await screen.findByText("Confirm the reviewed plan");
-  fireEvent.click(
-    screen.getByLabelText(
-      "The files sent to the model contain no answer keys or grading material.",
-    ),
-  );
-  fireEvent.click(
-    screen.getByLabelText(
-      "I reviewed every file and input that will be sent to the model.",
-    ),
-  );
-  fireEvent.click(
-    screen.getByLabelText(
-      "Send the reviewed files and example inputs to these model providers within this spend stop",
-    ),
-  );
+  fireEvent.click(screen.getByLabelText(SEND));
 };
+// The visible sub-tab panel (Results, Run a test or Cases).
+const openTab = (name) => fireEvent.click(screen.getByRole("tab", { name }));
+const visiblePanel = () => screen.getByRole("tabpanel");
 const setup = (props = {}) => (
   <TestRunSetup
     skill={api.skill}
@@ -505,6 +498,11 @@ describe("reviewed examples", () => {
   it("shows the first-run action and starters that match the skill, without paid work", () => {
     api.suite.data.cases = [];
     mount(<TestsTab skill={skill} />);
+    // Results is the default and leads to Cases while there is nothing to run.
+    expect(screen.getByRole("tab", { name: "Results" })).toHaveAttribute("aria-selected", "true");
+    expect(within(visiblePanel()).getByText("No test runs yet")).toBeVisible();
+    fireEvent.click(within(visiblePanel()).getByRole("button", { name: "Add test cases" }));
+    expect(screen.getByRole("tab", { name: "Cases" })).toHaveAttribute("aria-selected", "true");
     expect(
       screen.getByText("Does this skill handle your real requests?"),
     ).toBeInTheDocument();
@@ -630,8 +628,9 @@ describe("reviewed examples", () => {
   it("preserves edited input after suite CAS rejection", async () => {
     api.saveSuite.mockRejectedValue({ code: "test_suite_conflict" });
     mount(<TestsTab skill={skill} />);
+    openTab("Cases");
     fireEvent.click(screen.getByLabelText("Actions for Eligible refund"));
-    fireEvent.click(screen.getByText("Review or edit test case"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit test case" }));
     fireEvent.change(screen.getByLabelText("Request"), {
       target: { value: "Keep my unsaved request" },
     });
@@ -650,13 +649,16 @@ describe("reviewed examples", () => {
         `/dashboard/skills/skill?tab=tests&state=${state}`,
       );
       expect(api.create).not.toHaveBeenCalled();
+      // The tab strip stays in every state; the state shows inside Cases (and Run a test).
+      expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Results", "Run a test", "Cases"]);
+      openTab("Cases");
       if (state === "loading")
         expect(
-          screen.getByRole("progressbar", { name: "Loading skill tests" }),
+          within(visiblePanel()).getByRole("progressbar", { name: "Loading skill tests" }),
         ).toBeInTheDocument();
       else
         expect(
-          screen.getByText(
+          within(visiblePanel()).getByText(
             state === "error"
               ? "Could not load saved test cases"
               : "Does this skill handle your real requests?",
@@ -666,6 +668,7 @@ describe("reviewed examples", () => {
   );
   it("clears private editor form state when the principal changes", () => {
     const view = mount(<TestsTab skill={skill} />);
+    openTab("Cases");
     fireEvent.click(screen.getByRole("button", { name: "Add test case" }));
     fireEvent.change(screen.getByLabelText("Request"), {
       target: { value: "Private unsaved text" },
@@ -806,7 +809,9 @@ describe("reviewed run setup", () => {
     expect(screen.queryByText(/fixture-prices/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Technical details" }));
     expect(screen.getByText("Price source: fixture-prices")).toBeInTheDocument();
-    expect(screen.getByText(/Exact upper-bound estimate: USD 0\.23869440/)).toBeInTheDocument();
+    expect(screen.getByText(/Upper-bound estimate: USD 0\.23869440/)).toBeInTheDocument();
+    // The one send tick names the rounded-up ceiling.
+    expect(screen.getByLabelText(SEND)).toHaveAccessibleName(expect.stringContaining("up to $0.24"));
   });
   it("retains the idempotency key after capacity rejection when retrying the same plan", async () => {
     api.create.mockRejectedValueOnce({
@@ -1158,8 +1163,8 @@ describe("truthful result evidence", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/Task model: historical-task-2025/)).toBeInTheDocument();
     expect(screen.queryByText(/harness-recorded/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Technical details" }));
-    expect(screen.getByText(/harness-recorded/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Test runner versions" }));
+    expect(screen.getByText(/Test runner harness-recorded/)).toBeInTheDocument();
   });
   it("shows run costs as money for people and keeps the exact estimate on hover", () => {
     api.run.data.metrics = {
@@ -1426,8 +1431,8 @@ it("shows a missing allowance before consent and disables the paid run with its 
     expect(screen.getByRole("button", { name: "Copy request for admin" })).toHaveClass("MuiButton-outlined");
     await configure();
     await reviewPlan();
-    // The provider acknowledgment covers this run's spend, so it is held back (and was not ticked by reviewPlan).
-    const consent = screen.getByLabelText("Send the reviewed files and example inputs to these model providers within this spend stop");
+    // The send tick covers this run's spend, so it is held back (and was not ticked by reviewPlan).
+    const consent = screen.getByLabelText(SEND);
     expect(consent).toBeDisabled();
     expect(consent).not.toBeChecked();
     expect(consent).toHaveAccessibleDescription("Set an allowance first");
@@ -1468,7 +1473,7 @@ it("brings the provider acknowledgment back unticked once an allowance exists", 
     const view = mount(setup());
     await configure();
     await reviewPlan();
-    const label = "Send the reviewed files and example inputs to these model providers within this spend stop";
+    const label = SEND;
     expect(screen.getByLabelText(label)).toBeDisabled();
     api.spend = { data: { enabled: true, periodLimitUsd: "20.00" } };
     view.rerender(<MemoryRouter initialEntries={["/dashboard/skills/skill?tab=tests"]}>{setup()}</MemoryRouter>);
@@ -1499,4 +1504,190 @@ it("links Set allowance back to the blocked test so the admin can return after s
     accessOverride.value = null;
     window.history.pushState({}, "", "/");
   }
+});
+
+// ---- UXF1 (SKILL-TRACES §16 UXF-03, UXF-04, UXF-11, UXF-12, UXF-14) ----
+const visibleText = () => [...document.body.querySelectorAll("*")]
+  .filter((element) => !element.closest("[hidden]") && element.children.length === 0)
+  .map((element) => element.textContent)
+  .join(" ");
+
+describe("skill Tests sub-tabs", () => {
+  it("shows Results, Run a test and Cases in that order, with Results first, in every state", () => {
+    for (const entry of [
+      "/dashboard/skills/skill?tab=tests",
+      "/dashboard/skills/skill?tab=tests&state=loading",
+      "/dashboard/skills/skill?tab=tests&state=error",
+      "/dashboard/skills/skill?tab=tests&state=empty",
+      `/dashboard/skills/skill?tab=tests&run=${ids.run}`,
+    ]) {
+      mount(<TestsTab skill={skill} />, entry);
+      expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Results", "Run a test", "Cases"]);
+      expect(screen.getByRole("tab", { name: "Results" })).toHaveAttribute("aria-selected", "true");
+      cleanup();
+    }
+  });
+  it("puts the latest result and History in Results, the setup in Run a test and the table in Cases", () => {
+    mount(<TestsTab skill={skill} />, `/dashboard/skills/skill?tab=tests&run=${ids.run}`);
+    expect(within(visiblePanel()).getByText("Expectations met on these test cases.")).toBeVisible();
+    expect(within(visiblePanel()).getByText("History")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Preview work and spend" })).not.toBeInTheDocument();
+    fireEvent.click(within(visiblePanel()).getByRole("button", { name: "Run a test" }));
+    expect(screen.getByRole("tab", { name: "Run a test" })).toHaveAttribute("aria-selected", "true");
+    expect(within(visiblePanel()).getByRole("button", { name: "Preview work and spend" })).toBeVisible();
+    expect(within(visiblePanel()).getByRole("checkbox", { name: `Select ${testCase.title}` })).toBeChecked();
+    openTab("Cases");
+    expect(within(visiblePanel()).getByRole("table", { name: "Saved test cases" })).toBeVisible();
+  });
+  it("keeps the run setup mounted while another tab is open", async () => {
+    mount(<TestsTab skill={skill} />);
+    openTab("Run a test");
+    await configure();
+    openTab("Cases");
+    openTab("Run a test");
+    expect(screen.getByLabelText("Estimated-cost stop (USD)")).toHaveValue("1.00");
+  });
+  it("opens a test case from its row, with Edit and Remove in the row's ⋯", () => {
+    mount(<TestsTab skill={skill} />);
+    openTab("Cases");
+    const row = within(visiblePanel()).getByRole("row", { name: /Eligible refund/ });
+    fireEvent.click(within(row).getByLabelText("Actions for Eligible refund"));
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Edit test case", "Remove test case"]);
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+    fireEvent.click(within(row).getByText("Eligible refund"));
+    expect(screen.getByLabelText("Request")).toHaveValue(testCase.prompt);
+  });
+  it("calls test cases Approved or Needs approval, never Reviewed or Needs review", () => {
+    api.suite.data.cases = [testCase, { ...testCase, id: "draft-case", title: "Unapproved", reviewed: false }];
+    mount(<TestsTab skill={skill} />);
+    openTab("Cases");
+    const table = within(visiblePanel()).getByRole("table", { name: "Saved test cases" });
+    expect(within(table).getByText("Approved")).toBeVisible();
+    expect(within(table).getByText("Needs approval")).toBeVisible();
+    expect(within(table).queryByText("Reviewed")).not.toBeInTheDocument();
+    const text = visibleText();
+    for (const term of RETIRED_TERMS) expect(text).not.toContain(term);
+  });
+});
+
+describe("one send tick (UXF-03)", () => {
+  const sendBoxes = () => screen.getAllByRole("checkbox").filter((box) => /^Send /.test(box.closest("label")?.textContent || ""));
+  it("asks one tick for saved test cases and sends every server field bound to the preview", async () => {
+    const onStarted = vi.fn();
+    mount(setup({ onStarted }));
+    await configure();
+    fireEvent.click(screen.getByRole("button", { name: "Preview work and spend" }));
+    await screen.findByText("Confirm the reviewed plan");
+    // Saved, approved test cases ask no case tick; files, answer keys and provider consent are one tick.
+    expect(sendBoxes()).toHaveLength(1);
+    expect(screen.queryByLabelText("The files sent to the model contain no answer keys or grading material.")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("I reviewed every file and input that will be sent to the model.")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "View all files sent to the model" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Run quick check" })).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(SEND));
+    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    await waitFor(() => expect(onStarted).toHaveBeenCalled());
+    const request = api.create.mock.calls[0][0];
+    expect(request.expectedFingerprint).toBe("plan-fingerprint");
+    expect(request.acknowledgeProviderProcessing).toBe(true);
+    expect(request.inventoryReview).toEqual({ fingerprint: "plan-fingerprint", reviewedAllFiles: true, noKnownAnswerKeys: true, classifications: [], falsePositiveSecretFindings: [] });
+  });
+  it("adds one act per flagged file and per secret finding", async () => {
+    const findings = [{ findingId: "f1", code: "secret_suspected", location: { kind: "bundle_file", path: "SKILL.md" }, explanation: "Match" }];
+    const base = preview.inventory[0].files[0];
+    api.preview.mockResolvedValue({ ...preview, outboundFindings: findings, inventory: [{ ...preview.inventory[0], files: [base, { ...base, path: "eval.md", sha256: "e".repeat(64), flags: ["evaluation_artifact"] }] }] });
+    mount(setup());
+    await configure();
+    fireEvent.click(screen.getByRole("button", { name: "Preview work and spend" }));
+    await screen.findByText("Confirm the reviewed plan");
+    expect(sendBoxes()).toHaveLength(1);
+    expect(screen.getAllByLabelText("This is not a real secret")).toHaveLength(1);
+    expect(screen.getByLabelText(`Classify eval.md (${"e".repeat(8)})`)).toBeInTheDocument();
+  });
+  it("leaves the answer-key statement out of a diagnostic check and sends it as false", async () => {
+    const onStarted = vi.fn();
+    mount(setup({ onStarted, parentRunId: ids.run }));
+    await configure();
+    fireEvent.click(screen.getByRole("button", { name: "Preview work and spend" }));
+    await screen.findByText("Confirm the reviewed plan");
+    const tick = screen.getByLabelText(/^Send this file and 1 test case to Fixture, up to \$0\.10\.$/);
+    fireEvent.click(tick);
+    fireEvent.click(screen.getByRole("button", { name: "Run quick check" }));
+    await waitFor(() => expect(onStarted).toHaveBeenCalled());
+    expect(api.create.mock.calls[0][0].inventoryReview).toMatchObject({ reviewedAllFiles: true, noKnownAnswerKeys: false });
+  });
+  it("unticks when the preview fingerprint changes", () => {
+    const onChange = vi.fn();
+    const review = { fingerprint: "first", reviewedAllFiles: true, noKnownAnswerKeys: true, classifications: [], falsePositiveSecretFindings: [] };
+    const first = { ...preview, fingerprint: "first" };
+    const view = render(<TestInventoryReview preview={first} value={review} onChange={onChange} sendLabel="Send this file and 1 test case to Fixture, up to $0.10. It contains no answer keys or grading material." />);
+    expect(screen.getByRole("checkbox", { name: /^Send this file/ })).toBeChecked();
+    expect(onChange).not.toHaveBeenCalled();
+    view.rerender(<TestInventoryReview preview={{ ...preview, fingerprint: "second" }} value={review} onChange={onChange} sendLabel="Send this file and 1 test case to Fixture, up to $0.10. It contains no answer keys or grading material." />);
+    expect(screen.getByRole("checkbox", { name: /^Send this file/ })).not.toBeChecked();
+    expect(onChange).toHaveBeenCalledWith({ review: { fingerprint: "second", reviewedAllFiles: false, noKnownAnswerKeys: false, classifications: [], falsePositiveSecretFindings: [] }, complete: false, diagnostic: true });
+  });
+  it("words the send tick for one or several files", () => {
+    expect(sendSentence({ fileCount: 3, what: "the request", provider: "OpenAI", upTo: "$0.24" }))
+      .toBe("Send these 3 files and the request to OpenAI, up to $0.24. They contain no answer keys or grading material.");
+    expect(sendSentence({ fileCount: 1, what: "the test case", provider: "OpenAI", upTo: "$0.24", attestsNoAnswerKeys: false }))
+      .toBe("Send this file and the test case to OpenAI, up to $0.24.");
+    expect(centsUp("0.23869440")).toBe("$0.24");
+    expect(providerName("openai")).toBe("OpenAI");
+  });
+});
+
+describe("evidence summary (UXF-11)", () => {
+  it("shows one summary line and keeps counts, model, temperature and token limit under Technical details", () => {
+    mount(<TestEvidence variant="summary" skillId={ids.skill} candidate={{ kind: "version", version: 3 }} onSelectRun={vi.fn()} />);
+    expect(screen.getByTestId("evidence-summary")).toHaveTextContent("Passed: 1 of 1 test case, no regressions. Private, 6 Nov.");
+    expect(screen.queryByText(/answer regression/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Task model:/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Technical details" }));
+    expect(screen.getByText(/0 answer regressions \(including mixed\) · 0 skill-selection failures/)).toBeInTheDocument();
+    expect(screen.getByText(/Task model: historical-task-2025 · temperature 0\.3 · output allowance 1536 tokens\/call/)).toBeInTheDocument();
+    expect(screen.getByText(/1 attempt per version/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Attach this evidence" })).toBeInTheDocument();
+    const text = document.body.textContent;
+    expect(text).not.toMatch(/per arm|attempt\(s\)|\bexact\b|1 test cases/i);
+  });
+  it("says what the server reported, with plain plurals", () => {
+    const row = { ...evidenceRow, visibility: "workspace", selectedCases: 3, createdAt: "2026-11-16T12:00:00Z" };
+    expect(evidenceSummary(row, { state: "works_on_examples", regressedCases: 0 })).toBe("Passed: 3 of 3 test cases, no regressions. Shared with workspace, 16 Nov.");
+    expect(evidenceSummary({ ...row, selectedCases: 1 }, { state: "works_on_examples", regressedCases: 0 })).toBe("Passed: 1 of 1 test case, no regressions. Shared with workspace, 16 Nov.");
+    expect(evidenceSummary(row, { state: "needs_changes", regressedCases: 1 })).toBe("Needs changes: 1 of 3 test cases regressed. Shared with workspace, 16 Nov.");
+    // Without the run's decision it never says "Passed".
+    expect(evidenceSummary(row)).toBe("Completed: 3 test cases, no regressions. Shared with workspace, 16 Nov.");
+    expect(evidenceSummary({ ...row, status: "running" })).toBe("Running: 3 test cases. Shared with workspace, 16 Nov.");
+  });
+  it("keeps the full evidence view free of harness words", () => {
+    mount(<TestEvidence skillId={ids.skill} candidate={{ kind: "version", version: 3 }} onSelectRun={vi.fn()} />);
+    expect(screen.getByText(/1 attempt per version/)).toBeInTheDocument();
+    expect(screen.getByText("Checked this content · 1 of 3 saved test cases")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/per arm|attempt\(s\)|\bexact\b/i);
+  });
+  it("keeps run results and the setup free of harness words", async () => {
+    mount(<TestRunResults skillId={ids.skill} runId={ids.run} />);
+    expect(screen.getByText(/1 test case · 1 attempt per version · 0 selected competitors/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/per arm|attempt\(s\)|\bexact\b/i);
+    cleanup();
+    mount(setup());
+    await configure();
+    fireEvent.click(screen.getByRole("button", { name: "Preview work and spend" }));
+    await screen.findByText("Confirm the reviewed plan");
+    expect(screen.getByText("1 test case × 2 versions × 1 attempt per version = 2 attempts")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/per arm|attempt\(s\)|\bexact\b/i);
+  });
+});
+
+describe("result rows (UXF-12)", () => {
+  it("opens a test case result from its row and keeps Inspect in the row's ⋯", () => {
+    const onSelectionChange = vi.fn();
+    mount(<TestRunResults skillId={ids.skill} runId={ids.run} onSelectionChange={onSelectionChange} />);
+    const table = screen.getByRole("table", { name: "Test case comparisons" });
+    expect(within(table).queryByRole("button", { name: /^Inspect/ })).not.toBeInTheDocument();
+    fireEvent.click(within(table).getByLabelText("Actions for Eligible refund"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Inspect" }));
+    expect(onSelectionChange).toHaveBeenCalledWith({ caseId: ids.case, attemptId: null });
+  });
 });

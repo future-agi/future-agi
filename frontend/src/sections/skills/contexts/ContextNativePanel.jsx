@@ -132,7 +132,7 @@ function TargetSection({ contextId, version, canWrite, targets }) {
     {review && <ClosableDialog open onClose={() => setReview(null)} maxWidth="sm" fullWidth>
       <Stack spacing={1.5} sx={{ p: 3 }}>
         <Typography variant="m1">Pin the application configuration</Typography>
-        {configuration.isLoading ? <ContentSkeleton label="Reading the runtime's measured configuration" /> : configuration.isError ? <ErrorState title="The runtime did not describe itself" onRetry={configuration.refetch} /> : <>
+        {configuration.isError ? <ErrorState title="The runtime did not describe itself" onRetry={configuration.refetch} /> : configuration.isLoading || !configuration.data ? <ContentSkeleton label="Reading the runtime's measured configuration" /> : <>
           <Typography variant="s1" data-testid="pin-sentence">{pinSentence(configuration.data)}</Typography>
           <TechnicalDetails title="Technical details">
             <Stack spacing={0.5} component="dl" sx={{ m: 0 }}>
@@ -321,13 +321,12 @@ function RunDetail({ contextId, evidenceId, canWrite, target, selection, cases, 
   const runCases = (run.cases || []).map((item) => item.id).sort();
   const earlier = stale;
   const disagreements = annotations.data?.results.filter((row) => row.verdict === 'disagree') || [];
-  // Opened from the row, its ⋯ menu (no event) or the disagreement link; focus returns to the row's
-  // ⋯ button, the row itself on a phone, or the link that opened it.
+  // Opened from the row (click or Enter), its ⋯ menu (no event) or the disagreement link. Focus goes
+  // back to what opened it: the row, the row's ⋯ button, or the link.
   const inspect = (cell, event) => {
     const row = rows.current.get(cellKey(cell));
     const own = event?.currentTarget;
-    const fromRow = !own || Boolean(own.closest?.('tr'));
-    origin.current = fromRow ? (row?.querySelector('button') || row || own) : own;
+    origin.current = own || row?.querySelector('button') || row;
     setOpen(cell);
   };
   const referenceArm = run.arms.find((arm) => arm.variant === 'reference');

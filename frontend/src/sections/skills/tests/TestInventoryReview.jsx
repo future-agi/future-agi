@@ -16,7 +16,6 @@ import Section from "src/components/section";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import TechnicalDetails from '../components/TechnicalDetails';
 import IdentityChip from "../components/IdentityChip";
-import Acknowledgment from "../components/Acknowledgment";
 import ActionReason from "../components/ActionReason";
 import InventoryFileDrawer from "./InventoryFileDrawer";
 
@@ -154,17 +153,13 @@ export default function TestInventoryReview({
   }, [staleReview, preview.fingerprint, onChange]);
   const sent =
     value.fingerprint === preview.fingerprint && value.reviewedAllFiles;
-  const sendAcknowledgment = {
-    identity: preview.fingerprint,
-    acknowledged: sent,
-    changed: false,
-    setAcknowledged: (checked) => {
-      if (disabled || consentDisabled) return;
-      update({
-        reviewedAllFiles: Boolean(checked),
-        noKnownAnswerKeys: Boolean(checked) && attestsNoAnswerKeys,
-      });
-    },
+  const sendDisabled = disabled || consentDisabled;
+  const setSent = (checked) => {
+    if (sendDisabled) return;
+    update({
+      reviewedAllFiles: Boolean(checked),
+      noKnownAnswerKeys: Boolean(checked) && attestsNoAnswerKeys,
+    });
   };
   const classifyAll = () => {
     const keys = new Set(uniqueFlagged.map((file) => fileKey(file.skillId, file)));
@@ -373,10 +368,20 @@ export default function TestInventoryReview({
       {merged ? (
         <Stack spacing={0.5} {...(consentHeading ? { role: "group", "aria-labelledby": "test-consents-heading" } : {})}>
           {consentHeading && <Typography id="test-consents-heading" component="h3" variant="m3">{consentHeading}</Typography>}
-          <Acknowledgment
-            acknowledgment={sendAcknowledgment}
-            label={sendLabel}
-            disabled={disabled || consentDisabled}
+          {/* Like components/Acknowledgment: once ticked the label keeps full contrast, even while the
+              form is locked for submitting. A held tick names its reason. */}
+          <FormControlLabel
+            sx={{ alignItems: "flex-start", "& .MuiFormControlLabel-label.Mui-disabled": sent ? { color: "text.primary" } : {} }}
+            control={
+              <Checkbox
+                checked={sent}
+                disabled={sendDisabled}
+                inputProps={consentReason ? { "aria-describedby": "test-send-reason" } : undefined}
+                onChange={(event) => setSent(event.target.checked)}
+                sx={{ mt: -0.75 }}
+              />
+            }
+            label={<span data-acknowledged={sent ? "true" : "false"}>{sendLabel}</span>}
           />
           <ActionReason id="test-send-reason" reason={consentReason} />
         </Stack>

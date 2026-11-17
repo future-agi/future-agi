@@ -25,7 +25,7 @@ export default function TestsSubTabs({ value = DEFAULT_TESTS_SUB_TAB, onChange, 
   const current = TESTS_SUB_TABS.some(([key]) => key === value) ? value : DEFAULT_TESTS_SUB_TAB;
   return (
     <Box sx={{ minWidth: 0 }}>
-      <CustomTabs value={current} onChange={(_, next) => onChange?.(next)} aria-label={label} variant="scrollable" allowScrollButtonsMobile>
+      <CustomTabs value={current} onChange={(_, next) => onChange?.(next)} aria-label={label}>
         {TESTS_SUB_TABS.map(([key, text]) => (
           <Tab key={key} value={key} label={text} id={`${base}-${key}-tab`} aria-controls={`${base}-${key}-panel`} />
         ))}
