@@ -522,3 +522,97 @@ class TestVersionRecordedBeforeItsSealedContract:
         )
 
         assert version_contract(environment, draft) == SEALED
+
+    def _saved_edit(self, environment, version, contract):
+        """The version a saved builder edit makes, before any build seals it: the edited authored contract."""
+        edited = HarnessEnvironmentVersion._base_manager.create(
+            job=environment,
+            organization_id=environment.organization_id,
+            workspace_id=environment.workspace_id,
+            status="active",
+            version_number=version.version_number + 1,
+            hash="sha256:" + "e" * 64,
+            parent=version,
+            archive_size=0,
+            documents={"contract": contract},
+        )
+        type(environment)._base_manager.filter(id=environment.id).update(
+            environment_version=edited
+        )
+        environment.refresh_from_db()
+        return edited
+
+    def test_a_builder_edit_to_a_rule_and_a_description_still_reaches_the_tools_as_built(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        environment, version, storage = self._version(
+            user, workspace, "rc-edit-rule", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        edited = {
+            **AUTHORED,
+            "hard_constraints": ["Never refund an order that has not shipped."],
+            "tools": [
+                {
+                    "name": tool,
+                    "description": "Look up an order." if tool == "get_order" else "",
+                }
+                for tool in TOOLS
+            ],
+        }
+        drafts.record_draft(
+            environment,
+            _authoring(contract=edited, sealed=False),
+            origin="chat",
+            pieces={"environment"},
+        )
+        base = f"/simulate/api/harness-environments/{environment.id}"
+
+        contract = auth_client.get(f"{base}/").json()["contract"]
+        assert contract["from_draft"] is True and contract["production_only"] == []
+
+        saved = self._saved_edit(environment, version, edited)
+        plan = auth_client.get(f"{base}/run-plan/").json()
+        contract = auth_client.get(f"{base}/").json()["contract"]
+        assert (plan["blocked_tools"], plan["runnable"]) == ([], True)
+        assert contract["production_only"] == []
+        assert _blocked(environment, saved) == []
+        assert {one["status"] for one in contract["tool_status"]} != {"unsupported"}
+
+    def test_an_edit_that_changes_how_a_tool_is_reached_keeps_its_own(
+        self, user, workspace, monkeypatch
+    ):
+        environment, version, storage = self._version(
+            user, workspace, "rc-edit-entry", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        moved = {
+            **AUTHORED,
+            "tool_entrypoints": [
+                {**one, "endpoint": "orders/lookup"}
+                if one["tool"] == "get_order"
+                else one
+                for one in AUTHORED["tool_entrypoints"]
+            ],
+        }
+
+        saved = self._saved_edit(environment, version, moved)
+
+        assert _blocked(environment, saved) == sorted(TOOLS)
+
+    def test_a_version_its_own_build_sealed_keeps_how_that_build_reaches_the_tools(
+        self, user, workspace, monkeypatch
+    ):
+        environment, version, storage = self._version(
+            user, workspace, "rc-own-build", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        edited = {**AUTHORED, "hard_constraints": ["Never refund twice."]}
+        saved = self._saved_edit(environment, version, edited)
+        # Its own build kept the tools imported, whatever its base was built with.
+        HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
+            documents={"contract": edited, "run_contract": {**edited, "notes": "built"}}
+        )
+        saved.refresh_from_db()
+
+        assert _blocked(environment, saved) == sorted(TOOLS)

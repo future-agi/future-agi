@@ -48,9 +48,13 @@ def version_contract(
         agent_version_id=agent_version_id or job.agent_version_id,
         suite_version_id=suite_version_id or job.suite_version_id,
     )
-    recorded = sealed or recorded_contract(version.documents)
+    if sealed:
+        return sealed
+    recorded = recorded_contract(version.documents)
     if recorded:
-        return recorded
+        return _reached_as_built(
+            job, version, recorded, agent_version_id, suite_version_id
+        )
     # A draft or older version that recorded no contract runs as the default version would, never as the first
     # authoring snapshot.
     default = job.environment_version
@@ -62,6 +66,39 @@ def version_contract(
             suite_version_id=suite_version_id,
         )
     return contract_data(job)
+
+
+def _reached_as_built(
+    job: HostedHarnessJob,
+    version: Any,
+    recorded: dict[str, Any],
+    agent_version_id: Any,
+    suite_version_id: Any,
+) -> dict[str, Any]:
+    """A version's recorded contract, reaching its tools as the version it was made from runs them.
+
+    How tools are reached is a build's fact: a build can serve a tool the author's contract imports. An edit made
+    on the author's contract (a rule, a description) records that contract again, so a version no build sealed
+    reaches its tools as its base runs them, unless the edit changed how they are reached."""
+    documents = version.documents or {}
+    parent_id = getattr(version, "parent_id", None)
+    if "run_contract" in documents or parent_id is None:
+        return recorded
+    parent = type(version)._base_manager.filter(id=parent_id).first()
+    authored = (getattr(parent, "documents", None) or {}).get("contract")
+    if not isinstance(authored, dict) or authored.get(
+        "tool_entrypoints"
+    ) != recorded.get("tool_entrypoints"):
+        return recorded
+    base = version_contract(
+        job,
+        parent,
+        agent_version_id=agent_version_id,
+        suite_version_id=suite_version_id,
+    )
+    if "tool_entrypoints" not in base:
+        return recorded
+    return {**recorded, "tool_entrypoints": base["tool_entrypoints"]}
 
 
 def row_stage_output(job: HostedHarnessJob, kind: str) -> Any:
