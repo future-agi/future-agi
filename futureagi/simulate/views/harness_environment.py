@@ -119,6 +119,7 @@ from simulate.services.harness_environment import (
     environment_detail,
     environment_rows,
     eval_modality,
+    filter_for_list,
 )
 from simulate.services.harness_provider import (
     _usage_limit_response,
@@ -1270,8 +1271,14 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        jobs = self._queryset(request)
-        agent_definition_id = request.validated_query_data.get("agent_definition_id")
+        query = request.validated_query_data
+        jobs = filter_for_list(
+            self._queryset(request),
+            search=query.get("search"),
+            status=query.get("status"),
+            agent_type=query.get("agent_type"),
+        )
+        agent_definition_id = query.get("agent_definition_id")
         if agent_definition_id is not None:
             jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)
         paginator = self.pagination_class()

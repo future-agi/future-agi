@@ -29346,6 +29346,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
               format: "uuid",
             },
           },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 255,
+            },
+          },
+          status: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["building", "running", "completed", "failed"],
+            },
+          },
+          agent_type: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["voice", "chat"],
+            },
+          },
         },
         responses: {
           200: {
@@ -109893,6 +109914,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "agent_policy",
         "last_updated",
         "created_at",
+        "agent",
         "last_run",
       ],
       type: "object",
@@ -109975,6 +109997,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Created at",
           type: "string",
           format: "date-time",
+        },
+        agent: {
+          $ref: "#/definitions/HarnessEnvironmentAgentRef",
         },
         last_run: {
           $ref: "#/definitions/HarnessRunSummary",
@@ -132304,6 +132329,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    },
+    HarnessEnvironmentAgentRef: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     HarnessDiagnostics: {
       required: ["size", "final", "error"],

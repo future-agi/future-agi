@@ -40087,6 +40087,8 @@ one and returns 202; progress is read from the job.
 
 export const simulateApiHarnessEnvironmentsListQueryLimitMax = 100;
 
+export const simulateApiHarnessEnvironmentsListQuerySearchMax = 255;
+
 export const SimulateApiHarnessEnvironmentsListQueryParams = zod.object({
   page: zod.number().min(1).optional(),
   limit: zod
@@ -40095,6 +40097,12 @@ export const SimulateApiHarnessEnvironmentsListQueryParams = zod.object({
     .max(simulateApiHarnessEnvironmentsListQueryLimitMax)
     .optional(),
   agent_definition_id: zod.string().uuid().optional(),
+  search: zod
+    .string()
+    .max(simulateApiHarnessEnvironmentsListQuerySearchMax)
+    .optional(),
+  status: zod.enum(["building", "running", "completed", "failed"]).optional(),
+  agent_type: zod.enum(["voice", "chat"]).optional(),
 });
 
 export const simulateApiHarnessEnvironmentsListResponseResultsItemLastRunPassRateMin = 0;
@@ -40130,6 +40138,10 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
       agent_policy: zod.enum(["follow", "pinned"]),
       last_updated: zod.string().datetime({ offset: true }),
       created_at: zod.string().datetime({ offset: true }),
+      agent: zod.object({
+        id: zod.string().uuid(),
+        name: zod.string().min(1),
+      }),
       last_run: zod.object({
         trials_passed: zod.number().describe("Comparable trials that passed."),
         trials_evaluated: zod

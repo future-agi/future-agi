@@ -19,13 +19,21 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import structlog
 from django.db.models import (
+    BooleanField,
+    Case,
     Count,
+    Exists,
     OuterRef,
     Prefetch,
     Q,
     QuerySet,
     Subquery,
+    TextField,
+    Value,
+    When,
 )
+from django.db.models.fields.json import KT
+from django.db.models.functions import Coalesce, Lower, NullIf, Trim
 from minio.error import S3Error
 from urllib3.exceptions import HTTPError
 
@@ -47,6 +55,7 @@ from simulate.models import (
     HostedHarnessReceipt,
     HostedHarnessScenario,
     HostedHarnessStageOutput,
+    RunTest,
     TestExecution,
 )
 from simulate.selectors.environment_documents import (
@@ -154,6 +163,83 @@ def annotate_for_list(
     )
 
 
+def filter_for_list(
+    queryset: QuerySet[HostedHarnessJob],
+    *,
+    search: str | None = None,
+    status: str | None = None,
+    agent_type: str | None = None,
+) -> QuerySet[HostedHarnessJob]:
+    term = (search or "").strip()
+    if term:
+        queryset = queryset.annotate(
+            list_name=Coalesce(
+                _blank_as_null("name"),
+                _blank_as_null(KT("payload__metadata__agent_name")),
+                _blank_as_null(KT("payload__metadata__name")),
+                _blank_as_null(KT("payload__source__repository")),
+                output_field=TextField(),
+            ),
+            list_repository=KT("payload__source__repository"),
+        ).filter(Q(list_name__icontains=term) | Q(list_repository__icontains=term))
+    if status:
+        queryset = queryset.filter(_status_q(status))
+    if agent_type:
+        queryset = (
+            queryset.annotate(
+                list_connector=Coalesce(
+                    Lower(Trim(KT("payload__agent__connector"))),
+                    Value(""),
+                    output_field=TextField(),
+                ),
+            )
+            .annotate(
+                list_is_voice=Case(
+                    When(_voice_q(), then=Value(True)),
+                    default=Value(False),
+                    output_field=BooleanField(),
+                )
+            )
+            .filter(list_is_voice=agent_type == AGENT_TYPE_VOICE)
+        )
+    return queryset
+
+
+def _blank_as_null(expression: Any) -> NullIf:
+    return NullIf(Trim(expression), Value(""))
+
+
+def _status_q(status: str) -> Q:
+    known = _TERMINAL_FAILED | _RUN_STATES | {HostedHarnessJob.State.COMPLETED}
+    if status == STATUS_COMPLETED:
+        return Q(state=HostedHarnessJob.State.COMPLETED)
+    if status == STATUS_FAILED:
+        return Q(state__in=_TERMINAL_FAILED)
+    if status == STATUS_RUNNING:
+        return Q(state__in=_RUN_STATES)
+    return ~Q(state__in=known)
+
+
+def _voice_q() -> Q:
+    contracts = HostedHarnessStageOutput.no_workspace_objects.filter(
+        job=OuterRef("pk"), kind="contract", deleted=False
+    )
+    voice_contract = contracts.annotate(
+        modality=Lower(Trim(KT("data__modality")))
+    ).filter(modality=AGENT_TYPE_VOICE)
+    legacy_voice_contract = Q(
+        stage_outputs__contains=[
+            {"kind": "contract", "data": {"modality": AGENT_TYPE_VOICE}}
+        ]
+    )
+    contract_says_voice = Exists(voice_contract) | (
+        ~Exists(contracts) & legacy_voice_contract
+    )
+    return Q(list_connector__in=_VOICE_CONNECTORS) | (
+        Q(list_connector__in=("", "auto")) & contract_says_voice
+    )
+
+
 def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
     """One list row. Safe to call on a job that has never finished building."""
     from simulate.services.harness_agent_versions import environment_policy
@@ -187,10 +273,30 @@ def environment_rows(jobs: list[HostedHarnessJob]) -> list[dict[str, Any]]:
         id__in=[job.last_execution_id for job in jobs if job.last_execution_id]
     ).select_related("agent_version", "run_test")
     last_runs = run_summaries(list(executions))
+    agents = _agents_by_run_test(jobs)
     return [
-        {**environment_row(job), "last_run": last_runs.get(job.last_execution_id)}
+        {
+            **environment_row(job),
+            "agent": agents.get(job.run_test_id),
+            "last_run": last_runs.get(job.last_execution_id),
+        }
         for job in jobs
     ]
+
+
+def _agents_by_run_test(jobs: list[HostedHarnessJob]) -> dict[Any, dict[str, Any]]:
+    run_tests = RunTest.objects.filter(
+        id__in=[job.run_test_id for job in jobs if job.run_test_id],
+        deleted=False,
+        agent_definition__isnull=False,
+    ).select_related("agent_definition")
+    return {
+        run_test.id: {
+            "id": str(run_test.agent_definition.id),
+            "name": run_test.agent_definition.agent_name or None,
+        }
+        for run_test in run_tests
+    }
 
 
 def version_ref(

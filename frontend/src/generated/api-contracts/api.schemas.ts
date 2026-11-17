@@ -19938,6 +19938,12 @@ export const HarnessEnvironmentApiAgentPolicy = {
   pinned: "pinned",
 } as const;
 
+export interface HarnessEnvironmentAgentRefApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
 export interface HarnessEnvironmentApi {
   id: string;
   /** @minLength 1 */
@@ -19960,6 +19966,7 @@ export interface HarnessEnvironmentApi {
   agent_policy: HarnessEnvironmentApiAgentPolicy;
   last_updated: string;
   created_at: string;
+  agent: HarnessEnvironmentAgentRefApi;
   last_run: HarnessRunSummaryApi;
 }
 
@@ -43941,7 +43948,31 @@ export type SimulateApiHarnessEnvironmentsListParams = {
    */
   limit?: number;
   agent_definition_id?: string;
+  /**
+   * @maxLength 255
+   */
+  search?: string;
+  status?: SimulateApiHarnessEnvironmentsListStatus;
+  agent_type?: SimulateApiHarnessEnvironmentsListAgentType;
 };
+
+export type SimulateApiHarnessEnvironmentsListStatus =
+  (typeof SimulateApiHarnessEnvironmentsListStatus)[keyof typeof SimulateApiHarnessEnvironmentsListStatus];
+
+export const SimulateApiHarnessEnvironmentsListStatus = {
+  building: "building",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export type SimulateApiHarnessEnvironmentsListAgentType =
+  (typeof SimulateApiHarnessEnvironmentsListAgentType)[keyof typeof SimulateApiHarnessEnvironmentsListAgentType];
+
+export const SimulateApiHarnessEnvironmentsListAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
 
 export type SimulateApiHarnessEnvironmentsActorViewParams = {
   /**

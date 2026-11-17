@@ -49,6 +49,16 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
     page = serializers.IntegerField(required=False, min_value=1)
     limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
     agent_definition_id = serializers.UUIDField(required=False)
+    search = serializers.CharField(
+        required=False, allow_blank=True, trim_whitespace=True, max_length=255
+    )
+    status = serializers.ChoiceField(
+        required=False,
+        choices=(STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED),
+    )
+    agent_type = serializers.ChoiceField(
+        required=False, choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT)
+    )
 
 
 class HarnessEnvironmentRenameSerializer(serializers.Serializer):
@@ -161,7 +171,13 @@ class HarnessRunSummarySerializer(TrialPassFieldsSerializer):
     completed_at = serializers.DateTimeField(allow_null=True)
 
 
+class HarnessEnvironmentAgentRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_null=True)
+
+
 class HarnessEnvironmentSerializer(HarnessEnvironmentFieldsSerializer):
+    agent = HarnessEnvironmentAgentRefSerializer(allow_null=True)
     last_run = HarnessRunSummarySerializer(allow_null=True)
 
 

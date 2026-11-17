@@ -53023,6 +53023,35 @@
                         "required": false,
                         "type": "string",
                         "format": "uuid"
+                    },
+                    {
+                        "name": "search",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 255
+                    },
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "building",
+                            "running",
+                            "completed",
+                            "failed"
+                        ]
+                    },
+                    {
+                        "name": "agent_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "voice",
+                            "chat"
+                        ]
                     }
                 ],
                 "responses": {
@@ -144646,6 +144675,27 @@
                 }
             }
         },
+        "HarnessEnvironmentAgentRef": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessEnvironment": {
             "required": [
                 "id",
@@ -144664,6 +144714,7 @@
                 "agent_policy",
                 "last_updated",
                 "created_at",
+                "agent",
                 "last_run"
             ],
             "type": "object",
@@ -144757,6 +144808,9 @@
                     "title": "Created at",
                     "type": "string",
                     "format": "date-time"
+                },
+                "agent": {
+                    "$ref": "#/definitions/HarnessEnvironmentAgentRef"
                 },
                 "last_run": {
                     "$ref": "#/definitions/HarnessRunSummary"
