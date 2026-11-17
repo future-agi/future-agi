@@ -12,6 +12,7 @@ Tests cover:
 - AddScenarioColumnsView: POST /simulate/scenarios/<uuid>/add-columns/
 """
 
+import json
 import uuid
 from unittest.mock import patch
 
@@ -25,6 +26,7 @@ from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from simulate.models import AgentDefinition, Scenarios
 from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.simulator_agent import SimulatorAgent
+from simulate.serializers.requests.scenarios import MAX_SCENARIO_IDS
 
 # ============================================================================
 # Fixtures
@@ -452,6 +454,198 @@ class TestScenariosListView:
         data = response.json()
         assert len(data["results"]) == 10
         assert data["count"] >= 15
+
+    def test_list_scenarios_selected_scenarios_pinned_to_top(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        agent_definition,
+        simulator_agent,
+        dataset,
+        scenario,
+    ):
+        """A scenario passed in selected_scenarios sorts first even if older."""
+        newer_scenario = Scenarios.objects.create(
+            name="Newer Scenario",
+            description="Created after `scenario`",
+            source="Test source",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=workspace,
+            agent_definition=agent_definition,
+            simulator_agent=simulator_agent,
+            status=StatusType.COMPLETED.value,
+        )
+
+        response = auth_client.get(
+            "/simulate/scenarios/",
+            {"selected_scenarios": json.dumps([str(scenario.id)])},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        results = response.json()["results"]
+        result_ids = [r["id"] for r in results]
+        assert result_ids.index(str(scenario.id)) < result_ids.index(
+            str(newer_scenario.id)
+        )
+
+    def test_list_scenarios_selected_scenarios_pinned_across_page_boundary(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        agent_definition,
+        simulator_agent,
+        dataset,
+        scenario,
+    ):
+        """An older selection stays on page one even when a full page is newer."""
+        for i in range(12):
+            Scenarios.objects.create(
+                name=f"Newer Scenario {i}",
+                description=f"Created after `scenario` ({i})",
+                source="Test source",
+                scenario_type=Scenarios.ScenarioTypes.DATASET,
+                organization=organization,
+                workspace=workspace,
+                agent_definition=agent_definition,
+                simulator_agent=simulator_agent,
+                status=StatusType.COMPLETED.value,
+            )
+
+        params = {"limit": 10, "selected_scenarios": json.dumps([str(scenario.id)])}
+
+        unpinned = auth_client.get("/simulate/scenarios/", {"limit": 10})
+        assert unpinned.status_code == status.HTTP_200_OK
+        assert str(scenario.id) not in [r["id"] for r in unpinned.json()["results"]]
+
+        page_one = auth_client.get("/simulate/scenarios/", params)
+        page_two = auth_client.get("/simulate/scenarios/", {**params, "page": 2})
+
+        assert page_one.status_code == status.HTTP_200_OK
+        assert page_two.status_code == status.HTTP_200_OK
+        page_one_ids = [r["id"] for r in page_one.json()["results"]]
+        page_two_ids = [r["id"] for r in page_two.json()["results"]]
+        assert page_one_ids[0] == str(scenario.id)
+        assert not set(page_one_ids) & set(page_two_ids)
+
+    def test_list_scenarios_without_selected_scenarios_is_newest_first(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        agent_definition,
+        simulator_agent,
+        dataset,
+        scenario,
+    ):
+        """With no pins the list keeps its newest-first ordering."""
+        newer_scenario = Scenarios.objects.create(
+            name="Newer Scenario",
+            description="Created after `scenario`",
+            source="Test source",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=workspace,
+            agent_definition=agent_definition,
+            simulator_agent=simulator_agent,
+            status=StatusType.COMPLETED.value,
+        )
+
+        response = auth_client.get("/simulate/scenarios/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result_ids = [r["id"] for r in response.json()["results"]]
+        assert result_ids.index(str(newer_scenario.id)) < result_ids.index(
+            str(scenario.id)
+        )
+
+    def test_list_scenarios_selected_scenarios_other_workspace_is_noop(
+        self,
+        auth_client,
+        organization,
+        agent_definition,
+        simulator_agent,
+        user,
+        scenario,
+    ):
+        """A scenario from another workspace cannot be pinned into the list."""
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Scenario List Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_scenario = Scenarios.no_workspace_objects.create(
+            name="Other Workspace Scenario",
+            description="Not visible from the active workspace",
+            source="Test source",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=other_workspace,
+            agent_definition=agent_definition,
+            simulator_agent=simulator_agent,
+            status=StatusType.COMPLETED.value,
+        )
+
+        response = auth_client.get(
+            "/simulate/scenarios/",
+            {"selected_scenarios": json.dumps([str(other_scenario.id)])},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result_ids = [r["id"] for r in response.json()["results"]]
+        assert str(other_scenario.id) not in result_ids
+        assert str(scenario.id) in result_ids
+
+    def test_list_scenarios_selected_scenarios_invalid_json(
+        self, auth_client, scenario
+    ):
+        """Malformed JSON in selected_scenarios returns a typed 400."""
+        response = auth_client.get(
+            "/simulate/scenarios/", {"selected_scenarios": "not-json"}
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        details = response.json()["details"]
+        assert "selected_scenarios" in details
+        assert "valid JSON array" in str(details["selected_scenarios"])
+
+    def test_list_scenarios_selected_scenarios_not_a_list(self, auth_client, scenario):
+        """A JSON object (not array) in selected_scenarios returns a typed 400."""
+        response = auth_client.get(
+            "/simulate/scenarios/", {"selected_scenarios": json.dumps({"id": "x"})}
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        details = response.json()["details"]
+        assert "selected_scenarios" in details
+        assert "Must be a JSON array" in str(details["selected_scenarios"])
+
+    def test_list_scenarios_selected_scenarios_invalid_uuid(self, auth_client, scenario):
+        """A non-UUID entry in selected_scenarios returns a typed 400."""
+        response = auth_client.get(
+            "/simulate/scenarios/", {"selected_scenarios": json.dumps(["not-a-uuid"])}
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        details = response.json()["details"]
+        assert "selected_scenarios" in details
+        assert "Invalid UUID: not-a-uuid" in str(details["selected_scenarios"])
+
+    def test_list_scenarios_selected_scenarios_over_limit(self, auth_client, scenario):
+        """More scenario UUIDs than the cap returns a typed 400 instead of a huge URL."""
+        too_many = [str(uuid.uuid4()) for _ in range(MAX_SCENARIO_IDS + 1)]
+
+        response = auth_client.get(
+            "/simulate/scenarios/", {"selected_scenarios": json.dumps(too_many)}
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        details = response.json()["details"]
+        assert "selected_scenarios" in details
+        assert f"more than {MAX_SCENARIO_IDS}" in str(details["selected_scenarios"])
 
 
 # ============================================================================

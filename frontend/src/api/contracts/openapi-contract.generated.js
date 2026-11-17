@@ -32273,6 +32273,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               minimum: 1,
             },
           },
+          selected_scenarios: {
+            required: false,
+            schema: {
+              type: "string",
+              default: "",
+            },
+          },
         },
         responses: {
           200: {
@@ -32356,6 +32363,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "integer",
               minimum: 1,
+            },
+          },
+          selected_scenarios: {
+            required: false,
+            schema: {
+              type: "string",
+              default: "",
             },
           },
         },

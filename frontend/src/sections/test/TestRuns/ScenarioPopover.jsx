@@ -11,7 +11,7 @@ import {
   Skeleton,
   useTheme,
 } from "@mui/material";
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { useParams } from "react-router";
 import { useScrollEnd } from "../../../hooks/use-scroll-end";
@@ -46,9 +46,15 @@ const ScenarioPopoverChild = ({ simulationType, testId: testIdProp }) => {
     }, 300),
   ).current;
 
+  const { selectedScenarios, setSelectedScenarios } =
+    useSelectedScenariosStore();
+
+  const pinnedScenarioIds = useRef(selectedScenarios).current;
+
   const { data, isFetchingNextPage, fetchNextPage, isPending } =
     useGetScenarioList(search, {
       simulationType,
+      pinnedScenarioIds,
       staleTime: Infinity,
       params: {
         agent_type: AGENT_TYPES.CHAT,
@@ -64,9 +70,6 @@ const ScenarioPopoverChild = ({ simulationType, testId: testIdProp }) => {
     if (isPending || isFetchingNextPage) return;
     fetchNextPage();
   }, [fetchNextPage, isFetchingNextPage, isPending]);
-
-  const { selectedScenarios, setSelectedScenarios } =
-    useSelectedScenariosStore();
 
   const handleToggle = (value) => {
     const isSelected = selectedScenarios?.includes(value);
