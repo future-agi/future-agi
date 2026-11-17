@@ -58,9 +58,7 @@ def assert_safe_failure_log(caplog, event, failure_type, private_payload):
     # stdlib record too: a formatter can hide exc_info from rendered output while
     # another handler (including Sentry) still receives the original exception.
     records = [
-        record
-        for record in caplog.records
-        if record.name == "tracer.views.eval_task"
+        record for record in caplog.records if record.name == "tracer.views.eval_task"
     ]
     assert len(records) == 1
     record = records[0]
@@ -125,8 +123,14 @@ def test_create_failure_normalization_keeps_only_bounded_type_metadata(failure_t
     "failure_type", [RuntimeError, ValidationError, FilterPrincipalContextError]
 )
 def test_partial_task_or_relation_write_rolls_back_without_dispatch(
-    auth_client, project, custom_eval_config, monkeypatch, starter,
-    failure_stage, failure_type, caplog,
+    auth_client,
+    project,
+    custom_eval_config,
+    monkeypatch,
+    starter,
+    failure_stage,
+    failure_type,
+    caplog,
 ):
     caplog.set_level("WARNING", logger="tracer.views.eval_task")
     private_payload = "synthetic private persistence payload must not be logged"
@@ -181,12 +185,17 @@ def test_partial_task_or_relation_write_rolls_back_without_dispatch(
         # The same classes raised by the starter below must not take this path.
         assert private_payload in response.content.decode()
         assert not [
-            record for record in caplog.records if record.name == "tracer.views.eval_task"
+            record
+            for record in caplog.records
+            if record.name == "tracer.views.eval_task"
         ]
 
 
 def test_invalid_create_does_not_persist_or_dispatch(
-    auth_client, project, custom_eval_config, starter,
+    auth_client,
+    project,
+    custom_eval_config,
+    starter,
 ):
     before = EvalTask.all_objects.using("default").count()
     relations_before = EvalTask.evals.through.objects.using("default").count()
@@ -201,7 +210,11 @@ def test_invalid_create_does_not_persist_or_dispatch(
 
 @pytest.mark.parametrize("outer_transaction", [False, True])
 def test_initial_dispatch_sees_committed_task_and_relations_from_another_connection(
-    auth_client, project, custom_eval_config, starter, outer_transaction,
+    auth_client,
+    project,
+    custom_eval_config,
+    starter,
+    outer_transaction,
 ):
     seen = {}
 
@@ -231,9 +244,11 @@ def test_initial_dispatch_sees_committed_task_and_relations_from_another_connect
                 _CREATE, payload(project, custom_eval_config), format="json"
             )
             starter.assert_not_called()
-            assert EvalTask.objects.using("default").filter(
-                pk=response.json()["result"]["id"]
-            ).exists()
+            assert (
+                EvalTask.objects.using("default")
+                .filter(pk=response.json()["result"]["id"])
+                .exists()
+            )
     else:
         response = auth_client.post(
             _CREATE, payload(project, custom_eval_config), format="json"
@@ -256,8 +271,13 @@ def test_initial_dispatch_sees_committed_task_and_relations_from_another_connect
     "failure_type", [RuntimeError, ValidationError, FilterPrincipalContextError]
 )
 def test_start_failure_before_acknowledgement_keeps_saved_pending_and_safe_logs(
-    auth_client, project, custom_eval_config, starter, failure_type,
-    outer_transaction, caplog,
+    auth_client,
+    project,
+    custom_eval_config,
+    starter,
+    failure_type,
+    outer_transaction,
+    caplog,
 ):
     caplog.set_level("WARNING", logger="tracer.views.eval_task")
     private_payload = "synthetic private provider payload must not be logged"
@@ -304,7 +324,12 @@ def test_start_failure_before_acknowledgement_keeps_saved_pending_and_safe_logs(
     ],
 )
 def test_uncertain_ack_after_simulated_worker_preserves_results_and_all_markers(
-    auth_client, project, custom_eval_config, trace, starter, worker_status,
+    auth_client,
+    project,
+    custom_eval_config,
+    trace,
+    starter,
+    worker_status,
 ):
     worker = {}
 
@@ -341,7 +366,9 @@ def test_uncertain_ack_after_simulated_worker_preserves_results_and_all_markers(
         worker["task"] = task_snapshot(task.pk)
         worker["task_log"] = (
             EvalTaskLogger.all_objects.using("default")
-            .filter(pk=task_log.pk).values().get()
+            .filter(pk=task_log.pk)
+            .values()
+            .get()
         )
         worker["result"] = (
             EvalLogger.all_objects.using("default").filter(pk=result.pk).values().get()
@@ -358,11 +385,15 @@ def test_uncertain_ack_after_simulated_worker_preserves_results_and_all_markers(
     assert task_snapshot(task_id) == worker["task"]
     assert (
         EvalTaskLogger.all_objects.using("default")
-        .filter(eval_task_id=task_id).values().get()
+        .filter(eval_task_id=task_id)
+        .values()
+        .get()
     ) == worker["task_log"]
     assert (
         EvalLogger.all_objects.using("default")
-        .filter(eval_task_id=task_id).values().get()
+        .filter(eval_task_id=task_id)
+        .values()
+        .get()
     ) == worker["result"]
     assert list(
         EvalTask.objects.using("default")
@@ -373,7 +404,10 @@ def test_uncertain_ack_after_simulated_worker_preserves_results_and_all_markers(
 
 
 def test_outer_rollback_discards_task_relations_and_deferred_dispatch(
-    auth_client, project, custom_eval_config, starter,
+    auth_client,
+    project,
+    custom_eval_config,
+    starter,
 ):
     with transaction.atomic(using="default"):
         response = auth_client.post(
@@ -388,6 +422,7 @@ def test_outer_rollback_discards_task_relations_and_deferred_dispatch(
     assert not EvalTask.all_objects.using("default").filter(pk=task_id).exists()
     assert not (
         EvalTask.evals.through.objects.using("default")
-        .filter(evaltask_id=task_id).exists()
+        .filter(evaltask_id=task_id)
+        .exists()
     )
     starter.assert_not_called()

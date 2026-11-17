@@ -1957,12 +1957,16 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 serializer = self.get_serializer(data=data)
                 serializer.is_valid(raise_exception=True)
                 invalid_eval_ids = self._invalid_eval_ids_for_project(
-                    [eval_config.id for eval_config in serializer.validated_data["evals"]],
+                    [
+                        eval_config.id
+                        for eval_config in serializer.validated_data["evals"]
+                    ],
                     project_id,
                 )
                 if invalid_eval_ids:
                     return self._gm.bad_request(
-                        "Eval configs not found for project: " + ", ".join(invalid_eval_ids)
+                        "Eval configs not found for project: "
+                        + ", ".join(invalid_eval_ids)
                     )
                 # DRF saves the row before assigning its M2M relations. Both must
                 # roll back together if any part of persistence fails.
@@ -1983,7 +1987,9 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
 
         def dispatch_saved_task():
             try:
-                with _normalize_eval_task_create_failure(preserve_validation_errors=False):
+                with _normalize_eval_task_create_failure(
+                    preserve_validation_errors=False
+                ):
                     # Initial, non-replacing start only. An uncertain acknowledgement
                     # cannot justify a second start or any saved-state compensation.
                     start_eval_task_workflow_sync(eval_task)
