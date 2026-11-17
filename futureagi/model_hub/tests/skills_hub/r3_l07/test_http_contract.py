@@ -206,9 +206,12 @@ def test_complete_inventory_and_escaped_utf8_chunks(issued, released):
         HubSkillContextResolution.objects.filter(credential_id=issued[1]["id"]).count()
         == 1
     )
-    assert (
-        not version.skill.usage_days.exists()
-    ), "Continuation is not installation or delivery."
+    # SDK resolve records one fetch for either resource kind. Manifest/file
+    # continuations and access checks must not add fetches or imply delivery.
+    bucket = version.skill.usage_days.get()
+    assert bucket.channel == "sdk"
+    assert bucket.count == 1
+    assert bucket.version_id == version.pk
 
 
 @pytest.mark.parametrize(
