@@ -183,8 +183,9 @@ Quote.propTypes = {
   bad: PropTypes.bool,
 };
 
+// Sits on the first line of the boxed value beside it (the box's 4px margin + 8px padding).
 export const Label = ({ children }) => (
-  <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+  <Typography sx={{ typography: "s2", color: "text.tertiary", pt: 1.5 }}>
     {children}
   </Typography>
 );
