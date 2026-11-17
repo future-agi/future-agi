@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -243,6 +244,15 @@ func TestBlockedResponseIsNotCached(t *testing.T) {
 	}
 }
 
+// createdStamp matches a chunk's creation time. The gateway stamps the usage
+// chunk it adds to a stream when it is written, so two otherwise identical
+// streams differ there whenever they straddle a second.
+var createdStamp = regexp.MustCompile(`"created":\d+`)
+
+func withoutCreated(body string) string {
+	return createdStamp.ReplaceAllString(body, `"created":0`)
+}
+
 // Key policies are evaluated on every wire format, independently of static rules.
 func TestKeyGuardrailPolicyRoutes(t *testing.T) {
 	for _, rt := range guardedRoutes {
@@ -295,7 +305,7 @@ func TestKeyGuardrailPolicyRoutes(t *testing.T) {
 						t.Fatalf("monitor changed header %s: %v", name, values)
 					}
 				}
-				if monitor.Code != 200 || monitor.Header().Get("x-agentcc-guardrail-triggered") != "" || monitor.Body.String() != other.Body.String() {
+				if monitor.Code != 200 || monitor.Header().Get("x-agentcc-guardrail-triggered") != "" || withoutCreated(monitor.Body.String()) != withoutCreated(other.Body.String()) {
 					t.Fatalf("monitor status=%d header=%q body=%s other=%s", monitor.Code, monitor.Header().Get("x-agentcc-guardrail-triggered"), monitor.Body.String(), other.Body.String())
 				}
 				if again := send("sk-agentcc-policy-b"); again.Code != 200 {
