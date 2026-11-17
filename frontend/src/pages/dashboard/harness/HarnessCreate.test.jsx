@@ -8,7 +8,6 @@ import { render } from "src/utils/test-utils";
 
 import {
   callLimitConfig,
-  chatReplyLimitConfig,
   canStartEndToEndRun,
   parseProviderDynamicVariables,
 } from "./HarnessCreate";
@@ -116,17 +115,6 @@ describe("the call limit field on the page", () => {
     preflightHarnessJob.mockReset();
     createHarnessJob.mockResolvedValue({ job: { job_id: "job-1" } });
     preflightHarnessJob.mockResolvedValue({ ready_to_submit: true });
-  });
-
-  it("sends a chat agent's reply limit, and nothing when it is left blank", async () => {
-    await openForm();
-    await userEvent.type(screen.getByLabelText(/Chat reply limit \(seconds\)/i), "900");
-    await userEvent.click(screen.getByRole("button", { name: /Run end to end/i }));
-
-    await vi.waitFor(() => expect(createHarnessJob).toHaveBeenCalled());
-    expect(submittedConfig().chat_call_timeout_seconds).toBe(900);
-    expect(chatReplyLimitConfig("")).toEqual({});
-    expect(chatReplyLimitConfig("0")).toEqual({});
   });
 
   it("sends what was typed into the field", async () => {

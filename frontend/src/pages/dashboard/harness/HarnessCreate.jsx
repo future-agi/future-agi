@@ -102,12 +102,6 @@ export const callLimitConfig = (value) =>
     ? { voice_call_timeout_seconds: Number(value) }
     : {};
 
-// A chat agent's limit on one reply, the same way: blank keeps the 300 second default. The server checks the value.
-export const chatReplyLimitConfig = (value) =>
-  String(value ?? "").trim() && Number(value) > 0
-    ? { chat_call_timeout_seconds: Number(value) }
-    : {};
-
 const providerCredentialName = (connector) =>
   connector === "vapi"
     ? "VAPI_API_KEY"
@@ -220,7 +214,6 @@ export default function HarnessCreate() {
   const [parallelism, setParallelism] = useState(1);
   // Per call, not per run. See callLimitConfig above.
   const [callTimeoutSeconds, setCallTimeoutSeconds] = useState("");
-  const [chatReplySeconds, setChatReplySeconds] = useState("");
   const [preflight, setPreflight] = useState(null);
   // Shown beside the Preflight button: the general error banner sits at the foot of the
   // form, out of view when the button is what was clicked.
@@ -360,7 +353,6 @@ export default function HarnessCreate() {
         ...partitionConfigurationValues(configurationValues)
           .configurationValues,
         ...callLimitConfig(callTimeoutSeconds),
-        ...chatReplyLimitConfig(chatReplySeconds),
         ...(connector === "vapi" && providerMode === "connect_only"
           ? { assistant_id: providerTargetId.trim() }
           : {}),
@@ -1588,29 +1580,6 @@ export default function HarnessCreate() {
                   <Typography variant="caption" color="text.secondary">
                     Blank uses the default, 300 seconds. A call stopped at the
                     limit has no closing turn.
-                  </Typography>
-                </Stack>
-                <Stack
-                  direction={{ xs: "column", sm: "row" }}
-                  spacing={1.5}
-                  alignItems={{ sm: "center" }}
-                  sx={{ mt: 2 }}
-                >
-                  <TextField
-                    size="small"
-                    label="Chat reply limit (seconds)"
-                    type="number"
-                    value={chatReplySeconds}
-                    onChange={(event) =>
-                      setChatReplySeconds(event.target.value)
-                    }
-                    inputProps={{ min: 1, max: 3300 }}
-                    placeholder="300"
-                    sx={{ width: 180, flexShrink: 0 }}
-                  />
-                  <Typography variant="caption" color="text.secondary">
-                    For a chat agent: how long one reply may take. Blank uses
-                    the default, 300 seconds.
                   </Typography>
                 </Stack>
               </Section>
