@@ -227,9 +227,7 @@ def conversation_presence_signals(
     if call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT:
         agent_roles = frozenset({ChatMessageModel.RoleChoices.ASSISTANT})
         customer_roles = frozenset({ChatMessageModel.RoleChoices.USER})
-        for chat_message in call_execution.chat_messages.all().order_by(
-            "created_at"
-        ):
+        for chat_message in call_execution.chat_messages.all().order_by("created_at"):
             role_lower = str(getattr(chat_message, "role", "") or "").lower()
             messages = getattr(chat_message, "messages", None) or []
             for message in messages:
@@ -244,11 +242,9 @@ def conversation_presence_signals(
         provider = SpeakerRoleResolver.detect_provider(
             call_execution.provider_call_data
         )
-        agent_roles, customer_roles = (
-            SpeakerRoleResolver.get_skip_decision_role_sets(
-                provider=provider,
-                is_outbound=is_outbound,
-            )
+        agent_roles, customer_roles = SpeakerRoleResolver.get_skip_decision_role_sets(
+            provider=provider,
+            is_outbound=is_outbound,
         )
 
         for role, content in call_execution.transcripts.values_list(
