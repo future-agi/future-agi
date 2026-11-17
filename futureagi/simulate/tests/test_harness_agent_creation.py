@@ -301,6 +301,70 @@ class TestCreate:
         assert definition.agent_type == "voice"
         assert version.configuration_snapshot["assistant_id"] == "asst-1"
 
+    @pytest.mark.parametrize("legacy_key", [None, "val-vapi-1"])
+    def test_vapi_polling_follows_creation_and_credential_rotation(
+        self, client, user, workspace, gates, legacy_key, settings
+    ):
+        from requests import HTTPError
+
+        from tracer.models.observability_provider import ObservabilityProvider
+        from tracer.models.project import Project
+        from tracer.services.observability_providers import ObservabilityService
+
+        # The fixture has no built bundle; allow normal on-demand certification.
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        job = _job(_post(client, workspace, _vapi()))
+        definition = job.agent_version.agent_definition
+        assert definition.api_key is None
+        project = Project.objects.create(
+            name="Vapi credential regression",
+            organization=user.organization,
+            workspace=workspace,
+            model_type="Numeric",
+            trace_type="observe",
+        )
+        provider = ObservabilityProvider.objects.create(
+            project=project,
+            organization=user.organization,
+            workspace=workspace,
+            provider="vapi",
+        )
+        definition.observability_provider = provider
+        definition.api_key = legacy_key
+        definition.save(update_fields=["observability_provider", "api_key"])
+        job.state = HostedHarnessJob.State.COMPLETED
+        job.save(update_fields=["state"])
+        revoked = False
+        call = {"id": "synthetic-call", "assistantId": "asst-1"}
+
+        def get(_url, *, headers, params, **_kwargs):
+            assert params["assistantId"] == "asst-1"
+            if revoked and headers["Authorization"] == "Bearer val-vapi-1":
+                raise HTTPError("synthetic revoked key")
+            return SimpleNamespace(json=lambda: [call], raise_for_status=lambda: None)
+
+        with patch(
+            "tracer.services.observability_providers.requests.get", side_effect=get
+        ) as transport:
+            assert ObservabilityService.get_call_logs(provider) == [call]
+            assert transport.call_args.kwargs["headers"] == {
+                "Authorization": "Bearer val-vapi-1"
+            }
+            version = service.change_credentials(
+                job, secret_values={"VAPI_API_KEY": "val-vapi-2"}, user=user
+            )
+            assert service.preflight_agent_version(version).status == "passed"
+            job.refresh_from_db()
+            definition.refresh_from_db()
+            assert job.agent_version_id == version.id
+            assert definition.active_version.id == version.id
+            assert definition.api_key == legacy_key
+            revoked = True
+            assert ObservabilityService.get_call_logs(provider) == [call]
+            assert transport.call_args.kwargs["headers"] == {
+                "Authorization": "Bearer val-vapi-2"
+            }
+
     def test_a_credential_change_keeps_the_provider_prompt(
         self, client, user, workspace, gates
     ):
