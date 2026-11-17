@@ -601,8 +601,12 @@ const AddProviderDialog = ({
     if (!open || !isEditMode || !provider) return;
     if (apiKey.trim()) return;
     if (
-      isAwsAuth || isVertexAuth || requiresDeploymentIds || provider.name === "vertex"
-    ) return;
+      isAwsAuth ||
+      isVertexAuth ||
+      requiresDeploymentIds ||
+      provider.name === "vertex"
+    )
+      return;
     // null until the hydrating fetch records one, so opening the dialog is not
     // mistaken for a change.
     if (byNameFetchPrefix.current === null) return;
@@ -618,7 +622,12 @@ const AddProviderDialog = ({
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    apiPathPrefix, apiKey, open, isEditMode, isAwsAuth, isVertexAuth,
+    apiPathPrefix,
+    apiKey,
+    open,
+    isEditMode,
+    isAwsAuth,
+    isVertexAuth,
     requiresDeploymentIds,
   ]);
 
@@ -1202,13 +1211,14 @@ const AddProviderDialog = ({
           {(() => {
             const currentPreset = PROVIDER_PRESETS[name];
             // Keep a saved adapter until the user explicitly chooses the native one.
-            const visibleFormats = currentPreset && name !== "custom"
-              ? [...new Set([apiFormat, currentPreset.apiFormat])]
-              : currentPreset?.supportedFormats?.length
-                ? API_FORMATS.filter((f) =>
-                    currentPreset.supportedFormats.includes(f),
-                  )
-                : API_FORMATS;
+            const visibleFormats =
+              currentPreset && name !== "custom"
+                ? [...new Set([apiFormat, currentPreset.apiFormat])]
+                : currentPreset?.supportedFormats?.length
+                  ? API_FORMATS.filter((f) =>
+                      currentPreset.supportedFormats.includes(f),
+                    )
+                  : API_FORMATS;
             const isFiltered = visibleFormats.length < API_FORMATS.length;
             const isSingleOption = visibleFormats.length === 1;
             return (
@@ -1324,20 +1334,21 @@ const AddProviderDialog = ({
               renderInput={(params) => (
                 <TextField
                   {...params}
-                  helperText={requiresDeploymentIds
-                    ? "Enter the deployment names from your Azure resource, not catalogue model IDs."
-                    : undefined
+                  helperText={
+                    requiresDeploymentIds
+                      ? "Enter the deployment names from your Azure resource, not catalogue model IDs."
+                      : undefined
                   }
                   placeholder={
                     modelsLoading
                       ? "Fetching models..."
                       : requiresDeploymentIds
                         ? "Type or paste Azure deployment names"
-                      : modelOptions.length > 0
-                        ? "Select models..."
-                        : isAwsAuth || isVertexAuth || isSystemOne
-                          ? "Type or paste comma-separated model IDs"
-                          : "Enter API key to load models, or type manually"
+                        : modelOptions.length > 0
+                          ? "Select models..."
+                          : isAwsAuth || isVertexAuth || isSystemOne
+                            ? "Type or paste comma-separated model IDs"
+                            : "Enter API key to load models, or type manually"
                   }
                   onPaste={(e) => {
                     const pasted = e.clipboardData.getData("text");
