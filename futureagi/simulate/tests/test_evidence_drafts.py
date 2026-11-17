@@ -321,6 +321,34 @@ def test_an_edit_during_the_turn_never_moves_its_start(
     }
 
 
+def test_a_turn_queued_before_the_count_was_kept_still_lands(
+    environment, cases, storage
+):
+    """A command from before the start count was kept on it still settles; only
+    the counts that need the start are unknown."""
+    conversation, command = _command(environment, cases, 16)
+    payload = {k: v for k, v in command.payload.items() if k != "_starting_scenarios"}
+    HostedHarnessConversationMessage.no_workspace_objects.filter(id=command.id).update(
+        payload=payload
+    )
+    command.refresh_from_db()
+    key_one = evidence_drafts.scenario_key_for(cases[0])
+    key, digest = _save(conversation, command, storage, [key_one])
+    _end_turn(conversation, command)
+
+    with capture_logs() as logs:
+        _promote(conversation, command, key, digest, 16)
+
+    assert [c.status for c in _refreshed(cases)] == ["drafted", "blocked"]
+    counted = _counted(logs)
+    assert (counted["started"], counted["added"], counted["unmatched"]) == (
+        None,
+        None,
+        None,
+    )
+    assert counted["scenarios"] == 3
+
+
 @pytest.mark.parametrize("analyzer", ["missing", "finds nothing"])
 def test_the_landing_logs_no_name_the_builder_wrote(
     environment, cases, storage, analyzer, django_capture_on_commit_callbacks
