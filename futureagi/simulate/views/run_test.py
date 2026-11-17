@@ -4528,7 +4528,9 @@ class CallExecutionDeleteView(APIView):
             # Soft delete the call execution
             call_execution.deleted = True
             call_execution.deleted_at = timezone.now()
-            call_execution.save()
+            # Only these columns: a whole-row save would put back the results
+            # this request read, over any a grader wrote since.
+            call_execution.save(update_fields=["deleted", "deleted_at", "updated_at"])
 
             response_serializer = CallExecutionDeleteResponseSerializer(
                 {"message": "Call execution deleted successfully"}
@@ -6772,7 +6774,9 @@ def _rerun_call_executions(call_executions, rerun_type):
                 call_execution.call_metadata = call_execution.call_metadata or {}
                 call_execution.call_metadata["eval_started"] = False
                 call_execution.call_metadata["eval_completed"] = False
-                call_execution.save()
+                call_execution.save(
+                    update_fields=["eval_outputs", "call_metadata", "updated_at"]
+                )
 
                 _run_simulate_evaluations_task.apply_async(
                     args=(str(call_execution.id),)
@@ -7052,6 +7056,7 @@ def _regrade_evals_on_harness_run(
         for execution_id in plan.execution_ids
         for call_id in plan.graded[execution_id]
     ]
+    claimed_elsewhere: list[str] = []
     try:
         stamped_call_ids = regrade_run_evals(
             run_test,
@@ -7062,6 +7067,7 @@ def _regrade_evals_on_harness_run(
             call_execution_ids=graded_call_ids,
             snapshot_eval_outputs=True,
             skip_runs_without_a_completed_call=select_all,
+            claimed_elsewhere=claimed_elsewhere,
         )
     except RegradeStillFinishing:
         return still_finishing()
@@ -7093,12 +7099,16 @@ def _regrade_evals_on_harness_run(
             "rerun_evals_already_running",
             "Grading is already running on this run.",
         )
-    except RegradeDispatchFailed:
+    except RegradeDispatchFailed as dispatch_failed:
         return refuse(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "rerun_evals_dispatch_failed",
             "Evals may not have started: dispatch failed. The earlier results "
-            "are back, and it is safe to retry.",
+            "are back, and it is safe to retry."
+            if dispatch_failed.put_back
+            else "Evals may not have started: dispatch failed, and the earlier "
+            "results could not be put back yet. They are restored shortly; "
+            "try again after that.",
         )
 
     # A call that moved on or was deleted between the plan and the service's
@@ -7108,8 +7118,11 @@ def _regrade_evals_on_harness_run(
     # Under select_all the service passes over a run that lost all its
     # completed calls, so none of that run's calls is among the stamped.
     skipped = dict(plan.skipped)
+    taken = set(claimed_elsewhere)
     for execution_id in plan.execution_ids:
-        if not stamped.intersection(plan.graded[execution_id]):
+        if execution_id in taken:
+            skipped[execution_id] = "Another re-grade claimed this run."
+        elif not stamped.intersection(plan.graded[execution_id]):
             skipped[execution_id] = "No call in this run completed."
     graded = {
         execution_id: [c for c in plan.graded[execution_id] if c in stamped]
@@ -7482,7 +7495,16 @@ class CallExecutionRerunView(APIView):
                             rerun_eval_ids,
                             now=timezone.now(),
                         )
-                        call_execution.save()
+                        # Only the columns this step changes: a whole-row save
+                        # would put back every other value read earlier over
+                        # what a grader wrote since.
+                        call_execution.save(
+                            update_fields=[
+                                "eval_outputs",
+                                "call_metadata",
+                                "updated_at",
+                            ]
+                        )
 
                         # Evals will be handled by RerunCoordinatorWorkflow below
                         has_pending_evals = True

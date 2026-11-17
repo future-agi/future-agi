@@ -731,6 +731,114 @@ def test_the_put_back_takes_the_same_locks_in_the_same_order(
     locks.assert_the_locks_and_writes_share_one_savepoint(run_test_lock=1)
 
 
+def _deadlock():
+    """What Django raises when Postgres aborts this side of a deadlock."""
+    from psycopg import errors
+
+    error = OperationalError("deadlock detected")
+    error.__cause__ = errors.DeadlockDetected("deadlock detected")
+    return error
+
+
+@contextlib.contextmanager
+def _put_back_deadlocks(dispatch, times, error=None):
+    """Make the call lock fail ``times`` times once the dispatch has failed,
+    as it does when a grader finishing a call meets the put-back."""
+    dispatch_failed = []
+
+    def broker_down(*args, **kwargs):
+        dispatch_failed.append(True)
+        raise ConnectionError("broker unreachable")
+
+    dispatch.side_effect = broker_down
+    left = [times]
+
+    def wrapper(execute, sql, params, many, context):
+        if (
+            dispatch_failed
+            and left[0]
+            and "FOR UPDATE" in sql
+            and 'FROM "simulate_call_execution"' in sql
+        ):
+            left[0] -= 1
+            raise error or _deadlock()
+        return execute(sql, params, many, context)
+
+    with connection.execute_wrapper(wrapper):
+        yield
+
+
+@pytest.mark.django_db
+def test_a_put_back_that_loses_a_deadlock_runs_again_and_answers_as_a_failed_dispatch(
+    run_test, scenario, mapped_eval, dispatch
+):
+    run = _run(run_test)
+    call = _call(run, scenario, eval_outputs={str(mapped_eval.id): _harness_entry()})
+    before = _stored(call)
+
+    with _put_back_deadlocks(dispatch, times=1), pytest.raises(RegradeDispatchFailed):
+        _regrade(
+            run_test,
+            [run],
+            [mapped_eval],
+            call_execution_ids=_ids(call),
+            snapshot_eval_outputs=True,
+        )
+
+    after = _stored(call)
+    assert after["eval_outputs"] == before["eval_outputs"]
+    assert "eval_dispatch_failed" in after["call_metadata"]
+    assert not CallExecutionSnapshot.objects.exists()
+    run.refresh_from_db()
+    assert run.status == COMPLETED
+
+
+@pytest.mark.django_db
+def test_a_put_back_that_deadlocks_twice_still_answers_as_a_failed_dispatch(
+    run_test, scenario, mapped_eval, dispatch
+):
+    run = _run(run_test)
+    call = _call(run, scenario, eval_outputs={str(mapped_eval.id): _harness_entry()})
+
+    with (
+        _put_back_deadlocks(dispatch, times=2),
+        pytest.raises(RegradeDispatchFailed) as failed,
+    ):
+        _regrade(
+            run_test,
+            [run],
+            [mapped_eval],
+            call_execution_ids=_ids(call),
+            snapshot_eval_outputs=True,
+        )
+
+    # The caller must not tell the user the earlier results are back.
+    assert failed.value.put_back is False
+
+    # Each failed attempt rolled back whole, so the claim stands as it was
+    # committed: no marker, no half-restored cell.
+    after = _stored(call)
+    assert after["eval_outputs"][str(mapped_eval.id)]["status"] == "pending"
+    assert "eval_dispatch_failed" not in after["call_metadata"]
+    run.refresh_from_db()
+    assert run.status == EVALUATING
+    assert "eval_dispatch_failed" not in (run.execution_metadata or {})
+
+
+@pytest.mark.django_db
+def test_a_put_back_that_fails_for_another_database_reason_is_not_swallowed(
+    run_test, scenario, mapped_eval, dispatch
+):
+    run = _run(run_test)
+    call = _call(run, scenario)
+
+    with (
+        _put_back_deadlocks(dispatch, times=1, error=OperationalError("timeout")),
+        pytest.raises(OperationalError),
+    ):
+        _regrade(run_test, [run], [mapped_eval], call_execution_ids=_ids(call))
+
+
 @pytest.mark.django_db
 def test_the_add_eval_put_back_takes_the_run_test_lock_first(
     run_test, scenario, mapped_eval
@@ -995,6 +1103,90 @@ def test_a_run_that_lost_its_completed_calls_before_the_lock_can_be_passed_over(
     assert _stored(lost)["eval_outputs"] == lost_before["eval_outputs"]
     assert not CallExecutionSnapshot.objects.filter(call_execution=lost).exists()
     assert CallExecutionSnapshot.objects.filter(call_execution=kept).count() == 1
+
+
+@pytest.mark.django_db
+def test_a_run_claimed_by_another_request_before_the_claim_can_be_passed_over(
+    run_test, scenario, mapped_eval, dispatch
+):
+    mine = _run(run_test)
+    taken = _run(run_test)
+    kept = _call(mine, scenario)
+    other = _call(taken, scenario)
+    other_before = _stored(other)
+    claimed_elsewhere = []
+
+    with _a_call_changes_before_the_lock(
+        lambda: TestExecution.objects.filter(id=taken.id).update(status=EVALUATING)
+    ):
+        stamped = _regrade(
+            run_test,
+            [mine, taken],
+            [mapped_eval],
+            call_execution_ids=_ids(kept, other),
+            snapshot_eval_outputs=True,
+            skip_runs_without_a_completed_call=True,
+            claimed_elsewhere=claimed_elsewhere,
+        )
+
+    assert stamped == _ids(kept)
+    assert claimed_elsewhere == [str(taken.id)]
+    assert _dispatched_call_ids(dispatch) == _ids(kept)
+    mine.refresh_from_db()
+    taken.refresh_from_db()
+    assert mine.status == EVALUATING
+    # The other request's claim is untouched: no column, no snapshot, no
+    # placeholder from this one.
+    assert taken.status == EVALUATING
+    assert "column_order" not in (taken.execution_metadata or {})
+    assert _stored(other)["eval_outputs"] == other_before["eval_outputs"]
+    assert not CallExecutionSnapshot.objects.filter(call_execution=other).exists()
+    assert CallExecutionSnapshot.objects.filter(call_execution=kept).count() == 1
+
+
+@pytest.mark.django_db
+def test_every_run_claimed_elsewhere_still_refuses_when_runs_can_be_passed_over(
+    run_test, scenario, mapped_eval, dispatch
+):
+    runs = [_run(run_test), _run(run_test)]
+    calls = [_call(run, scenario) for run in runs]
+
+    with _a_call_changes_before_the_lock(
+        lambda: TestExecution.objects.filter(id__in=[r.id for r in runs]).update(
+            status=EVALUATING
+        )
+    ):
+        with pytest.raises(RegradeAlreadyRunning):
+            _regrade(
+                run_test,
+                runs,
+                [mapped_eval],
+                call_execution_ids=_ids(*calls),
+                skip_runs_without_a_completed_call=True,
+            )
+
+    dispatch.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_a_run_claimed_elsewhere_still_refuses_a_request_that_named_its_runs(
+    run_test, scenario, mapped_eval, dispatch
+):
+    mine = _run(run_test)
+    taken = _run(run_test)
+    calls = [_call(mine, scenario), _call(taken, scenario)]
+
+    with _a_call_changes_before_the_lock(
+        lambda: TestExecution.objects.filter(id=taken.id).update(status=EVALUATING)
+    ):
+        with pytest.raises(RegradeAlreadyRunning):
+            _regrade(
+                run_test, [mine, taken], [mapped_eval], call_execution_ids=_ids(*calls)
+            )
+
+    dispatch.assert_not_called()
+    mine.refresh_from_db()
+    assert mine.status == COMPLETED
 
 
 @pytest.mark.django_db

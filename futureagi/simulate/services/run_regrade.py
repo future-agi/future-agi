@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import structlog
-from django.db import transaction
+from django.db import OperationalError, transaction
 from django.db.models import Exists, OuterRef, QuerySet
 from django.utils import timezone
 
@@ -89,9 +89,12 @@ class RegradeDispatchFailed(Exception):
     dispatch failed stay.
     """
 
-    def __init__(self, call_execution_count):
+    def __init__(self, call_execution_count, put_back=True):
         super().__init__("The grading job could not be queued.")
         self.call_execution_count = call_execution_count
+        # False when the put-back itself was aborted twice: the claim stands
+        # and the sweep, not a retry, closes it.
+        self.put_back = put_back
 
 
 class HarnessRegradeStillFinishing(Exception):
@@ -280,6 +283,9 @@ def plan_harness_regrade(
     )
 
 
+# Postgres' code for a transaction aborted to break a deadlock.
+_DEADLOCK_SQLSTATE = "40P01"
+
 # Stands for "the call did not have this key" in what a failed dispatch
 # restores a call from. Never stored.
 _ABSENT = object()
@@ -323,7 +329,55 @@ def _lock_run_test(run_test: RunTest) -> None:
     list(RunTest.objects.select_for_update(of=("self",)).filter(pk=run_test.pk))
 
 
+def _lost_a_deadlock(error: OperationalError) -> bool:
+    """Whether Postgres aborted this transaction to break a deadlock."""
+    cause = error.__cause__
+    return getattr(cause, "sqlstate", None) == _DEADLOCK_SQLSTATE
+
+
 def _put_back_after_failed_dispatch(
+    run_test: RunTest,
+    execution_ids: Sequence[str],
+    before: dict[object, _BeforeRegrade],
+    snapshot_ids: Sequence[object],
+    previous_statuses: dict[str, str],
+    error: str,
+) -> bool:
+    """Put a failed dispatch back, once more if Postgres aborts it for a deadlock.
+
+    A grader finishing a call locks the call, then its run; the put-back locks
+    runs, then calls. If the two meet, Postgres aborts one of them. When it is
+    the put-back, its whole transaction has rolled back and nothing was
+    written, and every step reads the rows again under the lock, so running it
+    afresh in a new transaction is safe. The grader's own transaction is short
+    and has ended by then. A second abort is logged and left: returns False,
+    the caller still answers as a failed dispatch but cannot say the results
+    are back, and the claim's placeholders are closed by the sweep like any
+    other grading that never ran.
+    """
+    for attempt in (1, 2):
+        try:
+            _put_back_once(
+                run_test,
+                execution_ids,
+                before,
+                snapshot_ids,
+                previous_statuses,
+                error,
+            )
+            return True
+        except OperationalError as aborted:
+            if not _lost_a_deadlock(aborted):
+                raise
+            logger.warning(
+                "run_regrade_put_back_deadlocked",
+                run_test_id=str(run_test.id),
+                attempt=attempt,
+            )
+    return False
+
+
+def _put_back_once(
     run_test: RunTest,
     execution_ids: Sequence[str],
     before: dict[object, _BeforeRegrade],
@@ -343,8 +397,7 @@ def _put_back_after_failed_dispatch(
     a call of one of these runs takes them the other way round (the call,
     then the run), and the claim has already committed the run as
     evaluating, so the grader's settle does not skip it. If the two meet,
-    Postgres aborts one of them: a known limit of the put-back, rare because
-    it needs a grader of an older job to finish while the dispatch fails.
+    Postgres aborts one of them, and the caller retries a put-back that lost.
     """
     with transaction.atomic():
         _lock_run_test(run_test)
@@ -451,6 +504,7 @@ def regrade_run_evals(
     call_execution_ids=None,
     snapshot_eval_outputs=False,
     skip_runs_without_a_completed_call=False,
+    claimed_elsewhere=None,
 ):
     """Mark the runs evaluating and queue one grading job for all their calls.
 
@@ -473,6 +527,9 @@ def regrade_run_evals(
     request, unless ``skip_runs_without_a_completed_call`` is set: then that
     run is left as it was (the caller can tell it by its calls being absent
     from the result), and the request is refused only when no run is left.
+    The same holds for a run another request claimed after the caller read it
+    as completed: it is left to that request and its id is appended to
+    ``claimed_elsewhere``, when given, so the caller can say why.
     """
     # Passing a run over is judged by the calls kept for it, so without call
     # ids the runs to pass over are never worked out, and the calls of a run
@@ -508,6 +565,7 @@ def regrade_run_evals(
                 )
 
     completed_only = call_execution_ids is not None
+    run_of_call = None
     if call_execution_ids is None:
         # Bulk-fetch all matching CallExecution ids in a single query
         # rather than one query per test execution (N+1).
@@ -546,6 +604,7 @@ def regrade_run_evals(
             ).values_list("id", "test_execution_id")
         )
         call_execution_ids = [str(call_id) for call_id, _ in selected]
+        run_of_call = {str(call_id): str(run_id) for call_id, run_id in selected}
         executions_with_a_completed_call = {
             str(execution_id) for _, execution_id in selected
         }
@@ -588,6 +647,30 @@ def regrade_run_evals(
                 f"Updated enable_tool_evaluation to {enable_tool_evaluation} for run test {run_test.id}"
             )
 
+        if skip_runs_without_a_completed_call:
+            # Locked first, so the runs another request holds are known by
+            # name and passed over, where a bare count would only refuse the
+            # whole batch. The same order as every other path: run test,
+            # runs, calls.
+            claimable = {
+                str(execution_id)
+                for execution_id in TestExecution.objects.select_for_update(
+                    of=("self",)
+                )
+                .filter(
+                    id__in=execution_ids,
+                    status=TestExecution.ExecutionStatus.COMPLETED,
+                )
+                .order_by("id")
+                .values_list("id", flat=True)
+            }
+            taken = [i for i in execution_ids if i not in claimable]
+            if taken and not claimable:
+                raise RegradeAlreadyRunning()
+            if claimed_elsewhere is not None:
+                claimed_elsewhere.extend(taken)
+            execution_ids = [i for i in execution_ids if i in claimable]
+
         claimed = TestExecution.objects.filter(
             id__in=execution_ids,
             status=TestExecution.ExecutionStatus.COMPLETED,
@@ -598,6 +681,13 @@ def regrade_run_evals(
         if claimed != len(execution_ids):
             # Raising out of ``atomic`` rolls the partial claim back.
             raise RegradeAlreadyRunning()
+        if run_of_call is not None:
+            # A run passed over above is not this request's: its calls are
+            # neither locked nor stamped nor dispatched.
+            claimed_ids = set(execution_ids)
+            call_execution_ids = [
+                i for i in call_execution_ids if run_of_call.get(i) in claimed_ids
+            ]
 
         # The calls were read before this transaction, so one may have moved
         # on since: a placeholder on a call the graders skip would never be
@@ -806,7 +896,7 @@ def regrade_run_evals(
             f"Individual tasks will be spawned for parallel processing."
         )
     except Exception as dispatch_error:
-        _put_back_after_failed_dispatch(
+        put_back = _put_back_after_failed_dispatch(
             run_test,
             updated_test_executions,
             before,
@@ -821,6 +911,8 @@ def regrade_run_evals(
             eval_config_count=len(eval_config_ids),
             error=str(dispatch_error),
         )
-        raise RegradeDispatchFailed(len(call_execution_ids)) from dispatch_error
+        raise RegradeDispatchFailed(
+            len(call_execution_ids), put_back=put_back
+        ) from dispatch_error
 
     return call_execution_ids
