@@ -32683,6 +32683,105 @@ export const ModelHubSkillsChecksCreateResponse = zod.object({
   }),
 });
 
+/**
+ * Compare a label move or two explicit windows, same agents first.
+ */
+export const modelHubSkillsRuntimeComparisonListQueryKindDefault = `skill`;
+export const modelHubSkillsRuntimeComparisonListQueryLabelDefault = `production`;
+export const modelHubSkillsRuntimeComparisonListQueryLabelMax = 40;
+
+export const modelHubSkillsRuntimeComparisonListQueryWindowDefault = `24h`;
+export const modelHubSkillsRuntimeComparisonListQueryWindowMax = 5;
+
+export const modelHubSkillsRuntimeComparisonListQueryWindowRegExp = new RegExp(
+  "^(?:[1-9][0-9]*)(?:h|d)$",
+);
+export const modelHubSkillsRuntimeComparisonListQueryProjectIdsMax = 1900;
+
+export const modelHubSkillsRuntimeComparisonListQueryCursorMax = 2048;
+
+export const modelHubSkillsRuntimeComparisonListQueryLimitDefault = 100;
+export const modelHubSkillsRuntimeComparisonListQueryLimitMax = 100;
+
+export const ModelHubSkillsRuntimeComparisonListQueryParams = zod.object({
+  resource_id: zod.string().uuid(),
+  kind: zod
+    .enum(["skill", "agent_context"])
+    .default(modelHubSkillsRuntimeComparisonListQueryKindDefault),
+  event_id: zod.string().uuid().optional(),
+  label: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsRuntimeComparisonListQueryLabelMax)
+    .default(modelHubSkillsRuntimeComparisonListQueryLabelDefault),
+  window: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsRuntimeComparisonListQueryWindowMax)
+    .regex(modelHubSkillsRuntimeComparisonListQueryWindowRegExp)
+    .default(modelHubSkillsRuntimeComparisonListQueryWindowDefault),
+  project_ids: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsRuntimeComparisonListQueryProjectIdsMax)
+    .optional(),
+  before_from: zod.string().datetime({ offset: true }).optional(),
+  before_to: zod.string().datetime({ offset: true }).optional(),
+  after_from: zod.string().datetime({ offset: true }).optional(),
+  after_to: zod.string().datetime({ offset: true }).optional(),
+  cursor: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsRuntimeComparisonListQueryCursorMax)
+    .optional(),
+  limit: zod
+    .number()
+    .min(1)
+    .max(modelHubSkillsRuntimeComparisonListQueryLimitMax)
+    .default(modelHubSkillsRuntimeComparisonListQueryLimitDefault),
+});
+
+export const ModelHubSkillsRuntimeComparisonListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    event_id: zod.string().uuid().nullable(),
+    label: zod.string().min(1),
+    from_version: zod.number().nullable(),
+    to_version: zod.number().nullable(),
+    from_version_id: zod.string().uuid().nullable(),
+    to_version_id: zod.string().uuid().nullable(),
+    moved_at: zod.string().datetime({ offset: true }).nullable(),
+    window: zod.string().min(1),
+    before_cut_at: zod.string().datetime({ offset: true }).nullable(),
+    ends_at: zod.string().datetime({ offset: true }).nullable(),
+    complete: zod.boolean(),
+    verdict: zod.enum([
+      "watching",
+      "worse_so_far",
+      "worse",
+      "better",
+      "no_change",
+      "not_enough_data",
+    ]),
+    trigger: zod.record(zod.string(), zod.string().nullable()).nullable(),
+    so_far: zod.boolean(),
+    collecting: zod.record(zod.string(), zod.string().nullable()).nullable(),
+    same_agents: zod.record(zod.string(), zod.string().nullable()),
+    all_agents: zod.record(zod.string(), zod.string().nullable()),
+    control: zod.record(zod.string(), zod.string().nullable()).nullable(),
+    by_agent: zod.array(zod.record(zod.string(), zod.string().nullable())),
+    adoption: zod.array(zod.record(zod.string(), zod.string().nullable())),
+    changed_skills: zod.array(
+      zod.record(zod.string(), zod.string().nullable()),
+    ),
+    links: zod.record(zod.string(), zod.string().nullable()),
+    primary_action: zod.string().min(1).nullable(),
+    next_cursor: zod.string().min(1).nullable(),
+    truncated: zod.boolean(),
+    totals_note: zod.string().min(1),
+  }),
+});
+
 export const modelHubSkillsConsumptionResolveListQueryNameMax = 64;
 
 export const modelHubSkillsConsumptionResolveListQueryNameRegExp = new RegExp(
@@ -48456,6 +48555,136 @@ export const ModelHubSkillsTestingOptionsListResponse = zod.object({
     }),
     harness_version: zod.string().min(1),
     evaluator_version: zod.string().min(1),
+  }),
+});
+
+/**
+ * Shared, cursor-paged runtime cohorts; loads never imply use.
+ */
+export const modelHubSkillsRuntimeUsageListQueryCursorMax = 2048;
+
+export const modelHubSkillsRuntimeUsageListQueryLimitDefault = 100;
+export const modelHubSkillsRuntimeUsageListQueryLimitMax = 100;
+
+export const modelHubSkillsRuntimeUsageListQueryKindDefault = `skill`;
+export const modelHubSkillsRuntimeUsageListQueryGroupByDefault = `version`;
+export const modelHubSkillsRuntimeUsageListQueryProjectIdsMax = 1900;
+
+export const modelHubSkillsRuntimeUsageListQueryVersionIdsMax = 7400;
+
+export const modelHubSkillsRuntimeUsageListQuerySkillIdsMax = 7400;
+
+export const modelHubSkillsRuntimeUsageListQueryLabelMax = 40;
+
+export const modelHubSkillsRuntimeUsageListQueryServiceMax = 256;
+
+export const modelHubSkillsRuntimeUsageListQueryAgentMax = 256;
+
+export const modelHubSkillsRuntimeUsageListQueryProjectionDefault = `table`;
+export const modelHubSkillsRuntimeUsageListQueryMetricDefault = `failed_requests`;
+export const modelHubSkillsRuntimeUsageListQueryMetricMax = 50;
+
+export const modelHubSkillsRuntimeUsageListQueryMetricRegExp = new RegExp(
+  "^(?:traces|failed_requests|latency_p95|cost_per_trace|eval:[0-9a-f-]{36})$",
+);
+export const modelHubSkillsRuntimeUsageListQueryBucketDefault = `day`;
+
+export const ModelHubSkillsRuntimeUsageListQueryParams = zod.object({
+  to: zod.string().datetime({ offset: true }),
+  cursor: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsRuntimeUsageListQueryCursorMax)
+    .optional(),
+  limit: zod
+    .number()
+    .min(1)
+    .max(modelHubSkillsRuntimeUsageListQueryLimitMax)
+    .default(modelHubSkillsRuntimeUsageListQueryLimitDefault),
+  resource_id: zod.string().uuid().optional(),
+  kind: zod
+    .enum(["skill", "agent_context"])
+    .default(modelHubSkillsRuntimeUsageListQueryKindDefault),
+  group_by: zod
+    .enum(["skill", "version", "agent", "context"])
+    .default(modelHubSkillsRuntimeUsageListQueryGroupByDefault),
+  project_ids: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsRuntimeUsageListQueryProjectIdsMax)
+    .optional(),
+  project_id: zod.string().uuid().optional(),
+  version_ids: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsRuntimeUsageListQueryVersionIdsMax)
+    .optional(),
+  skill_ids: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsRuntimeUsageListQuerySkillIdsMax)
+    .optional(),
+  context_version_id: zod.string().uuid().optional(),
+  label: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsRuntimeUsageListQueryLabelMax)
+    .optional(),
+  service: zod
+    .string()
+    .max(modelHubSkillsRuntimeUsageListQueryServiceMax)
+    .optional(),
+  agent: zod
+    .string()
+    .max(modelHubSkillsRuntimeUsageListQueryAgentMax)
+    .optional(),
+  projection: zod
+    .enum(["table", "series"])
+    .default(modelHubSkillsRuntimeUsageListQueryProjectionDefault),
+  metric: zod
+    .string()
+    .min(1)
+    .max(modelHubSkillsRuntimeUsageListQueryMetricMax)
+    .regex(modelHubSkillsRuntimeUsageListQueryMetricRegExp)
+    .default(modelHubSkillsRuntimeUsageListQueryMetricDefault),
+  bucket: zod
+    .enum(["hour", "day"])
+    .default(modelHubSkillsRuntimeUsageListQueryBucketDefault),
+  from: zod.string().datetime({ offset: true }),
+});
+
+export const ModelHubSkillsRuntimeUsageListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    rows: zod.array(zod.record(zod.string(), zod.string().nullable())),
+    summary: zod.record(zod.string(), zod.string().nullable()),
+    coverage: zod.record(zod.string(), zod.string().nullable()),
+    diagnosis: zod.record(zod.string(), zod.string().nullable()),
+    failed_loads: zod.record(zod.string(), zod.string().nullable()),
+    mismatch: zod.record(zod.string(), zod.string().nullable()).nullable(),
+    move: zod.record(zod.string(), zod.string().nullable()).nullable(),
+    next_cursor: zod.string().min(1).nullable(),
+    totals_note: zod.string().min(1),
+    truncated: zod.boolean(),
+    agent: zod.record(zod.string(), zod.string().nullable()).nullish(),
+    contexts: zod
+      .array(zod.record(zod.string(), zod.string().nullable()))
+      .optional(),
+    links_summary: zod
+      .array(zod.record(zod.string(), zod.string().nullable()))
+      .optional(),
+    linked_not_loaded: zod
+      .array(zod.record(zod.string(), zod.string().nullable()))
+      .optional(),
+    loaded_not_linked: zod
+      .array(zod.record(zod.string(), zod.string().nullable()))
+      .optional(),
+    series: zod
+      .array(zod.record(zod.string(), zod.string().nullable()))
+      .optional(),
+    markers: zod
+      .array(zod.record(zod.string(), zod.string().nullable()))
+      .optional(),
   }),
 });
 

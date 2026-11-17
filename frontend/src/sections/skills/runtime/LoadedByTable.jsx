@@ -115,7 +115,8 @@ export function MetricCell({ row, column, evalConfig, what }) {
       return <TraceNumber {...common} lowSample={false} link={links.all} kind="all" what={`${what} traces`}>{formatCount(row.traces)}</TraceNumber>;
     case 'failed': {
       const failed = row.failedRequests || {};
-      const text = low ? lowSampleCount(failed.count ?? 0, row.traces ?? 0) : formatPercent(failed.rate);
+      const denominator = failed.denominator ?? Math.max(0, (row.traces ?? 0) - (row.incomplete ?? 0));
+      const text = low ? lowSampleCount(failed.count ?? 0, denominator) : formatPercent(failed.rate);
       return <TraceNumber {...common} link={links.failed} kind="failed" what={`${what} failed requests`}>{text}</TraceNumber>;
     }
     case 'p95':

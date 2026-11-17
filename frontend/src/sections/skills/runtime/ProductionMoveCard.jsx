@@ -66,9 +66,12 @@ function sideValue({ item, side, links, showLinks }) {
   const traces = item[`${side}Traces`];
   const count = item[`${side}Count`];
   const low = Boolean(item.lowSample);
-  const text = low && item.metric === 'failed_requests' && count != null ? lowSampleCount(count, traces ?? 0) : formatMetric(item.metric, value);
+  const denominator = item[`${side}Denominator`] ?? traces;
+  const baseText = low && item.metric === 'failed_requests' && count != null ? lowSampleCount(count, denominator ?? 0) : formatMetric(item.metric, value);
+  const coverage = item[`${side}Coverage`];
+  const text = String(item.metric).startsWith('eval:') && coverage != null ? `${baseText} · ${formatPercent(coverage)} evaluated` : baseText;
   const link = showLinks ? links?.[side]?.[item.metric] : null;
-  return <TraceNumber link={link} kind={linkKind(item.metric)} lowSample={low} traces={traces} what={`${metricPhrase(item.metric, item.name)} ${side}`}>{text}</TraceNumber>;
+  return <TraceNumber link={link} projects={link?.projects} kind={linkKind(item.metric)} lowSample={low} traces={traces} what={`${metricPhrase(item.metric, item.name)} ${side}`}>{text}</TraceNumber>;
 }
 
 /** before → after, with a delta only when the sample rule is met (UX-16). */
@@ -173,7 +176,7 @@ export function MoveCardBody({ data, subjectKind = 'skill', subjectId, title, on
         <Stack spacing={0.5} data-section="same-agents">
           <Typography variant="s1" sx={{ fontWeight: 500 }}>{SAME_AGENTS}</Typography>
           {data.sameAgents.agents > 0 && <Typography variant="s3" color="text.secondary">{sameAgentsLead(data.sameAgents.agents)}</Typography>}
-          <MetricRows label={SAME_AGENTS} metrics={data.sameAgents.metrics} trigger={data.trigger} links={data.links} showDeltas={showDeltas} soFarText={soFarText} />
+          <MetricRows label={SAME_AGENTS} metrics={data.sameAgents.metrics} trigger={data.trigger} links={data.sameAgents.links ?? data.links} showDeltas={showDeltas} soFarText={soFarText} />
         </Stack>
       )}
 
@@ -255,7 +258,7 @@ MoveCardBody.propTypes = {
  * secondary action goes to the Versions tab.
  */
 export default function ProductionMoveCard({ skillId, eventId, window: moveWindow = '24h', onRollback, projectIds = [] }) {
-  const query = useSkillComparison(skillId, { eventId, window: moveWindow });
+  const query = useSkillComparison(skillId, { eventId, window: moveWindow, projectIds });
   const versions = query.data ? [query.data.fromVersionId, query.data.toVersionId].filter(Boolean) : [];
   const series = useSkillRuntimeSeries(skillId, {
     window: '7d',

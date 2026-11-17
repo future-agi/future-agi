@@ -34,7 +34,7 @@ afterEach(() => {
 describe('ProductionMoveCard', () => {
   it('asks for the event and window named in the URL', () => {
     show(MOVE, { window: '6h' });
-    expect(hooks.comparison).toHaveBeenCalledWith(SKILL.id, { eventId: 'event-1', window: '6h' });
+    expect(hooks.comparison).toHaveBeenCalledWith(SKILL.id, { eventId: 'event-1', window: '6h', projectIds: [] });
     expect(screen.getByText('Production moved from v3 to v4 · 24 hours each side')).toBeInTheDocument();
   });
 

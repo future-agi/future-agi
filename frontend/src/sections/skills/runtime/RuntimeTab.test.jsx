@@ -66,7 +66,7 @@ describe('RuntimeTab', () => {
 
   it('opens the move card named in the URL, before the table', () => {
     show({ route: '/dashboard/skills/skill-a?tab=runtime&move=event-1&window=6h' });
-    expect(hooks.comparison).toHaveBeenCalledWith(SKILL.id, { eventId: 'event-1', window: '6h' });
+    expect(hooks.comparison).toHaveBeenCalledWith(SKILL.id, { eventId: 'event-1', window: '6h', projectIds: [] });
     const card = document.querySelector('[data-card="move"]');
     expect(before(card, screen.getByRole('table', { name: 'Loaded by' }))).toBe(true);
   });
@@ -74,7 +74,7 @@ describe('RuntimeTab', () => {
   it('shows the latest production move in the window without a URL', () => {
     hooks.runtime.mockReturnValue(success({ ...RUNTIME, move: { eventId: 'event-9', verdict: 'watching' } }));
     show();
-    expect(hooks.comparison).toHaveBeenCalledWith(SKILL.id, { eventId: 'event-9', window: '24h' });
+    expect(hooks.comparison).toHaveBeenCalledWith(SKILL.id, { eventId: 'event-9', window: '24h', projectIds: [] });
   });
 
   it('replaces the lead, strip and table with the diagnosis when nothing loaded', () => {

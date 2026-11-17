@@ -85,14 +85,19 @@ export function runtimeErrorKind(error) {
  * rows. A row with `agent: null` is the version row; it carries its own
  * cohort numbers, which are never the sum of its agent rows.
  */
-export function useSkillRuntime(skillId, { window: windowValue = '7d', projectIds = [], groupBy = 'version,agent', cursor, enabled = true } = {}) {
+export function useSkillRuntime(skillId, { window: windowValue = '7d', projectIds = [], groupBy = 'version', cursor, enabled = true } = {}) {
   const projects = projectParam(projectIds);
+  const bounds = useMemo(() => runtimeWindow(windowValue), [windowValue]);
   return useSkillV11Query({
     parts: [skillId, 'runtime', { window: windowValue, projects: projects || 'all', groupBy, cursor: cursor || null }],
     load: runtimeRead({
       route: 'skillUsage',
       path: { skill_id: skillId },
-      params: () => ({ ...runtimeWindow(windowValue), project_ids: projects, group_by: groupBy, cursor }),
+      params: () => ({ ...bounds, resource_id: skillId, project_ids: projects, group_by: groupBy, cursor }),
+      mapper: (value) => {
+        const data = camelizeRuntime(value);
+        return data && { ...data, rows: (data.rows || []).flatMap((row) => [row, ...(row.agentRows || [])]) };
+      },
     }),
     enabled: Boolean(skillId) && enabled,
   });
@@ -108,7 +113,7 @@ export function useSkillRuntimeSeries(skillId, { window: windowValue = '7d', pro
     load: runtimeRead({
       route: 'skillSeries',
       path: { skill_id: skillId },
-      params: () => ({ ...runtimeWindow(windowValue), project_ids: projects, version_ids: versions, metric, bucket: step }),
+      params: () => ({ ...runtimeWindow(windowValue), resource_id: skillId, projection: 'series', project_ids: projects, version_ids: versions, metric, bucket: step }),
     }),
     enabled: Boolean(skillId) && enabled,
   });
@@ -120,14 +125,15 @@ export function useSkillRuntimeSeries(skillId, { window: windowValue = '7d', pro
  * `trigger.before` and `trigger.after` are per-agent value lists; the client
  * never averages them.
  */
-export function useSkillComparison(skillId, { label = 'production', eventId, window: moveWindow = '24h', enabled = true } = {}) {
+export function useSkillComparison(skillId, { label = 'production', eventId, projectIds = [], cursor, window: moveWindow = '24h', enabled = true } = {}) {
   const windowValue = normalizeMoveWindow(moveWindow);
+  const projects = projectParam(projectIds);
   return useSkillV11Query({
-    parts: [skillId, 'runtimeComparison', { label, eventId: eventId || 'latest', window: windowValue }],
+    parts: [skillId, 'runtimeComparison', { label, eventId: eventId || 'latest', window: windowValue, projects, cursor }],
     load: runtimeRead({
       route: 'skillComparison',
       path: { skill_id: skillId },
-      params: () => ({ label, event_id: eventId, window: windowValue }),
+      params: () => ({ resource_id: skillId, label, event_id: eventId, window: windowValue, project_ids: projects, cursor }),
     }),
     enabled: Boolean(skillId) && enabled,
   });
@@ -144,7 +150,11 @@ export function useContextRuntime(contextId, { window: windowValue = '7d', proje
     load: runtimeRead({
       route: 'contextUsage',
       path: { context_id: contextId },
-      params: () => ({ ...runtimeWindow(windowValue), project_ids: projects, version_id: versionId }),
+      params: () => ({ ...runtimeWindow(windowValue), resource_id: contextId, kind: 'agent_context', group_by: 'version', project_ids: projects, context_version_id: versionId }),
+      mapper: (value) => {
+        const data = camelizeRuntime(value);
+        return data && { ...data, rows: (data.rows || []).flatMap((row) => [row, ...(row.agentRows || [])]) };
+      },
     }),
     enabled: Boolean(contextId) && enabled,
   });
@@ -174,23 +184,34 @@ export function useRuntimeAgent({ projectId, service = '', agent = '', window: w
     parts: ['runtimeAgent', { projectId, service, agent, window: windowValue, from: from || null, to: to || null }],
     load: runtimeRead({
       route: 'agentUsage',
-      params: () => ({ ...(from && to ? { from, to } : runtimeWindow(windowValue)), project_id: projectId, service, agent }),
+      params: () => ({ ...(from && to ? { from, to } : runtimeWindow(windowValue)), project_id: projectId, service, agent, group_by: 'version' }),
     }),
     enabled: Boolean(projectId) && enabled,
   });
 }
 
 /** Endpoint 9: the context release card, with `changed_skills`. */
-export function useContextComparison(contextId, { eventId, window: moveWindow = '24h', enabled = true } = {}) {
+export function useContextComparison(contextId, { eventId, projectIds = [], cursor, window: moveWindow = '24h', enabled = true } = {}) {
   const windowValue = normalizeMoveWindow(moveWindow);
+  const projects = projectParam(projectIds);
   return useSkillV11Query({
-    parts: ['contexts', contextId, 'runtimeComparison', { eventId: eventId || 'latest', window: windowValue }],
+    parts: ['contexts', contextId, 'runtimeComparison', { eventId: eventId || 'latest', window: windowValue, projects, cursor }],
     load: runtimeRead({
       route: 'contextComparison',
       path: { context_id: contextId },
-      params: () => ({ event_id: eventId, window: windowValue }),
+      params: () => ({ resource_id: contextId, kind: 'agent_context', event_id: eventId, window: windowValue, project_ids: projects, cursor }),
     }),
     enabled: Boolean(contextId) && enabled,
+  });
+}
+
+/** One batched runtime projection enriches the existing library, never N reads. */
+export function useLibraryRuntime({ skillIds = [], enabled = true } = {}) {
+  const bounds = useMemo(() => runtimeWindow('7d'), []);
+  return useSkillV11Query({
+    parts: ['libraryRuntime', bounds, skillIds],
+    load: runtimeRead({ route: 'libraryUsage', params: () => ({ ...bounds, group_by: 'skill', skill_ids: projectParam(skillIds) }) }),
+    enabled: enabled && skillIds.length > 0,
   });
 }
 

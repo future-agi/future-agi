@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { paths } from 'src/routes/paths';
 import { getContractedApiMethods, isContractedApiPath } from 'src/api/contracts/api-surface';
-import { RUNTIME_ROUTES, RUNTIME_ROUTE_PENDING, endpoints, runtimeEndpoint } from './endpoints';
+import { RUNTIME_ROUTES, endpoints, runtimeEndpoint } from './endpoints';
 
 // Exercise the real generated registry, not the path-only stub used by transport tests.
 const routes = [
@@ -44,8 +44,7 @@ describe('integrated Skills routes', () => {
   });
 });
 
-// Skill-trace runtime reads: provisional templates until the lean API map lands
-// (SKILLS-API-REVIEW.md). Both states are checked against the real registry.
+// All runtime reads are mounted shared resources, checked against the real registry.
 describe('skill-trace runtime routes', () => {
   const params = { skill_id: 'skill-id', context_id: 'context-id' };
   it('shares a contracted load projection for skills and contexts', () => {
@@ -58,13 +57,12 @@ describe('skill-trace runtime routes', () => {
     expect(getContractedApiMethods('/model-hub/skills/filter-values/')).toEqual(['get']);
     expect(isContractedApiPath('/model-hub/skills/runtime/filter-values/')).toBe(false);
   });
-  it.each(Object.entries(RUNTIME_ROUTES))('%s resolves only when the generated contract has it', (name, template) => {
-    if (isContractedApiPath(template)) {
-      expect(getContractedApiMethods(template).map((method) => method.toLowerCase())).toContain('get');
-      expect(runtimeEndpoint(name, params)).toBe(template.replace('{skill_id}', 'skill-id').replace('{context_id}', 'context-id'));
-    } else {
-      expect(() => runtimeEndpoint(name, params)).toThrow(expect.objectContaining({ code: RUNTIME_ROUTE_PENDING }));
-    }
+  it.each(Object.entries(RUNTIME_ROUTES))('%s resolves to a mounted shared GET projection', (name, template) => {
+    expect(isContractedApiPath(template)).toBe(true);
+    expect(getContractedApiMethods(template)).toEqual(['get']);
+    expect(runtimeEndpoint(name, params)).toBe(template);
+    expect(template).not.toContain('{');
+    expect(template).not.toContain('/runtime/');
   });
 
   it('every template is a GET read under the Skills group', () => {

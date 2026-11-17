@@ -6,6 +6,7 @@ import { httpStatus } from "../utils/conclusions";
 import { useSkillsAccess } from "../utils/access";
 import { Autocomplete, Avatar, Box, Button, Link, MenuItem, Stack, TextField, Typography, useMediaQuery } from "@mui/material";
 import { useSkillsList } from "src/api/skills";
+import { useLibraryRuntime } from "src/api/skills/runtime";
 import { paths } from "src/routes/paths";
 import PageHeader from "src/components/page-header";
 import StatusBadge from "src/components/status-badge";
@@ -50,7 +51,7 @@ function SkillCard({ skill, onOpen, traces = false }) {
       {traces && (
         <Stack component="span" direction="row" spacing={0.75} alignItems="baseline" data-library-loads="true" sx={{ gridColumn: "1 / -1", mt: 0.25, typography: "s3", color: "text.secondary" }}>
           <span>{LOADED_7_DAYS}</span>
-          <LibraryLoadsCell runtime={libraryRuntime(skill)} />
+          <LibraryLoadsCell runtime={libraryRuntime(skill)} loading={skill.runtimeLoading} error={skill.runtimeError} />
         </Stack>
       )}
     </Box>
@@ -95,7 +96,11 @@ export default function SkillsLibraryView() {
     || ([400, 422].includes(status) && Boolean(pageError))
     || (!query.isError && query.data?.count > 0 && !query.data.results?.length));
   const failed = !outOfRange && (previewState === "error" || (!previewState && query.isError));
-  const rows = ['empty', 'filtered-empty'].includes(previewState) ? [] : query.data?.results || [];
+  const catalogueRows = ['empty', 'filtered-empty'].includes(previewState) ? [] : query.data?.results || [];
+  const runtimeQuery = useLibraryRuntime({ skillIds: catalogueRows.map((skill) => skill.id), enabled: traces && !previewState });
+  const runtimeById = Object.fromEntries((runtimeQuery.data?.rows || []).map((row) => [row.skillId, row.runtime]));
+  const rows = catalogueRows.map((skill) => ({ ...skill, runtime: runtimeById[skill.id] ?? skill.runtime,
+    runtimeLoading: runtimeQuery.isPending && runtimeQuery.fetchStatus !== 'idle', runtimeError: runtimeQuery.isError }));
   const count = ['empty', 'filtered-empty'].includes(previewState) ? 0 : query.data?.count || 0;
   const stats = previewState === "empty" ? { total: 0 } : query.data?.stats;
   const filtered = previewState === 'filtered-empty' || Boolean(search || tag || label);
@@ -133,7 +138,7 @@ export default function SkillsLibraryView() {
     // A server fetch, not a runtime load (UX-18); "Loaded (7 days)" is a separate column.
     { accessorKey: "fetches7d", header: "Fetched (7 days)", size: 135 },
     // Flagged (UX-01, UX-16, §15 D12): runtime loads beside fetches, with the short move state.
-    ...(traces ? [{ id: "loaded7d", header: LOADED_7_DAYS, minSize: 150, cell: ({ row: { original: skill } }) => <LibraryLoadsCell runtime={libraryRuntime(skill)} /> }] : []),
+    ...(traces ? [{ id: "loaded7d", header: LOADED_7_DAYS, minSize: 150, cell: ({ row: { original: skill } }) => <LibraryLoadsCell runtime={libraryRuntime(skill)} loading={skill.runtimeLoading} error={skill.runtimeError} /> }] : []),
     { accessorKey: "updatedAt", header: "Updated", minSize: 170, cell: ({ row: { original: skill } }) => (
       <Stack direction="row" alignItems="center" spacing={1}>
         {skill.updatedBy && <Avatar alt={skill.updatedBy.name} sx={{ width: 20, height: 20, typography: "s3", fontFamily: "inherit" }}>{skill.updatedBy.name?.split(/\s+/).map((part) => part[0]).slice(0, 2).join("")}</Avatar>}

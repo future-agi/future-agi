@@ -24,7 +24,7 @@ vi.mock('./endpoints', async (importOriginal) => {
         error.code = actual.RUNTIME_ROUTE_PENDING;
         throw error;
       }
-      return `/runtime/${name}/${params.skill_id || params.context_id || ''}`;
+      return actual.runtimeEndpoint(name, params);
     },
   };
 });
@@ -111,9 +111,9 @@ describe('runtime hooks', () => {
     const { result } = renderHook(() => useSkillRuntime('skill-a', { window: '24h', projectIds: ['p1', 'p2'] }), { wrapper: wrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     const [url, config] = axios.get.mock.calls[0];
-    expect(url).toBe('/runtime/skillUsage/skill-a');
+    expect(url).toBe('/model-hub/skills/usage/');
     expect(config.headers).toEqual(headers);
-    expect(config.params).toMatchObject({ project_ids: 'p1,p2', group_by: 'version,agent' });
+    expect(config.params).toMatchObject({ project_ids: 'p1,p2', group_by: 'version', resource_id: 'skill-a' });
     expect(new Date(config.params.to) - new Date(config.params.from)).toBe(24 * 3600 * 1000);
     expect(result.current.data.rows[0].versionId).toBe('v-id');
   });
@@ -141,7 +141,7 @@ describe('runtime hooks', () => {
   it('asks for one move by event id and window', async () => {
     const { result } = renderHook(() => useSkillComparison('skill-a', { eventId: 'event-a', window: '6h' }), { wrapper: wrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(axios.get.mock.calls[0][1].params).toEqual({ label: 'production', event_id: 'event-a', window: '6h' });
+    expect(axios.get.mock.calls[0][1].params).toEqual({ resource_id: 'skill-a', label: 'production', event_id: 'event-a', window: '6h' });
   });
 
   it('indexes the 7-day link summary by skill id', async () => {
@@ -150,7 +150,7 @@ describe('runtime hooks', () => {
     await waitFor(() => expect(result.current.isPending).toBe(false));
     expect(result.current.bySkillId.s1).toEqual({ skillId: 's1', linkedVersion: 2, traces7d: 12, loadedVersions: [2] });
     expect(result.current.loadedNotLinked).toHaveLength(1);
-    expect(axios.get.mock.calls[0][1].params).toMatchObject({ version_id: 'ctx-v2' });
+    expect(axios.get.mock.calls[0][1].params).toMatchObject({ context_version_id: 'ctx-v2', resource_id: 'ctx-a', kind: 'agent_context' });
   });
 
   it('does not read the latest load until Check tracing starts', async () => {
@@ -159,7 +159,7 @@ describe('runtime hooks', () => {
     axios.get.mockResolvedValue({ data: { result: { load: null, fetch: { sdk_version: '0.9.2', tracing_mode: 'on', can_record: false } } } });
     rerender({ id: 'skill-a', since: '2026-11-17T12:00:00Z', active: true });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(axios.get).toHaveBeenCalledWith('/runtime/skillLatestLoad/skill-a', expect.objectContaining({ params: { resource_id: 'skill-a', kind: 'skill', since: '2026-11-17T12:00:00Z' }, headers }));
+    expect(axios.get).toHaveBeenCalledWith('/model-hub/skills/loads/', expect.objectContaining({ params: { resource_id: 'skill-a', kind: 'skill', since: '2026-11-17T12:00:00Z' }, headers }));
     expect(result.current.data.fetch).toEqual({ sdkVersion: '0.9.2', tracingMode: 'on', canRecord: false });
   });
 });

@@ -16263,6 +16263,91 @@ export interface SkillsChecksResultResponseApi {
   result: SkillsHubChecksResultApi;
 }
 
+export type RuntimeComparisonResultApiVerdict =
+  (typeof RuntimeComparisonResultApiVerdict)[keyof typeof RuntimeComparisonResultApiVerdict];
+
+export const RuntimeComparisonResultApiVerdict = {
+  watching: "watching",
+  worse_so_far: "worse_so_far",
+  worse: "worse",
+  better: "better",
+  no_change: "no_change",
+  not_enough_data: "not_enough_data",
+} as const;
+
+export type RuntimeComparisonResultApiTrigger = {
+  [key: string]: string | null;
+} | null;
+
+export type RuntimeComparisonResultApiCollecting = {
+  [key: string]: string | null;
+} | null;
+
+export type RuntimeComparisonResultApiSameAgents = {
+  [key: string]: string | null;
+};
+
+export type RuntimeComparisonResultApiAllAgents = {
+  [key: string]: string | null;
+};
+
+export type RuntimeComparisonResultApiControl = {
+  [key: string]: string | null;
+} | null;
+
+export type RuntimeComparisonResultApiByAgentItem = {
+  [key: string]: string | null;
+};
+
+export type RuntimeComparisonResultApiAdoptionItem = {
+  [key: string]: string | null;
+};
+
+export type RuntimeComparisonResultApiChangedSkillsItem = {
+  [key: string]: string | null;
+};
+
+export type RuntimeComparisonResultApiLinks = { [key: string]: string | null };
+
+export interface RuntimeComparisonResultApi {
+  event_id: string | null;
+  /** @minLength 1 */
+  label: string;
+  from_version: number | null;
+  to_version: number | null;
+  from_version_id: string | null;
+  to_version_id: string | null;
+  moved_at: string | null;
+  /** @minLength 1 */
+  window: string;
+  before_cut_at: string | null;
+  ends_at: string | null;
+  complete: boolean;
+  verdict: RuntimeComparisonResultApiVerdict;
+  trigger: RuntimeComparisonResultApiTrigger;
+  so_far: boolean;
+  collecting: RuntimeComparisonResultApiCollecting;
+  same_agents: RuntimeComparisonResultApiSameAgents;
+  all_agents: RuntimeComparisonResultApiAllAgents;
+  control: RuntimeComparisonResultApiControl;
+  by_agent: RuntimeComparisonResultApiByAgentItem[];
+  adoption: RuntimeComparisonResultApiAdoptionItem[];
+  changed_skills: RuntimeComparisonResultApiChangedSkillsItem[];
+  links: RuntimeComparisonResultApiLinks;
+  /** @minLength 1 */
+  primary_action: string | null;
+  /** @minLength 1 */
+  next_cursor: string | null;
+  truncated: boolean;
+  /** @minLength 1 */
+  totals_note: string;
+}
+
+export interface SkillsRuntimeComparisonResultResponseApi {
+  status: boolean;
+  result: RuntimeComparisonResultApi;
+}
+
 export type SkillsContextConsumptionManifestApiKind =
   (typeof SkillsContextConsumptionManifestApiKind)[keyof typeof SkillsContextConsumptionManifestApiKind];
 
@@ -22021,6 +22106,73 @@ export interface SkillsHubV11TestingOptionsApi {
 export interface SkillsTestingOptionsResponseApi {
   status: boolean;
   result: SkillsHubV11TestingOptionsApi;
+}
+
+export type RuntimeUsageResultApiRowsItem = { [key: string]: string | null };
+
+export type RuntimeUsageResultApiSummary = { [key: string]: string | null };
+
+export type RuntimeUsageResultApiCoverage = { [key: string]: string | null };
+
+export type RuntimeUsageResultApiDiagnosis = { [key: string]: string | null };
+
+export type RuntimeUsageResultApiFailedLoads = { [key: string]: string | null };
+
+export type RuntimeUsageResultApiMismatch = {
+  [key: string]: string | null;
+} | null;
+
+export type RuntimeUsageResultApiMove = { [key: string]: string | null } | null;
+
+export type RuntimeUsageResultApiAgent = {
+  [key: string]: string | null;
+} | null;
+
+export type RuntimeUsageResultApiContextsItem = {
+  [key: string]: string | null;
+};
+
+export type RuntimeUsageResultApiLinksSummaryItem = {
+  [key: string]: string | null;
+};
+
+export type RuntimeUsageResultApiLinkedNotLoadedItem = {
+  [key: string]: string | null;
+};
+
+export type RuntimeUsageResultApiLoadedNotLinkedItem = {
+  [key: string]: string | null;
+};
+
+export type RuntimeUsageResultApiSeriesItem = { [key: string]: string | null };
+
+export type RuntimeUsageResultApiMarkersItem = { [key: string]: string | null };
+
+export interface RuntimeUsageResultApi {
+  rows: RuntimeUsageResultApiRowsItem[];
+  summary: RuntimeUsageResultApiSummary;
+  coverage: RuntimeUsageResultApiCoverage;
+  diagnosis: RuntimeUsageResultApiDiagnosis;
+  failed_loads: RuntimeUsageResultApiFailedLoads;
+  mismatch: RuntimeUsageResultApiMismatch;
+  move: RuntimeUsageResultApiMove;
+  /** @minLength 1 */
+  next_cursor: string | null;
+  /** @minLength 1 */
+  totals_note: string;
+  truncated: boolean;
+  agent?: RuntimeUsageResultApiAgent;
+  contexts?: RuntimeUsageResultApiContextsItem[];
+  links_summary?: RuntimeUsageResultApiLinksSummaryItem[];
+  linked_not_loaded?: RuntimeUsageResultApiLinkedNotLoadedItem[];
+  loaded_not_linked?: RuntimeUsageResultApiLoadedNotLinkedItem[];
+  series?: RuntimeUsageResultApiSeriesItem[];
+  markers?: RuntimeUsageResultApiMarkersItem[];
+}
+
+export interface SkillsRuntimeUsageResultResponseApi {
+  status: boolean;
+  result: RuntimeUsageResultApi;
 }
 
 export interface SkillsContextContextSafetyOutApi {
@@ -46785,6 +46937,50 @@ export type ModelHubSkillsArchivedListParams = {
   page_size?: number;
 };
 
+export type ModelHubSkillsRuntimeComparisonListParams = {
+  resource_id: string;
+  kind?: ModelHubSkillsRuntimeComparisonListKind;
+  event_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  label?: string;
+  /**
+   * @minLength 1
+   * @maxLength 5
+   * @pattern ^(?:[1-9][0-9]*)(?:h|d)$
+   */
+  window?: string;
+  /**
+   * @minLength 1
+   * @maxLength 1900
+   */
+  project_ids?: string;
+  before_from?: string;
+  before_to?: string;
+  after_from?: string;
+  after_to?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type ModelHubSkillsRuntimeComparisonListKind =
+  (typeof ModelHubSkillsRuntimeComparisonListKind)[keyof typeof ModelHubSkillsRuntimeComparisonListKind];
+
+export const ModelHubSkillsRuntimeComparisonListKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
+
 export type ModelHubSkillsConsumptionResolveListParams = {
   /**
    * @minLength 1
@@ -47336,6 +47532,96 @@ export const ModelHubSkillsReviewInboxListStatus = {
   changes_requested: "changes_requested",
   released: "released",
   superseded: "superseded",
+} as const;
+
+export type ModelHubSkillsRuntimeUsageListParams = {
+  to: string;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  resource_id?: string;
+  kind?: ModelHubSkillsRuntimeUsageListKind;
+  group_by?: ModelHubSkillsRuntimeUsageListGroupBy;
+  /**
+   * @minLength 1
+   * @maxLength 1900
+   */
+  project_ids?: string;
+  project_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 7400
+   */
+  version_ids?: string;
+  /**
+   * @minLength 1
+   * @maxLength 7400
+   */
+  skill_ids?: string;
+  context_version_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  label?: string;
+  /**
+   * @maxLength 256
+   */
+  service?: string;
+  /**
+   * @maxLength 256
+   */
+  agent?: string;
+  projection?: ModelHubSkillsRuntimeUsageListProjection;
+  /**
+   * @minLength 1
+   * @maxLength 50
+   * @pattern ^(?:traces|failed_requests|latency_p95|cost_per_trace|eval:[0-9a-f-]{36})$
+   */
+  metric?: string;
+  bucket?: ModelHubSkillsRuntimeUsageListBucket;
+  from: string;
+};
+
+export type ModelHubSkillsRuntimeUsageListKind =
+  (typeof ModelHubSkillsRuntimeUsageListKind)[keyof typeof ModelHubSkillsRuntimeUsageListKind];
+
+export const ModelHubSkillsRuntimeUsageListKind = {
+  skill: "skill",
+  agent_context: "agent_context",
+} as const;
+
+export type ModelHubSkillsRuntimeUsageListGroupBy =
+  (typeof ModelHubSkillsRuntimeUsageListGroupBy)[keyof typeof ModelHubSkillsRuntimeUsageListGroupBy];
+
+export const ModelHubSkillsRuntimeUsageListGroupBy = {
+  skill: "skill",
+  version: "version",
+  agent: "agent",
+  context: "context",
+} as const;
+
+export type ModelHubSkillsRuntimeUsageListProjection =
+  (typeof ModelHubSkillsRuntimeUsageListProjection)[keyof typeof ModelHubSkillsRuntimeUsageListProjection];
+
+export const ModelHubSkillsRuntimeUsageListProjection = {
+  table: "table",
+  series: "series",
+} as const;
+
+export type ModelHubSkillsRuntimeUsageListBucket =
+  (typeof ModelHubSkillsRuntimeUsageListBucket)[keyof typeof ModelHubSkillsRuntimeUsageListBucket];
+
+export const ModelHubSkillsRuntimeUsageListBucket = {
+  hour: "hour",
+  day: "day",
 } as const;
 
 export type ModelHubSkillsVersionsInspectionListParams = {

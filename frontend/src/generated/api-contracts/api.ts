@@ -943,6 +943,8 @@ import type {
   ModelHubSkillsReleaseRequestsOptionsListParams,
   ModelHubSkillsResolveListParams,
   ModelHubSkillsReviewInboxListParams,
+  ModelHubSkillsRuntimeComparisonListParams,
+  ModelHubSkillsRuntimeUsageListParams,
   ModelHubSkillsTestEvidenceListParams,
   ModelHubSkillsTestRunsFilesListParams,
   ModelHubSkillsTestRunsListParams,
@@ -1492,8 +1494,10 @@ import type {
   SkillsRollbackResponseApi,
   SkillsRunSummaryPageResponseApi,
   SkillsRunSummaryResponseApi,
+  SkillsRuntimeComparisonResultResponseApi,
   SkillsRuntimeConfigurationResponseApi,
   SkillsRuntimeFilterValuesResultResponseApi,
+  SkillsRuntimeUsageResultResponseApi,
   SkillsSessionOutResponseApi,
   SkillsShareRunOutResponseApi,
   SkillsSkillDetailResponseApi,
@@ -54761,6 +54765,131 @@ export const modelHubSkillsChecksCreate = async (
   );
 };
 
+export type modelHubSkillsRuntimeComparisonListResponse200 = {
+  data: SkillsRuntimeComparisonResultResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponseSuccess =
+  modelHubSkillsRuntimeComparisonListResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsRuntimeComparisonListResponseError = (
+  | modelHubSkillsRuntimeComparisonListResponse400
+  | modelHubSkillsRuntimeComparisonListResponse401
+  | modelHubSkillsRuntimeComparisonListResponse403
+  | modelHubSkillsRuntimeComparisonListResponse404
+  | modelHubSkillsRuntimeComparisonListResponse409
+  | modelHubSkillsRuntimeComparisonListResponse410
+  | modelHubSkillsRuntimeComparisonListResponse413
+  | modelHubSkillsRuntimeComparisonListResponse422
+  | modelHubSkillsRuntimeComparisonListResponse428
+  | modelHubSkillsRuntimeComparisonListResponse503
+  | modelHubSkillsRuntimeComparisonListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsRuntimeComparisonListResponse =
+  | modelHubSkillsRuntimeComparisonListResponseSuccess
+  | modelHubSkillsRuntimeComparisonListResponseError;
+
+export const getModelHubSkillsRuntimeComparisonListUrl = (
+  params: ModelHubSkillsRuntimeComparisonListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/skills/comparison/?${stringifiedParams}`
+    : `/model-hub/skills/comparison/`;
+};
+
+/**
+ * Compare a label move or two explicit windows, same agents first.
+ */
+export const modelHubSkillsRuntimeComparisonList = async (
+  params: ModelHubSkillsRuntimeComparisonListParams,
+  options?: RequestInit,
+): Promise<modelHubSkillsRuntimeComparisonListResponse> => {
+  return apiMutator<modelHubSkillsRuntimeComparisonListResponse>(
+    getModelHubSkillsRuntimeComparisonListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type modelHubSkillsConsumptionResolveListResponse200 = {
   data: SkillsConsumptionManifestResponseApi;
   status: 200;
@@ -68220,6 +68349,131 @@ export const modelHubSkillsTestingOptionsList = async (
 ): Promise<modelHubSkillsTestingOptionsListResponse> => {
   return apiMutator<modelHubSkillsTestingOptionsListResponse>(
     getModelHubSkillsTestingOptionsListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type modelHubSkillsRuntimeUsageListResponse200 = {
+  data: SkillsRuntimeUsageResultResponseApi;
+  status: 200;
+};
+
+export type modelHubSkillsRuntimeUsageListResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type modelHubSkillsRuntimeUsageListResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type modelHubSkillsRuntimeUsageListResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type modelHubSkillsRuntimeUsageListResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type modelHubSkillsRuntimeUsageListResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type modelHubSkillsRuntimeUsageListResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type modelHubSkillsRuntimeUsageListResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type modelHubSkillsRuntimeUsageListResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type modelHubSkillsRuntimeUsageListResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type modelHubSkillsRuntimeUsageListResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type modelHubSkillsRuntimeUsageListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type modelHubSkillsRuntimeUsageListResponseSuccess =
+  modelHubSkillsRuntimeUsageListResponse200 & {
+    headers: Headers;
+  };
+export type modelHubSkillsRuntimeUsageListResponseError = (
+  | modelHubSkillsRuntimeUsageListResponse400
+  | modelHubSkillsRuntimeUsageListResponse401
+  | modelHubSkillsRuntimeUsageListResponse403
+  | modelHubSkillsRuntimeUsageListResponse404
+  | modelHubSkillsRuntimeUsageListResponse409
+  | modelHubSkillsRuntimeUsageListResponse410
+  | modelHubSkillsRuntimeUsageListResponse413
+  | modelHubSkillsRuntimeUsageListResponse422
+  | modelHubSkillsRuntimeUsageListResponse428
+  | modelHubSkillsRuntimeUsageListResponse503
+  | modelHubSkillsRuntimeUsageListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type modelHubSkillsRuntimeUsageListResponse =
+  | modelHubSkillsRuntimeUsageListResponseSuccess
+  | modelHubSkillsRuntimeUsageListResponseError;
+
+export const getModelHubSkillsRuntimeUsageListUrl = (
+  params: ModelHubSkillsRuntimeUsageListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/model-hub/skills/usage/?${stringifiedParams}`
+    : `/model-hub/skills/usage/`;
+};
+
+/**
+ * Shared, cursor-paged runtime cohorts; loads never imply use.
+ */
+export const modelHubSkillsRuntimeUsageList = async (
+  params: ModelHubSkillsRuntimeUsageListParams,
+  options?: RequestInit,
+): Promise<modelHubSkillsRuntimeUsageListResponse> => {
+  return apiMutator<modelHubSkillsRuntimeUsageListResponse>(
+    getModelHubSkillsRuntimeUsageListUrl(params),
     {
       ...options,
       method: "GET",

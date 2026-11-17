@@ -68,7 +68,7 @@ describe('ContextRuntimeView', () => {
 
   it('lists the release card with the skills that changed', () => {
     show();
-    expect(hooks.comparison).toHaveBeenCalledWith('ctx-1', { eventId: 'release-1', window: '24h' });
+    expect(hooks.comparison).toHaveBeenCalledWith('ctx-1', { eventId: 'release-1', window: '24h', projectIds: [] });
     const card = document.querySelector('[data-card="context-release"]');
     expect(within(card).getByText('Released v4 (was v3) · 24 hours each side')).toBeInTheDocument();
     expect(within(card).getByText('refund-policy: v3 → v4')).toBeInTheDocument();

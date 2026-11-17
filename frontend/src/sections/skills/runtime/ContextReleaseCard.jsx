@@ -13,8 +13,8 @@ import { CANT_OPEN_PROJECT, CHANGED_SKILLS, MOVE_CARD_ERROR, changedSkillLine, c
  * between the two context versions listed under it. Shown on the context
  * Runtime tab and on the context release receipt.
  */
-export default function ContextReleaseCard({ contextId, eventId, window: moveWindow = '24h', onRollback, variant = 'card' }) {
-  const query = useContextComparison(contextId, { eventId, window: moveWindow });
+export default function ContextReleaseCard({ contextId, eventId, projectIds = [], window: moveWindow = '24h', onRollback, variant = 'card' }) {
+  const query = useContextComparison(contextId, { eventId, window: moveWindow, projectIds });
   const errorKind = query.isError ? runtimeErrorKind(query.error) : null;
   const body = (() => {
     if (query.isPending && query.fetchStatus !== 'idle') return <ContentSkeleton variant="panel" label="Loading this release" />;
@@ -48,6 +48,7 @@ export default function ContextReleaseCard({ contextId, eventId, window: moveWin
 ContextReleaseCard.propTypes = {
   contextId: PropTypes.string.isRequired,
   eventId: PropTypes.string,
+  projectIds: PropTypes.array,
   window: PropTypes.string,
   onRollback: PropTypes.func,
   variant: PropTypes.oneOf(['card', 'plain']),

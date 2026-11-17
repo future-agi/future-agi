@@ -53,22 +53,22 @@ export const endpoints = {
 
 // Skill-trace runtime reads (SKILL-TRACES §6.6 endpoints 1–5 and 8–10, lane
 // ST10). The load projection is mounted at the shared /loads/ resource.
-// Loads and filter values are mounted. Usage and comparison remain provisional until their shared
-// API projections are mounted (SKILLS-API-REVIEW.md); do not enable the feature
-// or replace these guards with uncontracted network calls. Hooks in runtime.js
-// call `runtimeEndpoint(name, params)`.
+// Usage and comparison are shared projections, not endpoints per screen.
+// Hooks carry resource, grouping, window and project selectors as query params.
+// The contract guard also supports rolling deployments of older servers.
 //
 // A template is used only once the generated contract has it. Until then the
 // read fails with the typed code `runtime_route_pending` (the screens show
 // their error state), so nothing calls a route the backend does not serve.
 export const RUNTIME_ROUTES = Object.freeze({
-  skillUsage: '/model-hub/skills/{skill_id}/runtime/', // 1: Loaded by, summary, diagnosis
-  skillSeries: '/model-hub/skills/{skill_id}/runtime/timeseries/', // 2
-  skillComparison: '/model-hub/skills/{skill_id}/runtime/label-move/', // 3: move card and header chip
-  contextUsage: '/model-hub/skills/contexts/{context_id}/runtime-skills/', // 4
-  filterValues: '/model-hub/skills/filter-values/', // Shared, cursor-paged Observe pickers
-  agentUsage: '/model-hub/skills/runtime/agent/', // 8: agent panel
-  contextComparison: '/model-hub/skills/contexts/{context_id}/runtime/release-move/', // 9
+  skillUsage: '/model-hub/skills/usage/',
+  skillSeries: '/model-hub/skills/usage/',
+  skillComparison: '/model-hub/skills/comparison/',
+  contextUsage: '/model-hub/skills/usage/',
+  libraryUsage: '/model-hub/skills/usage/',
+  filterValues: '/model-hub/skills/filter-values/',
+  agentUsage: '/model-hub/skills/usage/',
+  contextComparison: '/model-hub/skills/comparison/',
   // One mounted load projection serves both resource kinds.
   skillLatestLoad: '/model-hub/skills/loads/',
   contextLatestLoad: '/model-hub/skills/loads/',

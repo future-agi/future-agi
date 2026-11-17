@@ -95,7 +95,7 @@ export default function ContextRuntimeView({ context, versionId, onRollback, onC
                 <RuntimeDiagnosis kind="agent_context" diagnosis={data.diagnosis} subjectId={context.id} loadsAgents={data.summary?.agents ?? 0} onCheckTracing={onCheckTracing} />
               )}
               <RuntimeStrip summary={data.summary} />
-              {releaseId && <ContextReleaseCard contextId={context.id} eventId={releaseId} window={params.get('move') ? params.get('window') || '24h' : '24h'} onRollback={onRollback} />}
+              {releaseId && <ContextReleaseCard contextId={context.id} eventId={releaseId} projectIds={projectIds} window={params.get('move') ? params.get('window') || '24h' : '24h'} onRollback={onRollback} />}
               <Stack spacing={1}>
                 <Typography variant="m3" component="h3">{SKILLS_LOADED_AT_RUNTIME}</Typography>
                 <Table size="small" aria-label={SKILLS_LOADED_AT_RUNTIME} sx={stackedTableSx}>
