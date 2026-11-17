@@ -945,7 +945,8 @@ def _apply_receipt_to_call(
         call.started_at, call.ended_at = receipt_call_times(call_data)
         call.completed_at = call.ended_at
         call.duration_seconds = round(call_data["duration_ms"] / 1000)
-    elif body["status"] == "skipped":
+    elif body["status"] == "skipped" or call.completed_at is None:
+        # Every receipt ends its trial: one with no call data still gets its end, so its worker read is due.
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
     previous_receipt = metadata.get("hosted_harness_receipt") or {}

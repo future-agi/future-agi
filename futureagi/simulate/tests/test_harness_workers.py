@@ -3654,42 +3654,84 @@ def test_only_a_cancel_the_user_asked_for_reads_stopped_by_the_user(
 
 
 @pytest.mark.django_db
-def test_an_earlier_attempt_the_user_stopped_still_says_so_after_a_rerun(
+def test_an_earlier_attempt_the_user_stopped_keeps_its_own_ending_after_a_rerun(
     user, workspace, storage, settings, auth_client
 ):
-    """Stop, then rerun: the earlier attempt keeps being the one the user stopped; the current attempt says its own."""
-    from simulate.models import CallExecution, HostedHarnessJob
+    """Stop, then rerun: the earlier attempt keeps the user's stop and each worker it cut short keeps that attempt's
+    own ending and cleanup; the current attempt says its own."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from simulate.models import CallExecution, HostedHarnessAttempt, HostedHarnessJob
     from simulate.services.call_rerun import call_snapshot, clear_call_for_rerun
     from simulate.services.harness_workers import WORKERS_KEY
 
-    job, _attempt, call = _cut_short_run(user, workspace, storage, settings, "sbr")
+    job, sandbox, call = _cut_short_run(user, workspace, storage, settings, "sbr")
+
+    def cut_short(collected: str) -> dict:
+        timeline = worker_timeline(SPANS, DECLARED, run_key=RUN)
+        workers = [
+            {**one, "state": "cancel_requested"} if one["id"] == "refund" else one
+            for one in timeline["workers"]
+        ]
+        return {**timeline, "workers": workers, "collected_at": collected}
+
+    # Attempt 1: stopped by the user while the refund worker was out; its sandbox went with the stop.
     CallExecution.objects.filter(id=call.id).update(
-        status=CallExecution.CallStatus.CANCELLED
+        status=CallExecution.CallStatus.CANCELLED,
+        completed_at=timezone.now(),
+        call_metadata={
+            **(call.call_metadata or {}),
+            WORKERS_KEY: cut_short("2026-11-17T10:00:00+00:00"),
+        },
     )
     HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
         state=HostedHarnessJob.State.CANCELED, cancel_reason="user_canceled"
     )
-    CallExecution.objects.filter(id=call.id).update(
-        call_metadata={
-            **(call.call_metadata or {}),
-            WORKERS_KEY: {
-                **worker_timeline(SPANS, DECLARED, run_key=RUN),
-                "collected_at": "2026-11-17T10:00:00+00:00",
-            },
-        }
+    HostedHarnessAttempt.no_workspace_objects.filter(id=sandbox.id).update(
+        cleanup_verified_at=timezone.now()
     )
     call.refresh_from_db()
     stopped = call_snapshot(call)
     stopped.save()
+
+    # The rerun: a new sandbox attempt, still running, with the refund worker out again.
     clear_call_for_rerun(call)
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        state=HostedHarnessJob.State.RUNNING, cancel_reason="", current_attempt_number=2
+    )
+    HostedHarnessAttempt.no_workspace_objects.create(
+        job=job,
+        attempt_number=2,
+        token_hash="u" * 64,
+        fence_hash="g" * 64,
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.CANCELLED,
+        call_metadata={
+            **(call.call_metadata or {}),
+            WORKERS_KEY: cut_short("2026-11-17T11:00:00+00:00"),
+        },
+    )
     call.refresh_from_db()
     url = f"/simulate/v3/call-executions/{call.id}/workers/"
+
+    def refund(body: dict) -> dict:
+        return next(one for one in body["workers"] if one["id"] == "refund")
 
     earlier = auth_client.get(url, {"attempt": str(stopped.id)})
     assert earlier.status_code == 200, earlier.content
     assert earlier.json()["stopped_by_user"] is True
-    # The rerun's own attempt has not been stopped.
-    assert harness_worker_states.stopped_by_user(call) is False
+    assert refund(earlier.json())["state"] == "cancelled"
+    assert refund(earlier.json())["cleanup"]["status"] == "stopped_with_sandbox"
+    # The current attempt: its stop is not confirmed and its sandbox is still up.
+    latest = auth_client.get(url)
+    assert latest.status_code == 200, latest.content
+    assert latest.json()["stopped_by_user"] is False
+    assert refund(latest.json())["state"] == "cancel_requested"
+    assert refund(latest.json())["cleanup"]["status"] == "still_running"
 
 
 @pytest.mark.django_db

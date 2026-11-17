@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, cast
 
 from simulate.constants.hosted_harness import (
@@ -272,11 +273,52 @@ def worker_cleanup(
     return {"status": "still_running", "at": ended}
 
 
+# How an attempt ended, kept beside its record when a rerun snapshots it (`attempt_end`): read for that attempt
+# instead of the call, its job and its sandbox as they are now.
+ATTEMPT_END_KEY = "harness_attempt_end"
+
+
+def _attempt_execution(
+    call: CallExecution, attempt: CallExecutionSnapshot
+) -> HostedHarnessExecution | None:
+    """This call's own execution that ran an earlier attempt: its latest one created before the rerun."""
+    return (
+        HostedHarnessExecution.objects.select_related("job", "receipt__attempt")
+        .filter(call_execution=call, created_at__lte=attempt.snapshot_timestamp)
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def _attempt_job(
+    call: CallExecution, attempt: CallExecutionSnapshot
+) -> HostedHarnessJob | None:
+    """The job of this call's own execution; with none, its run's job (a run has exactly one)."""
+    return _job_of(call, _attempt_execution(call, attempt))
+
+
+def _kept_end(attempt: CallExecutionSnapshot) -> Mapping[str, Any] | None:
+    kept = (attempt.call_metadata or {}).get(ATTEMPT_END_KEY)
+    return kept if isinstance(kept, Mapping) else None
+
+
+def _attempt_as_ended(attempt: CallExecutionSnapshot) -> Any:
+    """An earlier attempt as its snapshot kept the call when it ended: its status, metadata and end."""
+    return SimpleNamespace(
+        status=attempt.status,
+        call_metadata=attempt.call_metadata or {},
+        completed_at=attempt.completed_at,
+    )
+
+
 def stopped_by_user(
     call: CallExecution, attempt: CallExecutionSnapshot | None = None
 ) -> bool:
     """Whether the user stopped this call, or the earlier attempt a rerun kept (`attempt`, from its own snapshot):
     cancelled, and its receipt or its job says the user stopped it; a fix ending or an environment delete is not."""
+    kept = _kept_end(attempt) if attempt is not None else None
+    if kept is not None:
+        return kept.get("stopped_by_user") is True
     status = attempt.status if attempt is not None else call.status
     if status != CallExecution.CallStatus.CANCELLED:
         return False
@@ -287,18 +329,7 @@ def stopped_by_user(
     failure = receipt.get("failure") if isinstance(receipt, Mapping) else None
     if isinstance(failure, Mapping) and failure.get("code") == USER_CANCELED:
         return True
-    if attempt is None:
-        job = job_for_call(call)
-    else:
-        # The job that ran the attempt: the latest one of the call's run created before the rerun.
-        job = (
-            HostedHarnessJob.no_workspace_objects.filter(
-                test_execution_id=call.test_execution_id,
-                created_at__lte=attempt.snapshot_timestamp,
-            )
-            .order_by("-created_at")
-            .first()
-        )
+    job = job_for_call(call) if attempt is None else _attempt_job(call, attempt)
     return job is not None and job.cancel_reason == USER_CANCELED
 
 
@@ -348,6 +379,7 @@ def served_workers(
     timeline: WorkerTimeline,
     metadata: Mapping[str, Any] | None = None,
     bindings: Mapping[str, str] | None = None,
+    attempt: CallExecutionSnapshot | None = None,
 ) -> WorkerTimeline:
     """The stored record as served: a `cancel_requested` the job has since confirmed reads `cancelled`, each cut-short
     worker carries its cleanup, and a worker the trial (`metadata`, the call's or an earlier attempt's) says bypassed
@@ -391,19 +423,37 @@ def served_workers(
         workers.append(served)
     if not any(one.get("state") in CUT_SHORT_STATES for one in workers):
         return {**timeline, "workers": workers}
-    execution = _execution(call)
-    # Read once for every worker, not per worker.
-    job = _job_of(call, execution)
-    attempt = _call_attempt(execution, job) if job is not None else None
+    # Read once for every worker, not per worker. An earlier attempt is read as its own snapshot and job kept it,
+    # never as the call stands now.
+    kept = _kept_end(attempt) if attempt is not None else None
+    ended: Any = call if attempt is None else _attempt_as_ended(attempt)
+    if attempt is None:
+        execution = _execution(call)
+    else:
+        # An earlier attempt kept without its ending is read from this call's own execution that ran it.
+        execution = None if kept is not None else _attempt_execution(call, attempt)
+    # With no execution row, the run's job: a run has exactly one.
+    job = _job_of(call, execution) if kept is None else None
+    sandbox = _call_attempt(execution, job) if job is not None else None
+    cut = any(one.get("state") == "cancel_requested" for one in workers)
     ending = (
-        trial_ending(call, job)
-        if any(one.get("state") == "cancel_requested" for one in workers)
+        (kept.get("ending") if kept is not None else trial_ending(ended, job))
+        if cut
         else None
     )
     for worker in workers:
         if worker.get("state") == "cancel_requested" and ending == "cancelled":
             worker["state"] = "cancelled"
-        cleanup = worker_cleanup(call, job, attempt, worker)
+        if kept is not None:
+            cleanup = (
+                worker_cleanup(ended, None, None, worker)
+                if worker.get("stopped_at") is not None
+                else kept.get("cleanup")
+                if worker.get("state") in CUT_SHORT_STATES
+                else None
+            )
+        else:
+            cleanup = worker_cleanup(ended, job, sandbox, worker)
         if cleanup is not None:
             worker["cleanup"] = cleanup
     return {**timeline, "workers": workers}

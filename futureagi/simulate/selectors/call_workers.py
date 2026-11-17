@@ -84,7 +84,9 @@ def _answer(
             for one in (declared_workers(job) if job is not None else [])
         }
         served = served_record(
-            served_workers(call, cast(WorkerTimeline, record), metadata, bindings),
+            served_workers(
+                call, cast(WorkerTimeline, record), metadata, bindings, attempt
+            ),
             now,
             receipt_sub_goals(metadata),
             stopped_by_user=stopped_by_user(call, attempt),
