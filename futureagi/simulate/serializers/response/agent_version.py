@@ -11,12 +11,28 @@ from tracer.services.observability_switch import snapshot_as_shown
 logger = structlog.get_logger(__name__)
 
 
+class AgentVersionPreflightCheckSerializer(serializers.Serializer):
+    id = serializers.CharField(allow_blank=True)
+    label = serializers.CharField(allow_blank=True)
+    status = serializers.CharField(allow_blank=True)
+    missing = serializers.ListField(child=serializers.CharField())
+
+
+class AgentVersionPreflightReportSerializer(serializers.Serializer):
+    """What the check results show of a stored report: nothing else leaves the server."""
+
+    checks = AgentVersionPreflightCheckSerializer(many=True)
+    missing = serializers.ListField(child=serializers.CharField())
+    invalid = serializers.ListField(child=serializers.CharField())
+    error = serializers.CharField(allow_null=True)
+
+
 def _preflight(context, version):
     """The check's (status, report) the view read for this version, else nulls.
 
     The fields sit on a side table, so the views read a page of them in one
-    query; a serializer without that context (create, activate, restore) or a
-    version with no row reports nothing rather than querying per row.
+    query and pass them in the context; a version with no row, or a serializer
+    given no context, reports nothing rather than querying per row.
     """
     return (context.get("preflight") or {}).get(version.id, (None, None))
 
@@ -127,10 +143,13 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
         return _preflight(self.context, obj)[0]
 
     @swagger_serializer_method(
-        serializer_or_field=serializers.JSONField(allow_null=True)
+        serializer_or_field=AgentVersionPreflightReportSerializer(allow_null=True)
     )
     def get_preflight_report(self, obj) -> dict | None:
-        return _preflight(self.context, obj)[1]
+        # Imported here: the service module imports serializers of its own.
+        from simulate.services.harness_agent_versions import public_preflight_report
+
+        return public_preflight_report(_preflight(self.context, obj)[1])
 
 
 class AgentVersionListResponseSerializer(serializers.ModelSerializer):
@@ -181,10 +200,13 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
         return _preflight(self.context, obj)[0]
 
     @swagger_serializer_method(
-        serializer_or_field=serializers.JSONField(allow_null=True)
+        serializer_or_field=AgentVersionPreflightReportSerializer(allow_null=True)
     )
     def get_preflight_report(self, obj) -> dict | None:
-        return _preflight(self.context, obj)[1]
+        # Imported here: the service module imports serializers of its own.
+        from simulate.services.harness_agent_versions import public_preflight_report
+
+        return public_preflight_report(_preflight(self.context, obj)[1])
 
 
 class AgentVersionCreateResponseSerializer(serializers.Serializer):

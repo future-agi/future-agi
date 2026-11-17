@@ -58,9 +58,10 @@ describe("ConnectedAgentsView", () => {
       "Source",
       "Versions",
       "Used in",
+      "Last updated",
       "Created at",
     ]);
-    ["Owner", "Production", "Last updated", "Connected"].forEach((h) =>
+    ["Owner", "Production", "Connected"].forEach((h) =>
       expect(screen.queryByRole("columnheader", { name: h })).toBeNull(),
     );
   });

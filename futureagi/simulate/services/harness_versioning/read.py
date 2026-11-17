@@ -388,6 +388,7 @@ def _agent_item(
     from simulate.services.harness_agent_versions import (
         _held_elsewhere,
         agent_pick_allowed,
+        public_preflight_report,
         requested_here,
         version_credential_names,
     )
@@ -417,10 +418,8 @@ def _agent_item(
         if runtime is not None and runtime.parent_id
         else None
     )
-    report = (
-        runtime.preflight_report
-        if runtime is not None and isinstance(runtime.preflight_report, Mapping)
-        else None
+    report = public_preflight_report(
+        runtime.preflight_report if runtime is not None else None
     )
     # Annotated by ``_runtimes``.
     asked_here = runtime is not None and requested_here(

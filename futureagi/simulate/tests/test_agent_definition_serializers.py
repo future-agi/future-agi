@@ -616,12 +616,65 @@ class TestAgentVersionResponseSerializer:
         assert data["preflight_status"] is None
         assert data["preflight_report"] is None
 
-        report = {"reason": "the endpoint answered 401"}
+        report = {
+            "checks": [
+                {
+                    "id": "source",
+                    "label": "Source",
+                    "status": "failed",
+                    "missing": [],
+                }
+            ],
+            "missing": [],
+            "invalid": ["openai"],
+            "error": "github_repository_not_found",
+        }
         with_row = AgentVersionResponseSerializer(
             version, context={"preflight": {version.id: ("failed", report)}}
         ).data
         assert with_row["preflight_status"] == "failed"
         assert with_row["preflight_report"] == report
+
+    def test_the_report_leaves_out_what_the_page_does_not_show(
+        self, db, organization, workspace
+    ):
+        from simulate.models import AgentDefinition
+        from simulate.serializers.response.agent_version import (
+            AgentVersionListResponseSerializer,
+            AgentVersionResponseSerializer,
+        )
+
+        agent = AgentDefinition.objects.create(
+            agent_name="Test Agent",
+            agent_type="voice",
+            inbound=True,
+            description="Test",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        version = agent.create_version(
+            description="First version", commit_message="Initial", status="active"
+        )
+        stored = {
+            "checks": [],
+            "activation": [{"environment_id": "env-1", "outcome": "environment_busy"}],
+            "source_scan": {"required_files": ["config/secrets.yaml"]},
+            "reading": {"status": "failed", "message": "free text"},
+        }
+        context = {"preflight": {version.id: ("failed", stored)}}
+
+        for serializer in (
+            AgentVersionResponseSerializer,
+            AgentVersionListResponseSerializer,
+        ):
+            report = serializer(version, context=context).data["preflight_report"]
+            assert report == {
+                "checks": [],
+                "missing": [],
+                "invalid": [],
+                "error": None,
+            }
 
     def test_configuration_snapshot_uuid_safe(self, db, organization, workspace):
         from simulate.models import AgentDefinition
@@ -758,3 +811,61 @@ class TestAgentDefinitionSerializerObservability:
         agent = _agent_with_row(organization, workspace, enabled=True, api_key="")
         _delete_project(agent)
         assert "api_key" not in self._errors(_stored_agent(agent))
+
+
+@pytest.mark.unit
+class TestPublicPreflightReport:
+    """The check's stored report, cut to what the Agents page renders."""
+
+    def test_keeps_only_the_rendered_fields(self):
+        from simulate.services.harness_agent_versions import public_preflight_report
+
+        stored = {
+            "checks": [
+                {
+                    "id": "source",
+                    "label": "Source",
+                    "status": "passed",
+                    "missing": ["A"],
+                    "detail": "x",
+                }
+            ],
+            "missing": ["A"],
+            "invalid": ["openai"],
+            "error": "preflight_error",
+            "activation": [{"environment_id": "e"}],
+        }
+
+        assert public_preflight_report(stored) == {
+            "checks": [
+                {
+                    "id": "source",
+                    "label": "Source",
+                    "status": "passed",
+                    "missing": ["A"],
+                }
+            ],
+            "missing": ["A"],
+            "invalid": ["openai"],
+            "error": "preflight_error",
+        }
+
+    @pytest.mark.parametrize("stored", [None, [], "failed", 3])
+    def test_a_report_that_is_not_an_object_is_null(self, stored):
+        from simulate.services.harness_agent_versions import public_preflight_report
+
+        assert public_preflight_report(stored) is None
+
+    def test_malformed_entries_are_dropped_not_passed_on(self):
+        from simulate.services.harness_agent_versions import public_preflight_report
+
+        report = public_preflight_report(
+            {"checks": ["x", {"id": "a", "label": "A"}], "missing": "A", "error": 7}
+        )
+
+        assert report == {
+            "checks": [{"id": "a", "label": "A", "status": "", "missing": []}],
+            "missing": [],
+            "invalid": [],
+            "error": "7",
+        }

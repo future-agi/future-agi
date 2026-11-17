@@ -14,10 +14,10 @@ const CONNECTED_AGENTS = '/dashboard/agents/connected';
 type AgentRow = { id: string; agent_name: string };
 type AgentList = { results: AgentRow[] };
 
-test('AGENT-E2E-002: an agent used after a newer one was created lists above it on Connected agents', {
+test('AGENT-E2E-003: an agent used after a newer one was created lists above it on Connected agents', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'AGENT-E2E-002', area: 'agents',
+    id: 'AGENT-E2E-003', area: 'agents',
     userGoal: 'A developer who reuses an older agent sees it at the top of Connected agents, not buried behind newer ones',
     steps: ['seed two Agent Definitions with one version each, then give the older one the later updated_at that a reuse writes (no hosted-agent infra runs in this harness - see e2e/lib/simulate-seed.ts)',
             'open Connected agents and search for the seeded names',

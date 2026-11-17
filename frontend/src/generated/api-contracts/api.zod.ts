@@ -34023,7 +34023,22 @@ export const SimulateAgentDefinitionsVersionsListResponseItem = zod.object({
   is_active: zod.string().optional(),
   is_latest: zod.string().optional(),
   preflight_status: zod.string().min(1).nullable().optional(),
-  preflight_report: zod.object({}).passthrough().nullable().optional(),
+  preflight_report: zod
+    .object({
+      checks: zod.array(
+        zod.object({
+          id: zod.string(),
+          label: zod.string(),
+          status: zod.string(),
+          missing: zod.array(zod.string().min(1)),
+        }),
+      ),
+      missing: zod.array(zod.string().min(1)),
+      invalid: zod.array(zod.string().min(1)),
+      error: zod.string().min(1).nullable(),
+    })
+    .nullable()
+    .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
 });
 export const SimulateAgentDefinitionsVersionsListResponse = zod.array(
@@ -34169,7 +34184,22 @@ export const SimulateAgentDefinitionsVersionsReadResponse = zod.object({
   agent_kind: zod.string().min(1).optional(),
   api_key: zod.string().min(1).optional(),
   preflight_status: zod.string().min(1).nullable().optional(),
-  preflight_report: zod.object({}).passthrough().nullable().optional(),
+  preflight_report: zod
+    .object({
+      checks: zod.array(
+        zod.object({
+          id: zod.string(),
+          label: zod.string(),
+          status: zod.string(),
+          missing: zod.array(zod.string().min(1)),
+        }),
+      ),
+      missing: zod.array(zod.string().min(1)),
+      invalid: zod.array(zod.string().min(1)),
+      error: zod.string().min(1).nullable(),
+    })
+    .nullable()
+    .optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -34254,7 +34284,22 @@ export const SimulateAgentDefinitionsVersionsActivateCreateResponse =
         agent_kind: zod.string().min(1).optional(),
         api_key: zod.string().min(1).optional(),
         preflight_status: zod.string().min(1).nullable().optional(),
-        preflight_report: zod.object({}).passthrough().nullable().optional(),
+        preflight_report: zod
+          .object({
+            checks: zod.array(
+              zod.object({
+                id: zod.string(),
+                label: zod.string(),
+                status: zod.string(),
+                missing: zod.array(zod.string().min(1)),
+              }),
+            ),
+            missing: zod.array(zod.string().min(1)),
+            invalid: zod.array(zod.string().min(1)),
+            error: zod.string().min(1).nullable(),
+          })
+          .nullable()
+          .optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })
@@ -34760,7 +34805,22 @@ export const SimulateAgentDefinitionsVersionsRestoreCreateResponse = zod.object(
         agent_kind: zod.string().min(1).optional(),
         api_key: zod.string().min(1).optional(),
         preflight_status: zod.string().min(1).nullable().optional(),
-        preflight_report: zod.object({}).passthrough().nullable().optional(),
+        preflight_report: zod
+          .object({
+            checks: zod.array(
+              zod.object({
+                id: zod.string(),
+                label: zod.string(),
+                status: zod.string(),
+                missing: zod.array(zod.string().min(1)),
+              }),
+            ),
+            missing: zod.array(zod.string().min(1)),
+            invalid: zod.array(zod.string().min(1)),
+            error: zod.string().min(1).nullable(),
+          })
+          .nullable()
+          .optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })

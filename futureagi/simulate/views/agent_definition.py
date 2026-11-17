@@ -51,8 +51,8 @@ from simulate.services.agent_overview import (
     observability_on,
     recent_agent_runs,
 )
+from simulate.services.harness_agent_versions import preflight_by_version
 from simulate.services.types.agent_definition import ProviderCredentialsInput
-from simulate.views.agent_version import _preflight_by_version
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -448,7 +448,7 @@ class AgentDefinitionDetailView(APIView):
             ids = [v.id for v in versions]
             if active_version:
                 ids.append(active_version.id)
-            context = {"preflight": _preflight_by_version(ids)}
+            context = {"preflight": preflight_by_version(ids)}
             versions_data = AgentVersionListResponseSerializer(
                 versions, many=True, context=context
             ).data

@@ -30,6 +30,25 @@
 - voice detail preserves scalar Fail and adds the exact latest per-span rollup; eval-cell click selects Evals and shows its explanation
 - native Failed and Passed filters send the config-bound predicate; browser and API return exactly the call ID or the empty set, respectively
 
+### AGENT-E2E-003 — an agent used after a newer one was created lists above it on Connected agents
+
+**Goal:** A developer who reuses an older agent sees it at the top of Connected agents, not buried behind newer ones
+
+**Spec:** `flows/agents/agent-list-recency.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two Agent Definitions with one version each, then give the older one the later updated_at that a reuse writes (no hosted-agent infra runs in this harness - see e2e/lib/simulate-seed.ts)
+2. open Connected agents and search for the seeded names
+3. see the older agent listed before the newer one
+
+**Backend state verified:**
+
+- the seeded older definition has an earlier created_at and a later updated_at than the newer one, both scoped to the actor org
+- GET /simulate/agent-definitions/ returns the older definition before the newer one, matching the table
+
 ## alerts
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window

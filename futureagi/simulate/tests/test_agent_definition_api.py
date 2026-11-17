@@ -560,6 +560,14 @@ class TestCreateAgentDefinition:
 # ============================================================================
 
 
+@pytest.mark.unit
+def test_the_list_order_has_an_index_on_its_filter_and_sort():
+    """The list filters one organization and sorts by ``updated_at``."""
+    indexed = [tuple(index.fields) for index in AgentDefinition._meta.indexes]
+
+    assert ("organization", "updated_at") in indexed
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestGetAgentDefinition:
@@ -580,7 +588,26 @@ class TestGetAgentDefinition:
     def test_the_embedded_versions_carry_their_check(
         self, auth_client, agent_definition, agent_version
     ):
-        report = {"checks": [{"name": "credentials", "ok": False, "detail": "bad key"}]}
+        report = {
+            "checks": [
+                {"id": "credentials", "label": "Credentials", "status": "failed"}
+            ],
+            "activation": [{"environment_id": "env-1", "outcome": "environment_busy"}],
+            "source_scan": {"required_files": ["config/secrets.yaml"]},
+        }
+        shown = {
+            "checks": [
+                {
+                    "id": "credentials",
+                    "label": "Credentials",
+                    "status": "failed",
+                    "missing": [],
+                }
+            ],
+            "missing": [],
+            "invalid": [],
+            "error": None,
+        }
         HarnessAgentVersionRuntime.no_workspace_objects.create(
             agent_version=agent_version,
             agent_definition=agent_definition,
@@ -598,9 +625,9 @@ class TestGetAgentDefinition:
         ).json()
 
         assert data["versions"][0]["preflight_status"] == "failed"
-        assert data["versions"][0]["preflight_report"] == report
+        assert data["versions"][0]["preflight_report"] == shown
         assert data["active_version"]["preflight_status"] == "failed"
-        assert data["active_version"]["preflight_report"] == report
+        assert data["active_version"]["preflight_report"] == shown
 
     def test_not_found(self, auth_client):
         fake_id = uuid.uuid4()

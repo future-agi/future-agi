@@ -120,8 +120,62 @@ def _checked(version, status, report=None):
     )
 
 
+# What the check wrote, with the keys the page never shows (other environments'
+# activation outcomes, the customer's file paths), and what the page may get.
+STORED_REPORT = {
+    "checks": [
+        {
+            "id": "credentials",
+            "label": "Credentials",
+            "status": "failed",
+            "missing": ["OPENAI_API_KEY"],
+            "detail": "internal detail",
+        }
+    ],
+    "missing": ["OPENAI_API_KEY"],
+    "invalid": [],
+    "error": None,
+    "activation": [{"environment_id": "env-1", "outcome": "environment_busy"}],
+    "source_scan": {"required_files": ["config/secrets.yaml"]},
+}
+SHOWN_REPORT = {
+    "checks": [
+        {
+            "id": "credentials",
+            "label": "Credentials",
+            "status": "failed",
+            "missing": ["OPENAI_API_KEY"],
+        }
+    ],
+    "missing": ["OPENAI_API_KEY"],
+    "invalid": [],
+    "error": None,
+}
+
+
 def _version_url(agent_id, version_id, suffix=""):
     return f"/simulate/agent-definitions/{agent_id}/versions/{version_id}/{suffix}"
+
+
+@pytest.mark.integration
+class TestPreflightByVersion:
+    """The one read of a page of checks, shared by the version and agent views."""
+
+    def test_it_is_a_public_service_read_not_a_view_helper(
+        self, agent_definition, agent_version, second_version
+    ):
+        from simulate.services.harness_agent_versions import preflight_by_version
+        from simulate.views import agent_definition as definition_views
+        from simulate.views import agent_version as version_views
+
+        _checked(second_version, "failed", STORED_REPORT)
+
+        read = preflight_by_version([agent_version.id, second_version.id])
+
+        assert read == {second_version.id: ("failed", STORED_REPORT)}
+        assert not hasattr(version_views, "_preflight_by_version")
+        assert definition_views.preflight_by_version is preflight_by_version
+        assert version_views.preflight_by_version is preflight_by_version
 
 
 # ============================================================================
@@ -152,15 +206,14 @@ class TestListAgentVersions:
     def test_a_failed_check_is_listed_with_its_reason(
         self, auth_client, agent_definition, agent_version, second_version
     ):
-        report = {"checks": [{"name": "credentials", "ok": False, "detail": "bad key"}]}
-        _checked(second_version, "failed", report)
+        _checked(second_version, "failed", STORED_REPORT)
 
         results = auth_client.get(_url(agent_definition.id)).json()["results"]
 
         by_id = {row["id"]: row for row in results}
         failed = by_id[str(second_version.id)]
         assert failed["preflight_status"] == "failed"
-        assert failed["preflight_report"] == report
+        assert failed["preflight_report"] == SHOWN_REPORT
         unchecked = by_id[str(agent_version.id)]
         assert unchecked["preflight_status"] is None
         assert unchecked["preflight_report"] is None
@@ -496,15 +549,14 @@ class TestGetAgentVersion:
     def test_a_failed_check_is_returned_with_its_reason(
         self, auth_client, agent_definition, agent_version
     ):
-        report = {"checks": [{"name": "credentials", "ok": False, "detail": "bad key"}]}
-        _checked(agent_version, "failed", report)
+        _checked(agent_version, "failed", STORED_REPORT)
 
         data = auth_client.get(
             _version_url(agent_definition.id, agent_version.id)
         ).json()
 
         assert data["preflight_status"] == "failed"
-        assert data["preflight_report"] == report
+        assert data["preflight_report"] == SHOWN_REPORT
 
     def test_an_unchecked_version_has_null_check_fields(
         self, auth_client, agent_definition, agent_version
@@ -568,15 +620,14 @@ class TestActivateAgentVersion:
     def test_the_activated_version_carries_its_check(
         self, auth_client, agent_definition, agent_version, second_version
     ):
-        report = {"checks": [{"name": "credentials", "ok": False, "detail": "bad key"}]}
-        _checked(second_version, "failed", report)
+        _checked(second_version, "failed", STORED_REPORT)
 
         version = auth_client.post(
             _version_url(agent_definition.id, second_version.id, "activate/")
         ).json()["version"]
 
         assert version["preflight_status"] == "failed"
-        assert version["preflight_report"] == report
+        assert version["preflight_report"] == SHOWN_REPORT
 
     def test_archives_other_versions(
         self, auth_client, agent_definition, agent_version, second_version
@@ -684,15 +735,14 @@ class TestRestoreAgentVersion:
     def test_the_restored_version_carries_its_check(
         self, auth_client, agent_definition, agent_version
     ):
-        report = {"checks": [{"name": "credentials", "ok": False, "detail": "bad key"}]}
-        _checked(agent_version, "failed", report)
+        _checked(agent_version, "failed", STORED_REPORT)
 
         version = auth_client.post(
             _version_url(agent_definition.id, agent_version.id, "restore/")
         ).json()["version"]
 
         assert version["preflight_status"] == "failed"
-        assert version["preflight_report"] == report
+        assert version["preflight_report"] == SHOWN_REPORT
 
     def test_restores_agent_fields(self, auth_client, agent_definition, agent_version):
         # Change agent name

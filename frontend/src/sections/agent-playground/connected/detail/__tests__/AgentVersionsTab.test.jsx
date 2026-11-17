@@ -145,6 +145,40 @@ describe("AgentVersionsTab check", () => {
     ).toBeInTheDocument();
   });
 
+  // The row's other badge (Active) comes from the one status map, so the check
+  // draws from it too instead of the environment workspace's own badge.
+  it.each([
+    ["pending", "Checking…"],
+    ["passed", "Check passed"],
+    ["failed", "Check failed"],
+  ])("draws a %s check through the status badge", async (status, label) => {
+    servePages([[withCheck(V2, status, { checks: [] }), V1]]);
+    renderTab();
+    await screen.findAllByTestId("version-entry");
+    const badge = screen.getByTestId("version-check");
+    expect(badge).toHaveAttribute("data-status", status);
+    expect(badge).toHaveTextContent(label);
+  });
+
+  it("says in plain words why a check with a known error code couldn't finish", async () => {
+    servePages([[withCheck(V2, "failed", { error: "preflight_error" }), V1]]);
+    renderTab();
+    await screen.findAllByTestId("version-entry");
+    expect(
+      screen.getByText("The check couldn't finish. Try it again in a moment."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/preflight_error/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the generic line, with the code, for an error code it doesn't know", async () => {
+    servePages([[withCheck(V2, "failed", { error: "something_new" }), V1]]);
+    renderTab();
+    await screen.findAllByTestId("version-entry");
+    expect(
+      screen.getByText("The check couldn't finish (something_new)."),
+    ).toBeInTheDocument();
+  });
+
   it.each(["passed", "pending"])(
     "shows the badge but no lines for a %s check",
     async (status) => {

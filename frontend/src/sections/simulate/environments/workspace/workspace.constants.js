@@ -277,7 +277,30 @@ export const AGENT_VERSIONS_COPY = {
   },
   missing: (names) => `Missing: ${names.join(", ")}`,
   invalid: (names) => `Rejected by the provider: ${names.join(", ")}`,
-  checkError: (code) => `The check couldn't finish (${code}).`,
+  // Plain text for the error codes the check is known to end with; any other
+  // code keeps the generic line so nothing is hidden.
+  checkErrors: {
+    preflight_error: "The check couldn't finish. Try it again in a moment.",
+    github_repository_invalid:
+      "The repository isn't in the owner/repository form.",
+    github_ref_invalid: "The branch, tag or commit isn't valid.",
+    github_repository_not_found:
+      "The repository wasn't found. Check its name, and for a private repository install the GitHub App on it.",
+    github_clone_failed:
+      "The repository couldn't be cloned. Check that it exists and the GitHub App can reach it.",
+    github_installation_token_failed:
+      "GitHub didn't accept the app's access. Reinstall the GitHub App on this repository.",
+    github_installation_token_missing:
+      "The GitHub App isn't installed on this repository. Install it and try again.",
+    github_commit_mismatch: "That commit isn't on the selected branch.",
+    archive_artifact_missing: "The uploaded project is missing. Upload it again.",
+    archive_source_not_found: "The uploaded project is missing. Upload it again.",
+    source_archive_too_large:
+      "The upload is too large. Remove dependencies and build output, then upload again.",
+  },
+  checkError: (code) =>
+    AGENT_VERSIONS_COPY.checkErrors[code] ??
+    `The check couldn't finish (${code}).`,
   preflightNoDetail: "The check failed without saying why.",
   // Why a version whose check passed is not this environment's default.
   activation: {

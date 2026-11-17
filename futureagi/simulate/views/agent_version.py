@@ -12,7 +12,6 @@ from simulate.models import (
     AgentDefinition,
     AgentVersion,
     CallExecution,
-    HarnessAgentVersionRuntime,
 )
 from simulate.serializers.requests.agent_version import (
     AgentVersionCreateRequestSerializer,
@@ -39,6 +38,7 @@ from simulate.services.agent_definition import (
     resolve_api_secret_for_version,
     sync_provider_credentials,
 )
+from simulate.services.harness_agent_versions import preflight_by_version
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.utils.eval_summary import (
     _build_template_statistics,
@@ -105,7 +105,7 @@ class AgentVersionListView(APIView):
             serializer = AgentVersionListResponseSerializer(
                 result_page,
                 many=True,
-                context={"preflight": _preflight_by_version(v.id for v in result_page)},
+                context={"preflight": preflight_by_version(v.id for v in result_page)},
             )
             return paginator.get_paginated_response(serializer.data)
 
@@ -120,17 +120,6 @@ class AgentVersionListView(APIView):
                 f"Failed to retrieve agent versions: {str(e)}",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
-
-def _preflight_by_version(version_ids):
-    """``{version_id: (status, report)}`` in one query, without the credential blob."""
-    rows = HarnessAgentVersionRuntime.no_workspace_objects.filter(
-        agent_version_id__in=list(version_ids)
-    ).only("agent_version_id", "preflight_status", "preflight_report")
-    return {
-        row.agent_version_id: (row.preflight_status, row.preflight_report)
-        for row in rows
-    }
 
 
 class CreateAgentVersionView(APIView):
@@ -412,7 +401,7 @@ class AgentVersionDetailView(APIView):
             version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
 
             serializer = AgentVersionResponseSerializer(
-                version, context={"preflight": _preflight_by_version([version.id])}
+                version, context={"preflight": preflight_by_version([version.id])}
             )
             return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -463,7 +452,7 @@ class ActivateAgentVersionView(APIView):
             response_data = {
                 "message": "Agent version activated successfully",
                 "version": AgentVersionResponseSerializer(
-                    version, context={"preflight": _preflight_by_version([version.id])}
+                    version, context={"preflight": preflight_by_version([version.id])}
                 ).data,
             }
             return Response(response_data, status=status.HTTP_200_OK)
@@ -579,7 +568,7 @@ class RestoreAgentVersionView(APIView):
                 "message": "Agent definition restored successfully from version",
                 "agent": AgentDefinitionResponseSerializer(restored_agent).data,
                 "version": AgentVersionResponseSerializer(
-                    version, context={"preflight": _preflight_by_version([version.id])}
+                    version, context={"preflight": preflight_by_version([version.id])}
                 ).data,
             }
             return Response(response_data, status=status.HTTP_200_OK)

@@ -827,27 +827,39 @@ export type ${jsonAlias} = JsonValueApi;`,
       }
     }
 
-    // A version with no check row reports null status and report.
+    // A version with no check row reports null status and report. The report is
+    // a $ref, so orval drops its read-only marker as well as its x-nullable.
     for (const typeName of [
       "AgentVersionListResponseApi",
       "AgentVersionResponseApi",
     ]) {
-      for (const [field, valueType] of [
-        ["preflight_status", "string"],
+      for (const [anchor, replacement] of [
         [
-          "preflight_report",
-          `${typeName.replace(/Api$/, "")}ApiPreflightReport`,
+          "readonly preflight_status?: string;",
+          "readonly preflight_status?: string | null;",
+        ],
+        [
+          "preflight_report?: AgentVersionPreflightReportApi;",
+          "preflight_report?: AgentVersionPreflightReportApi | null;",
         ],
       ]) {
         schemas = assertReplaceInNamedBlock(
           schemas,
           `export interface ${typeName} {`,
-          `readonly ${field}?: ${valueType};`,
-          `readonly ${field}?: ${valueType} | null;`,
-          `${typeName}.${field} nullable`,
+          anchor,
+          replacement,
+          `${typeName}.${anchor.split("?")[0].replace("readonly ", "")} nullable`,
         );
       }
     }
+
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface AgentVersionPreflightReportApi {",
+      "error: string;",
+      "error: string | null;",
+      "AgentVersionPreflightReportApi.error nullable",
+    );
 
     // Orval drops Swagger 2.0 x-nullable: environment versions carry null labels
     // (unnumbered drafts), creators, origins, hashes, parents and pre-versioning
@@ -1257,11 +1269,12 @@ export type ${jsonAlias} = JsonValueApi;`,
         '"preflight_status": zod.string().min(1).nullable()',
         `${response}.preflight_status nullable`,
       );
+      // The report is a $ref, so orval drops its x-nullable and its error's.
       zod = assertReplaceRegexInNamedBlock(
         zod,
         `export const ${response} =`,
-        /("preflight_report": zod\.object\(\{\s*\}\)\.passthrough\(\))/g,
-        "$1.nullable()",
+        /("preflight_report": zod\.object\(\{[\s\S]*?"error": zod\.string\(\)\.min\(1\))(\s*\}\))/,
+        "$1.nullable()$2.nullable()",
         `${response}.preflight_report nullable`,
       );
     }

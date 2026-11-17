@@ -129,6 +129,21 @@ const columns = [
     },
   },
   {
+    // The list is ordered by this, so it shows why an agent sits where it does.
+    id: "updatedAt",
+    accessorKey: "updatedAt",
+    header: "Last updated",
+    size: 180,
+    enableSorting: false,
+    cell: ({ row }) => (
+      <CellText>
+        {row.original.updatedAt
+          ? format(new Date(row.original.updatedAt), "dd-MM-yyyy, h:mm a")
+          : "—"}
+      </CellText>
+    ),
+  },
+  {
     id: "createdAt",
     accessorKey: "createdAt",
     header: "Created at",

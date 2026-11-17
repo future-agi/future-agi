@@ -52294,10 +52294,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         preflight_report: {
-          title: "Preflight report",
-          type: "object",
-          readOnly: true,
-          "x-nullable": true,
+          $ref: "#/definitions/AgentVersionPreflightReport",
         },
         created_at: {
           title: "Created at",
@@ -52445,10 +52442,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         preflight_report: {
-          title: "Preflight report",
-          type: "object",
-          readOnly: true,
-          "x-nullable": true,
+          $ref: "#/definitions/AgentVersionPreflightReport",
         },
         created_at: {
           title: "Created at",
@@ -94629,6 +94623,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentVersionPreflightReport: {
+      required: ["checks", "missing", "invalid", "error"],
+      type: "object",
+      properties: {
+        checks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentVersionPreflightCheck",
+          },
+        },
+        missing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        invalid: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
     AgentccRequestLogMetadataValues: {
       required: ["application", "service", "tags"],
       type: "object",
@@ -118201,6 +118228,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    AgentVersionPreflightCheck: {
+      required: ["id", "label", "status", "missing"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+        },
+        missing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
     },
     AlertOption: {
       required: ["value", "label"],
