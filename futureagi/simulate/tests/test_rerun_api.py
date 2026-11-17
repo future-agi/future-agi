@@ -999,6 +999,79 @@ class TestTestExecutionRerunView:
         snapshot = CallExecutionSnapshot.objects.get(call_execution=call_execution)
         assert list(call_execution.call_metadata[ATTEMPTS_KEY]) == [str(snapshot.id)]
 
+    @pytest.mark.requires_ee
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_a_bulk_rerun_starts_each_new_attempt_without_the_earlier_worker_record(
+        self,
+        mock_rerun,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        test_execution_2,
+        call_execution_te2,
+    ):
+        from simulate.services.harness_worker_timeline import worker_timeline
+        from simulate.services.harness_workers import READ_KEY, WORKERS_KEY
+        from simulate.tests.test_harness_workers import DECLARED, RUN, SPANS
+
+        mock_rerun.return_value = {"workflow_id": "test-workflow-id", "merged": False}
+        calls = (call_execution, call_execution_te2)
+        timeline = worker_timeline(SPANS, DECLARED, run_key=RUN)
+        for index, call in enumerate(calls):
+            # Each call's own record: its workers carry the call's index in their names.
+            record = {
+                **timeline,
+                "workers": [
+                    {**one, "name": f"{one['name']}-{index}"}
+                    for one in timeline["workers"]
+                ],
+                "collected_at": "2026-11-17T09:00:00+00:00",
+            }
+            CallExecution.objects.filter(id=call.id).update(
+                call_metadata={
+                    **(call.call_metadata or {}),
+                    WORKERS_KEY: record,
+                    READ_KEY: {"at": "2026-11-17T09:00:00+00:00", "failed": False},
+                }
+            )
+
+        from simulate.views import run_test as run_test_view
+
+        snapshot_of = run_test_view.call_snapshot
+
+        def snapshot_then_written(call):
+            # A worker read lands on the row after the rerun loaded it.
+            CallExecution.objects.filter(id=call.id).update(
+                call_metadata={**(call.call_metadata or {}), "written_meanwhile": True}
+            )
+            return snapshot_of(call)
+
+        with patch.object(run_test_view, "call_snapshot", snapshot_then_written):
+            response = auth_client.post(
+                self.URL_TEMPLATE.format(run_test.id),
+                {"rerun_type": "call_and_eval", "select_all": True},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+
+        for index, call in enumerate(calls):
+            call.refresh_from_db()
+            assert call.call_metadata["written_meanwhile"] is True
+            assert (
+                WORKERS_KEY not in call.call_metadata
+                and READ_KEY not in call.call_metadata
+            )
+            url = f"/simulate/v3/call-executions/{call.id}/workers/"
+            # The new attempt has not ended: no record yet, never the earlier attempt's.
+            assert auth_client.get(url).status_code == status.HTTP_204_NO_CONTENT
+            snapshot = CallExecutionSnapshot.objects.get(call_execution=call)
+            earlier = auth_client.get(url, {"attempt": str(snapshot.id)})
+            assert earlier.status_code == status.HTTP_200_OK, earlier.content
+            assert {one["name"] for one in earlier.json()["workers"]} == {
+                f"{one['name']}-{index}" for one in timeline["workers"]
+            }
+
     def test_rerun_missing_params(self, auth_client, run_test):
         """Test rerun with neither select_all nor test_execution_ids."""
         url = self.URL_TEMPLATE.format(run_test.id)
