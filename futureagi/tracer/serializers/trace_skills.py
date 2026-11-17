@@ -1,7 +1,6 @@
 """One shared trace projection, with bounded identity reads and typed results."""
 from datetime import timedelta
 
-from django.utils import timezone
 from rest_framework import serializers
 
 from tfc.utils.api_serializers import StrictInputSerializer
@@ -32,8 +31,10 @@ class TraceSkillsRequest(StrictInputSerializer):
             raise serializers.ValidationError("Supply trace_id for a detail projection.")
         if mode == "cohort":
             start, end = attrs.get("from"), attrs.get("to")
-            if not start or not end or start >= end or end - start > timedelta(days=30) or end > timezone.now():
-                raise serializers.ValidationError("Choose a nonempty window of at most 30 days ending now or earlier.")
+            # Observe's date picker includes the remainder of today and supports
+            # 90-day windows. A future end-of-day bound is not invalid telemetry.
+            if not start or not end or start >= end or end - start > timedelta(days=90):
+                raise serializers.ValidationError("Choose a nonempty window of at most 90 days.")
             if not any(is_skill_filter(item) for item in attrs["filters"]):
                 raise serializers.ValidationError("A cohort requires a SKILL filter.")
             if attrs.get("trace_id") or attrs.get("trace_ids") or attrs.get("cursor"):

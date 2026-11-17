@@ -19,11 +19,11 @@ from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
 CACHE_NAMESPACE = "observe-skill-version-graph-v1"
 METRICS = {
     "latency": ("latency_p95", "Root latency p95 (ms)", "p95"),
-    "cost": ("cost_per_trace", "Cost per trace", "mean"),
+    "cost": ("cost_per_trace", "Cost per trace ($)", "mean"),
     "tokens": ("tokens_per_trace", "Tokens per trace", "mean"),
     "total_tokens": ("tokens_per_trace", "Tokens per trace", "mean"),
     "traffic": ("traces", "Traces", "count"),
-    "error_rate": ("failed_request_rate", "Failed requests", "percentage"),
+    "error_rate": ("failed_request_rate", "Failed requests (%)", "percentage"),
 }
 
 

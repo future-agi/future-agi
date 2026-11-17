@@ -29,7 +29,7 @@ const strip = (props = {}) =>
 beforeEach(() => {
   http.post.mockReset();
   http.endpoint.mockReset();
-  http.endpoint.mockReturnValue("/tracer/trace/skills/cohort-summary/");
+  http.endpoint.mockReturnValue("/tracer/trace/skill-projection/");
 });
 
 describe("mapCohortSummary", () => {
@@ -51,12 +51,12 @@ describe("mapCohortSummary", () => {
 
 describe("SkillCohortStrip", () => {
   it("sends the whole filter request and shows the cohort's numbers", async () => {
-    http.post.mockResolvedValue({ data: { result: SUMMARY } });
+    http.post.mockResolvedValue({ data: { result: { summary: SUMMARY } } });
     const { container } = strip();
     expect(await screen.findByRole("region", { name: "Traces matching these filters" })).toHaveTextContent("1,204");
     expect(http.post).toHaveBeenCalledWith(
-      "/tracer/trace/skills/cohort-summary/",
-      { project_id: "p1", filters: FILTERS, from: "2026-11-10T00:00:00Z", to: "2026-11-17T00:00:00Z" },
+      "/tracer/trace/skill-projection/",
+      { projection: "cohort", project_id: "p1", filters: FILTERS, from: "2026-11-10T00:00:00Z", to: "2026-11-17T00:00:00Z" },
       expect.objectContaining({ signal: expect.anything() }),
     );
     expect(screen.getByText("12 traces have no root span yet and aren't counted.")).toBeInTheDocument();

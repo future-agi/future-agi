@@ -323,3 +323,15 @@ def test_cohort_applies_non_skill_filters(http, seeded):
                     **{"from": START.isoformat(), "to": (START + timedelta(hours=1)).isoformat()})
     assert response.status_code == 200, response.data
     assert response.data["result"]["summary"]["traces"] == 0
+
+
+def test_cohort_accepts_observe_end_of_day_and_ninety_day_windows(http):
+    end = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    for days in (1, 90):
+        response = http(projection="cohort", filters=[skill("version_id", str(uuid4()))],
+                        **{"from": (end - timedelta(days=days)).isoformat(), "to": end.isoformat()})
+        assert response.status_code == 200, response.data
+        assert response.data["result"]["summary"]["traces"] == 0
+    invalid = http(projection="cohort", filters=[skill("version_id", str(uuid4()))],
+                   **{"from": (end - timedelta(days=91)).isoformat(), "to": end.isoformat()})
+    assert invalid.status_code == 400 and invalid.data["code"] == "invalid_runtime_query"

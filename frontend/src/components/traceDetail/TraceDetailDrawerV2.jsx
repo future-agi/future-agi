@@ -202,12 +202,27 @@ export function useTraceSkillsDetail({ traceId, projectId, enabled }) {
   const query = useQuery({
     queryKey: ["observe", "trace-skills-detail", projectId, traceId],
     queryFn: async ({ signal }) => {
-      const url = traceSkillsEndpoint("traceSkills", { trace_id: traceId });
-      const response = await axios.get(url, {
-        params: { project_id: projectId },
-        signal,
-      });
-      return mapTraceSkillsDetail(response?.data?.result ?? response?.data);
+      const url = traceSkillsEndpoint();
+      const detail = { skills: [], failed: [], contexts: [], linked_not_loaded: [] };
+      let cursor;
+      const seenCursors = new Set();
+      do {
+        const response = await axios.post(url, {
+          projection: "detail", project_id: projectId, trace_id: traceId,
+          ...(cursor ? { cursor } : {}),
+        }, { signal });
+        const page = response.data.result;
+        for (const key of ["skills", "failed", "contexts", "linked_not_loaded"]) {
+          detail[key].push(...page[key]);
+        }
+        detail.coverage = page.coverage;
+        cursor = page.next_cursor;
+        if (cursor && (seenCursors.has(cursor) || seenCursors.size >= 100)) {
+          throw new Error("Trace skills pagination did not complete.");
+        }
+        if (cursor) seenCursors.add(cursor);
+      } while (cursor);
+      return mapTraceSkillsDetail(detail);
     },
     enabled: Boolean(enabled && traceId && projectId),
     retry: false,
