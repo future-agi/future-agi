@@ -25,7 +25,7 @@ SECOND_AT = datetime(2027, 1, 1, 0, 0, 5, tzinfo=UTC)
 
 def _response(usage):
     return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="Passed"))],
+        choices=[SimpleNamespace(message=SimpleNamespace(content="<label>Passed</label>"))],
         usage=SimpleNamespace(**usage),
     )
 

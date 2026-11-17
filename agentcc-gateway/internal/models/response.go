@@ -94,13 +94,34 @@ type Usage struct {
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
+// UnmarshalJSON normalizes input/output token aliases while preserving provider extras.
 func (u *Usage) UnmarshalJSON(data []byte) error {
 	type Alias Usage
-	var a Alias
+	var a struct {
+		Alias
+		PromptTokens     *int `json:"prompt_tokens"`
+		CompletionTokens *int `json:"completion_tokens"`
+		InputTokens      *int `json:"input_tokens"`
+		OutputTokens     *int `json:"output_tokens"`
+	}
 	if err := json.Unmarshal(data, &a); err != nil {
 		return err
 	}
-	*u = Usage(a)
+	*u = Usage(a.Alias)
+	// An explicit zero in the canonical spelling must win over its alias.
+	if a.PromptTokens != nil {
+		u.PromptTokens = *a.PromptTokens
+	} else if a.InputTokens != nil {
+		u.PromptTokens = *a.InputTokens
+	}
+	if a.CompletionTokens != nil {
+		u.CompletionTokens = *a.CompletionTokens
+	} else if a.OutputTokens != nil {
+		u.CompletionTokens = *a.OutputTokens
+	}
+	if u.TotalTokens == 0 {
+		u.TotalTokens = u.PromptTokens + u.CompletionTokens
+	}
 	extra, err := captureExtra(data, reflect.TypeFor[Usage]())
 	if err != nil {
 		return err

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
+	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
 // tFeb is a month past the switch, when the dated rows may be gone.
@@ -98,15 +99,15 @@ func billAt(t *testing.T, db *modeldb.ModelDB, at time.Time, provider, table, co
 	p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
 	p.now = clockAt(at)
 	if table != "" {
-		p.SetPriceTables(func(_, id string) string {
-			if id == provider {
+		p.SetPriceTables(func(rc *models.RequestContext) string {
+			if rc.Provider == provider {
 				return table
 			}
 			return ""
 		})
 	}
-	p.SetProviderTypes(func(_, id string) string {
-		if id == provider {
+	p.SetProviderTypes(func(rc *models.RequestContext) string {
+		if rc.Provider == provider {
 			return configuredType
 		}
 		return ""
@@ -121,7 +122,7 @@ func billAt(t *testing.T, db *modeldb.ModelDB, at time.Time, provider, table, co
 // direct is what resellerPrice says for a request, asked as ProcessResponse
 // asks it.
 func direct(db *modeldb.ModelDB, at time.Time, provider, table, configuredType, model string) (string, bool) {
-	return resellerPrice(db, priceKey(db, model, provider, table), provider, table, configuredType, at)
+	return resellerPrice(db, db.PriceKey(model, provider, table), provider, table, configuredType, at)
 }
 
 func checkDirect(t *testing.T, db *modeldb.ModelDB, at time.Time, provider, table, configuredType, model, wantKey string, wantKeep bool) {

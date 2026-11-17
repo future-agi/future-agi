@@ -125,16 +125,22 @@ func TestProviderTypeComesFromTheProvidersConfig(t *testing.T) {
 		t.Fatalf("creating org-2's di: %v", err)
 	}
 
+	// Each org row is a request the org's own instance served, when it has one.
 	for _, tc := range []struct{ orgID, providerID, want string }{
 		{"", "di", "deepinfra"},
 		{"", "plain", ""},
 		{"", "google", ""},
 		{"org-1", "team-di", ""},
 		{"org-1", "di", "deepinfra"}, // no org-1 instance: the config.yaml provider
-		{"org-2", "di", ""},          // the org's own instance comes first
+		{"org-2", "di", ""},          // the org's own instance served
 		{"", "missing", ""},
 	} {
-		if got := srv.ProviderType(tc.orgID, tc.providerID); got != tc.want {
+		rc := &models.RequestContext{Provider: tc.providerID, Metadata: map[string]string{}}
+		if tc.orgID != "" {
+			rc.Metadata["org_id"] = tc.orgID
+			rc.Metadata["org_provider"] = "true"
+		}
+		if got := srv.ProviderType(rc); got != tc.want {
 			t.Errorf("ProviderType(%q, %q) = %q, want %q", tc.orgID, tc.providerID, got, tc.want)
 		}
 	}

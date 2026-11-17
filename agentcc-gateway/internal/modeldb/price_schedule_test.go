@@ -539,7 +539,7 @@ func freshEntry(t *testing.T, key string) *ModelInfo {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh, err := parseLiteLLM(snippet)
+	fresh, err := parseLiteLLM(snippet, true)
 	if err != nil {
 		t.Fatalf("parseLiteLLM: %v", err)
 	}

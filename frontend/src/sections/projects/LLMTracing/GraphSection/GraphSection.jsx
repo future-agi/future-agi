@@ -1050,7 +1050,7 @@ const GraphSection = ({
               >
                 <EmptyGraph />
                 <Typography
-                  fontSize="13px"
+                  fontSize="12px"
                   fontWeight={600}
                   color="text.secondary"
                 >
