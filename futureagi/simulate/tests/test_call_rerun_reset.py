@@ -217,6 +217,15 @@ def test_a_kept_attempt_holds_only_what_its_worker_answer_and_trial_view_read(
         {"actor_id": "a1", "action": "approve", "refusal_code": "x"}
     ]
     assert "alk_batch_claimed" not in kept and "base_prompt" not in kept
+    # The live call keeps none of them: the new attempt's trial, receipt and record start empty.
+    assert not {
+        WORKERS_KEY,
+        READ_KEY,
+        TRIAL_STATE_KEY,
+        WORLD_ACTIONS_KEY,
+        "hosted_harness_receipt",
+    } & set(call.call_metadata)
+    assert call.call_metadata["alk_batch_claimed"] is True
 
 
 def test_an_attempt_record_past_the_size_bound_is_not_kept(call_execution, monkeypatch):

@@ -24,6 +24,15 @@ logger = structlog.get_logger(__name__)
 _ATTEMPT_KEYS = (WORKERS_KEY, READ_KEY, TRIAL_STATE_KEY, "sub_goals")
 _RECEIPT_FIELDS = ("sub_goals", "failure")
 _WORLD_ACTION_FIELDS = ("actor_id", "action", "name", "refusal_code", "handoff")
+# The closing attempt's own keys, gone from the call on a call rerun (kept per attempt instead), so its trial, receipt
+# and worker record never read as the new attempt's. An evals-only rerun re-scores the same attempt and keeps them.
+_ATTEMPT_LIVE_KEYS = (
+    WORKERS_KEY,
+    READ_KEY,
+    TRIAL_STATE_KEY,
+    WORLD_ACTIONS_KEY,
+    "hosted_harness_receipt",
+)
 # A record past this is not kept (its attempt then reads `not_kept`): the call row is read on every list and detail.
 MAX_KEPT_ATTEMPT_BYTES = 64 * 1024
 
@@ -105,7 +114,7 @@ def closed_attempt_metadata(
 ) -> dict[str, Any]:
     """A rerun call's metadata from what its locked row holds now: the closing attempt kept by its snapshot's id, and
     the attempt's own keys gone. ``clear_metadata`` keeps only ``row_id``, ``keep_metadata_keys`` and the kept
-    attempts; without it, only the worker record and its read note go. Every rerun path writes this, so a new attempt
+    attempts; without it, the attempt's own keys (`_ATTEMPT_LIVE_KEYS`) go. Every rerun path writes this, so a new attempt
     never starts with the earlier one's record."""
     current = metadata if isinstance(metadata, dict) else {}
     attempts = _kept_attempts(current, call_id, snapshot_id, ending)
@@ -118,7 +127,7 @@ def closed_attempt_metadata(
         kept = {
             key: value
             for key, value in current.items()
-            if key not in (WORKERS_KEY, READ_KEY)
+            if key not in _ATTEMPT_LIVE_KEYS
         }
     if attempts:
         kept[ATTEMPTS_KEY] = attempts
@@ -195,8 +204,8 @@ def clear_call_for_rerun(
 ) -> None:
     """Snapshot a call's result, then reset the row so a rerun can fill it again.
 
-    ``clear_metadata`` drops ``call_metadata`` except ``row_id`` and ``keep_metadata_keys``; without it, only the worker
-    record and its read note go. Either way the closing attempt is kept (`closed_attempt_metadata`)."""
+    ``clear_metadata`` drops ``call_metadata`` except ``row_id`` and ``keep_metadata_keys``; without it, the attempt's
+    own keys go. Either way the closing attempt is kept (`closed_attempt_metadata`)."""
     with transaction.atomic():
         # A worker read or a receipt may write the row's metadata meanwhile: read it under the lock, then reset.
         locked = (
