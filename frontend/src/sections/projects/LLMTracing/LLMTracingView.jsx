@@ -2727,7 +2727,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         strict: true,
       });
       if (rejected > 0) {
-        setSkillLink((prev) => ({ ...prev, unreadable: true }));
+        // The list stays unfiltered; the notice shows until the person
+        // filters or changes the dates themselves.
+        setSkillLink((prev) => ({
+          ...prev,
+          unreadable: true,
+          signature: filtersSignature([]),
+          dateKey: JSON.stringify(primaryTraceDateFilter?.dateFilter ?? null),
+        }));
         return;
       }
       const rows =
@@ -3471,13 +3478,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const showSkillSourceBar =
     skillTracesEnabled &&
     !showCompare &&
-    (skillLink.unreadable ||
-      Boolean(
-        skillLink.source &&
-          skillLink.signature &&
-          skillLink.signature === extraFiltersSignature &&
-          skillLink.dateKey === currentDateKey,
-      ));
+    Boolean(
+      (skillLink.unreadable || skillLink.source) &&
+        skillLink.signature &&
+        skillLink.signature === extraFiltersSignature &&
+        skillLink.dateKey === currentDateKey,
+    );
   // The source bar's before/after switch. Navigating to the same route does
   // not remount this view, so re-seed the filters, dates and source from the
   // other side's §6.6 link here, then put its URL in the address bar so Back
@@ -3501,7 +3507,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         Number.isNaN(to.getTime()) ||
         from >= to
       ) {
-        setSkillLink((prev) => ({ ...prev, unreadable: true }));
+        // Keep the current list and say the other side couldn't be opened.
+        setSkillLink((prev) => ({
+          ...prev,
+          unreadable: true,
+          signature: extraFiltersSignature,
+          dateKey: currentDateKey,
+        }));
         return;
       }
       const dateFilter = [formatDate(from), formatDate(to)];
@@ -3520,7 +3532,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       });
       if (href) navigate(href);
     },
-    [navigate, setExtraFilters, setPrimaryTraceDateFilter, skillLink.source],
+    [
+      currentDateKey,
+      extraFiltersSignature,
+      navigate,
+      setExtraFilters,
+      setPrimaryTraceDateFilter,
+      skillLink.source,
+    ],
   );
   // The Skills column is shown by default only when the project has skill
   // loads in the window, once per project in this browser, and never inside

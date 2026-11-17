@@ -205,7 +205,20 @@ const MAX_VALUES = 1000;
 const MAX_VALUE_UTF8_BYTES = 16384;
 const MAX_GROUP = 2147483647;
 const MAX_VERSION = 4294967295;
-const ITEM_KEYS = new Set(["column_id", "group", "display_name", "property_id", "filter_config", "id", "_meta"]);
+// The server's filter item keys (tracer/serializers/filters.py
+// FILTER_ITEM_SCHEMA, with ST6's `group`), plus the UI-only `id` and `_meta`.
+const ITEM_KEYS = new Set([
+  "column_id",
+  "group",
+  "display_name",
+  "property_id",
+  "source",
+  "output_type",
+  "filter_config",
+  "id",
+  "_meta",
+]);
+const PASSTHROUGH_TEXT_KEYS = ["property_id", "source", "output_type"];
 const CONFIG_KEYS = new Set(["col_type", "filter_type", "filter_op", "filter_value"]);
 
 const UUID_RE =
@@ -268,8 +281,12 @@ function canonicalSkillItem(item) {
   const displayName = item.display_name;
   const config = item.filter_config;
   const valueLabel = item._meta?.valueLabel;
+  const passthrough = Object.fromEntries(
+    PASSTHROUGH_TEXT_KEYS.filter((key) => typeof item[key] === "string" && item[key]).map((key) => [key, item[key]]),
+  );
   return {
     column_id: item.column_id,
+    ...passthrough,
     ...(typeof displayName === "string" && displayName ? { display_name: displayName } : {}),
     ...(group ? { group } : {}),
     ...(typeof valueLabel === "string" && valueLabel ? { _meta: { valueLabel } } : {}),

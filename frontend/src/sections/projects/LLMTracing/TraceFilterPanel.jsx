@@ -85,7 +85,6 @@ import {
   EVIDENCE,
   LOAD_FAILED,
   LOADED,
-  versionName,
 } from "src/sections/skills/runtime/runtimeCopy";
 import {
   normalizeVoiceCallStatus,
