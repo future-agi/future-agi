@@ -2382,6 +2382,36 @@ def test_recovered_transcript_restores_the_pass_of_a_call_the_agent_answered(
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("modality", ["text", "voice"])
+def test_hosted_receipt_with_a_customer_only_transcript_holds_no_passing_eval(
+    organization, workspace, modality
+):
+    from simulate.services.run_results_v3 import call_outcome
+
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization,
+        workspace,
+        key=f"hosted-customer-only-{modality}",
+        modality=modality,
+    )
+    digest, content = _store_transcript_artifact(job, _CUSTOMER_ONLY)
+    receipt = _hosted_receipt(
+        job, capability, scenario_id, modality=modality, transcript=f"sha256:{digest}"
+    )
+
+    call = _ingest_hosted(job, capability, receipt, content)
+
+    assert call.simulation_call_type == modality
+    assert call.transcripts.count() + call.chat_messages.count() > 0
+    (output,) = call.eval_outputs.values()
+    assert output["status"] == "skipped"
+    assert output["output"] is None
+    assert call.call_metadata["processing_skipped"] is True
+    assert call_outcome(call, {}) == "inconclusive"
+    assert job.completed_count == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("modality", ["text", "voice"])
 def test_hosted_receipt_the_agent_answered_keeps_its_pass(
     organization, workspace, modality
 ):
