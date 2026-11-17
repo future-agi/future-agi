@@ -3,6 +3,7 @@ package cost
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,49 +56,47 @@ func TestResellersAndFallbackNamesFrom2027(t *testing.T) {
 		table    string // the price table name the provider states
 		resolved string // the model the upstream reports, when it differs
 		model    string
-		keeps    bool // priced at its table entry, not the dated row
+		billed   string // the entry whose own table price bills it on both sides; "" follows the dated rows
 	}{
 		// A reseller with its own entry keeps its price, even under a bare name.
-		{"copilot bare 3.7, own entry", "github_copilot", "", "", "gemini-3.7-flash", true},
-		{"copilot bare 3.8, own entry", "github_copilot", "", "", "gemini-3.8-flash", true},
-		{"aihubmix bare 3.7, own entry", "aihubmix", "", "", "gemini-3.7-flash", true},
-		{"openrouter, own entry", "openrouter", "", "", "google/gemini-3.7-flash", true},
-		{"perplexity, own entry", "perplexity", "", "", "google/gemini-3.7-flash", true},
-		{"deepinfra 3.7, own entry", "deepinfra", "", "", "google/gemini-3.7-flash", true},
-		{"copilot prefixed, own entry", "github_copilot", "", "", "github_copilot/gemini-3.7-flash", true},
+		{"copilot bare 3.7, own entry", "github_copilot", "", "", "gemini-3.7-flash", "github_copilot/gemini-3.7-flash"},
+		{"copilot bare 3.8, own entry", "github_copilot", "", "", "gemini-3.8-flash", "github_copilot/gemini-3.8-flash"},
+		{"aihubmix bare 3.7, own entry", "aihubmix", "", "", "gemini-3.7-flash", "aihubmix/gemini-3.7-flash"},
+		{"openrouter, own entry", "openrouter", "", "", "google/gemini-3.7-flash", "openrouter/google/gemini-3.7-flash"},
+		{"perplexity, own entry", "perplexity", "", "", "google/gemini-3.7-flash", "perplexity/google/gemini-3.7-flash"},
+		{"deepinfra 3.7, own entry", "deepinfra", "", "", "google/gemini-3.7-flash", "deepinfra/google/gemini-3.7-flash"},
+		{"copilot prefixed, own entry", "github_copilot", "", "", "github_copilot/gemini-3.7-flash", "github_copilot/gemini-3.7-flash"},
 
 		// A reseller with no entry of its own already takes Google's price.
-		{"copilot 3.6, no own entry", "github_copilot", "", "", "gemini-3.6-flash", false},
-		{"deepinfra 3.8, no own entry", "deepinfra", "", "", "google/gemini-3.8-flash", false},
-		{"deepinfra 3.6, no own entry", "deepinfra", "", "", "google/gemini-3.6-flash", false},
-		{"aihubmix 3.6, no own entry", "aihubmix", "", "", "gemini-3.6-flash", false},
-		{"aihubmix 3.8, no own entry", "aihubmix", "", "", "gemini-3.8-flash", false},
+		{"copilot 3.6, no own entry", "github_copilot", "", "", "gemini-3.6-flash", ""},
+		{"deepinfra 3.8, no own entry", "deepinfra", "", "", "google/gemini-3.8-flash", ""},
+		{"deepinfra 3.6, no own entry", "deepinfra", "", "", "google/gemini-3.6-flash", ""},
+		{"aihubmix 3.6, no own entry", "aihubmix", "", "", "gemini-3.6-flash", ""},
+		{"aihubmix 3.8, no own entry", "aihubmix", "", "", "gemini-3.8-flash", ""},
 
 		// Google's own providers follow the date, whatever entries exist.
-		{"vertex_ai", "vertex_ai", "", "", "gemini-3.7-flash", false},
-		{"gemini", "gemini", "", "", "google/gemini-3.7-flash", false},
-		{"google by the table name it states", "vertex_ai_global", "vertex_ai", "", "gemini-3.7-flash", false},
-		{"no provider", "", "", "", "gemini-3.7-flash", false},
+		{"vertex_ai", "vertex_ai", "", "", "gemini-3.7-flash", ""},
+		{"gemini", "gemini", "", "", "google/gemini-3.7-flash", ""},
+		{"google by the table name it states", "vertex_ai_global", "vertex_ai", "", "gemini-3.7-flash", ""},
+		{"no provider", "", "", "", "gemini-3.7-flash", ""},
 
 		// The upstream's name is unlisted, so the requested one is priced.
-		{"fallback, copilot own entry", "github_copilot", "", "gemini-3.7-flash-unlisted", "gemini-3.7-flash", true},
-		{"fallback, deepinfra no own entry", "deepinfra", "", "gemini-3.6-flash-unlisted", "gemini-3.6-flash", false},
+		{"fallback, copilot own entry", "github_copilot", "", "gemini-3.7-flash-unlisted", "gemini-3.7-flash", "github_copilot/gemini-3.7-flash"},
+		{"fallback, deepinfra no own entry", "deepinfra", "", "gemini-3.6-flash-unlisted", "gemini-3.6-flash", ""},
 
 		// A reseller under another ID is known by the type its config records.
-		{"deepinfra as di, typed", "di", "", "", "google/gemini-3.7-flash", true},
-		{"deepinfra as di-untyped, not recognised", "di-untyped", "", "", "google/gemini-3.7-flash", false},
+		{"deepinfra as di, typed", "di", "", "", "google/gemini-3.7-flash", "deepinfra/google/gemini-3.7-flash"},
+		{"deepinfra as di-untyped, not recognised", "di-untyped", "", "", "google/gemini-3.7-flash", ""},
 	}
 
 	db := modeldb.New(modeldb.BundledModels, nil)
 	for _, tc := range cases {
-		// A dated request costs the dated rows' price on each side of
-		// midnight. One that keeps the table price costs, on both sides, what
-		// the big-table entry the plugin's lookup resolves it to says, read
-		// from the table so a refresh that moves that entry does not turn
-		// this red. TestBareResellerNameKeepsTodaysPrice pins that price.
+		// A request priced at an entry's own table price costs, on both sides
+		// of midnight, what the entry pinned in its case says; any other costs
+		// the dated rows' price.
 		want26, want27 := cost2026, cost2027
-		if tc.keeps {
-			want26 = tableCost(t, db, tc.model, tc.provider, tc.table)
+		if tc.billed != "" {
+			want26 = entryCost(t, db, tc.billed)
 			want27 = want26
 		}
 		for _, instant := range []struct {
@@ -127,42 +126,52 @@ func TestResellersAndFallbackNamesFrom2027(t *testing.T) {
 	}
 }
 
-// tableCost is the plugin's cost for 1M tokens in and 100k out at the
-// big-table price of the entry the plugin's lookup resolves model to.
-func tableCost(t *testing.T, db *modeldb.ModelDB, model, provider, table string) string {
+// entryCost is the plugin's cost for 1M tokens in and 100k out at the table
+// price of the entry listed under exactly key.
+func entryCost(t *testing.T, db *modeldb.ModelDB, key string) string {
 	t.Helper()
-	key := priceKey(db, model, provider, table)
 	m, ok := db.Get(key)
-	if !ok {
-		t.Fatalf("the table does not list %q (%s, %s)", key, provider, model)
+	if !ok || m.ID != key {
+		t.Fatalf("the table does not list %q under that exact key", key)
 	}
 	p := m.Pricing
 	return fmt.Sprintf("%.6f", p.Calculate(1_000_000, 100_000, modeldb.CostOptions{}))
 }
 
-// A reseller whose upstream reports a bare model name is priced at the big
-// table's bare entry, which is Google's, not at the reseller's own entry. Its
-// price is right only while that bare entry holds the dated file's 2026 price,
-// the price these resellers charge. This test fails on the refresh that moves
-// the bare entry, which is when that stops holding.
+// A reseller of Google's Gemini Flash is billed at its own entry once
+// Google's price moves, whatever name its upstream reports. The entry each one
+// is billed at is pinned here, so a refresh that drops, adds or unprices one
+// of them fails here and is looked at before it ships.
 func TestBareResellerNameKeepsTodaysPrice(t *testing.T) {
 	db := modeldb.New(modeldb.BundledModels, nil)
-	for _, bare := range []string{"gemini-3.7-flash", "gemini-3.8-flash"} {
-		m, ok := db.Get(bare)
-		if !ok || m.ID != bare {
-			t.Fatalf("the table does not list the bare entry %q", bare)
+	for _, c := range resellerCells {
+		for _, form := range nameForms {
+			model := fmt.Sprintf(form, c.version)
+			key := priceKey(db, model, c.provider, "")
+			wantKey, wantKeep := c.own, false
+			if strings.Contains(c.own, "/google/") && strings.HasPrefix(model, "google/") {
+				// The lookup already lands on the reseller's own entry.
+				if key != c.own {
+					t.Errorf("%s %s: the lookup resolves to %q, want its own %q", c.provider, model, key, c.own)
+				}
+				wantKey, wantKeep = "", true
+			}
+			gotKey, gotKeep := resellerPrice(db, key, c.provider, "", "", t27)
+			if gotKey != wantKey || gotKeep != wantKeep {
+				t.Errorf("%s %s on 1 Jan 2027: (%q, %v), want (%q, %v)", c.provider, model, gotKey, gotKeep, wantKey, wantKeep)
+			}
 		}
-		table, dated2026 := m.Pricing, m.PricingAt(t26)
-		if table.InputPerToken != dated2026.InputPerToken || table.OutputPerToken != dated2026.OutputPerToken ||
-			table.CachedInputPerToken != dated2026.CachedInputPerToken {
-			t.Fatalf("The big table's bare Gemini Flash price has moved: %s is now input %g, output %g, cached %g per token, "+
-				"no longer the dated file's 2026 price (input %g, output %g, cached %g). "+
-				"Copilot and AIHubMix requests that report the bare name are priced at this entry, not at their own, "+
-				"so this refresh would change what those resellers' customers pay. "+
-				"Fix the gateway's reseller lookup order first, so a provider's own entry is found before the bare name; "+
-				"this refresh must not merge until then, and this test must not be edited to pass.",
-				bare, table.InputPerToken, table.OutputPerToken, table.CachedInputPerToken,
-				dated2026.InputPerToken, dated2026.OutputPerToken, dated2026.CachedInputPerToken)
+		if c.own == "" {
+			continue
+		}
+		p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
+		p.now = clockAt(t27)
+		rc := newRC(fmt.Sprintf("gemini-%s-flash", c.version), 1_000_000, 100_000)
+		rc.Provider = c.provider
+		rc.ResolvedModel = fmt.Sprintf("gemini-%s-flash-unlisted", c.version)
+		p.ProcessResponse(context.Background(), rc)
+		if want := entryCost(t, db, c.own); rc.Metadata["cost"] != want {
+			t.Errorf("%s, fallback to gemini-%s-flash on 1 Jan 2027: cost %q, want its own entry's %q", c.provider, c.version, rc.Metadata["cost"], want)
 		}
 	}
 
@@ -205,7 +214,7 @@ func TestProviderTypeIsAskedForTheRequestsOrg(t *testing.T) {
 	if askedOrg != "org-1" {
 		t.Errorf("the provider type was asked for org %q, want the request's org-1", askedOrg)
 	}
-	if want := tableCost(t, db, "google/gemini-3.7-flash", "di", ""); rc.Metadata["cost"] != want {
+	if want := entryCost(t, db, "deepinfra/google/gemini-3.7-flash"); rc.Metadata["cost"] != want {
 		t.Errorf("org-1's di, typed deepinfra, on 1 Jan: cost %q, want its table price %q", rc.Metadata["cost"], want)
 	}
 }
