@@ -32,12 +32,13 @@ it('shows every changed precondition and removed evidence before creating the ne
   expect(row).toHaveTextContent('Release revision');
   expect(row).toHaveTextContent('A label moved or label protection was edited.');
   expect(row.children[1]).toHaveTextContent('At approval');
-  expect(row.children[2]).toHaveTextContent('Edited since approval');
+  expect(row.children[2]).toHaveTextContent('Changed since approval');
   fireEvent.click(screen.getByRole('button', { name: 'Changed values' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Technical details' }));
   expect(screen.getByText(/"before": 1/)).toHaveTextContent('"after": 3');
   fireEvent.click(screen.getByRole('button', { name: 'Changed values' }));
   expect(screen.queryByText('transition.expected_release_revision')).not.toBeInTheDocument();
-  expect(screen.getByText(/is removed from the renewed request/)).toBeVisible();
+  expect(screen.getByText('Removed (expired)')).toBeVisible();
   expect(screen.queryByText(/packet/)).not.toBeInTheDocument();
   const create = screen.getByRole('button', { name: 'Approve again' });
   expect(create).toBeDisabled();
@@ -60,15 +61,15 @@ it('offers explicit renewal only to the assigned reviewer of a stale packet', ()
     request: { id: 'request', revision: 2, status: 'approved' }, review: { complete: false }, onRenew: vi.fn(), onRefresh: vi.fn() };
   const { rerender } = render(<ReleaseRequestPanel {...props} permissions={{ canDecide: true, canExecute: true }} />);
   expect(screen.getByText('Approval no longer applies. See what changed and renew the request.')).toBeVisible();
-  // One title, one sentence, one action: Refresh lives inside "Why this review is paused".
+  // One title, one sentence, one action: Refresh lives inside "Why this request is paused".
   expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Why this review is paused' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Why this request is paused' }));
   expect(screen.getByRole('button', { name: 'Refresh' })).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'Renew review' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Renew request' }));
   expect(props.onRenew).toHaveBeenCalled();
   expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();
   rerender(<ReleaseRequestPanel {...props} permissions={{ canDecide: false, canExecute: false }} />);
-  expect(screen.queryByRole('button', { name: 'Renew review' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Renew request' })).not.toBeInTheDocument();
 });
 
 it('approves exactly the renewed revision it created, bound to the inspected fingerprint', async () => {
@@ -76,7 +77,7 @@ it('approves exactly the renewed revision it created, bound to the inspected fin
   const onClose = vi.fn();
   const onApproved = vi.fn();
   render(<ReleaseRenewalDialog open requestId="request" onClose={onClose} onApproved={onApproved} />);
-  expect(screen.getByText(/renewed request keeps no evidence/)).toBeVisible();
+  expect(screen.getByText('No test results kept.')).toBeVisible();
   const approve = screen.getByRole('button', { name: 'Approve again' });
   expect(approve).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again." }));
@@ -105,11 +106,16 @@ it('keeps a reviewer attestation only for the same revision and fingerprint', ()
   const props = { scopeKey: 'org:ws:reviewer', state: 'ready', preview: { packet, fingerprint: 'fp', current: true },
     request: { id: 'request', revision: 2, status: 'approved' }, review: { complete: true }, permissions: { canDecide: true, canExecute: true }, onExecute: vi.fn(), onDecide: vi.fn() };
   const { rerender } = render(<ReleaseRequestPanel {...props} reviewedIdentity="2:fp" onReviewedChange={vi.fn()} />);
-  expect(screen.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change." })).toBeChecked();
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Move production', exact: true })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(screen.getByRole('button', { name: 'Release to production' })).toBeEnabled();
   rerender(<ReleaseRequestPanel {...props} request={{ ...props.request, revision: 3 }} reviewedIdentity="2:fp" onReviewedChange={vi.fn()} />);
-  expect(screen.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change." })).not.toBeChecked();
-  expect(screen.getByRole('button', { name: 'Release to production' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
+  expect(screen.getByRole('checkbox', { name: /I've checked the changes/ })).not.toBeChecked();
+  expect(screen.getByRole('button', { name: 'Move production', exact: true })).toBeDisabled();
 });
 
 it('clears a refusal from the previous revision when the renewed revision is approved', async () => {
@@ -121,10 +127,10 @@ it('clears a refusal from the previous revision when the renewed revision is app
   fireEvent.click(await screen.findByRole('button', { name: 'Move production' }));
   expect(await screen.findByText('Approval no longer applies. See what changed and renew the request.')).toBeVisible();
   // The confirmation is still closing; wait until the page is interactive again.
-  expect(await screen.findByRole('button', { name: 'Renew review' })).toBeVisible();
+  expect(await screen.findByRole('button', { name: 'Renew request' })).toBeVisible();
   rerender(<ReleaseRequestPanel {...props} preview={{ packet, fingerprint: 'fp2', current: true }} request={{ id: 'request', revision: 3, status: 'approved' }} reviewedIdentity={null} onReviewedChange={vi.fn()} />);
   expect(screen.queryByText(/Approval no longer applies/)).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Renew review' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Renew request' })).not.toBeInTheDocument();
 });
 
 it('lets the same mounted dialog renew a later revision after an earlier renewal', async () => {
@@ -162,7 +168,7 @@ it('blocks a second submit for the revision it already renewed', async () => {
 it('renews without approval only after acknowledgment and retains the fingerprint', async () => {
   useRenewalPreview.mockReturnValue({ data: { ...preview, changes: [{ item: 'transition.expected_security_revision', before: 0, after: 2 }] } });
   render(<ReleaseRenewalDialog open requestId="request" onClose={vi.fn()} />);
-  expect(screen.getByText('The security policy changed after this request was made, so the approval no longer applies. See what changed and approve again.')).toBeVisible();
+  expect(screen.getByText('The release review rules changed after this request was approved, so the approval no longer applies. Review what changed, then approve again.')).toBeVisible();
   const renewOnly = screen.getByRole('button', { name: 'Renew and decide later' });
   expect(renewOnly).toBeDisabled();
   fireEvent.click(screen.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again." }));

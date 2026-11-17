@@ -65,7 +65,7 @@ describe('ReleaseRequestComposer', () => {
     expect(next).toHaveAttribute('aria-describedby', 'prepare-review-reason');
   });
 
-  it('opens the share consent for one private row only, and cancelling shares nothing', () => {
+  it('opens the share consent for one private row only, and cancelling shares nothing', async () => {
     renderComposer();
     fireEvent.click(attachBox('Older answer check'));
     const dialog = screen.getByRole('dialog');
@@ -74,7 +74,7 @@ describe('ReleaseRequestComposer', () => {
     expect(within(dialog).queryByText('Your answer check')).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(share).not.toHaveBeenCalled();
-    expect(attachBox('Older answer check')).not.toBeChecked();
+    await waitFor(() => expect(attachBox('Older answer check')).not.toBeChecked());
   });
 
   it('attaches a private row only after its sharing is confirmed', async () => {
@@ -97,7 +97,7 @@ describe('ReleaseRequestComposer', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Share and attach' }));
     await waitFor(() => expect(share).toHaveBeenCalledWith(expect.objectContaining({ sourceId: 'run-from-test', acknowledgeSnapshotSharing: true })));
     await waitFor(() => expect(screen.queryByRole('button', { name: /selected$/ })).not.toBeInTheDocument());
-    expect(attachBox('Your answer check')).toBeChecked();
+    await waitFor(() => expect(attachBox('Your answer check')).toBeChecked());
   });
 
   it('uses the release request names only', () => {
