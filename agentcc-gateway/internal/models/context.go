@@ -64,11 +64,11 @@ type RequestContext struct {
 	// notes from this baseline rather than accumulating stale provider drops.
 	TranslationDrops []string
 
-	// ResponsesRouteDrops holds the serving provider attempt's Responses-route
-	// notes, without the translator's. The response cache stores them with a
-	// cached response and restores them on a hit, so a cached answer reports
-	// the settings that were omitted when it was produced.
-	ResponsesRouteDrops []string
+	// ResponsesCarriage reports that the serving provider attempt goes over the
+	// Responses route. The response cache stores only this fact with a cached
+	// response; a hit recomputes the omitted settings from the request it
+	// answers, since those settings are not part of the cache key.
+	ResponsesCarriage bool
 
 	// GuardrailRequest and GuardrailResponse carry the text of a request and
 	// its response, chat-shaped, on the routes that forward the client's own
@@ -226,7 +226,7 @@ func (rc *RequestContext) Release() {
 	rc.GuardrailResults = rc.GuardrailResults[:0]
 	rc.RequestHeaders = nil
 	rc.TranslationDrops = nil
-	rc.ResponsesRouteDrops = nil
+	rc.ResponsesCarriage = false
 	rc.CustomMetadataKeys = rc.CustomMetadataKeys[:0]
 	rc.CallerExtras = nil
 	rc.CallerExtrasDropped = 0

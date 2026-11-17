@@ -383,12 +383,10 @@ func (p *Provider) ResponsesDrops(req *models.ChatCompletionRequest) []string {
 	return drops
 }
 
+// responsesDroppedParams is the shared support table, so a response-cache hit
+// names exactly what this route omits from the request it answers.
 func responsesDroppedParams(req *models.ChatCompletionRequest) []string {
-	drops := chatOnlyParams(req)
-	if req.N != nil && *req.N > 1 {
-		drops = append(drops, "n")
-	}
-	return drops
+	return models.ResponsesOmittedParams(req)
 }
 
 // Only fixed parameter names reach the warning, never parameter values or
@@ -398,56 +396,6 @@ func logResponsesDrops(req *models.ChatCompletionRequest) {
 	if drops := responsesDroppedParams(req); len(drops) > 0 {
 		slog.Warn("responses route drops chat-only parameters", "parameters", drops)
 	}
-}
-
-// chatOnlyParams names the chat parameters set on req that the Responses API
-// cannot carry. A value that changes nothing (a zero penalty, logprobs false,
-// an empty stop, a logit_bias of zeros) is not counted.
-func chatOnlyParams(req *models.ChatCompletionRequest) []string {
-	var params []string
-	if stopSet(req.Stop) {
-		params = append(params, "stop")
-	}
-	if req.Seed != nil {
-		params = append(params, "seed")
-	}
-	if req.Logprobs != nil && *req.Logprobs {
-		params = append(params, "logprobs")
-	}
-	if req.TopLogprobs != nil && *req.TopLogprobs > 0 {
-		params = append(params, "top_logprobs")
-	}
-	if req.FrequencyPenalty != nil && *req.FrequencyPenalty != 0 {
-		params = append(params, "frequency_penalty")
-	}
-	if req.PresencePenalty != nil && *req.PresencePenalty != 0 {
-		params = append(params, "presence_penalty")
-	}
-	for _, bias := range req.LogitBias {
-		if bias != 0 {
-			params = append(params, "logit_bias")
-			break
-		}
-	}
-	return params
-}
-
-// stopSet reports whether a chat stop value names at least one sequence.
-func stopSet(raw json.RawMessage) bool {
-	var one string
-	if json.Unmarshal(raw, &one) == nil {
-		return one != ""
-	}
-	var many []string
-	if json.Unmarshal(raw, &many) == nil {
-		for _, s := range many {
-			if s != "" {
-				return true
-			}
-		}
-		return false
-	}
-	return len(raw) > 0 && string(raw) != "null"
 }
 
 // unsupportedOverResponses is the 400 for a request that must go over the

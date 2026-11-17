@@ -109,10 +109,10 @@ func postCachedBridge(t *testing.T, srv *Server, path, body string) *httptest.Re
 	return w
 }
 
-// A repeated non-streaming function-tool request served from the response
-// cache reports the same omitted settings as the request that produced the
-// cached answer: in x-agentcc-translation-drops and in the request log's
-// translation_drops. Expected red before the cache stored the notes.
+// A repeated non-streaming function-tool request served from an entry the
+// Responses route produced reports the settings that route omits from it, in
+// x-agentcc-translation-drops and in the request log's translation_drops.
+// Expected red before cache hits reported notes.
 func TestResponsesDropNotesSurviveCacheHit(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -135,7 +135,7 @@ func TestResponsesDropNotesSurviveCacheHit(t *testing.T) {
 					t.Fatalf("%s: x-agentcc-cache=%q, want %q", label, got, wantCache)
 				}
 				checkToolCompletion(t, w.Body.Bytes())
-				if strings.Contains(w.Body.String(), "route_drops") {
+				if strings.Contains(w.Body.String(), "x_agentcc_responses") {
 					t.Errorf("%s: body exposes the cache's stored notes: %s", label, w.Body.String())
 				}
 				if got := w.Result().Header.Get("x-agentcc-translation-drops"); got != tc.want {
@@ -150,7 +150,7 @@ func TestResponsesDropNotesSurviveCacheHit(t *testing.T) {
 }
 
 // On the translated /v1/messages route a hit reports the current request's
-// translator notes together with the route notes stored with the answer.
+// translator notes together with what the Responses route omits from it.
 func TestResponsesDropNotesSurviveCacheHitTranslated(t *testing.T) {
 	logs, wantLog := observeLogInput(t)
 	srv, upstream := newCachedResponsesBridgeServer(t, logs)
@@ -163,7 +163,7 @@ func TestResponsesDropNotesSurviveCacheHitTranslated(t *testing.T) {
 		if got := w.Result().Header.Get("x-agentcc-cache"); got != wantCache {
 			t.Fatalf("%s: x-agentcc-cache=%q, want %q", label, got, wantCache)
 		}
-		if strings.Contains(w.Body.String(), "route_drops") {
+		if strings.Contains(w.Body.String(), "x_agentcc_responses") {
 			t.Errorf("%s: body exposes the cache's stored notes: %s", label, w.Body.String())
 		}
 		if got := w.Result().Header.Get("x-agentcc-translation-drops"); got != want {
@@ -171,5 +171,45 @@ func TestResponsesDropNotesSurviveCacheHitTranslated(t *testing.T) {
 		}
 		wantLog(want)
 		checkHits(t, upstream, 0, 1)
+	}
+}
+
+// stop is not part of the cache key, so requests that differ only in stop
+// share a cached answer. The notes describe the request being answered: a
+// caller whose stop the Responses route omits is told so even when the entry
+// came from a request without stop, and a caller without stop is not told
+// about another caller's.
+func TestResponsesDropNotesFollowCachedRequest(t *testing.T) {
+	const without = `"seed":7,`
+	const with = `"seed":7,"stop":["END"],`
+	for _, tc := range []struct {
+		name          string
+		first, second string
+		wantFirst     string
+		wantSecond    string
+	}{
+		{"A without stop then B with stop", without, with, "seed_unsupported", "stop_unsupported,seed_unsupported"},
+		{"A with stop then B without stop", with, without, "stop_unsupported,seed_unsupported", "seed_unsupported"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs, wantLog := observeLogInput(t)
+			srv, upstream := newCachedResponsesBridgeServer(t, logs)
+			for i, step := range []struct{ extra, cache, want string }{
+				{tc.first, "miss", tc.wantFirst},
+				{tc.second, "hit_exact", tc.wantSecond},
+			} {
+				label := fmt.Sprintf("caller %c", 'A'+i)
+				w := postCachedBridge(t, srv, "/v1/chat/completions", chatToolBody("gpt-5.6-terra", false, step.extra))
+				if got := w.Result().Header.Get("x-agentcc-cache"); got != step.cache {
+					t.Fatalf("%s: x-agentcc-cache=%q, want %q", label, got, step.cache)
+				}
+				checkToolCompletion(t, w.Body.Bytes())
+				if got := w.Result().Header.Get("x-agentcc-translation-drops"); got != step.want {
+					t.Errorf("%s: x-agentcc-translation-drops=%q, want %q", label, got, step.want)
+				}
+				wantLog(step.want)
+				checkHits(t, upstream, 0, 1)
+			}
+		})
 	}
 }

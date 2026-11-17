@@ -125,7 +125,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 
 	// L1: Check exact-match cache.
 	if resp, ok := p.store.Get(key); ok {
-		resp = restoreRouteDrops(rc, resp)
+		resp = restoreCarriage(rc, resp)
 		rc.Response = resp
 		rc.Flags.CacheHit = true
 		rc.Metadata["cache_status"] = "hit_exact"
@@ -144,7 +144,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
 			if result := p.semanticStore.Search(vec, rc.Metadata["cache_semantic_partition"]); result != nil {
-				resp := restoreRouteDrops(rc, result.Response)
+				resp := restoreCarriage(rc, result.Response)
 				rc.Response = resp
 				rc.Flags.CacheHit = true
 				rc.Metadata["cache_status"] = "hit_semantic"
@@ -191,9 +191,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	ttl := p.resolveTTL(rc)
-	// Store a copy carrying the attempt's route notes; rc.Response itself is
+	// Store a copy marked with the attempt's route; rc.Response itself is
 	// still to be sent to this caller and must not gain the reserved field.
-	stored := withRouteDrops(rc.Response, rc.ResponsesRouteDrops)
+	stored := withCarriage(rc.Response, rc.ResponsesCarriage)
 	p.store.Set(key, stored, ttl)
 
 	// Also store in semantic cache (L2).

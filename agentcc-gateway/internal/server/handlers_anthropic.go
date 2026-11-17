@@ -1132,6 +1132,7 @@ func setUsageResponse(rc *models.RequestContext, promptTokens, completionTokens 
 // pre-plugins, so a request a policy changed or refused reports only what its
 // final form loses.
 func noteResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
+	rc.ResponsesCarriage = responsesCarriage(provider, req)
 	setResponsesRouteDrops(w, rc, responsesRouteDrops(provider, req))
 }
 
@@ -1140,6 +1141,7 @@ func noteResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, p
 // and the x-agentcc-translation-drops header, the gateway's notes channel. It
 // runs per provider attempt, so a failover attempt never keeps another's.
 func noteChatResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
+	rc.ResponsesCarriage = responsesCarriage(provider, req)
 	drops := responsesRouteDrops(provider, req)
 	names := make([]string, len(drops))
 	for i, drop := range drops {
@@ -1151,8 +1153,6 @@ func noteChatResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContex
 // Rebuild per attempt from trusted translator notes, never from headers or
 // arbitrary metadata. A nil writer supports async/scheduled request logs;
 // their admission response precedes execution and cannot report future drops.
-// The attempt's own notes are kept on rc.ResponsesRouteDrops, which the
-// response cache stores with the response.
 func setResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, extra []string) {
 	joined := rc.SetResponsesRouteDrops(extra)
 	if w == nil {
@@ -1163,6 +1163,16 @@ func setResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, ex
 		return
 	}
 	w.Header().Set("x-agentcc-translation-drops", joined)
+}
+
+// responsesCarriage reports whether provider sends req over its Responses
+// route. The response cache stores this with the response, so a hit can name
+// what that route omits from the request the cached answer is served to.
+func responsesCarriage(provider providers.Provider, req *models.ChatCompletionRequest) bool {
+	rp, ok := provider.(interface {
+		ChatNeedsResponses(*models.ChatCompletionRequest) bool
+	})
+	return ok && rp.ChatNeedsResponses(req)
 }
 
 // responsesRouteDrops names what provider's Responses route will omit;
