@@ -59,6 +59,17 @@ type RequestContext struct {
 	Timings       map[string]time.Duration
 	Errors        []error
 
+	// TranslationDrops holds only the translator's own notes, separate from
+	// caller metadata and provider-attempt notes. Retries rebuild the combined
+	// notes from this baseline rather than accumulating stale provider drops.
+	TranslationDrops []string
+
+	// ResponsesCarriage reports that the serving provider attempt goes over the
+	// Responses route. The response cache stores only this fact with a cached
+	// response; a hit recomputes the omitted settings from the request it
+	// answers, since those settings are not part of the cache key.
+	ResponsesCarriage bool
+
 	// GuardrailRequest and GuardrailResponse carry the text of a request and
 	// its response, chat-shaped, on the routes that forward the client's own
 	// body: native /v1/messages, /v1/responses and native GenAI. There Request
@@ -91,6 +102,12 @@ type RequestContext struct {
 	// EndpointType identifies the API endpoint: "chat", "embedding", "image",
 	// "speech", "transcription", "rerank", or "decision". Defaults to "chat".
 	EndpointType string
+
+	// ServedPriceTable is the price-table name of the provider instance that
+	// served the request, set by the server where retries and failover can
+	// switch instances; nil when not set. A field, not Metadata, because a
+	// caller can write Metadata.
+	ServedPriceTable *string
 
 	// Guardrail results — populated by the guardrails plugin with triggered checks.
 	GuardrailResults []GuardrailResult
@@ -186,6 +203,7 @@ func (rc *RequestContext) Release() {
 	rc.UserID = ""
 	rc.Flags = RequestFlags{}
 	rc.EndpointType = ""
+	rc.ServedPriceTable = nil
 	rc.EmbeddingRequest = nil
 	rc.EmbeddingResponse = nil
 	rc.ImageRequest = nil
@@ -207,6 +225,8 @@ func (rc *RequestContext) Release() {
 	rc.OrgModelFallbacks = nil
 	rc.GuardrailResults = rc.GuardrailResults[:0]
 	rc.RequestHeaders = nil
+	rc.TranslationDrops = nil
+	rc.ResponsesCarriage = false
 	rc.CustomMetadataKeys = rc.CustomMetadataKeys[:0]
 	rc.CallerExtras = nil
 	rc.CallerExtrasDropped = 0
