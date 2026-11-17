@@ -596,6 +596,11 @@ def test_a_call_whose_first_read_has_not_run_says_its_record_is_still_coming(
         status=CallExecution.CallStatus.COMPLETED, completed_at=timezone.now()
     )
     just_ended = auth_client.get(url)
+    # Past the first read and its grace, which found nothing and left no note: the later read is still to run.
+    CallExecution.objects.filter(id=call.id).update(
+        completed_at=timezone.now() - timedelta(seconds=400)
+    )
+    between_reads = auth_client.get(url)
     CallExecution.objects.filter(id=call.id).update(
         completed_at=timezone.now() - timedelta(days=1)
     )
@@ -604,6 +609,8 @@ def test_a_call_whose_first_read_has_not_run_says_its_record_is_still_coming(
     # Just ended: the read is still to run, so the client checks again instead of reading "no workers".
     assert just_ended.status_code == 202, just_ended.content
     assert just_ended.json()["pending"] is True
+    assert between_reads.status_code == 202, between_reads.content
+    assert between_reads.json()["pending"] is True
     assert long_ended.status_code == 204
 
 
@@ -4489,42 +4496,96 @@ def test_a_request_with_no_organization_reads_no_call_s_workers():
         _call_for_request(nobody, "00000000-0000-0000-0000-000000000001")
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("world", "held"),
+    [
+        ({"door": True, "worker_channels": True, "state_changes": []}, "held_at_world"),
+        ({"door": True, "state_changes": []}, "unknown"),
+        ({"recorded": False, "why": "tools_inside_agent"}, "not_enforced"),
+    ],
+)
+def test_a_separate_worker_reads_held_only_when_the_ingested_trial_shows_its_channel(
+    organization, workspace, world, held
+):
+    from simulate.models import CallExecution
+    from simulate.tests.test_harness_call_actors import _ingest
+
+    metadata: dict = {}
+    _ingest(
+        organization,
+        workspace,
+        "held-" + held,
+        CallExecution.SimulationCallType.TEXT,
+        {
+            "messages": [{"role": "assistant", "content": "Done."}],
+            "world_actors": world,
+        },
+        metadata,
+    )
+    timeline = worker_timeline(SPANS, DECLARED, run_key=RUN)
+    workers = harness_worker_states.served_workers(
+        None, timeline, metadata, {"refund": "separate"}
+    )["workers"]
+    assert next(one for one in workers if one["id"] == "refund")["enforcement"] == held
+
+
 def test_each_worker_says_how_the_world_held_it_in_the_trial_and_in_the_contract():
     from simulate.services.harness_environment import _contract_worker
+    from simulate.services.hosted_harness_ingestion import _world_change_fields
 
     timeline = worker_timeline(SPANS, DECLARED, run_key=RUN)
     bindings = {"order_lookup": "separate", "refund": "separate", "audit": "shared"}
 
-    def served(metadata):
+    def served(world, notices=()):
+        # The trial as ingestion keeps it from the world record ALK seals.
+        trial = {
+            **_world_change_fields(world),
+            **({"notices": list(notices)} if notices else {}),
+        }
         workers = harness_worker_states.served_workers(
-            None, timeline, metadata, bindings
+            None, timeline, {"harness_trial_state": trial}, bindings
         )["workers"]
         return {one["id"]: one["enforcement"] for one in workers}
 
-    fronted = {"harness_trial_state": {"door": True}}
-    assert served(fronted) == {
+    proxied = {"door": True, "worker_channels": True, "state_changes": []}
+    assert served(proxied) == {
         "order_lookup": "held_at_world",
         "refund": "held_at_world",
         "audit": "not_enforced",
     }
-    # With no door in front of the tools this trial, no worker's limits were held.
-    assert set(served({"harness_trial_state": {"door": False}}).values()) == {
+    # A door that stood but held no worker on its own channel (the door inside the agent, or a proxy sealed before
+    # per-worker limits) is no evidence of a hold.
+    assert served({"door": True, "state_changes": []}) == {
+        "order_lookup": "unknown",
+        "refund": "unknown",
+        "audit": "not_enforced",
+    }
+    # The agent ran its own tools: no door saw them, so no worker was held.
+    assert set(served({"recorded": False, "why": "tools_inside_agent"}).values()) == {
         "not_enforced"
     }
+    # A record from before the harness said whether a door stood says nothing either way.
+    assert served({})["refund"] == "unknown"
+    unheld = {"code": "worker_limits_not_enforced", "message": "Limits not held."}
+    assert set(served(proxied, [unheld]).values()) == {"not_enforced"}
     bypass = {
-        "harness_trial_state": {
-            "door": True,
-            "notices": [{"code": "worker_channel_bypassed", "workers": ["refund"]}],
-        }
+        "code": "worker_channel_bypassed",
+        "message": "Bypassed.",
+        "workers": ["refund"],
     }
-    assert served(bypass)["refund"] == "bypassed"
-    # The contract's cards read it from the binding, with the server's words.
+    assert served(proxied, [bypass]) == {
+        "order_lookup": "held_at_world",
+        "refund": "bypassed",
+        "audit": "not_enforced",
+    }
+    # The contract's cards have no trial: a separate worker's hold is not known, a shared one's is not enforced.
     separate = _contract_worker(
         {"id": "refund", "binding": "separate", "tools": ["issue_refund"]}
     )
     shared = _contract_worker({"id": "audit", "binding": "shared"})
     assert (separate["enforcement"], shared["enforcement"]) == (
-        "held_at_world",
+        "unknown",
         "not_enforced",
     )
-    assert separate["enforcement_label"].startswith("Held at the world")
+    assert separate["enforcement_label"].startswith("Not known")

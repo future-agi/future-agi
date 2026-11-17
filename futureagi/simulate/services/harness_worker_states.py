@@ -13,6 +13,7 @@ from simulate.constants.hosted_harness import (
     USER_CANCELED,
     WORKER_CHANNEL_BYPASSED,
     WORKER_ENFORCEMENT_LABELS,
+    WORKER_LIMITS_NOT_ENFORCED,
 )
 from simulate.models import (
     CallExecution,
@@ -293,6 +294,21 @@ def _bypassed(metadata: Mapping[str, Any] | None) -> set[str]:
     }
 
 
+def _unheld(metadata: Mapping[str, Any] | None) -> set[str] | None:
+    """The workers whose limits the trial says were not held, by its `worker_limits_not_enforced` notices; None when a
+    notice names no worker, so it falls on every one."""
+    trial = (metadata or {}).get(TRIAL_STATE_KEY)
+    notices = trial.get("notices") if isinstance(trial, Mapping) else None
+    named: set[str] = set()
+    for one in notices if isinstance(notices, list) else []:
+        if isinstance(one, Mapping) and one.get("code") == WORKER_LIMITS_NOT_ENFORCED:
+            workers = one.get("workers")
+            if not isinstance(workers, list) or not workers:
+                return None
+            named.update(str(worker) for worker in workers)
+    return named
+
+
 def served_workers(
     call: CallExecution,
     timeline: WorkerTimeline,
@@ -303,15 +319,16 @@ def served_workers(
     worker carries its cleanup, and a worker the trial (`metadata`, the call's or an earlier attempt's) says bypassed
     its channel says so. The stored record is never rewritten."""
     bypassed = _bypassed(metadata)
+    unheld = _unheld(metadata)
     late = refused_past_deadline(metadata)
     trial = (metadata or {}).get(TRIAL_STATE_KEY)
-    door = trial.get("door") if isinstance(trial, Mapping) else None
     workers: list[HarnessWorker] = []
     for one in timeline["workers"]:
         enforcement = worker_enforcement(
             (bindings or {}).get(str(one.get("id"))),
-            door=door,
+            trial=trial if isinstance(trial, Mapping) else None,
             bypassed=str(one.get("id")) in bypassed,
+            unheld=unheld is None or str(one.get("id")) in unheld,
         )
         served: HarnessWorker = {
             **one,

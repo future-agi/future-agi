@@ -653,7 +653,8 @@ class HarnessEnvironmentWorkerSerializer(serializers.Serializer):
     tools_shown = serializers.ListField(child=serializers.CharField())
     # `not_declared` when its contract entry does not say how it reaches the world.
     binding = serializers.ChoiceField(choices=get_args(WorkerBinding))
-    # How the world holds it to its limits, decided from its binding, and the words the cards show.
+    # How the world holds it to its limits, and the words the cards show: with no trial, a separate worker's is not
+    # known and a shared one's is not enforced.
     enforcement = serializers.ChoiceField(choices=get_args(WorkerEnforcement))
     enforcement_label = serializers.CharField()
     address_env = serializers.CharField(required=False, allow_blank=True)

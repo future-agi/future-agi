@@ -63,7 +63,8 @@ class CallWorkerSerializer(serializers.Serializer):
     enforcement = serializers.ChoiceField(
         choices=get_args(WorkerEnforcement),
         required=False,
-        help_text="How the world held it to its limits in this trial: on its own channel, not at all, or bypassed.",
+        help_text="How the world held it to its limits in this trial: on its own channel (only when the trial "
+        "shows it), not at all, bypassed, or not known.",
     )
     enforcement_label = serializers.CharField(required=False)
     channel_bypassed = serializers.BooleanField(

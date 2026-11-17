@@ -1592,6 +1592,9 @@ def _world_change_fields(world: dict[str, Any]) -> dict[str, Any]:
     elif world.get("door") is True:
         # A door stood for these counts; a record without this is from before the harness said so.
         kept["door"] = True
+        if world.get("worker_channels") is True:
+            # And it held each separate worker on its own channel: the only evidence a worker was held.
+            kept["worker_channels"] = True
     records = world.get("records")
     if world.get("unreadable") or (
         isinstance(records, dict) and records.get("unreadable")

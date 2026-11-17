@@ -62,7 +62,8 @@ def _column(step: WorkerStep, record: CallWorkersRecord) -> RouteColumn:
         """Who took part: a worker by its id within the run, the coordinator, or unknown when the record does not
         say; a worker the record does not list keeps its id and has no name."""
         if worker_id is not None:
-            local, name = workers.get(str(worker_id), (str(worker_id), None))
+            key = str(worker_id)
+            local, name = workers[key] if key in workers else (key, None)
             return "worker", local, name
         if unknown:
             return "unknown", None, None

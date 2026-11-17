@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, NotRequired, Required, TypedDict
+from typing import Any, Literal, NotRequired, Required, TypedDict
 
 WorkerEventType = Literal["delegated", "transferred", "tool_call", "returned"]
 WorkerStatus = Literal["ok", "error"]
@@ -137,22 +137,32 @@ class SealedToolCall(TypedDict, total=False):
 WorkerBinding = Literal["separate", "shared", "not_declared"]
 
 
-# How the world holds a worker to its limits: on its own channel, not at all, or bypassed in a trial.
-WorkerEnforcement = Literal["held_at_world", "not_enforced", "bypassed"]
+# How the world held a worker to its limits: on its own channel, not at all, bypassed in a trial, or not known.
+WorkerEnforcement = Literal["held_at_world", "not_enforced", "bypassed", "unknown"]
 
 
 def worker_enforcement(
-    binding: object, *, door: object = None, bypassed: bool = False
+    binding: object,
+    *,
+    trial: Mapping[str, Any] | None = None,
+    bypassed: bool = False,
+    unheld: bool = False,
 ) -> WorkerEnforcement:
-    """How the world holds a worker: bypassed when a trial says so; held at the world on its own (`separate`) channel
-    unless the trial ran with no door; otherwise not enforced."""
+    """How the world held a worker, from what the harness sealed for the trial (`trial`): held only on positive
+    evidence, a door that stood and held each separate worker on its own channel (`worker_channels`). Bypassed when the
+    trial says so; not enforced when it shares the app's address, the trial says its limits were not held (`unheld`)
+    or no door saw its tools; otherwise, and with no trial, not known."""
     if bypassed:
         return "bypassed"
-    return (
-        "held_at_world"
-        if binding == "separate" and door is not False
-        else "not_enforced"
-    )
+    if binding != "separate" or unheld:
+        return "not_enforced"
+    if trial is None:
+        return "unknown"
+    if trial.get("door") is True and trial.get("worker_channels") is True:
+        return "held_at_world"
+    if trial.get("recorded") is False:
+        return "not_enforced"
+    return "unknown"
 
 
 class ContractWorker(TypedDict):

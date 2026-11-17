@@ -136914,7 +136914,8 @@
                     "enum": [
                         "held_at_world",
                         "not_enforced",
-                        "bypassed"
+                        "bypassed",
+                        "unknown"
                     ]
                 },
                 "enforcement_label": {
@@ -163104,12 +163105,13 @@
                 },
                 "enforcement": {
                     "title": "Enforcement",
-                    "description": "How the world held it to its limits in this trial: on its own channel, not at all, or bypassed.",
+                    "description": "How the world held it to its limits in this trial: on its own channel (only when the trial shows it), not at all, bypassed, or not known.",
                     "type": "string",
                     "enum": [
                         "held_at_world",
                         "not_enforced",
-                        "bypassed"
+                        "bypassed",
+                        "unknown"
                     ]
                 },
                 "enforcement_label": {

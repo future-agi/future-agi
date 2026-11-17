@@ -97394,7 +97394,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         enforcement: {
           title: "Enforcement",
           type: "string",
-          enum: ["held_at_world", "not_enforced", "bypassed"],
+          enum: ["held_at_world", "not_enforced", "bypassed", "unknown"],
         },
         enforcement_label: {
           title: "Enforcement label",
@@ -99352,9 +99352,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         enforcement: {
           title: "Enforcement",
           description:
-            "How the world held it to its limits in this trial: on its own channel, not at all, or bypassed.",
+            "How the world held it to its limits in this trial: on its own channel (only when the trial shows it), not at all, bypassed, or not known.",
           type: "string",
-          enum: ["held_at_world", "not_enforced", "bypassed"],
+          enum: ["held_at_world", "not_enforced", "bypassed", "unknown"],
         },
         enforcement_label: {
           title: "Enforcement label",

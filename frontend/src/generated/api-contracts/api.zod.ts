@@ -34136,7 +34136,12 @@ export const SimulateAgentDefinitionsVersionsReadResponse = zod.object({
         allowed_tools: zod.array(zod.string().min(1)),
         tools_shown: zod.array(zod.string().min(1)),
         binding: zod.enum(["separate", "shared", "not_declared"]),
-        enforcement: zod.enum(["held_at_world", "not_enforced", "bypassed"]),
+        enforcement: zod.enum([
+          "held_at_world",
+          "not_enforced",
+          "bypassed",
+          "unknown",
+        ]),
         enforcement_label: zod.string().min(1),
         address_env: zod.string().optional(),
         process: zod.string().optional(),
@@ -39060,7 +39065,12 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
           allowed_tools: zod.array(zod.string().min(1)),
           tools_shown: zod.array(zod.string().min(1)),
           binding: zod.enum(["separate", "shared", "not_declared"]),
-          enforcement: zod.enum(["held_at_world", "not_enforced", "bypassed"]),
+          enforcement: zod.enum([
+            "held_at_world",
+            "not_enforced",
+            "bypassed",
+            "unknown",
+          ]),
           enforcement_label: zod.string().min(1),
           address_env: zod.string().optional(),
           process: zod.string().optional(),
@@ -39636,7 +39646,12 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
           allowed_tools: zod.array(zod.string().min(1)),
           tools_shown: zod.array(zod.string().min(1)),
           binding: zod.enum(["separate", "shared", "not_declared"]),
-          enforcement: zod.enum(["held_at_world", "not_enforced", "bypassed"]),
+          enforcement: zod.enum([
+            "held_at_world",
+            "not_enforced",
+            "bypassed",
+            "unknown",
+          ]),
           enforcement_label: zod.string().min(1),
           address_env: zod.string().optional(),
           process: zod.string().optional(),
@@ -45291,6 +45306,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
               "held_at_world",
               "not_enforced",
               "bypassed",
+              "unknown",
             ]),
             enforcement_label: zod.string().min(1),
             address_env: zod.string().optional(),
@@ -62369,10 +62385,10 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
         }),
       ),
       enforcement: zod
-        .enum(["held_at_world", "not_enforced", "bypassed"])
+        .enum(["held_at_world", "not_enforced", "bypassed", "unknown"])
         .optional()
         .describe(
-          "How the world held it to its limits in this trial: on its own channel, not at all, or bypassed.",
+          "How the world held it to its limits in this trial: on its own channel (only when the trial shows it), not at all, bypassed, or not known.",
         ),
       enforcement_label: zod.string().min(1).optional(),
       channel_bypassed: zod
