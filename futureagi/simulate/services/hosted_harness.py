@@ -47,6 +47,7 @@ from simulate.services.scoring_status import (
     TRANSPORT_RUN_STATUSES,
     settle_run_after_commit,
 )
+from simulate.utils.processing_outcomes import SILENT_AGENT_SKIP_REASON
 from tracer.services.observability_switch import (
     ObservabilityRefused,
     refusal_body,
@@ -3031,7 +3032,21 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
         # counters answer "did the call transport complete?". Keep those dimensions separate so a
         # completed, playable call with a failed behavioural/evidence verdict is not reported as a
         # failed call.
-        scenario_completed = receipts.filter(status="passed").count()
+        # A call the agent never answered holds no verdict, whatever its receipt sealed.
+        silent_agent_call = Q(
+            execution__call_execution__call_metadata__processing_skipped=True,
+            execution__call_execution__call_metadata__processing_skip_reason=(
+                SILENT_AGENT_SKIP_REASON
+            ),
+        ) | Q(
+            scenario__call_execution__call_metadata__processing_skipped=True,
+            scenario__call_execution__call_metadata__processing_skip_reason=(
+                SILENT_AGENT_SKIP_REASON
+            ),
+        )
+        scenario_completed = (
+            receipts.filter(status="passed").exclude(silent_agent_call).count()
+        )
         scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
         # A run's calls hang off its executions, a build's off its scenarios.
         calls = CallExecution.no_workspace_objects.filter(

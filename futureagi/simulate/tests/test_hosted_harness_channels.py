@@ -2205,3 +2205,129 @@ def test_hosted_receipt_for_a_silent_call_holds_no_passing_eval(organization):
     assert call.call_metadata["processing_skipped"] is True
     assert call.status == CallExecution.CallStatus.COMPLETED
     assert call_outcome(call, {}) == "inconclusive"
+
+
+_CUSTOMER_ONLY = [
+    {"role": "user", "content": "Hello? Is anyone there?"},
+    {"role": "user", "content": "Hello?"},
+]
+_ANSWERED = [
+    *_CUSTOMER_ONLY,
+    {"role": "assistant", "content": "Sorry, I am here now. How can I help?"},
+]
+
+
+def _begin_hosted_scenario(organization, *, key, modality):
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key=key)
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Hosted silent",
+            "modality": modality,
+            "personas": [
+                {
+                    "scenario_key": "hosted-one",
+                    "name": "Caller",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    provisioned = provision.json()["result"]
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["hosted-one"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    return job, capability, provisioned["scenarios"][0]["scenario_id"]
+
+
+def _store_transcript_artifact(job, messages, *, kind="transcript"):
+    from simulate.models import HostedHarnessArtifact
+
+    content = json.dumps({"messages": messages}).encode()
+    digest = hashlib.sha256(content).hexdigest()
+    HostedHarnessArtifact.no_workspace_objects.create(
+        job=job,
+        sha256=digest,
+        kind=kind,
+        size=len(content),
+        content_type="application/json",
+        object_key=f"hosted/{digest}.json",
+        scenario_key="hosted-one",
+    )
+    return digest, content
+
+
+def _hosted_receipt(job, capability, scenario_id, *, modality, transcript=None):
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "hosted-one",
+        "scenario_id": scenario_id,
+        "scenario_attempt": 1,
+        "world_index": None,
+        "modality": modality,
+        "status": "passed",
+        "sub_goals": [
+            {"name": "booking_created", "held": True, "judged": False, "reason": None}
+        ],
+        "evaluations": [],
+        "call": {
+            "started_at": "2026-09-28T10:00:00.000Z",
+            "ended_at": "2026-09-28T10:01:00.000Z",
+            "duration_ms": 60_000,
+            "turns": 3,
+            "transcript_artifact": transcript,
+            "recording_artifacts": [],
+        },
+        "failure": None,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+    return receipt
+
+
+def _ingest_hosted(job, capability, receipt, content=None, **kwargs):
+    storage = MagicMock()
+    if content is not None:
+        storage.get_object.return_value.read.return_value = content
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion.get_storage_client",
+            return_value=storage,
+        ),
+        patch("simulate.services.hosted_harness_ingestion.transaction.on_commit"),
+    ):
+        ingest_result_receipt(capability.attempt, receipt, **kwargs)
+    call = CallExecution.objects.get(
+        hosted_registration__job=job, hosted_registration__scenario_key="hosted-one"
+    )
+    job.refresh_from_db()
+    return call
+
+
+@pytest.mark.django_db
+def test_hosted_silent_receipt_is_not_counted_as_a_completed_scenario(organization):
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization, key="hosted-silent-count", modality="text"
+    )
+    receipt = _hosted_receipt(job, capability, scenario_id, modality="text")
+
+    call = _ingest_hosted(job, capability, receipt)
+
+    assert call.call_metadata["processing_skipped"] is True
+    assert job.completed_count == 0
+    assert HostedHarnessReceipt.no_workspace_objects.get(job=job).status == "passed"

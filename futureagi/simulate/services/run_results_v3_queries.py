@@ -97,7 +97,13 @@ from simulate.services.run_results_v3_scoring import (
     resolve_eval_scoring_spec,
     score_tokens,
 )
+from simulate.utils.processing_outcomes import SILENT_AGENT_SKIP_REASON
 
+# A call withheld because the agent never answered it; the executor's own skips differ.
+_SILENT_AGENT_SKIP = Q(
+    call_metadata__processing_skipped=True,
+    call_metadata__processing_skip_reason=SILENT_AGENT_SKIP_REASON,
+)
 OUTCOMES = tuple(OUTCOME_LABELS)
 # Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
 # so they are reported as run health rather than counted against the agent.
@@ -1298,11 +1304,17 @@ def build_run_comparison(
                 result_harness_status=_json_text(
                     "call_metadata", "harness_outcome_status"
                 ),
+                result_silent_agent=Case(
+                    When(_SILENT_AGENT_SKIP, then=Value(True)),
+                    default=Value(False),
+                    output_field=BooleanField(),
+                ),
             )
             fields += [
                 "result_eval_outcome",
                 "result_receipt_sub_goals",
                 "result_harness_status",
+                "result_silent_agent",
             ]
         for scenario_key, scenario_label, outcome, *trial in calls.values_list(
             *fields
@@ -1314,13 +1326,20 @@ def build_run_comparison(
             elif outcome == "failed":
                 counts[key][1] += 1
             if trial:
-                eval_outcome, sub_goals, harness_status = trial
-                trials.setdefault(key, run_compare.ScenarioTrials(labels[key])).add(
-                    sub_goals if isinstance(sub_goals, list) else None,
-                    harness_status,
-                    outcome,
-                    eval_outcome,
+                eval_outcome, sub_goals, harness_status, silent_agent = trial
+                scenario_trials = trials.setdefault(
+                    key, run_compare.ScenarioTrials(labels[key])
                 )
+                if silent_agent:
+                    # The sealed receipt still says passed; the call holds no verdict.
+                    scenario_trials.add(None, None, outcome, eval_outcome)
+                else:
+                    scenario_trials.add(
+                        sub_goals if isinstance(sub_goals, list) else None,
+                        harness_status,
+                        outcome,
+                        eval_outcome,
+                    )
         return (
             {
                 scenario: failed == 0

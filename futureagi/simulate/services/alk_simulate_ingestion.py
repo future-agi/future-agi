@@ -50,6 +50,7 @@ from simulate.services.test_executor import (
 )
 from simulate.utils.ended_reason import to_canonical_ended_reason
 from simulate.utils.processing_outcomes import (
+    SILENT_AGENT_SKIP_REASON,
     build_skipped_eval_output_payload,
     set_processing_skip_metadata,
 )
@@ -1856,9 +1857,7 @@ def _render_harness_transcript(segments: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-_SILENT_AGENT_SKIP_REASON = (
-    "We could not find enough agent conversation to process this call."
-)
+_SILENT_AGENT_SKIP_REASON = SILENT_AGENT_SKIP_REASON
 
 
 def _skip_harness_evals_without_agent(call_execution: CallExecution) -> bool:

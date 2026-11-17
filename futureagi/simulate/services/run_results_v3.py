@@ -52,6 +52,7 @@ from simulate.services.scoring_status import (
     scoring_input_from_call,
 )
 from simulate.utils.eval_summary import iter_live_eval_outputs
+from simulate.utils.processing_outcomes import is_silent_agent_skip
 
 OUTCOME_LABELS = {
     "queued": "Queued",
@@ -105,6 +106,7 @@ CALL_ROW_METADATA_KEYS = (
     "harness_scenario_key",
     "harness_trial_index",
     "processing_skipped",
+    "processing_skip_reason",
     *SCORING_META_KEYS,
 )
 
@@ -692,6 +694,8 @@ def build_call_rows(
             or (harness_scenario.sub_goals if harness_scenario else None)
             or []
         )
+        # A call the agent never answered holds no verdict, whatever the receipt sealed.
+        silent_agent = is_silent_agent_skip(metadata)
         sub_goal_results = []
         for item in raw_sub_goals:
             name = item.get("name") if isinstance(item, dict) else item
@@ -701,7 +705,9 @@ def build_call_rows(
             sub_goal_results.append(
                 {
                     "name": str(name),
-                    "passed": held if isinstance(held, bool) else None,
+                    "passed": (
+                        held if isinstance(held, bool) and not silent_agent else None
+                    ),
                 }
             )
         ideal_outcome = (
@@ -769,7 +775,9 @@ def build_call_rows(
                 "sub_goal_results": sub_goal_results,
                 "outcome": call_outcome(call, live_eval_configs, specs),
                 "execution_status": call.status,
-                "harness_outcome_status": metadata.get("harness_outcome_status"),
+                "harness_outcome_status": (
+                    None if silent_agent else metadata.get("harness_outcome_status")
+                ),
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),
                 "modality": call.simulation_call_type,
