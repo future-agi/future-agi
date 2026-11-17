@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -170,6 +171,7 @@ func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseW
 			return err
 		}
 		respBody = body
+		recordServedBy(callRC, rp)
 		applyResponsesUsage(callRC, body)
 		callRC.GuardrailResponse = assistantText(responsesOutputText(body))
 		return nil
@@ -227,6 +229,7 @@ func (h *Handlers) handleResponseStream(ctx context.Context, w http.ResponseWrit
 			return err
 		}
 		stream = s
+		recordServedBy(callRC, rp)
 		callRC.IsStream = true
 		return nil
 	}
@@ -375,31 +378,32 @@ func responsesEventType(ev streaming.Event) string {
 	return payload.Type
 }
 
-// applyResponsesUsage moves a Responses API response's model and token counts
-// onto rc, which is what the cost plugin prices from. A response without usage
-// leaves rc.Response without it, so the request goes unpriced rather than
-// priced at zero.
+// applyResponsesUsage moves a Responses API response's model and usage onto
+// rc, which is what the cost plugin prices from. The usage is read the way a
+// chat response's is, so keys the gateway does not name (a vendor's own
+// statement of the cost, such as Perplexity's usage.cost) reach the plugin
+// in Usage.Extra on this route too, streamed or not. A response without
+// usage leaves rc.Response without it, so the request goes unpriced rather
+// than priced at zero.
 func applyResponsesUsage(rc *models.RequestContext, body []byte) {
 	var parsed struct {
-		Model string `json:"model"`
-		Usage *struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-			TotalTokens  int `json:"total_tokens"`
-		} `json:"usage"`
+		Model string          `json:"model"`
+		Usage json.RawMessage `json:"usage"`
 	}
 	_ = json.Unmarshal(body, &parsed)
 	if parsed.Model != "" {
 		rc.ResolvedModel = parsed.Model
 	}
 	rc.Response = &models.ChatCompletionResponse{Model: rc.ResolvedModel}
-	if parsed.Usage != nil {
-		rc.Response.Usage = &models.Usage{
-			PromptTokens:     parsed.Usage.InputTokens,
-			CompletionTokens: parsed.Usage.OutputTokens,
-			TotalTokens:      parsed.Usage.TotalTokens,
-		}
+	raw := bytes.TrimSpace(parsed.Usage)
+	if len(raw) == 0 || raw[0] != '{' {
+		return
 	}
+	var usage models.Usage
+	if err := json.Unmarshal(raw, &usage); err != nil {
+		return
+	}
+	rc.Response.Usage = &usage
 }
 
 // responsesStreamErrorEvent is an error as a Responses stream event: the
