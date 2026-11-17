@@ -177,7 +177,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
     def handle_exception(self, exc):
         if isinstance(exc, HostedHarnessError):
-            return Response(exc.as_dict(), status=exc.status_code)
+            return Response(
+                exc.as_dict(), status=exc.status_code, headers=exc.headers()
+            )
         response = _usage_limit_response(exc)
         if response is not None:
             return response

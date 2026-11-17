@@ -1519,7 +1519,9 @@ class HostedHarnessProvider:
                         None
                         if connected_build
                         else validate_public_github_source(
-                            payload, organization_id=organization.id
+                            payload,
+                            organization_id=organization.id,
+                            workspace_id=getattr(workspace, "id", None),
                         )
                     )
                     on_create = _environment_agent_maker(

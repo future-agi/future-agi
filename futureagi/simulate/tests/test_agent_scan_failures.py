@@ -199,10 +199,12 @@ class TestSourceChecks:
                 422,
             ),
             (GitHubResponse("not_found"), "github_repository_not_found", 422),
-            (GitHubResponse("rate_limited"), "github_unavailable", 503),
-            (GitHubResponse("budget"), "github_unavailable", 503),
+            (GitHubResponse("rate_limited"), "github_rate_limited", 429),
+            (GitHubResponse("not_connected"), "github_not_connected", 422),
+            (GitHubResponse("revoked"), "github_installation_revoked", 422),
+            (GitHubResponse("error"), "source_unreachable", 503),
         ],
-        ids=["private", "missing", "rate-limited", "budget"],
+        ids=["private", "missing", "rate-limited", "not-connected", "revoked", "error"],
     )
     def test_a_repository_said_to_be_public_is_checked_with_github_first(
         self, organization, workspace, user, start, answer, code, status_code

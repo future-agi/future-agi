@@ -283,7 +283,9 @@ class HarnessJobViewSet(viewsets.ViewSet):
                 user=request.user,
             )
         except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
+            return Response(
+                exc.as_dict(), status=exc.status_code, headers=exc.headers()
+            )
         environment.refresh_from_db(fields=["agent_version"])
         return Response(
             {"agent_version": agent_version_item(environment, version)},

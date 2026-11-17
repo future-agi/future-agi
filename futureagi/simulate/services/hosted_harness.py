@@ -116,6 +116,12 @@ class HostedHarnessError(Exception):
             **(self.details or {}),
         }
 
+    def headers(self) -> dict[str, str]:
+        retry_after = (self.details or {}).get("retry_after")
+        if self.status_code == 429 and retry_after:
+            return {"Retry-After": str(int(retry_after))}
+        return {}
+
 
 @dataclass(frozen=True)
 class AttemptCapability:

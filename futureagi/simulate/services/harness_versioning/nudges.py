@@ -398,23 +398,28 @@ def _file(
 
 
 def _compare(
-    repository: str, base_sha: str, new_sha: str, organization_id: Any
+    repository: str,
+    base_sha: str,
+    new_sha: str,
+    organization_id: Any,
+    workspace_id: Any = None,
 ) -> tuple[str | None, Any]:
-    """``(unavailable, body)`` of one public compare, cached for a few minutes; within
-    the organization's share of the hourly comparisons."""
+    """``(unavailable, body)`` of one public compare, cached for a few minutes; read
+    with the workspace's credential."""
     from simulate.services import harness_github
 
     key = f"harness:gh-compare:{repository.lower()}:{base_sha}:{new_sha}"
     cached = cache.get(key)
     if cached is not None:
         return None, cached
-    response = harness_github.github_get(
-        f"/repos/{repository}/compare/{base_sha}...{new_sha}",
-        accept="application/vnd.github+json",
-        purpose="compare",
-        owner=str(organization_id),
-    )
-    if response.status in ("rate_limited", "budget"):
+    with harness_github.read_credential(organization_id, workspace_id) as credential:
+        response = harness_github.github_get(
+            f"/repos/{repository}/compare/{base_sha}...{new_sha}",
+            accept="application/vnd.github+json",
+            credential=credential,
+            purpose="compare",
+        )
+    if response.status == "rate_limited":
         return "rate_limited", None
     if response.status != "ok" or not isinstance(response.body, Mapping):
         return "github_error", None
@@ -483,7 +488,7 @@ def _github_file(one: Mapping[str, Any], *, inverted: bool) -> dict[str, Any] | 
 
 
 def _github_files(
-    base: Any, new: Any, organization_id: Any
+    base: Any, new: Any, organization_id: Any, workspace_id: Any = None
 ) -> tuple[str | None, list, bool, bool]:
     """``(unavailable, files, truncated, reversed)`` between two commits."""
     from simulate.services.harness_github import safe_repository
@@ -500,13 +505,17 @@ def _github_files(
         return "no_commit", [], False, False
     if not safe_repository(repository):
         return "github_error", [], False, False
-    unavailable, body = _compare(repository, base_sha, new_sha, organization_id)
+    unavailable, body = _compare(
+        repository, base_sha, new_sha, organization_id, workspace_id
+    )
     if unavailable is not None:
         return unavailable, [], False, False
     inverted = body["status"] == "behind"
     if inverted:
         # A roll back to an ancestor: the forward compare of the two, read backwards.
-        unavailable, body = _compare(repository, new_sha, base_sha, organization_id)
+        unavailable, body = _compare(
+            repository, new_sha, base_sha, organization_id, workspace_id
+        )
         if unavailable is not None:
             return unavailable, [], False, False
     elif body["status"] not in ("ahead", "identical"):
@@ -923,7 +932,10 @@ def diff_facts(
         try:
             if kind == "github":
                 unavailable, files, truncated, inverted = _github_files(
-                    base_runtime, new_runtime, environment.organization_id
+                    base_runtime,
+                    new_runtime,
+                    environment.organization_id,
+                    getattr(environment, "workspace_id", None),
                 )
                 facts.update(files_truncated=truncated, reversed=inverted)
             elif kind == "archive":

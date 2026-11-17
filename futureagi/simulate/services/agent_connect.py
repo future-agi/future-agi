@@ -65,8 +65,12 @@ def _check_source(organization_id: Any, workspace_id: Any, source: Mapping) -> N
             "Choosing a folder isn't supported yet; connect the repository root",
             status_code=422,
         )
+    if source.get("kind") == "github":
+        from simulate.services.harness_github import take_workspace_read
+
+        take_workspace_read(workspace_id)
     if source.get("kind") == "github" and source.get("visibility") != "private":
-        _require_public_repository(organization_id, source)
+        _require_public_repository(organization_id, workspace_id, source)
     if source.get("kind") == "github" and source.get("visibility") == "private":
         from integrations.services.github_app import installation_connected
 
@@ -95,13 +99,16 @@ def _check_source(organization_id: Any, workspace_id: Any, source: Mapping) -> N
             )
 
 
-def _require_public_repository(organization_id: Any, source: Mapping) -> None:
+def _require_public_repository(
+    organization_id: Any, workspace_id: Any, source: Mapping
+) -> None:
     from simulate.services.harness_agent_changes import validate_public_github_source
 
     try:
         validate_public_github_source(
             {"source": {**source, "visibility": "public"}},
             organization_id=organization_id,
+            workspace_id=workspace_id,
             required=True,
         )
     except HostedHarnessError as exc:

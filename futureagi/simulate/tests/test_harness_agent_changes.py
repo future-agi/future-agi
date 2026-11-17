@@ -1,9 +1,11 @@
 """Agent versions from pushes: which environments watch, when a head is new, and how
 its version is made, checked and activated."""
 
+import contextlib
 import copy
 import dataclasses
 import re
+import time
 import uuid
 from unittest.mock import MagicMock, patch
 from urllib.parse import unquote
@@ -40,7 +42,7 @@ from simulate.services.harness_agent_versions import (
     stamp_built_commit,
     version_credential_names,
 )
-from simulate.services.harness_github import GitHubResponse
+from simulate.services.harness_github import GitHubResponse, ReadCredential
 from simulate.services.harness_provider import _preflight_source_connectors
 from simulate.services.harness_versioning.versions import move_default
 from simulate.services.hosted_harness import HostedHarnessError, _soft_delete
@@ -121,7 +123,7 @@ class _GitHub:
         self.calls: list[tuple[str, str, str | None]] = []
 
     def __call__(self, url, headers=None, timeout=None):
-        assert "Authorization" not in (headers or {})
+        assert (headers or {}).get("Authorization") == "Bearer test-token"
         named = _REPOSITORY.match(url)
         if named:
             self.calls.append((named[1].lower(), "", None))
@@ -146,6 +148,19 @@ class _GitHub:
             return response
         response.status_code, response.headers, response.text = 200, {"ETag": etag}, sha
         return response
+
+
+TOKEN = ReadCredential("test-token", "test-installation")
+
+
+@pytest.fixture(autouse=True)
+def read_token(settings):
+    settings.GITHUB_APP_FALLBACK_INSTALLATION_ID = "test-installation"
+    with patch(
+        "integrations.services.github_app.fallback_read_token",
+        return_value="test-token",
+    ):
+        yield
 
 
 @pytest.fixture
@@ -195,31 +210,51 @@ class TestGitHubHead:
     def test_a_head_is_cached_with_its_etag_for_a_day(self, gh):
         gh.heads[("acme/agent", "main")] = HEAD_Y
         with patch.object(changes.cache, "set", wraps=cache.set) as stored:
-            first = github_head("acme/agent", "main", purpose="t")
+            first = github_head("acme/agent", "main", credential=TOKEN, purpose="t")
         assert first == HeadResult("ok", HEAD_Y)
         key, value, timeout = stored.call_args.args
         assert value == {"etag": f'"{HEAD_Y[:8]}"', "sha": HEAD_Y}
         assert timeout >= 86400
 
-        second = github_head("acme/agent", "main", purpose="t")
+        second = github_head("acme/agent", "main", credential=TOKEN, purpose="t")
 
         assert second == HeadResult("not_modified", HEAD_Y)
         assert gh.calls[1][2] == f'"{HEAD_Y[:8]}"'
 
     def test_a_body_that_is_not_a_commit_is_an_error(self, gh):
         gh.heads[("acme/agent", "main")] = "not-a-sha"
-        assert github_head("acme/agent", "main", purpose="t").status == "error"
+        assert (
+            github_head("acme/agent", "main", credential=TOKEN, purpose="t").status
+            == "error"
+        )
 
     def test_the_default_branch_and_quoted_refs(self, gh):
         gh.heads[("acme/agent", "HEAD")] = HEAD_X
         gh.heads[("acme/agent", "feature/a b")] = HEAD_Y
-        assert github_head("acme/agent", None, purpose="t").sha == HEAD_X
+        assert (
+            github_head("acme/agent", None, credential=TOKEN, purpose="t").sha == HEAD_X
+        )
         with patch.object(github.requests, "get", side_effect=gh) as get:
-            github_head("acme/agent", "feature/a b", purpose="t")
+            github_head("acme/agent", "feature/a b", credential=TOKEN, purpose="t")
         assert get.call_args.args[0].endswith("/commits/feature/a%20b")
 
 
 class TestWatchedSources:
+    def test_an_environment_on_a_deleted_agent_is_not_watched(
+        self, user, workspace, storage
+    ):
+        from simulate.models import AgentDefinition
+
+        environment = _environment(user, workspace, "watch-deleted", storage)
+        a1 = _a1(environment)
+        assert [one.environment_id for one in watched_sources()] == [environment.id]
+
+        AgentDefinition.no_workspace_objects.filter(id=a1.agent_definition_id).update(
+            deleted=True
+        )
+
+        assert watched_sources() == []
+
     def test_selection(self, user, workspace, storage):
         environment = _environment(user, workspace, "watch-sel", storage)
         a1 = _a1(environment)
@@ -1321,13 +1356,47 @@ class TestCreationCheck:
         assert refused.value.code == "github_private_unsupported"
         get.assert_not_called()
 
-    @pytest.mark.parametrize("status", ["rate_limited", "budget", "error"])
+    @pytest.mark.parametrize(
+        "status", ["rate_limited", "not_connected", "revoked", "error"]
+    )
     def test_github_out_of_reach_never_blocks_a_creation(self, status, caplog):
         with patch.object(changes, "github_get", return_value=GitHubResponse(status)):
             validate_public_github_source(
                 {"source": {"kind": "github", "repository": "acme/agent"}}
             )
         assert f"harness_github_check_skipped reason={status}" in caplog.text
+
+    @pytest.mark.parametrize(
+        ("status", "code", "status_code"),
+        [
+            ("rate_limited", "github_rate_limited", 429),
+            ("not_connected", "github_not_connected", 422),
+            ("revoked", "github_installation_revoked", 422),
+            ("error", "source_unreachable", 503),
+        ],
+    )
+    def test_a_required_check_says_why_github_did_not_answer(
+        self, status, code, status_code
+    ):
+        response = GitHubResponse(status, reset_at=time.time() + 300)
+        with patch.object(changes, "github_get", return_value=response):
+            with pytest.raises(HostedHarnessError) as refused:
+                validate_public_github_source(
+                    {"source": {"kind": "github", "repository": "acme/agent"}},
+                    required=True,
+                )
+        assert (refused.value.code, refused.value.status_code) == (code, status_code)
+
+    def test_the_check_reads_with_the_workspace_credential(self, user, workspace):
+        with patch.object(
+            changes, "github_get", return_value=GitHubResponse("ok", {})
+        ) as get:
+            validate_public_github_source(
+                {"source": {"kind": "github", "repository": "acme/agent"}},
+                organization_id=workspace.organization_id,
+                workspace_id=workspace.id,
+            )
+        assert get.call_args.kwargs["credential"] == TOKEN
 
     def test_other_sources_are_not_checked(self):
         with patch.object(changes, "github_get") as get:
@@ -1517,7 +1586,7 @@ class TestRefsAndBudget:
 
     def test_a_push_reads_the_head_again_without_its_etag(self, gh):
         gh.heads[("acme/agent", "main")] = HEAD_Y
-        github_head("acme/agent", "main", purpose="poll")
+        github_head("acme/agent", "main", credential=TOKEN, purpose="poll")
         with (
             patch.object(changes, "watched_sources", return_value=[_source("main")]),
             patch.object(changes, "observe_repository_head", return_value={}),
@@ -1542,7 +1611,7 @@ class TestRefsAndBudget:
 
         def head(repository, ref, **kwargs):
             read.append(repository)
-            assert kwargs["reserve"] == 20
+            assert kwargs["credential"] == TOKEN
             return HeadResult("ok", HEAD_Y)
 
         with (
@@ -1560,7 +1629,7 @@ class TestRefsAndBudget:
         assert not set(first) & set(read)
         assert seen.call_args.kwargs["purpose"] == "poll"
 
-    @pytest.mark.parametrize("skipped_by", ["cooldown", "budget"])
+    @pytest.mark.parametrize("skipped_by", ["cooldown", "rate_limited"])
     def test_a_skipped_push_is_polled_first(self, skipped_by):
         sources = [_source("main", f"acme/r{n:02d}", n) for n in range(12)]
         for n, one in enumerate(sources):
@@ -1569,8 +1638,8 @@ class TestRefsAndBudget:
 
         def head(repository, ref, **kwargs):
             read.append(repository)
-            if kwargs["purpose"] == "webhook" and skipped_by == "budget":
-                return HeadResult("budget")
+            if kwargs["purpose"] == "webhook" and skipped_by == "rate_limited":
+                return HeadResult("rate_limited")
             return HeadResult("ok", HEAD_Y)
 
         def watched(repository=None, **kwargs):
@@ -1588,16 +1657,27 @@ class TestRefsAndBudget:
 
         assert read[0] == "acme/r11"
 
-    def test_one_owners_pushes_cannot_hold_every_poll_slot(self):
-        busy = [_source("main", f"busy/r{n}", n) for n in range(5)]
-        others = [_source("main", f"acme/r{n}", 10 + n) for n in range(5)]
+    def test_one_organizations_pushes_cannot_hold_every_poll_slot(self):
+        busy = [
+            dataclasses.replace(
+                _source("main", f"busy/r{n}", n), organization_id=uuid.UUID(int=501)
+            )
+            for n in range(5)
+        ]
+        others = [
+            dataclasses.replace(
+                _source("main", f"acme/r{n}", 10 + n),
+                organization_id=uuid.UUID(int=502),
+            )
+            for n in range(5)
+        ]
         for n, one in enumerate(others + busy):
             cache.set(changes._checked_key(one.repository, "main"), 100 + n, 60)
         read = []
 
         def head(repository, ref, **kwargs):
             if kwargs["purpose"] == "webhook":
-                return HeadResult("budget")
+                return HeadResult("rate_limited")
             read.append(repository)
             return HeadResult("ok", HEAD_Y)
 
@@ -1616,10 +1696,15 @@ class TestRefsAndBudget:
                     receive_push(one.repository, "refs/heads/main", "main")
                 poll_repository_heads()
 
-        assert sum(one.startswith("busy/") for one in read) == 5
-        assert {f"acme/r{n}" for n in range(5)} <= set(read)
+        assert sum(one.startswith("busy/") for one in read) == 6
+        assert [one for one in read if one.startswith("acme/")] == [
+            "acme/r0",
+            "acme/r1",
+            "acme/r2",
+            "acme/r3",
+        ]
 
-    def test_a_push_to_a_pair_many_environments_watch_counts_once(self):
+    def test_a_push_to_a_pair_many_environments_watch_marks_it_once(self):
         sources = [_source("main", "acme/agent", n) for n in range(3)]
         with (
             patch.object(changes, "watched_sources", return_value=sources),
@@ -1629,24 +1714,24 @@ class TestRefsAndBudget:
             for _ in range(2):
                 receive_push("acme/agent", "refs/heads/main", "main")
 
-        assert cache.get(f"{github._hour_key()}:poll-first:acme") == 1
         assert cache.get(changes._checked_key("acme/agent", "main")) == -1
 
-    def test_many_owners_cannot_poll_first_past_the_hourly_cap(self, settings):
-        settings.HARNESS_GITHUB_WEBHOOK_SHARE = 1
-        settings.HARNESS_GITHUB_WEBHOOK_BUDGET = 2
-        pairs = [("busy/r0", "main"), ("busy/r1", "main")] + [
-            (f"owner{n}/agent", "main") for n in range(4)
-        ]
+    def test_any_pair_can_be_polled_first(self):
+        pairs = [(f"owner{n}/agent", "main") for n in range(6)]
         for pair in pairs:
             changes._poll_first(pair)
+        assert all(cache.get(changes._checked_key(*p)) == -1 for p in pairs)
 
-        first = [p for p in pairs if cache.get(changes._checked_key(*p)) == -1]
-        assert first == [("busy/r0", "main"), ("owner0/agent", "main")]
-
-    def test_a_rate_limit_stops_the_tick_and_the_next_ones(self):
+    def test_a_rate_limited_pair_is_skipped_and_the_tick_goes_on(self):
         sources = [_source("main", f"acme/r{n:02d}", n) for n in range(4)]
-        results = iter([HeadResult("ok", HEAD_Y), HeadResult("rate_limited")])
+        results = iter(
+            [
+                HeadResult("ok", HEAD_Y),
+                HeadResult("rate_limited"),
+                HeadResult("ok", HEAD_Y),
+                HeadResult("ok", HEAD_Y),
+            ]
+        )
         with (
             patch.object(changes, "watched_sources", return_value=sources),
             patch.object(
@@ -1655,14 +1740,11 @@ class TestRefsAndBudget:
             patch.object(changes, "observe_repository_head", return_value={}),
         ):
             assert poll_repository_heads() == {"rate_limited": 1}
-            assert head.call_count == 2
-            cache.set(github.RATE_RESET_KEY, 10**12, 60)
-            assert poll_repository_heads() == {}
-            assert head.call_count == 2
+        assert head.call_count == 4
 
-    def test_low_remaining_calls_shrink_the_tick(self):
+    def test_a_tick_reads_up_to_the_poll_budget(self, settings):
+        settings.HARNESS_GITHUB_POLL_BUDGET = 3
         sources = [_source("main", f"acme/r{n:02d}", n) for n in range(6)]
-        cache.set(github.REMAINING_KEY, 22, 60)
         with (
             patch.object(changes, "watched_sources", return_value=sources),
             patch.object(
@@ -1671,7 +1753,45 @@ class TestRefsAndBudget:
             patch.object(changes, "observe_repository_head", return_value={}),
         ):
             poll_repository_heads()
-        assert head.call_count == 2
+        assert head.call_count == 3
+
+    def test_one_credential_per_workspace_a_tick_and_none_for_a_private_source(
+        self,
+    ):
+        sources = [
+            dataclasses.replace(
+                _source("main", f"acme/r{n}", n),
+                organization_id="org",
+                workspace_id=f"ws{n % 2}",
+            )
+            for n in range(4)
+        ] + [
+            dataclasses.replace(
+                _source("main", "acme/private", 9), installation_id="77"
+            )
+        ]
+        made = []
+        credentials = []
+
+        @contextlib.contextmanager
+        def credential(organization_id=None, workspace_id=None):
+            made.append(workspace_id)
+            yield ReadCredential(f"tok-{workspace_id}", workspace_id)
+
+        def head(watched, **kwargs):
+            credentials.append(kwargs["credential"])
+            return HeadResult("ok", HEAD_Y)
+
+        with (
+            patch.object(changes, "watched_sources", return_value=sources),
+            patch.object(changes, "read_credential", credential),
+            patch.object(changes, "read_head", side_effect=head),
+            patch.object(changes, "observe_repository_head", return_value={}),
+        ):
+            poll_repository_heads(budget=10)
+        assert sorted(made) == ["ws0", "ws1"]
+        assert credentials.count(None) == 1
+        assert {one.token for one in credentials if one} == {"tok-ws0", "tok-ws1"}
 
 
 class TestRepositoryId:
@@ -1702,7 +1822,7 @@ class TestRepositoryId:
         job = _job(response)
 
         assert get.call_args.kwargs["purpose"] == "create"
-        assert get.call_args.kwargs["owner"] == str(job.organization_id)
+        assert get.call_args.kwargs["credential"] == TOKEN
         access = _side(_a1(job)).agent_payload["source_access"]
         assert access["repository_id"] == 918273645
         listed = api.get(

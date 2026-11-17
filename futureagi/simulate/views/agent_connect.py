@@ -43,7 +43,7 @@ class _ConnectView(APIView):
                 details=error_details(exc.details) if exc.details else None,
                 extra={"retryable": exc.retryable},
             )
-            return Response(body, status=exc.status_code)
+            return Response(body, status=exc.status_code, headers=exc.headers())
         return super().handle_exception(exc)
 
     @staticmethod

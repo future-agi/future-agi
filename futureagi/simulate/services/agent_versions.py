@@ -147,8 +147,10 @@ def _branch_head(definition: AgentDefinition, source: dict[str, Any]) -> str:
 
 def branch_head_of(organization_id: Any, workspace_id: Any, source: dict[str, Any]):
     """The commit a source's branch points at now; a private repository is read
-    through the workspace's GitHub installation."""
+    through the workspace's GitHub installation, a public one with the workspace's
+    read credential."""
     from simulate.services.harness_agent_changes import github_head
+    from simulate.services.harness_github import read_credential, read_refused
 
     installation_id = source.get("installation_id")
     if source.get("visibility") == "private" and installation_id:
@@ -181,16 +183,20 @@ def branch_head_of(organization_id: Any, workspace_id: Any, source: dict[str, An
         if sha is None:
             raise _source_gone()
         return sha
-    head = github_head(
-        str(source["repository"]),
-        source.get("ref"),
-        purpose="create",
-        repository_id=source.get("repository_id"),
-    )
+    with read_credential(organization_id, workspace_id) as credential:
+        head = github_head(
+            str(source["repository"]),
+            source.get("ref"),
+            credential=credential,
+            purpose="create",
+            repository_id=source.get("repository_id"),
+        )
     if head.status == "not_found":
         raise _source_gone()
     if head.status not in ("ok", "not_modified") or not head.sha:
-        raise _source_unreachable(head.status)
+        raise read_refused(head.status, head.reset_at) or _source_unreachable(
+            head.status
+        )
     return head.sha
 
 

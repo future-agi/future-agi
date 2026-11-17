@@ -13,8 +13,9 @@ import re
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import quote
 from uuid import UUID
 
@@ -48,13 +49,14 @@ from simulate.services.harness_agent_versions import (
 )
 from simulate.services.harness_github import (
     GitHubResponse,
+    ReadCredential,
+    ReadStatus,
     github_get,
-    rate_limited_now,
-    remaining,
+    read_credential,
+    read_refused,
     safe_ref,
     safe_repository,
     short_ref,
-    within_share,
 )
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -67,8 +69,6 @@ SourceKind = HarnessAgentVersionRuntime.SourceKind
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _PINNED_REF = re.compile(r"^[0-9a-fA-F]{40}$")
 _DAY = 86400
-# Calls an hour the poller leaves to push re-reads, creation checks and comparisons.
-_POLL_RESERVE = 20
 # A passed version an environment asked for from where it stands is observed, unless
 # its move was held back by one of these: asking again moves it.
 _ASK_AGAIN = (
@@ -116,10 +116,9 @@ class WatchedSource:
 
 @dataclass(frozen=True)
 class HeadResult:
-    status: Literal[
-        "ok", "not_modified", "not_found", "rate_limited", "budget", "error"
-    ]
+    status: ReadStatus
     sha: str | None = None
+    reset_at: float | None = None
 
 
 def _facts(environment: HostedHarnessJob) -> Any:
@@ -145,6 +144,8 @@ def watched_sources(
         deleted=False,
         state=HostedHarnessJob.State.COMPLETED,
         agent_version__isnull=False,
+        agent_version__deleted=False,
+        agent_version__agent_definition__deleted=False,
     ).select_related("agent_version")
     # Narrows only, as below: a GitHub source by the payload (a legacy or unrecorded
     # default) or by the default's own side row.
@@ -284,17 +285,32 @@ def _outcome_key(watched: WatchedSource) -> str:
     return str(watched.environment_id or watched.definition_id)
 
 
-def read_head(watched: WatchedSource, *, purpose: str, reserve: int = 0) -> HeadResult:
+def read_head(
+    watched: WatchedSource,
+    *,
+    purpose: str,
+    credential: ReadCredential | None = None,
+) -> HeadResult:
     """The head of a watched source: a private one through its installation, any
-    other from GitHub's public API."""
+    other with the workspace's read credential (``credential`` when the caller holds
+    it already)."""
     if watched.installation_id is None:
-        return github_head(
-            watched.repository,
-            watched.ref,
-            purpose=purpose,
-            reserve=reserve,
-            repository_id=watched.repository_id,
-        )
+        if credential is not None:
+            return github_head(
+                watched.repository,
+                watched.ref,
+                credential=credential,
+                purpose=purpose,
+                repository_id=watched.repository_id,
+            )
+        with read_credential(watched.organization_id, watched.workspace_id) as held:
+            return github_head(
+                watched.repository,
+                watched.ref,
+                credential=held,
+                purpose=purpose,
+                repository_id=watched.repository_id,
+            )
     if not watched.installation_id:
         return HeadResult("error")
     from integrations.services.github_app import (
@@ -351,8 +367,8 @@ def github_head(
     repository: str,
     ref: str | None,
     *,
+    credential: ReadCredential,
     purpose: str,
-    reserve: int = 0,
     repository_id: int | None = None,
 ) -> HeadResult:
     """The commit ``ref`` (the default branch when ``None``) points at now; read by
@@ -367,17 +383,16 @@ def github_head(
     response = github_get(
         f"{path}/commits/{quote(ref or 'HEAD', safe='/')}",
         accept="application/vnd.github.sha",
+        credential=credential,
         etag=cached.get("etag"),
         purpose=purpose,
-        reserve=reserve,
-        owner=repository.split("/")[0],
     )
     if response.status == "not_modified" and cached.get("sha"):
         return HeadResult("not_modified", cached["sha"])
     if response.status == "not_modified":
         return HeadResult("error")
     if response.status != "ok":
-        return HeadResult(response.status)
+        return HeadResult(response.status, reset_at=response.reset_at)
     sha = str(response.body or "").strip()
     if not _SHA.fullmatch(sha):
         return HeadResult("error")
@@ -548,15 +563,14 @@ def _seed(environment: HostedHarnessJob, watched: WatchedSource, head: str) -> b
 
 
 def github_repository(
-    repository: str, *, purpose: str, reserve: int = 0, owner: str | None = None
+    repository: str, *, credential: ReadCredential, purpose: str
 ) -> GitHubResponse:
     """GitHub's record of a public repository, by its checked name."""
     return github_get(
         f"/repos/{repository}",
         accept="application/vnd.github+json",
+        credential=credential,
         purpose=purpose,
-        reserve=reserve,
-        owner=owner,
     )
 
 
@@ -576,14 +590,10 @@ def _identified(
     key = f"harness:gh-repo-id:{watched.repository.lower()}"
     found = cache.get(key)
     if found is None:
-        found = _repository_id(
-            github_repository(
-                watched.repository,
-                purpose=purpose,
-                reserve=_POLL_RESERVE if purpose == "poll" else 0,
-                owner=watched.repository.split("/")[0],
+        with read_credential(watched.organization_id, watched.workspace_id) as held:
+            found = _repository_id(
+                github_repository(watched.repository, credential=held, purpose=purpose)
             )
-        )
         if found is None:
             return False
         # Environments on the same repository this tick share the one lookup.
@@ -725,8 +735,6 @@ def observe_repository_head(
             head = heads[pair] = read_head(watched, purpose=purpose)
         if head.status not in ("ok", "not_modified") or not head.sha:
             outcomes[_outcome_key(watched)] = "head_unavailable"
-            if head.status in ("rate_limited", "budget"):
-                break
             continue
         if watched.connected and watched.definition_id in connected_outcomes:
             outcomes[_outcome_key(watched)] = connected_outcomes[watched.definition_id]
@@ -766,20 +774,18 @@ def _checked_key(repository: str, ref: str | None) -> str:
 
 
 def _poll_first(pair: tuple[str, str | None]) -> None:
-    """Have the poller read a pair first, within its owner's hourly share and the
-    hourly cap: pushes can't hold every poll slot."""
-    if within_share("poll-first", pair[0].split("/")[0]):
-        cache.set(_checked_key(*pair), -1, _DAY)
+    """Have the poller read a pair first."""
+    cache.set(_checked_key(*pair), -1, _DAY)
 
 
 def poll_repository_heads(*, budget: int | None = None) -> dict[str, int]:
-    """One poller tick: the oldest-checked (repo, ref) pairs first, within the shared
-    GitHub budget; returns counts by outcome."""
+    """One poller tick: the oldest-checked (repo, ref) pairs first, each read with
+    its workspace's credential; returns counts by outcome."""
     from django.conf import settings
 
     from simulate.services.harness_versioning.versions import versioning_enabled
 
-    if not versioning_enabled() or rate_limited_now():
+    if not versioning_enabled():
         return {}
     groups: dict[tuple[str, str | None], list[WatchedSource]] = {}
     for watched in watched_sources():
@@ -789,36 +795,52 @@ def poll_repository_heads(*, budget: int | None = None) -> dict[str, int]:
         if budget is not None
         else int(getattr(settings, "HARNESS_GITHUB_POLL_BUDGET", 5))
     )
-    left = remaining()
-    if left is not None:
-        limit = min(limit, max(left - _POLL_RESERVE, 0))
     checked = {pair: float(cache.get(_checked_key(*pair)) or 0) for pair in groups}
     order = sorted(groups, key=checked.__getitem__)
-    # Organizations take turns, each oldest-checked first, so one with many pairs
-    # can't hold every read; pairs a push asked for still go first.
+    # Organizations take turns, each with the pairs a push asked for first, then the
+    # oldest-checked: one organization's pushes can't hold every read.
     taken: Counter[Any] = Counter()
     turn: dict[tuple[str, str | None], int] = {}
     for pair in order:
         turn[pair] = taken[groups[pair][0].organization_id]
         taken[groups[pair][0].organization_id] += 1
-    order.sort(key=lambda pair: (checked[pair] >= 0, turn[pair]))
+    order.sort(key=lambda pair: (turn[pair], checked[pair] >= 0))
     counts: Counter[str] = Counter()
-    for pair in order[:limit]:
-        sources = groups[pair]
-        head = read_head(sources[0], purpose="poll", reserve=_POLL_RESERVE)
-        if head.status in ("rate_limited", "budget"):
-            counts[head.status] += 1
-            break
-        cache.set(_checked_key(*pair), time.time(), _DAY)
-        for definition_id in dict.fromkeys(one.definition_id for one in sources):
-            for outcome in observe_repository_head(
-                definition_id,
-                repository=sources[0].repository,
-                heads={pair: head},
+    with ExitStack() as held:
+        credentials: dict[tuple[Any, Any], ReadCredential] = {}
+        for pair in order[:limit]:
+            sources = groups[pair]
+            head = read_head(
+                sources[0],
                 purpose="poll",
-            ).values():
-                counts[outcome] += 1
+                credential=_held_credential(held, credentials, sources[0]),
+            )
+            if head.status == "rate_limited":
+                counts[head.status] += 1
+                continue
+            cache.set(_checked_key(*pair), time.time(), _DAY)
+            for definition_id in dict.fromkeys(one.definition_id for one in sources):
+                for outcome in observe_repository_head(
+                    definition_id,
+                    repository=sources[0].repository,
+                    heads={pair: head},
+                    purpose="poll",
+                ).values():
+                    counts[outcome] += 1
     return dict(counts)
+
+
+def _held_credential(
+    held: ExitStack,
+    credentials: dict[tuple[Any, Any], ReadCredential],
+    watched: WatchedSource,
+) -> ReadCredential | None:
+    if watched.installation_id is not None:
+        return None
+    scope = (watched.organization_id, watched.workspace_id)
+    if scope not in credentials:
+        credentials[scope] = held.enter_context(read_credential(*scope))
+    return credentials[scope]
 
 
 def receive_push(
@@ -847,9 +869,12 @@ def receive_push(
     ]
     heads: dict[tuple[str, str | None], HeadResult] = {}
     seen: set[tuple[str, str | None]] = set()
-    for watched in matched:
-        pair = _pair(watched)
-        if pair not in seen:
+    with ExitStack() as held:
+        credentials: dict[tuple[Any, Any], ReadCredential] = {}
+        for watched in matched:
+            pair = _pair(watched)
+            if pair in seen:
+                continue
             seen.add(pair)
             if not cache.add(
                 f"harness:gh-push-seen:{pair[0]}:{pair[1] or 'HEAD'}",
@@ -862,8 +887,12 @@ def receive_push(
             cache.delete(
                 _head_key(watched.repository, watched.ref, watched.repository_id)
             )
-            heads[pair] = read_head(watched, purpose="webhook")
-            if heads[pair].status in ("rate_limited", "budget"):
+            heads[pair] = read_head(
+                watched,
+                purpose="webhook",
+                credential=_held_credential(held, credentials, watched),
+            )
+            if heads[pair].status == "rate_limited":
                 _poll_first(pair)
     counts: Counter[str] = Counter()
     for definition_id in dict.fromkeys(one.definition_id for one in matched):
@@ -878,14 +907,16 @@ def validate_public_github_source(
     payload: Mapping[str, Any],
     *,
     organization_id: Any = None,
+    workspace_id: Any = None,
     lookup: bool = True,
     required: bool = False,
 ) -> int | None:
     """Refuse a new environment on a private or unknown GitHub repository: only
-    public ones are watched. GitHub being unreachable never blocks a creation,
-    unless ``required``: then an unchecked repository is refused too. Without
-    ``lookup`` only what the payload says is checked. Returns GitHub's id for the
-    repository when it was looked up."""
+    public ones are watched. The repository is read with the workspace's credential.
+    GitHub not answering never blocks a creation, unless ``required``: then an
+    unchecked repository is refused, saying why. Without ``lookup`` only what the
+    payload says is checked. Returns GitHub's id for the repository when it was
+    looked up."""
     source = payload.get("source") or {}
     if source.get("kind") != "github":
         return None
@@ -900,16 +931,12 @@ def validate_public_github_source(
     if not lookup:
         return None
     repository = str(source.get("repository") or "")
-    found = (
-        # One organization's creations take only its share of their own cap.
-        github_repository(
-            repository,
-            purpose="create",
-            owner=str(organization_id) if organization_id else None,
-        )
-        if safe_repository(repository)
-        else None
-    )
+    found = None
+    if safe_repository(repository):
+        with read_credential(organization_id, workspace_id) as credential:
+            found = github_repository(
+                repository, credential=credential, purpose="create"
+            )
     if found is None or found.status == "not_found":
         raise HostedHarnessError(
             "github_repository_not_found",
@@ -917,15 +944,9 @@ def validate_public_github_source(
             status_code=422,
         )
     if found.status != "ok":
-        if required:
-            raise HostedHarnessError(
-                "github_unavailable",
-                "Couldn't check that GitHub repository right now; try again in a"
-                " few minutes",
-                status_code=503,
-            )
-        # TODO: creations past the hourly cap fail open without a repository_id,
-        # and are identified by name on the first tick.
+        refused = read_refused(found.status, found.reset_at)
+        if required and refused is not None:
+            raise refused
         logger.info("harness_github_check_skipped reason=%s", found.status)
         return None
     if isinstance(found.body, Mapping) and found.body.get("private"):

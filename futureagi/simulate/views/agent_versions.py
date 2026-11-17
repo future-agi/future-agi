@@ -54,7 +54,7 @@ class _AgentVersionView(APIView):
                 details=error_details(exc.details) if exc.details else None,
                 extra={"retryable": exc.retryable},
             )
-            return Response(body, status=exc.status_code)
+            return Response(body, status=exc.status_code, headers=exc.headers())
         return super().handle_exception(exc)
 
     def _agent(self, request, agent_id) -> AgentDefinition:
