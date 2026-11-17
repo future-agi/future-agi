@@ -149,11 +149,12 @@ def worker_enforcement(
     trial: Mapping[str, Any] | None = None,
     bypassed: bool = False,
     unheld: bool = False,
+    at_door: bool = False,
 ) -> WorkerEnforcement:
     """How the world held a worker, from what the harness sealed for the trial (`trial`): held only on positive
-    evidence, a door that stood and held each separate worker on its own channel (`worker_channels`). Bypassed when the
-    trial says so; not enforced when it shares the app's address, the trial says its limits were not held (`unheld`)
-    or no door saw its tools; otherwise, and with no trial, not known."""
+    evidence, its own calls at the door in this trial (`at_door`) with a door that held each separate worker on its own
+    channel (`worker_channels`). Bypassed when the trial says so; not enforced when it shares the app's address, the
+    trial says its limits were not held (`unheld`) or no door saw its tools; otherwise, and with no trial, not known."""
     if bypassed:
         return "bypassed"
     if binding != "separate" or unheld:
@@ -161,7 +162,7 @@ def worker_enforcement(
     if trial is None:
         return "unknown"
     if trial.get("door") is True and trial.get("worker_channels") is True:
-        return "held_at_world"
+        return "held_at_world" if at_door else "unknown"
     if trial.get("recorded") is False:
         return "not_enforced"
     return "unknown"

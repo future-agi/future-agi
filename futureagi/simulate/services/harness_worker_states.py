@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
-from uuid import UUID
 
 from simulate.constants.hosted_harness import (
     SCENARIO_FAILURE_CODES,
@@ -17,6 +16,7 @@ from simulate.constants.hosted_harness import (
 )
 from simulate.models import (
     CallExecution,
+    CallExecutionSnapshot,
     HostedHarnessAttempt,
     HostedHarnessExecution,
     HostedHarnessJob,
@@ -272,12 +272,33 @@ def worker_cleanup(
     return {"status": "still_running", "at": ended}
 
 
-def stopped_by_user(call: CallExecution, attempt: UUID | None) -> bool:
-    """Whether the user stopped this call: cancelled, and its job cancelled for the user; a fix ending or an
-    environment delete is not. An earlier attempt's own status is not kept, so it never says."""
-    if attempt is not None or call.status != CallExecution.CallStatus.CANCELLED:
+def stopped_by_user(
+    call: CallExecution, attempt: CallExecutionSnapshot | None = None
+) -> bool:
+    """Whether the user stopped this call, or the earlier attempt a rerun kept (`attempt`, from its own snapshot):
+    cancelled, and its receipt or its job says the user stopped it; a fix ending or an environment delete is not."""
+    status = attempt.status if attempt is not None else call.status
+    if status != CallExecution.CallStatus.CANCELLED:
         return False
-    job = job_for_call(call)
+    metadata = (
+        attempt.call_metadata if attempt is not None else call.call_metadata
+    ) or {}
+    receipt = metadata.get("hosted_harness_receipt")
+    failure = receipt.get("failure") if isinstance(receipt, Mapping) else None
+    if isinstance(failure, Mapping) and failure.get("code") == USER_CANCELED:
+        return True
+    if attempt is None:
+        job = job_for_call(call)
+    else:
+        # The job that ran the attempt: the latest one of the call's run created before the rerun.
+        job = (
+            HostedHarnessJob.no_workspace_objects.filter(
+                test_execution_id=call.test_execution_id,
+                created_at__lte=attempt.snapshot_timestamp,
+            )
+            .order_by("-created_at")
+            .first()
+        )
     return job is not None and job.cancel_reason == USER_CANCELED
 
 
@@ -290,6 +311,20 @@ def _bypassed(metadata: Mapping[str, Any] | None) -> set[str]:
         for one in (notices if isinstance(notices, list) else [])
         if isinstance(one, Mapping) and one.get("code") == WORKER_CHANNEL_BYPASSED
         for worker in one.get("workers") or []
+    }
+
+
+def _at_door(metadata: Mapping[str, Any] | None) -> set[str]:
+    """The workers whose own calls reached the world's door in the trial, by its state changes (`worker:<id>`)."""
+    trial = (metadata or {}).get(TRIAL_STATE_KEY)
+    changes = trial.get("state_changes") if isinstance(trial, Mapping) else None
+    return {
+        worker
+        for one in (changes if isinstance(changes, list) else [])
+        if isinstance(one, Mapping)
+        and (worker := worker_subject_id(one.get("who")))
+        and isinstance(one.get("attempted"), int)
+        and one["attempted"] > 0
     }
 
 
@@ -319,6 +354,7 @@ def served_workers(
     its channel says so. The stored record is never rewritten."""
     bypassed = _bypassed(metadata)
     unheld = _unheld(metadata)
+    at_door = _at_door(metadata)
     late = refused_past_deadline(metadata)
     trial = (metadata or {}).get(TRIAL_STATE_KEY)
     # A record read before every worker kept a state is served with the state its own events give each one.
@@ -338,6 +374,7 @@ def served_workers(
             trial=trial if isinstance(trial, Mapping) else None,
             bypassed=str(one.get("id")) in bypassed,
             unheld=unheld is None or str(one.get("id")) in unheld,
+            at_door=str(one.get("id")) in at_door,
         )
         served: HarnessWorker = {
             **one,

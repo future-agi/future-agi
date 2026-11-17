@@ -71,7 +71,7 @@ def _answer(
     metadata: Mapping[str, object],
     now: datetime,
     *,
-    attempt: UUID | None,
+    attempt: CallExecutionSnapshot | None,
 ) -> WorkersReply | None:
     """The kept record, or a failed read, or None when the read ran and found no hand-off or has not run."""
     record = metadata.get(WORKERS_KEY)
@@ -107,7 +107,7 @@ def call_workers(
             call.snapshots.filter(
                 id=attempt, rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL
             )
-            .only("call_metadata")
+            .only("call_metadata", "status", "snapshot_timestamp")
             .first()
         )
         if snapshot is None:
@@ -116,7 +116,7 @@ def call_workers(
             # Snapshotted before snapshots kept the call's metadata: its record, if any, was not kept.
             return _stated("not_kept", now.isoformat(), now)
         return _answer(
-            call, snapshot.call_metadata, now, attempt=attempt
+            call, snapshot.call_metadata, now, attempt=snapshot
         ) or WorkersReply(status.HTTP_204_NO_CONTENT)
     metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     answer = _answer(call, metadata, now, attempt=None)
