@@ -616,6 +616,49 @@ def test_a_removed_evals_placeholder_puts_its_harness_verdict_back(
     assert call_execution.eval_outputs[_CODE_CHECK_ID] == _code_check()
 
 
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NO_SKIP)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch("simulate.services.test_executor.run_eval_func")
+def test_a_keyless_call_of_a_harness_sdk_run_keeps_its_harness_checks(
+    mock_run, mock_transcript, run_test, test_execution, call_execution, organization
+):
+    from simulate.services.test_executor import _run_simulate_evaluations_task
+
+    mock_transcript.return_value = dict(_TRANSCRIPT)
+    claim_template = EvalTemplate.objects.create(
+        name=f"claim_{uuid.uuid4().hex[:6]}",
+        config={"required_keys": ["conversation"], "prompt": "Grade it"},
+        owner="user",
+        organization=organization,
+    )
+    column = _config(run_test, claim_template, mapping={})
+    # A sibling carries the harness's checks, so the run test is a harness
+    # run; this call lost the key but still holds the harness's verdict.
+    _call(test_execution, metadata={"harness_evaluations": []})
+    _awaiting_regrade(
+        call_execution,
+        {str(column.id): pending_placeholder(_harness_verdict(column.name))},
+    )
+
+    def run_inline(*, args, kwargs):
+        _run_simulate_evaluations_task._original_func(*args, **kwargs)
+        return SimpleNamespace(id="inline")
+
+    with patch(
+        "simulate.services.test_executor._run_simulate_evaluations_task.apply_async",
+        side_effect=run_inline,
+    ):
+        run_new_evals_on_call_executions_task._original_func(
+            [str(call_execution.id)], [str(column.id)]
+        )
+
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(column.id)] == _harness_verdict(column.name)
+    mock_run.assert_not_called()
+
+
 # --- what the call APIs show ------------------------------------------------
 
 

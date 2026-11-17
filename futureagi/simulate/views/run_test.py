@@ -6669,6 +6669,42 @@ def _save_eval_snapshot(call_execution):
     )
 
 
+def _clear_call_evals_under_lock(call_execution, save_snapshot, rerun_eval_ids=None):
+    """Snapshot a call's results and clear them for an eval-only re-run.
+
+    The call is read again under its row lock, so a write another request
+    made to ``call_metadata`` or ``eval_outputs`` since this request loaded
+    it is kept, not replaced. Locks are taken run test, then run, then call,
+    the order every re-grade path uses. ``call_execution`` is refreshed with
+    what was written.
+    """
+    with transaction.atomic():
+        RunTest.objects.select_for_update(of=("self",)).filter(
+            pk=call_execution.test_execution.run_test_id
+        ).first()
+        TestExecution.objects.select_for_update(of=("self",)).filter(
+            pk=call_execution.test_execution_id
+        ).first()
+        locked = CallExecution.objects.select_for_update(of=("self",)).get(
+            pk=call_execution.pk
+        )
+        save_snapshot(locked)
+        locked.eval_outputs = {}
+        locked.call_metadata = locked.call_metadata or {}
+        locked.call_metadata["eval_started"] = False
+        locked.call_metadata["eval_completed"] = False
+        if rerun_eval_ids is not None:
+            # Its scoring clock starts here, not at the call's old
+            # completion, so the coordinator's wait is not a timeout.
+            stamp_eval_queued(locked.call_metadata, rerun_eval_ids, now=timezone.now())
+        # Only the columns this step changes: a whole-row save would put back
+        # every other value read earlier over what a grader wrote since.
+        locked.save(update_fields=["eval_outputs", "call_metadata", "updated_at"])
+    call_execution.eval_outputs = locked.eval_outputs
+    call_execution.call_metadata = locked.call_metadata
+    call_execution.updated_at = locked.updated_at
+
+
 def _restore_eval_only_rerun_state(call_execution_ids, dispatch_error_message):
     """Restore eval outputs after eval-only rerun dispatch fails before work starts."""
     for call_execution in CallExecution.objects.filter(id__in=call_execution_ids):
@@ -6768,15 +6804,7 @@ def _rerun_call_executions(call_executions, rerun_type):
     for call_execution in call_executions:
         try:
             if rerun_type == "eval_only":
-                _save_eval_snapshot(call_execution)
-
-                call_execution.eval_outputs = {}
-                call_execution.call_metadata = call_execution.call_metadata or {}
-                call_execution.call_metadata["eval_started"] = False
-                call_execution.call_metadata["eval_completed"] = False
-                call_execution.save(
-                    update_fields=["eval_outputs", "call_metadata", "updated_at"]
-                )
+                _clear_call_evals_under_lock(call_execution, _save_eval_snapshot)
 
                 _run_simulate_evaluations_task.apply_async(
                     args=(str(call_execution.id),)
@@ -7477,33 +7505,11 @@ class CallExecutionRerunView(APIView):
             for call_execution in call_executions:
                 try:
                     if rerun_type == "eval_only":
-                        # Save eval-only snapshot before clearing
-                        self._save_eval_snapshot(call_execution)
-
-                        # Rerun evaluations only - clear eval data and reset status
-                        call_execution.eval_outputs = {}
-
-                        call_execution.call_metadata = (
-                            call_execution.call_metadata or {}
-                        )
-                        call_execution.call_metadata["eval_started"] = False
-                        call_execution.call_metadata["eval_completed"] = False
-                        # Its scoring clock starts here, not at the call's old
-                        # completion, so the coordinator's wait is not a timeout.
-                        stamp_eval_queued(
-                            call_execution.call_metadata,
+                        # Snapshot, then clear the results and reset the flags
+                        _clear_call_evals_under_lock(
+                            call_execution,
+                            self._save_eval_snapshot,
                             rerun_eval_ids,
-                            now=timezone.now(),
-                        )
-                        # Only the columns this step changes: a whole-row save
-                        # would put back every other value read earlier over
-                        # what a grader wrote since.
-                        call_execution.save(
-                            update_fields=[
-                                "eval_outputs",
-                                "call_metadata",
-                                "updated_at",
-                            ]
                         )
 
                         # Evals will be handled by RerunCoordinatorWorkflow below

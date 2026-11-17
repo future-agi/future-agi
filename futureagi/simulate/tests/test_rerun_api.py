@@ -312,6 +312,63 @@ class TestCallExecutionRerunView:
         assert call_execution.overall_score == 7.5
 
     @patch("simulate.temporal.client.rerun_call_executions")
+    def test_rerun_eval_only_keeps_a_metadata_key_written_before_its_lock(
+        self, mock_rerun, auth_client, test_execution, call_execution
+    ):
+        from simulate.views.run_test import CallExecutionRerunView
+
+        mock_rerun.return_value = {"workflow_id": "test-workflow-id", "merged": False}
+        written = {**(call_execution.call_metadata or {}), "csat_status": "completed"}
+        changed = []
+
+        def another_request_writes():
+            # Once, after the request read the call: just before it takes the
+            # run test's lock, or, with no lock, before it clears the call.
+            if not changed:
+                changed.append(True)
+                CallExecution.objects.filter(id=call_execution.id).update(
+                    call_metadata=written
+                )
+
+        real_lock = RunTest.objects.select_for_update
+        real_snapshot = CallExecutionRerunView._save_eval_snapshot
+
+        def lock_after_a_write(*args, **kwargs):
+            another_request_writes()
+            return real_lock(*args, **kwargs)
+
+        def snapshot_after_a_write(view, call):
+            another_request_writes()
+            real_snapshot(view, call)
+
+        with (
+            patch.object(
+                RunTest.objects, "select_for_update", side_effect=lock_after_a_write
+            ),
+            patch.object(
+                CallExecutionRerunView,
+                "_save_eval_snapshot",
+                autospec=True,
+                side_effect=snapshot_after_a_write,
+            ),
+        ):
+            response = auth_client.post(
+                self.URL_TEMPLATE.format(test_execution.id),
+                {
+                    "rerun_type": "eval_only",
+                    "call_execution_ids": [str(call_execution.id)],
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        call_execution.refresh_from_db()
+        # The write landed after the request read the call: read again under
+        # the call's lock, it is kept, not replaced by the earlier read.
+        assert call_execution.call_metadata["csat_status"] == "completed"
+        assert call_execution.call_metadata["eval_started"] is False
+
+    @patch("simulate.temporal.client.rerun_call_executions")
     def test_rerun_eval_only_specific_ids(
         self,
         mock_rerun,
