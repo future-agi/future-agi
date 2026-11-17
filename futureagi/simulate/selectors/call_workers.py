@@ -27,6 +27,7 @@ from simulate.services.harness_workers import (
     check_again_at,
     declared_workers,
     first_read_due,
+    later_read_due,
     read_pending,
 )
 from simulate.services.run_results_v3 import receipt_sub_goals
@@ -121,12 +122,14 @@ def call_workers(
     answer = _answer(call, metadata, now, attempt=None)
     if answer is not None:
         return answer
-    due = first_read_due(call)
-    if due is not None and read_pending(due, now):
-        # The first read has not run yet: the client checks again at `next_read_at` rather than reading "no workers".
-        return WorkersReply(
-            status.HTTP_202_ACCEPTED, next_read_at=check_again_at(due, now)
-        )
+    first = first_read_due(call)
+    # Before the first read, or after one that found nothing until the later read has run (it notes what it finds):
+    # the client checks again at `next_read_at` rather than reading "no workers".
+    for due in (first, later_read_due(first)) if first is not None else ():
+        if read_pending(due, now):
+            return WorkersReply(
+                status.HTTP_202_ACCEPTED, next_read_at=check_again_at(due, now)
+            )
     return WorkersReply(status.HTTP_204_NO_CONTENT)
 
 
@@ -163,7 +166,8 @@ def _trial_route(
             return "unreadable", None
         return ("partial" if _hand_offs_incomplete(metadata) else "no_hand_off"), None
     due = (call.completed_at + timedelta(seconds=FIRST_READ)).isoformat()
-    if hosted and read_pending(due, now):
+    # Until the later read has run, a first read that found nothing leaves no note.
+    if hosted and read_pending(later_read_due(due), now):
         return "pending", None
     # Completed and past its read with no read noted: what its workers did is not known.
     return "unreadable", None

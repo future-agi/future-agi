@@ -376,6 +376,13 @@ def first_read_due(call: CallExecution) -> str | None:
     return (call.completed_at + timedelta(seconds=FIRST_READ)).isoformat()
 
 
+def later_read_due(first_due: str) -> str:
+    """When the later read runs for a call whose first read, due at `first_due`, found nothing to keep."""
+    return (
+        datetime.fromisoformat(first_due) + timedelta(seconds=SECOND_READ)
+    ).isoformat()
+
+
 def record_call_workers(
     call_execution_id: str, *, second_read: bool = False
 ) -> WorkerTimeline | None:

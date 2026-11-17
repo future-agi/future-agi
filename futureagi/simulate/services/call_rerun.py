@@ -1,6 +1,7 @@
 from simulate.models import CallExecution
 from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.selectors.call_transcripts import with_speakers
+from simulate.services.harness_workers import READ_KEY, WORKERS_KEY
 
 
 def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
@@ -103,8 +104,6 @@ def clear_call_for_rerun(
         call_execution.call_metadata = kept
     elif isinstance(call_execution.call_metadata, dict):
         # The earlier attempt's worker record lives on in its snapshot, never in the new attempt's.
-        from simulate.services.harness_workers import READ_KEY, WORKERS_KEY
-
         call_execution.call_metadata = {
             key: value
             for key, value in call_execution.call_metadata.items()

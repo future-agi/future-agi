@@ -1046,6 +1046,7 @@ def _contract_worker(worker: dict[str, Any]) -> ContractWorker:
         "allowed_tools": allowed if narrower else [],
         "tools_shown": allowed if narrower else tools,
         "binding": binding if binding in ("separate", "shared") else "not_declared",
+        # No trial here: a separate worker's hold is not known until one shows it.
         "enforcement": (enforcement := worker_enforcement(binding)),
         "enforcement_label": WORKER_ENFORCEMENT_LABELS[enforcement],
     }

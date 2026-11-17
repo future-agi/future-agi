@@ -17394,6 +17394,7 @@ export const HarnessEnvironmentWorkerApiEnforcement = {
   held_at_world: "held_at_world",
   not_enforced: "not_enforced",
   bypassed: "bypassed",
+  unknown: "unknown",
 } as const;
 
 export interface HarnessEnvironmentWorkerApi {
@@ -28550,7 +28551,7 @@ export interface WorkerCheckApi {
 }
 
 /**
- * How the world held it to its limits in this trial: on its own channel, not at all, or bypassed.
+ * How the world held it to its limits in this trial: on its own channel (only when the trial shows it), not at all, bypassed, or not known.
  */
 export type CallWorkerApiEnforcement =
   (typeof CallWorkerApiEnforcement)[keyof typeof CallWorkerApiEnforcement];
@@ -28559,6 +28560,7 @@ export const CallWorkerApiEnforcement = {
   held_at_world: "held_at_world",
   not_enforced: "not_enforced",
   bypassed: "bypassed",
+  unknown: "unknown",
 } as const;
 
 export interface CallWorkerApi {
@@ -28580,7 +28582,7 @@ export interface CallWorkerApi {
   stopped_at?: number;
   cleanup?: CleanupApi;
   checks: WorkerCheckApi[];
-  /** How the world held it to its limits in this trial: on its own channel, not at all, or bypassed. */
+  /** How the world held it to its limits in this trial: on its own channel (only when the trial shows it), not at all, bypassed, or not known. */
   enforcement?: CallWorkerApiEnforcement;
   /** @minLength 1 */
   enforcement_label?: string;

@@ -554,3 +554,23 @@ def test_a_trial_s_route_says_whether_its_record_can_be_compared(
     route, record = _trial_route(call, NOW, hosted=hosted)
     assert route == expected
     assert (record is not None) == (expected == "recorded")
+
+
+@pytest.mark.parametrize(
+    ("ended_seconds_ago", "expected"),
+    [(10, "pending"), (400, "pending"), (2000, "unreadable")],
+)
+def test_a_trial_whose_first_read_found_nothing_is_pending_until_the_later_read_has_run(
+    ended_seconds_ago, expected
+):
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from simulate.selectors.call_workers import _trial_route
+
+    call = SimpleNamespace(
+        status="completed",
+        completed_at=NOW - timedelta(seconds=ended_seconds_ago),
+        call_metadata={},
+    )
+    assert _trial_route(call, NOW, hosted=True)[0] == expected
