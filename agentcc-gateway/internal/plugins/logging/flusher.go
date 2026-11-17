@@ -11,11 +11,15 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/metrics"
 )
 
-const maxFlushRetries = 3 // drop records after this many consecutive failures
+const maxFlushRetries = 3 // default; kept for existing shutdown characterization tests
 
 // Enqueue refuses records while the buffer holds twice maxBuffer, and warns
 // about it at most this often.
@@ -41,6 +45,21 @@ type LogFlusher struct {
 	maxBuffer        int
 	client           *http.Client
 	consecutiveFails int
+	maxRetries       int
+	retryBackoff     time.Duration
+	maxRetryBackoff  time.Duration
+	nextAttempt      time.Time // protected by sendMu
+
+	// All seven reasons are counted even when Prometheus is disabled. A batch
+	// discarded after the initial failure and max_retries further failed sends
+	// may already have reached the backend (a timed-out send can finish there);
+	// backend ingest dedupes request IDs. A 4xx is discarded immediately. No
+	// disk spill is provided.
+	// Shutdown counts only the records still undelivered at Close, not records
+	// already counted on earlier live flushes.
+	drops     [7]atomic.Int64
+	metricsMu sync.Mutex // serializes metric attachment with recordDrop
+	registry  *metrics.Registry
 
 	// kick asks Run for a flush once the buffer reaches maxBuffer. It holds
 	// one request, so the records that arrive during a slow send wait for
@@ -88,30 +107,127 @@ type logEntry struct {
 	RequestHeaders     json.RawMessage   `json:"request_headers,omitempty"`
 }
 
-func NewLogFlusher(webhookURL, webhookSecret string, interval time.Duration, maxBuffer int) *LogFlusher {
+// The optional configuration preserves the existing constructor for callers
+// that use default timeout/retry settings while permitting control-plane overrides.
+func NewLogFlusher(webhookURL, webhookSecret string, interval time.Duration, maxBuffer int, settings ...config.LogFlushConfig) *LogFlusher {
+	cfg := config.DefaultLogFlushConfig()
+	if len(settings) != 0 {
+		cfg = settings[0]
+	}
 	if interval <= 0 {
-		interval = 30 * time.Second
+		interval = cfg.Interval
 	}
 	if maxBuffer <= 0 {
-		maxBuffer = 5000
+		maxBuffer = cfg.MaxBatch
 	}
 	sendCtx, cancelSends := context.WithCancel(context.Background())
 	return &LogFlusher{
-		kick:          make(chan struct{}, 1),
-		sendCtx:       sendCtx,
-		cancelSends:   cancelSends,
-		stop:          make(chan struct{}),
-		webhookURL:    webhookURL,
-		webhookSecret: webhookSecret,
-		interval:      interval,
-		maxBuffer:     maxBuffer,
-		client:        &http.Client{Timeout: 15 * time.Second},
+		kick:            make(chan struct{}, 1),
+		sendCtx:         sendCtx,
+		cancelSends:     cancelSends,
+		stop:            make(chan struct{}),
+		webhookURL:      webhookURL,
+		webhookSecret:   webhookSecret,
+		interval:        interval,
+		maxBuffer:       maxBuffer,
+		maxRetries:      cfg.MaxRetries,
+		retryBackoff:    cfg.RetryBackoff,
+		maxRetryBackoff: cfg.MaxRetryBackoff,
+		client:          &http.Client{Timeout: cfg.Timeout},
 	}
+}
+
+var dropReasons = [...]string{"max_retries", "client_error", "encode_error", "buffer_full", "requeue_overflow", "closed", "shutdown"}
+
+const droppedMetric = "agentcc_request_log_records_dropped_total"
+const droppedHelp = "Request log records dropped by the gateway, by reason"
+
+// Dropped returns a snapshot of all drop counts, even without Prometheus.
+func (f *LogFlusher) Dropped() map[string]int64 {
+	out := make(map[string]int64, len(dropReasons))
+	for i, reason := range dropReasons {
+		out[reason] = f.drops[i].Load()
+	}
+	return out
+}
+
+// SetMetrics attaches or detaches the optional registry, including drops
+// which occurred before it was attached. Nil is safe.
+func (f *LogFlusher) SetMetrics(reg *metrics.Registry) {
+	f.metricsMu.Lock()
+	defer f.metricsMu.Unlock()
+	if f.registry == reg {
+		return
+	}
+	f.registry = reg
+	if reg != nil {
+		for i, reason := range dropReasons {
+			if n := f.drops[i].Load(); n != 0 {
+				reg.CounterAdd(droppedMetric, droppedHelp, map[string]string{"reason": reason}, n)
+			}
+		}
+	}
+}
+
+// recordDrop counts a discard, always, and logs it at ERROR.
+func (f *LogFlusher) recordDrop(reason string, n int) int64 {
+	total := f.countDrop(reason, n)
+	if n > 0 {
+		slog.Error("log flusher: records dropped", "reason", reason, "count", n, "dropped_total", total)
+	}
+	return total
+}
+
+// countDrop counts a discard without logging it, for a caller that logs it
+// itself: a full buffer refuses records one request at a time, so it logs
+// at most once per overflowWarnInterval.
+func (f *LogFlusher) countDrop(reason string, n int) int64 {
+	if n <= 0 {
+		return 0
+	}
+	f.metricsMu.Lock()
+	var total int64
+	for i, candidate := range dropReasons {
+		if reason == candidate {
+			total = f.drops[i].Add(int64(n))
+			break
+		}
+	}
+	if f.registry != nil {
+		f.registry.CounterAdd(droppedMetric, droppedHelp, map[string]string{"reason": reason}, int64(n))
+	}
+	f.metricsMu.Unlock()
+	return total
 }
 
 func (f *LogFlusher) Run(ctx context.Context) {
 	ticker := time.NewTicker(f.interval)
 	defer ticker.Stop()
+
+	// Run owns the only retry timer. Reschedule it after each flush, so a
+	// retry wakes at its backoff deadline even when the flush tick is later.
+	var retryTimer *time.Timer
+	var retryWake <-chan time.Time
+	defer func() {
+		if retryTimer != nil {
+			retryTimer.Stop()
+		}
+	}()
+	scheduleRetry := func() {
+		f.sendMu.Lock()
+		next := f.nextAttempt
+		f.sendMu.Unlock()
+		if retryTimer != nil {
+			retryTimer.Stop()
+		}
+		retryWake = nil
+		// A deadline already passed with nothing re-sent means the buffer is
+		// empty (Close took it); the tick covers anything enqueued later.
+		if wait := time.Until(next); !next.IsZero() && wait > 0 {
+			retryTimer = time.NewTimer(wait)
+			retryWake = retryTimer.C
+		}
+	}
 
 	slog.Info("log flusher started",
 		"interval", f.interval.String(),
@@ -131,7 +247,10 @@ func (f *LogFlusher) Run(ctx context.Context) {
 			f.flush()
 		case <-f.kick:
 			f.flush()
+		case <-retryWake:
+			f.flush()
 		}
+		scheduleRetry()
 	}
 }
 
@@ -140,21 +259,21 @@ func (f *LogFlusher) Enqueue(rec TraceRecord) {
 	if f.closed {
 		f.lost++
 		f.mu.Unlock()
+		f.recordDrop("closed", 1)
 		return
 	}
 	if len(f.buffer) >= 2*f.maxBuffer {
 		// The webhook is not keeping up: refuse the record rather than let
 		// the buffer grow without bound.
-		f.overflow++
-		overflow := f.overflow
 		warn := time.Since(f.overflowWarned) >= overflowWarnInterval
 		if warn {
 			f.overflowWarned = time.Now()
 		}
 		f.mu.Unlock()
+		total := f.countDrop("buffer_full", 1)
 		if warn {
 			slog.Warn("log flusher: buffer full, dropping new records",
-				"dropped_total", overflow,
+				"reason", "buffer_full", "count", 1, "dropped_total", total,
 				"buffered", 2*f.maxBuffer,
 			)
 		}
@@ -236,7 +355,11 @@ func (f *LogFlusher) flush() {
 	f.sendMu.Lock()
 	defer f.sendMu.Unlock()
 
-	records := f.take()
+	// Close owns its own final attempts and ignores the regular backoff.
+	if !f.closing() && time.Now().Before(f.nextAttempt) {
+		return
+	}
+	records := f.takeBatch()
 	if len(records) == 0 {
 		return
 	}
@@ -245,6 +368,7 @@ func (f *LogFlusher) flush() {
 	if err != nil {
 		slog.Error("log flusher: marshal failed", "error", err, "count", len(records))
 		f.countLost(len(records))
+		f.recordDrop("encode_error", len(records))
 		return
 	}
 
@@ -260,22 +384,41 @@ func (f *LogFlusher) flush() {
 			cause = slog.Int("status", status)
 		}
 		f.consecutiveFails++
-		if f.consecutiveFails > maxFlushRetries && !f.closing() {
+		if f.consecutiveFails > f.maxRetries && !f.closing() {
 			slog.Error("log flusher: max retries exceeded, dropping records",
 				cause,
 				"count", len(records),
 				"consecutive_failures", f.consecutiveFails,
 			)
 			f.consecutiveFails = 0
+			f.nextAttempt = time.Time{}
 			f.countLost(len(records))
+			f.recordDrop("max_retries", len(records))
 			return
 		}
+		// Saturating doubling avoids overflow on a long outage.
+		delay := f.retryBackoff
+		for i := 1; i < f.consecutiveFails && delay < f.maxRetryBackoff; i++ {
+			if delay > f.maxRetryBackoff/2 {
+				delay = f.maxRetryBackoff
+				break
+			}
+			delay *= 2
+		}
+		if delay > f.maxRetryBackoff {
+			delay = f.maxRetryBackoff
+		}
+		f.nextAttempt = time.Now().Add(delay)
 		slog.Error("log flusher: send failed, re-enqueuing records",
 			cause,
 			"count", len(records),
 			"retry", f.consecutiveFails,
 		)
-		f.reEnqueue(records)
+		if f.reEnqueue(records) == 0 {
+			// None of this batch survived: the next batch has not failed yet.
+			f.consecutiveFails = 0
+			f.nextAttempt = time.Time{}
+		}
 		return
 	}
 	if status >= 400 {
@@ -285,12 +428,15 @@ func (f *LogFlusher) flush() {
 			"count", len(records),
 		)
 		f.consecutiveFails = 0
+		f.nextAttempt = time.Time{}
 		f.countLost(len(records))
+		f.recordDrop("client_error", len(records))
 		return
 	}
 
 	// Success — reset retry counter.
 	f.consecutiveFails = 0
+	f.nextAttempt = time.Time{}
 
 	slog.Debug("log flusher: sent records",
 		"count", len(records),
@@ -324,6 +470,7 @@ func (f *LogFlusher) Close(ctx context.Context) {
 	if len(records) > 0 {
 		undelivered, err = f.deliver(ctx, records)
 	}
+	f.recordDrop("shutdown", undelivered)
 	delivered := len(records) - undelivered
 
 	f.mu.Lock()
@@ -451,7 +598,17 @@ func (f *LogFlusher) countLost(n int) {
 	}
 }
 
-// take empties the buffer and returns what was in it.
+// takeBatch removes at most one configured batch, leaving the rest buffered.
+func (f *LogFlusher) takeBatch() []TraceRecord {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := min(len(f.buffer), f.maxBuffer)
+	records := f.buffer[:n]
+	f.buffer = f.buffer[n:]
+	return records
+}
+
+// take empties the buffer and returns what was in it (Close only).
 func (f *LogFlusher) take() []TraceRecord {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -479,32 +636,29 @@ func (f *LogFlusher) post(ctx context.Context, body []byte) (int, error) {
 	return resp.StatusCode, nil
 }
 
-// reEnqueue puts failed records back into the buffer (up to maxBuffer).
+// reEnqueue puts failed records back at the front of the buffer (up to twice
+// maxBuffer in all).
 // This prevents data loss when the webhook endpoint is temporarily unavailable.
 // Once Close has begun it keeps them all for Close's last attempt: Enqueue
 // refuses records by then, so the buffer cannot grow further.
-func (f *LogFlusher) reEnqueue(records []TraceRecord) {
+func (f *LogFlusher) reEnqueue(records []TraceRecord) int {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	capacity := f.maxBuffer - len(f.buffer)
+	capacity := 2*f.maxBuffer - len(f.buffer)
 	if f.closed {
 		capacity = len(records)
 	}
-	if capacity <= 0 {
-		slog.Warn("log flusher: buffer full, dropping records",
-			"dropped", len(records),
-		)
-		return
+	kept := min(len(records), max(0, capacity))
+	// Back at the front, ahead of what arrived since: the next send retries
+	// this batch, in order, so consecutiveFails counts this batch's failures.
+	// records shares the buffer's backing array; the capped slice makes
+	// append copy instead of writing over it.
+	f.buffer = append(records[:kept:kept], f.buffer...)
+	f.mu.Unlock()
+	if dropped := len(records) - kept; dropped > 0 {
+		f.countLost(dropped)
+		f.recordDrop("requeue_overflow", dropped)
 	}
-	if len(records) > capacity {
-		slog.Warn("log flusher: partial re-enqueue, dropping excess",
-			"re_enqueued", capacity,
-			"dropped", len(records)-capacity,
-		)
-		records = records[:capacity]
-	}
-	f.buffer = append(f.buffer, records...)
+	return kept
 }
 
 func FormatLogsWebhookURL(controlPlaneURL string) string {

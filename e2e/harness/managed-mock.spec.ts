@@ -219,6 +219,57 @@ for (const evalBackground of [false, true]) {
   }
 }
 
+// docker-compose.e2e.yml worker-only acceleration for GW-E2E-006. Neither
+// setting changes routes or credentials; no other service needs the override.
+const webhookThresholds: Record<string, string> = {
+  AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES: '3',
+  AGENTCC_WEBHOOK_DISABLE_AFTER_MINUTES: '0',
+};
+for (const evalBackground of [false, true]) {
+  for (const [key, value] of Object.entries(webhookThresholds)) {
+    test(`managed mock accepts exact worker webhook threshold ${key} (background=${evalBackground})`, () => {
+      validateMockEnvironment('worker', { ...backgroundEnvironment, [key]: value }, evalBackground);
+      const overlay = parse(readFileSync(new URL('../stack/docker-compose.e2e.yml', import.meta.url), 'utf8'));
+      expect(overlay.services.worker.environment[key]).toBe(value);
+    });
+
+    test(`managed mock rejects altered worker webhook threshold ${key} (background=${evalBackground})`, () => {
+      for (const invalid of ['1', '30', '-1', `${value}.0`, ` ${value}`, `${value} `, 'false', '${THRESHOLD}']) {
+        expect(() => validateMockEnvironment('worker', { ...backgroundEnvironment, [key]: invalid }, evalBackground))
+          .toThrow(`worker has an unsupported gateway override (${key})`);
+      }
+    });
+
+    test(`managed mock rejects webhook threshold ${key} on other services (background=${evalBackground})`, () => {
+      for (const service of ['backend', 'worker-default', 'worker-exact-aggregation', 'worker-sql-workbench', 'agentcc-gateway', 'mock-llm']) {
+        expect(() => validateMockEnvironment(service, { ...backgroundEnvironment, [key]: value }, evalBackground))
+          .toThrow(`${service} has an unsupported gateway override (${key})`);
+      }
+      expect(() => validateStandaloneAppEnvironment({ ...composedStandaloneEnvironment(), [key]: value }, evalBackground))
+        .toThrow(`app has an unsupported gateway override (${key})`);
+    });
+  }
+
+  test(`managed mock webhook thresholds do not mask routing and telemetry refusals (background=${evalBackground})`, () => {
+    const env = { ...backgroundEnvironment, ...webhookThresholds };
+    validateMockEnvironment('worker', env, evalBackground);
+    for (const [override, reason] of [
+      [{ AGENTCC_WEBHOOK_DISABLE_AFTER_FAILURES_EXTRA: '3' }, 'unsupported gateway override'],
+      [{ AGENTCC_WEBHOOK_DISABLE_AFTER_SECONDS: '0' }, 'unsupported gateway override'],
+      [{ AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: 'true' }, 'unsupported gateway override'],
+      [{ OPENAI_API_KEY: 'private-provider-key' }, 'non-mock provider key'],
+      [{ HTTPS_PROXY: 'http://proxy.invalid' }, 'proxy/preload override'],
+      [{ FUTURE_AGI_TELEMETRY_URL: 'https://telemetry.invalid' }, 'FUTURE_AGI_TELEMETRY_URL mismatch'],
+    ] as [Record<string, string>, string][]) {
+      expect(() => validateMockEnvironment('worker', { ...env, ...override }, evalBackground)).toThrow(reason);
+    }
+    if (evalBackground) {
+      expect(() => validateMockEnvironment('worker', { ...env, EE_LICENSE_KEY: 'private-license' }, true))
+        .toThrow('license, notification or credential override');
+    }
+  });
+}
+
 for (const stack of ['distributed', 'standalone']) {
   test(`managed mock runner keeps unset status-directory behavior for ${stack}`, ({}, testInfo) => {
     const home = testInfo.outputPath('home');

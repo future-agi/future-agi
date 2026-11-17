@@ -9103,7 +9103,15 @@ export const AgentccWebhookEventsListResponse = zod.object({
       event_type: zod.string().min(1).optional(),
       payload: zod.object({}).passthrough().optional(),
       status: zod
-        .enum(["pending", "delivered", "failed", "dead_letter"])
+        .enum([
+          "pending",
+          "delivered",
+          "failed",
+          "dead_letter",
+          "cancelled",
+          "expired",
+          "dropped",
+        ])
         .optional(),
       attempts: zod.number().optional(),
       max_attempts: zod.number().optional(),
@@ -9134,7 +9142,15 @@ export const AgentccWebhookEventsReadResponse = zod.object({
   event_type: zod.string().min(1).optional(),
   payload: zod.object({}).passthrough().optional(),
   status: zod
-    .enum(["pending", "delivered", "failed", "dead_letter"])
+    .enum([
+      "pending",
+      "delivered",
+      "failed",
+      "dead_letter",
+      "cancelled",
+      "expired",
+      "dropped",
+    ])
     .optional(),
   attempts: zod.number().optional(),
   max_attempts: zod.number().optional(),
@@ -9229,6 +9245,11 @@ export const AgentccWebhooksListResponse = zod.object({
       is_active: zod.boolean().optional(),
       headers: zod.object({}).passthrough().optional(),
       description: zod.string().optional(),
+      consecutive_failures: zod.number().optional(),
+      disabled_reason: zod.string().min(1).optional(),
+      disabled_at: zod.string().datetime({ offset: true }).optional(),
+      dropped_events_total: zod.number().optional(),
+      last_dropped_at: zod.string().datetime({ offset: true }).optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
     }),
@@ -9280,6 +9301,11 @@ export const AgentccWebhooksReadResponse = zod.object({
   is_active: zod.boolean().optional(),
   headers: zod.object({}).passthrough().optional(),
   description: zod.string().optional(),
+  consecutive_failures: zod.number().optional(),
+  disabled_reason: zod.string().min(1).optional(),
+  disabled_at: zod.string().datetime({ offset: true }).optional(),
+  dropped_events_total: zod.number().optional(),
+  last_dropped_at: zod.string().datetime({ offset: true }).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -9326,6 +9352,11 @@ export const AgentccWebhooksUpdateResponse = zod.object({
   is_active: zod.boolean().optional(),
   headers: zod.object({}).passthrough().optional(),
   description: zod.string().optional(),
+  consecutive_failures: zod.number().optional(),
+  disabled_reason: zod.string().min(1).optional(),
+  disabled_at: zod.string().datetime({ offset: true }).optional(),
+  dropped_events_total: zod.number().optional(),
+  last_dropped_at: zod.string().datetime({ offset: true }).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -9382,6 +9413,11 @@ export const AgentccWebhooksPartialUpdateResponse = zod.object({
   is_active: zod.boolean().optional(),
   headers: zod.object({}).passthrough().optional(),
   description: zod.string().optional(),
+  consecutive_failures: zod.number().optional(),
+  disabled_reason: zod.string().min(1).optional(),
+  disabled_at: zod.string().datetime({ offset: true }).optional(),
+  dropped_events_total: zod.number().optional(),
+  last_dropped_at: zod.string().datetime({ offset: true }).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
