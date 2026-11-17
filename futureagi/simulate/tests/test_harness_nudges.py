@@ -2295,3 +2295,21 @@ class TestReconcileHooks:
             (built.id,),
             (extended.id,),
         ]
+
+
+def test_a_sandbox_stop_is_scheduled_with_a_short_dispatch_deadline(monkeypatch):
+    # The stop is scheduled from a draft save's on-commit hook, inside the
+    # request. Without a deadline a slow Temporal frontend would hold a save
+    # that already committed.
+    seen = {}
+
+    def record(**kwargs):
+        seen.update(kwargs)
+
+    monkeypatch.setattr(nudge_tasks.stop_harness_nudge_sandbox, "apply_async", record)
+
+    nudge_tasks.schedule_sandbox_stop("conversation-1", "sandbox-1")
+
+    assert seen["task_id"] == "harness-nudge-sandbox-stop-sandbox-1"
+    assert seen["args"] == ["conversation-1", "sandbox-1"]
+    assert 0 < seen["dispatch_timeout_seconds"] <= 5

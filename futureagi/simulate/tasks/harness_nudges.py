@@ -92,14 +92,31 @@ def schedule_reconcile_task(environment_id: Any):
     )
 
 
-def _unique(task: Any, args: list[Any], task_id: str):
+def _unique(
+    task: Any,
+    args: list[Any],
+    task_id: str,
+    *,
+    dispatch_timeout_seconds: float | None = None,
+):
     from temporalio.common import WorkflowIDConflictPolicy
 
+    options: dict[str, Any] = {}
+    if dispatch_timeout_seconds is not None:
+        options["dispatch_timeout_seconds"] = dispatch_timeout_seconds
     return task.apply_async(
         args=args,
         task_id=task_id,
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+        **options,
     )
+
+
+# A sandbox stop is scheduled from request-path on-commit hooks (draft save,
+# discard, suite amend). A slow Temporal frontend must not hold a request whose
+# write has already committed: a schedule that misses this deadline raises, the
+# caller logs it, and the sandbox falls back to its idle limit.
+SANDBOX_STOP_DISPATCH_TIMEOUT_SECONDS = 5.0
 
 
 @temporal_activity(time_limit=60, max_retries=0, queue="default")
@@ -204,6 +221,7 @@ def schedule_sandbox_stop(conversation_id: Any, provider_ref: str):
         stop_harness_nudge_sandbox,
         [str(conversation_id), str(provider_ref)],
         f"harness-nudge-sandbox-stop-{provider_ref}",
+        dispatch_timeout_seconds=SANDBOX_STOP_DISPATCH_TIMEOUT_SECONDS,
     )
 
 
