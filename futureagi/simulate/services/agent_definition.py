@@ -1,4 +1,8 @@
+from uuid import UUID
+
 from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
 
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import ProviderCredentials
@@ -253,3 +257,33 @@ def resolve_stored_api_key(
             return None
 
     return key
+
+
+def delete_agents(organization, agent_ids) -> tuple[int, int, list[UUID]]:
+    from simulate.services.agent_overview import environment_counts
+
+    with transaction.atomic():
+        agents = list(
+            AgentDefinition.objects.select_for_update(of=("self",))
+            .filter(id__in=agent_ids, organization=organization, deleted=False)
+            .only("id")
+            .order_by("id")
+        )
+        counts = environment_counts([agent.id for agent in agents])
+        found = {agent.id for agent in agents}
+        skipped = [
+            agent_id
+            for agent_id in dict.fromkeys(agent_ids)
+            if agent_id in found and counts.get(agent_id)
+        ]
+        ids = [agent.id for agent in agents if not counts.get(agent.id)]
+        if not ids:
+            return 0, 0, skipped
+        now = timezone.now()
+        agents_deleted = AgentDefinition.objects.filter(id__in=ids).update(
+            deleted=True, deleted_at=now, updated_at=now
+        )
+        versions_deleted = AgentVersion.objects.filter(
+            agent_definition_id__in=ids
+        ).update(deleted=True, deleted_at=now, updated_at=now)
+    return agents_deleted, versions_deleted, skipped

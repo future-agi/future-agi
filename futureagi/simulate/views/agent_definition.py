@@ -40,6 +40,7 @@ from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
 from simulate.services.agent_definition import (
+    delete_agents,
     is_masked,
     resolve_api_key_for_version,
     resolve_stored_api_key,
@@ -48,6 +49,7 @@ from simulate.services.agent_definition import (
 from simulate.services.agent_overview import (
     annotate_agent_rows,
     environment_refs,
+    filter_agent_rows,
     observability_on,
     recent_agent_runs,
 )
@@ -128,7 +130,6 @@ class AgentDefinitionView(APIView):
 
             validated = request.validated_query_data
             search_query = validated.get("search", "").strip()
-            agent_type = validated.get("agent_type", None)
             required_agent_id = validated.get("agent_definition_id", None)
 
             # Use Subquery to get latest version info in a single query (avoid N+1)
@@ -145,17 +146,17 @@ class AgentDefinitionView(APIView):
                 .values("id")[:1]
             )
 
-            agents = annotate_agent_rows(
-                AgentDefinition.objects.filter(
-                    organization=user_organization,
-                )
+            agents = filter_agent_rows(
+                annotate_agent_rows(
+                    AgentDefinition.objects.filter(
+                        organization=user_organization,
+                    )
+                ),
+                validated,
             ).annotate(
                 _latest_version=Subquery(latest_version_subquery),
                 _latest_version_id=Subquery(latest_version_id_subquery),
             )
-
-            if agent_type is not None:
-                agents = agents.filter(agent_type=agent_type)
 
             # Apply search filter
             if search_query:
@@ -222,23 +223,16 @@ class AgentDefinitionView(APIView):
         try:
             agent_ids = request.validated_data["agent_ids"]
 
-            with transaction.atomic():
-                updated_agents = AgentDefinition.objects.filter(
-                    id__in=agent_ids,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                ).update(deleted=True, deleted_at=timezone.now())
-
-                updated_versions = AgentVersion.objects.filter(
-                    agent_definition_id__in=agent_ids,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                ).update(deleted=True, deleted_at=timezone.now())
+            updated_agents, updated_versions, skipped = delete_agents(
+                getattr(request, "organization", None) or request.user.organization,
+                agent_ids,
+            )
 
             response_data = {
                 "message": "Agents deleted successfully",
                 "agents_updated": updated_agents,
                 "versions_updated": updated_versions,
+                "skipped_agent_ids": skipped,
             }
             return Response(
                 AgentDefinitionBulkDeleteResponseSerializer(response_data).data,

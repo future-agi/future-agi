@@ -1,4 +1,5 @@
 import re
+from typing import Any
 
 from rest_framework import serializers
 
@@ -6,6 +7,11 @@ from simulate.models.agent_definition import (
     AgentDefinition,
     AgentDefinitionAuthenticationChoices,
     AgentTypeChoices,
+)
+from simulate.services.agent_overview import (
+    AGENT_ENVIRONMENT_FILTERS,
+    AGENT_OBSERVE_FILTERS,
+    AGENT_SOURCE_FILTERS,
 )
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 from tracer.models.observability_provider import ProviderChoices
@@ -411,21 +417,45 @@ class AgentDefinitionBulkDeleteRequestSerializer(serializers.Serializer):
     )
 
 
+class OneOrManyField(serializers.ListField):
+    swagger_collection_format = "multi"
+
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            data = [data]
+        return super().to_internal_value(data)
+
+
 class AgentDefinitionFilterSerializer(serializers.Serializer):
     """
     Serializer for validating GET /agent-definitions/ query parameters.
     """
 
     search = serializers.CharField(required=False, allow_blank=True, default="")
-    agent_type = serializers.ChoiceField(
-        choices=AgentTypeChoices.choices,
+    agent_type = OneOrManyField(
+        child=serializers.ChoiceField(
+            choices=AgentTypeChoices.choices, allow_blank=True
+        ),
         required=False,
-        allow_blank=True,
-        allow_null=True,
+    )
+    source: Any = OneOrManyField(
+        child=serializers.ChoiceField(choices=AGENT_SOURCE_FILTERS),
+        required=False,
+    )
+    environments = OneOrManyField(
+        child=serializers.ChoiceField(choices=AGENT_ENVIRONMENT_FILTERS),
+        required=False,
+    )
+    observe = OneOrManyField(
+        child=serializers.ChoiceField(choices=AGENT_OBSERVE_FILTERS),
+        required=False,
     )
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
     page = serializers.IntegerField(required=False, default=1, min_value=1)
     limit = serializers.IntegerField(required=False, min_value=1)
+
+    def validate_agent_type(self, value):
+        return [agent_type for agent_type in value if agent_type]
 
 
 class AgentRunsQuerySerializer(serializers.Serializer):

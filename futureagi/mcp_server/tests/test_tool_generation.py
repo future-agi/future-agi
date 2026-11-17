@@ -385,3 +385,17 @@ def test_dashboard_tools_follow_the_real_dashboard_contract():
     assert {"property_id", "metric_name", "search", "cursor"} <= tools[
         "get_dashboard_filter_values"
     ]["inputSchema"]["properties"].keys()
+
+
+def test_a_list_query_filter_takes_one_value_a_list_or_null():
+    manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
+    tools = {tool["name"]: tool for tool in manifest["tools"]}
+    agents = Draft7Validator(tools["list_agents"]["inputSchema"])
+
+    assert agents.is_valid({"agent_type": "voice"})
+    assert agents.is_valid({"agent_type": ["voice", "text"]})
+    assert agents.is_valid({"agent_type": None})
+    assert agents.is_valid({"source": "livekit", "environments": ["with"]})
+    assert not agents.is_valid({"agent_type": "fax"})
+    assert not agents.is_valid({"agent_type": ["voice", "fax"]})
+    assert not agents.is_valid({"source": "not-a-source"})

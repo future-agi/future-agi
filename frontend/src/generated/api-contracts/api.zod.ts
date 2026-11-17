@@ -33239,7 +33239,22 @@ export const simulateAgentDefinitionsListQueryPageDefault = 1;
 
 export const SimulateAgentDefinitionsListQueryParams = zod.object({
   search: zod.string().default(simulateAgentDefinitionsListQuerySearchDefault),
-  agent_type: zod.enum(["voice", "text"]).optional(),
+  agent_type: zod.array(zod.enum(["voice", "text"])).optional(),
+  source: zod
+    .array(
+      zod.enum([
+        "github",
+        "archive",
+        "livekit",
+        "vapi",
+        "retell",
+        "bland",
+        "eleven_labs",
+      ]),
+    )
+    .optional(),
+  environments: zod.array(zod.enum(["with", "without"])).optional(),
+  observe: zod.array(zod.enum(["linked", "not_linked"])).optional(),
   agent_definition_id: zod.string().uuid().optional(),
   page: zod
     .number()
@@ -33411,6 +33426,7 @@ export const SimulateAgentDefinitionsDeleteResponse = zod.object({
   message: zod.string().min(1).optional(),
   agents_updated: zod.number().optional(),
   versions_updated: zod.number().optional(),
+  skipped_agent_ids: zod.array(zod.string().uuid()).optional(),
 });
 
 /**
