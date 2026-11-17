@@ -95,6 +95,49 @@ def test_unchanged_string_does_not_warn(judge, source, length):
     assert value in provider_call.call_args.kwargs["prompt"][-1]["content"]
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"transcript": "x" * 15000},
+        ["x" * 15000],
+        [{"transcript": "x" * 5000}],
+        {"nested": {"transcript": "x" * 6000}},
+        {"items": [1, 2, 3, 4]},
+    ],
+)
+def test_structured_row_context_warns_on_content_loss_below_total_limit(judge, value):
+    evaluator, provider_call = judge
+    evaluator.rule_prompt = "Evaluate the data"
+    original_length = len(json.dumps(value))
+    assert original_length < _MAX_CONTEXT_CHARS
+    expected = fit_to_context(value, max_total_chars=_MAX_CONTEXT_CHARS)
+    with capture_logs() as events:
+        evaluator._evaluate(required_keys=[], row_context=value)
+    assert truncation_events(events) == [
+        {
+            "event": "custom_prompt_eval_input_truncated",
+            "log_level": "warning",
+            "field": "row_context",
+            "original_length": original_length,
+            "truncated_length": len(expected),
+            "limit": _MAX_CONTEXT_CHARS,
+        }
+    ]
+    assert expected in provider_call.call_args.kwargs["prompt"][-1]["content"]
+    provider_call.assert_called_once()
+
+
+@pytest.mark.parametrize("value", [{"text": "short"}, ["short"], {"items": [1, 2, 3]}])
+def test_structured_row_context_without_content_loss_does_not_warn(judge, value):
+    evaluator, provider_call = judge
+    with capture_logs() as events:
+        evaluator._evaluate(required_keys=[], row_context=value)
+    assert truncation_events(events) == []
+    assert (
+        fit_to_context(value) in provider_call.call_args.kwargs["prompt"][-1]["content"]
+    )
+
+
 def test_multiple_fields_warn_independently(judge):
     evaluator, _ = judge
     with capture_logs() as events:

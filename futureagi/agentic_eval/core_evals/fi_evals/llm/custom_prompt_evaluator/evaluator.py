@@ -300,7 +300,7 @@ class CustomPromptEvaluator(LLM):
         )
 
         # Create template context from kwargs with context windowing for large values
-        from .context_window import fit_to_context
+        from .context_window import fit_to_context_with_metadata
 
         template_context = {}
         for key in required_keys:
@@ -314,16 +314,18 @@ class CustomPromptEvaluator(LLM):
             elif isinstance(value, (dict, list)):
                 original_length = len(json.dumps(value, default=str))
             if original_length > _MAX_CONTEXT_CHARS:
-                value = fit_to_context(
+                formatted = fit_to_context_with_metadata(
                     value, max_total_chars=_MAX_CONTEXT_CHARS, label=key
                 )
-                logger.warning(
-                    "custom_prompt_eval_input_truncated",
-                    field=key,
-                    original_length=original_length,
-                    truncated_length=len(value),
-                    limit=_MAX_CONTEXT_CHARS,
-                )
+                value = formatted.text
+                if formatted.truncated:
+                    logger.warning(
+                        "custom_prompt_eval_input_truncated",
+                        field=key,
+                        original_length=original_length,
+                        truncated_length=len(value),
+                        limit=_MAX_CONTEXT_CHARS,
+                    )
             template_context[key] = value
 
         # Render the rule prompt with the template context using Jinja2
@@ -406,17 +408,14 @@ class CustomPromptEvaluator(LLM):
             rendered_prompt += "\n\n## Data\n"
             if isinstance(row_context, (dict, list)):
                 original_length = len(json.dumps(row_context, default=str))
-                ctx_str = fit_to_context(
-                    row_context, max_total_chars=_MAX_CONTEXT_CHARS
-                )
             else:
-                ctx_str = str(row_context)
-                original_length = len(ctx_str)
-                if original_length > _MAX_CONTEXT_CHARS:
-                    ctx_str = fit_to_context(
-                        ctx_str, max_total_chars=_MAX_CONTEXT_CHARS, label="data"
-                    )
-            if original_length > _MAX_CONTEXT_CHARS:
+                row_context = str(row_context)
+                original_length = len(row_context)
+            formatted = fit_to_context_with_metadata(
+                row_context, max_total_chars=_MAX_CONTEXT_CHARS
+            )
+            ctx_str = formatted.text
+            if formatted.truncated:
                 logger.warning(
                     "custom_prompt_eval_input_truncated",
                     field="row_context",
