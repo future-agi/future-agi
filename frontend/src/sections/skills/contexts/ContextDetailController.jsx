@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import PropTypes from 'prop-types';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Alert, Stack } from '@mui/material';
+import ContentSkeleton from 'src/components/content-skeleton';
 import { useSkillV11Scope } from 'src/api/skills/testing';
 import { useContextDetail, useContextDraft } from 'src/api/skills/context-authoring';
 import { useContextBindings } from 'src/api/skills/context-consumers';
@@ -18,7 +19,6 @@ import { contextSkillChoices } from './context-skill-choices';
 import { productionBaseline } from './production-baseline';
 import ContextTargetRegistration from './ContextTargetRegistration';
 import J6RecoveryPanel from './J6RecoveryPanel';
-import UsageTab from '../detail/UsageTab';
 import { useSkillsAccess } from '../utils/access';
 import ContextRuntimeView from '../runtime/ContextRuntimeView';
 import CheckTracing from '../runtime/CheckTracing';
@@ -28,6 +28,9 @@ import { useSkillTracesEnabled } from '../runtime/skillTracesFlag';
 const PANEL_STATE_TABS = ['tests', 'consumers', 'recovery'];
 const PREVIEW_STATES = ['loading', 'error', 'empty', 'off', 'denied'];
 import { publicApiOrigin } from '../utils/origin';
+
+// The fetch view (and its chart library) loads only when the flagged Activity tab opens.
+const UsageTab = lazy(() => import('../detail/UsageTab'));
 
 // Check tracing below the context install instructions (SKILL-TRACES §7.4 "Install",
 // UX-14): waits for the next `context.load`. Viewers see it disabled with the reason (§7.7).
@@ -99,7 +102,7 @@ function Detail() {
   // the existing Rollback tab, which keeps the reviewed rollback request; nothing moves here.
   const tracesSections = traces && contextName ? {
     runtime: <ContextRuntimeView context={{ id: contextId, name: contextName }} versionId={selectedVersion?.id} onRollback={() => openTab('recovery')} onCheckTracing={() => openTab('use')} />,
-    usage: <UsageTab kind="agent_context" skill={{ id: contextId, name: contextName, latestVersion: query.data?.context?.latestVersion ?? undefined }} />,
+    usage: <Suspense fallback={<ContentSkeleton variant="panel" label="Loading usage" />}><UsageTab kind="agent_context" skill={{ id: contextId, name: contextName, latestVersion: query.data?.context?.latestVersion ?? undefined }} /></Suspense>,
   } : {};
   return <Stack spacing={1.5} sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
     {requested !== null && number === null && <Alert severity="error">Choose a positive, explicit release number. No latest-version substitution was made.</Alert>}

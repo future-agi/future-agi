@@ -50,9 +50,11 @@ const SUBJECT = {
 };
 
 /**
- * The one fetch read for this tab. Skills and agent contexts share the usage
- * route (SKILLS-API-REVIEW: one shared usage endpoint, no context-only route);
- * the server decides whether it accepts a context id, and authorizes the read.
+ * The one fetch read for this tab. Per SKILLS-API-REVIEW, skills and agent
+ * contexts are meant to share one usage route rather than gain a context-only
+ * one, so a context's Activity tab sends its id to the same read. Until the
+ * server's usage view accepts context ids (SKILL-TRACES [V17], open after ST7),
+ * that read fails and the tab shows its error state. The server authorizes it.
  */
 export function useFetchUsage(id, days) {
   return useSkillUsage(id, days);

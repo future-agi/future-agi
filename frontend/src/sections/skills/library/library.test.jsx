@@ -805,7 +805,7 @@ describe("Archived skills (UX iteration 5, LIB1)", () => {
 // "Loaded (7 days)" sits beside "Fetched (7 days)" and reads the list serializer's `runtime` field.
 describe("Loaded (7 days) with skillTraces on", () => {
   const runtimeSkill = (runtime) => ({ ...skill, runtime });
-  const loadedCells = () => [...document.querySelectorAll('[role="gridcell"][data-field="loaded7d"]')].map((cell) => cell.textContent);
+  const loadedCells = () => [...document.querySelectorAll('.MuiDataGrid-cell[data-field="loaded7d"]')].map((cell) => cell.textContent);
   afterEach(() => setSkillTracesOverride(null));
 
   it("adds the column beside Fetched, with the count and the short move state", () => {
