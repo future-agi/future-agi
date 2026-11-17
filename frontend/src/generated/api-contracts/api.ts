@@ -1513,6 +1513,7 @@ import type {
   SkillsTestRunAckResponseApi,
   SkillsTestRunPreviewResponseApi,
   SkillsTestingOptionsResponseApi,
+  SkillsTraceSkillsResultResponseApi,
   SkillsUsageResponseApi,
   SkillsVersionDetailResponseApi,
   SkillsVersionInspectionResponseApi,
@@ -1607,6 +1608,7 @@ import type {
   TraceSessionListQueryApi,
   TraceSessionListResponseApi,
   TraceSessionRetrieveQueryApi,
+  TraceSkillsRequestApi,
   TraceTagsUpdateApi,
   TraceToGraphRequestApi,
   TraceToGraphResponseApi,
@@ -106361,6 +106363,112 @@ export const tracerTraceListVoiceCallsCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(traceVoiceCallListQueryApi),
+    },
+  );
+};
+
+export type tracerTraceSkillProjectionCreateResponse200 = {
+  data: SkillsTraceSkillsResultResponseApi;
+  status: 200;
+};
+
+export type tracerTraceSkillProjectionCreateResponse400 = {
+  data: SkillsErrorApi;
+  status: 400;
+};
+
+export type tracerTraceSkillProjectionCreateResponse401 = {
+  data: SkillsErrorApi;
+  status: 401;
+};
+
+export type tracerTraceSkillProjectionCreateResponse403 = {
+  data: SkillsErrorApi;
+  status: 403;
+};
+
+export type tracerTraceSkillProjectionCreateResponse404 = {
+  data: SkillsErrorApi;
+  status: 404;
+};
+
+export type tracerTraceSkillProjectionCreateResponse409 = {
+  data: SkillsConflictErrorApi;
+  status: 409;
+};
+
+export type tracerTraceSkillProjectionCreateResponse410 = {
+  data: SkillsErrorApi;
+  status: 410;
+};
+
+export type tracerTraceSkillProjectionCreateResponse413 = {
+  data: SkillsErrorApi;
+  status: 413;
+};
+
+export type tracerTraceSkillProjectionCreateResponse422 = {
+  data: SkillsChecksErrorApi;
+  status: 422;
+};
+
+export type tracerTraceSkillProjectionCreateResponse428 = {
+  data: SkillsErrorApi;
+  status: 428;
+};
+
+export type tracerTraceSkillProjectionCreateResponse503 = {
+  data: SkillsErrorApi;
+  status: 503;
+};
+
+export type tracerTraceSkillProjectionCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 428 | 503
+  >;
+};
+
+export type tracerTraceSkillProjectionCreateResponseSuccess =
+  tracerTraceSkillProjectionCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerTraceSkillProjectionCreateResponseError = (
+  | tracerTraceSkillProjectionCreateResponse400
+  | tracerTraceSkillProjectionCreateResponse401
+  | tracerTraceSkillProjectionCreateResponse403
+  | tracerTraceSkillProjectionCreateResponse404
+  | tracerTraceSkillProjectionCreateResponse409
+  | tracerTraceSkillProjectionCreateResponse410
+  | tracerTraceSkillProjectionCreateResponse413
+  | tracerTraceSkillProjectionCreateResponse422
+  | tracerTraceSkillProjectionCreateResponse428
+  | tracerTraceSkillProjectionCreateResponse503
+  | tracerTraceSkillProjectionCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerTraceSkillProjectionCreateResponse =
+  | tracerTraceSkillProjectionCreateResponseSuccess
+  | tracerTraceSkillProjectionCreateResponseError;
+
+export const getTracerTraceSkillProjectionCreateUrl = () => {
+  return `/tracer/trace/skill-projection/`;
+};
+
+export const tracerTraceSkillProjectionCreate = async (
+  traceSkillsRequestApi: TraceSkillsRequestApi,
+  options?: RequestInit,
+): Promise<tracerTraceSkillProjectionCreateResponse> => {
+  return apiMutator<tracerTraceSkillProjectionCreateResponse>(
+    getTracerTraceSkillProjectionCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(traceSkillsRequestApi),
     },
   );
 };

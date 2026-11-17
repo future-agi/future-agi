@@ -9,9 +9,9 @@ const skill = {
 };
 
 describe("Split by skill version (SKILL-TRACES §7.1)", () => {
-  it("sends nothing until the graph contract accepts split_by", () => {
-    expect(SKILL_VERSION_SPLIT_SUPPORTED).toBe(false);
-    expect(skillVersionSplitParams({ enabled: true, filters: [skill] })).toEqual({});
+  it("sends the contracted split only after support is mounted", () => {
+    expect(SKILL_VERSION_SPLIT_SUPPORTED).toBe(true);
+    expect(skillVersionSplitParams({ enabled: true, filters: [skill] })).toEqual({ split_by: "skill_version" });
   });
 
   it("asks for the split only with a Skill filter, once supported", () => {

@@ -4,7 +4,6 @@ import { Link as RouterLink } from "react-router-dom";
 import { Box, Chip, Menu, MenuItem, Skeleton, Tooltip, Typography } from "@mui/material";
 import { useQueries } from "@tanstack/react-query";
 import axios, {
-  TRACE_SKILLS_ROUTE_PENDING,
   traceSkillsEndpoint,
 } from "src/utils/axios";
 import Iconify from "src/components/iconify";
@@ -42,7 +41,7 @@ export const traceSkillsErrorKind = (error) => {
   const status = error?.response?.status;
   if (code === "project_not_readable" || status === 403) return "denied";
   if (code === "runtime_read_budget_exceeded") return "slow";
-  if (["runtime_read_unavailable", "runtime_read_too_large", TRACE_SKILLS_ROUTE_PENDING].includes(code)) {
+  if (["runtime_read_unavailable", "runtime_read_too_large"].includes(code)) {
     return "unavailable";
   }
   if (code === "invalid_runtime_query" || status === 400) return "invalid";
@@ -84,8 +83,8 @@ export function mapTraceSkillsEntry(entry) {
 }
 
 async function readTraceSkills({ projectId, ids, signal }) {
-  const url = traceSkillsEndpoint("pageSkills");
-  const response = await axios.post(url, { project_id: projectId, trace_ids: ids }, { signal });
+  const url = traceSkillsEndpoint();
+  const response = await axios.post(url, { projection: "page", project_id: projectId, trace_ids: ids }, { signal });
   const traces = response?.data?.result?.traces ?? response?.data?.traces ?? {};
   // Only ids that were asked for are kept; a trace with no loads is absent
   // from the response and reads as "no loads" because it was requested.

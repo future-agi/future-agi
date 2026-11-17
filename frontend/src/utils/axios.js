@@ -12,7 +12,7 @@ import {
   setSession,
 } from "src/auth/context/jwt/utils";
 import { HOST_API } from "src/config-global";
-import { apiPath, isContractedApiPath } from "src/api/contracts/api-surface";
+import { apiPath } from "src/api/contracts/api-surface";
 import {
   assertContractedRequestConfig,
   assertContractedResponse,
@@ -2384,36 +2384,9 @@ export const endpoints = {
   },
 };
 
-// Tracer reads for skill traces (SKILL-TRACES §6.6 endpoints 6, 7 and 11,
-// §7.8; lane ST9). PROVISIONAL: SKILLS-API-REVIEW.md replaces the proposed
-// tracer routes with existing trace projections, and its migration map is not
-// written yet. These are the §6.6 paths as placeholders, named by what they
-// read; when the lean map lands, only this table changes. They sit outside
-// `endpoints` on purpose: the registry check accepts only contracted paths
-// there, and a template is used only once the generated contract has it.
-// Until then the read fails with the typed code `runtime_route_pending`, and
-// the Observe surfaces show their §7.7 error state, so nothing calls a route
-// the backend does not serve.
-export const TRACE_SKILLS_ROUTES = Object.freeze({
-  pageSkills: "/tracer/trace/skills/", // 6: POST {project_id, trace_ids}, Skills column
-  traceSkills: "/tracer/trace/{trace_id}/skills/", // 7: GET, trace detail "Skills loaded"
-  cohortSummary: "/tracer/trace/skills/cohort-summary/", // 11: POST, cohort strip
-});
-
-export const TRACE_SKILLS_ROUTE_PENDING = "runtime_route_pending";
-
-/** Resolve one skill-trace read. Throws a typed error until the route is contracted. */
-export function traceSkillsEndpoint(name, params = {}) {
-  const template = TRACE_SKILLS_ROUTES[name];
-  if (!template) throw new Error(`Unknown skill-trace route: ${name}`);
-  if (!isContractedApiPath(template)) {
-    const error = new Error(
-      "This skill-trace read is not available on this server yet.",
-    );
-    error.code = TRACE_SKILLS_ROUTE_PENDING;
-    throw error;
-  }
-  return apiPath(template, params);
+// One shared, contracted projection for page, detail and cohort evidence.
+export function traceSkillsEndpoint() {
+  return apiPath("/tracer/trace/skill-projection/");
 }
 
 export function createQueryString(params) {

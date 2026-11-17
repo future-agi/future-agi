@@ -1,8 +1,9 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "src/utils/test-utils";
+import axios, { traceSkillsEndpoint } from "src/utils/axios";
 import { forbiddenRuntimeWords } from "src/sections/skills/runtime/runtimeCopy";
 import SkillsCell, {
   chunkTraceIds,
@@ -125,6 +126,7 @@ describe("chunkTraceIds", () => {
 });
 
 describe("useTracePageSkills", () => {
+  afterEach(() => vi.restoreAllMocks());
   const wrapper = ({ children }) => (
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{children}</QueryClientProvider>
   );
@@ -134,7 +136,19 @@ describe("useTracePageSkills", () => {
     expect(result.current.status).toBe("idle");
   });
 
-  it("reports the read as unavailable until the route is in the contract", async () => {
+  it("hydrates a page through the shared contracted projection", async () => {
+    const post = vi.spyOn(axios, "post").mockResolvedValue({ data: { result: { traces: { t1: ENTRY } } } });
+    const { result } = renderHook(() => useTracePageSkills({ projectId: "p1", traceIds: ["t1"] }), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(traceSkillsEndpoint()).toBe("/tracer/trace/skill-projection/");
+    expect(post).toHaveBeenCalledWith(traceSkillsEndpoint(), {
+      projection: "page", project_id: "p1", trace_ids: ["t1"],
+    }, expect.objectContaining({ signal: expect.anything() }));
+    expect(result.current.byTrace.t1.skills[0].name).toBe("refund-policy");
+  });
+
+  it("reports a typed unavailable read instead of claiming no loads", async () => {
+    vi.spyOn(axios, "post").mockRejectedValue({ response: { status: 503, data: { code: "runtime_read_unavailable" } } });
     const { result } = renderHook(() => useTracePageSkills({ projectId: "p1", traceIds: ["t1"] }), { wrapper });
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(result.current.errorKind).toBe("unavailable");

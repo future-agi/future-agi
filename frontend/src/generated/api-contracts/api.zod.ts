@@ -88791,6 +88791,13 @@ export const TracerObservationSpanGetGraphMethodsBody = zod.object({
 });
 
 export const tracerObservationSpanGetGraphMethodsResponseStatusDefault = true;
+
+export const tracerObservationSpanGetGraphMethodsResponseResultSeriesItemDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerObservationSpanGetGraphMethodsResponseResultSeriesItemDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerObservationSpanGetGraphMethodsResponseResultSeriesItemDataItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
 
 export const tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin = 0;
@@ -88822,10 +88829,58 @@ export const TracerObservationSpanGetGraphMethodsResponse = zod.object({
     .boolean()
     .default(tracerObservationSpanGetGraphMethodsResponseStatusDefault),
   result: zod.object({
+    split_by: zod.enum(["skill_version"]).optional(),
+    series: zod
+      .array(
+        zod.object({
+          version_id: zod.string().uuid(),
+          label: zod.string().min(1),
+          data: zod.array(
+            zod.object({
+              timestamp: zod.string().min(1),
+              value: zod.number().nullable(),
+              primary_traffic: zod.number().nullish(),
+              cost_coverage: zod
+                .object({
+                  status: zod.enum(["complete", "partial", "unknown"]),
+                  known_subtotal: zod
+                    .number()
+                    .min(
+                      tracerObservationSpanGetGraphMethodsResponseResultSeriesItemDataItemCostCoverageKnownSubtotalMin,
+                    )
+                    .describe(
+                      "Sum in USD of known observed contributions, never an average.",
+                    ),
+                  known_fact_count: zod
+                    .number()
+                    .min(
+                      tracerObservationSpanGetGraphMethodsResponseResultSeriesItemDataItemCostCoverageKnownFactCountMin,
+                    )
+                    .describe(
+                      "Observed additive monetary facts with known cost, including zero.",
+                    ),
+                  unknown_fact_count: zod
+                    .number()
+                    .min(
+                      tracerObservationSpanGetGraphMethodsResponseResultSeriesItemDataItemCostCoverageUnknownFactCountMin,
+                    )
+                    .describe(
+                      "Observed additive monetary facts with unknown cost, not missing requests.",
+                    ),
+                })
+                .optional(),
+              traces: zod.number(),
+              incomplete: zod.number(),
+            }),
+          ),
+        }),
+      )
+      .optional(),
+    totals_note: zod.string().min(1).optional(),
     metric_name: zod.string(),
     name: zod.string().optional(),
     metric_statistic: zod
-      .enum(["count", "sum", "mean", "percentage"])
+      .enum(["count", "sum", "mean", "percentage", "p95"])
       .optional()
       .describe(
         "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
@@ -91879,6 +91934,13 @@ export const TracerProjectGetUsersAggregateGraphDataBody = zod.object({
 
 export const tracerProjectGetUsersAggregateGraphDataResponseStatusDefault =
   true;
+
+export const tracerProjectGetUsersAggregateGraphDataResponseResultSeriesItemDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerProjectGetUsersAggregateGraphDataResponseResultSeriesItemDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerProjectGetUsersAggregateGraphDataResponseResultSeriesItemDataItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
 
 export const tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownFactCountMin = 0;
@@ -91910,10 +91972,58 @@ export const TracerProjectGetUsersAggregateGraphDataResponse = zod.object({
     .boolean()
     .default(tracerProjectGetUsersAggregateGraphDataResponseStatusDefault),
   result: zod.object({
+    split_by: zod.enum(["skill_version"]).optional(),
+    series: zod
+      .array(
+        zod.object({
+          version_id: zod.string().uuid(),
+          label: zod.string().min(1),
+          data: zod.array(
+            zod.object({
+              timestamp: zod.string().min(1),
+              value: zod.number().nullable(),
+              primary_traffic: zod.number().nullish(),
+              cost_coverage: zod
+                .object({
+                  status: zod.enum(["complete", "partial", "unknown"]),
+                  known_subtotal: zod
+                    .number()
+                    .min(
+                      tracerProjectGetUsersAggregateGraphDataResponseResultSeriesItemDataItemCostCoverageKnownSubtotalMin,
+                    )
+                    .describe(
+                      "Sum in USD of known observed contributions, never an average.",
+                    ),
+                  known_fact_count: zod
+                    .number()
+                    .min(
+                      tracerProjectGetUsersAggregateGraphDataResponseResultSeriesItemDataItemCostCoverageKnownFactCountMin,
+                    )
+                    .describe(
+                      "Observed additive monetary facts with known cost, including zero.",
+                    ),
+                  unknown_fact_count: zod
+                    .number()
+                    .min(
+                      tracerProjectGetUsersAggregateGraphDataResponseResultSeriesItemDataItemCostCoverageUnknownFactCountMin,
+                    )
+                    .describe(
+                      "Observed additive monetary facts with unknown cost, not missing requests.",
+                    ),
+                })
+                .optional(),
+              traces: zod.number(),
+              incomplete: zod.number(),
+            }),
+          ),
+        }),
+      )
+      .optional(),
+    totals_note: zod.string().min(1).optional(),
     metric_name: zod.string(),
     name: zod.string().optional(),
     metric_statistic: zod
-      .enum(["count", "sum", "mean", "percentage"])
+      .enum(["count", "sum", "mean", "percentage", "p95"])
       .optional()
       .describe(
         "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
@@ -94676,6 +94786,13 @@ export const TracerTraceSessionGetSessionGraphDataBody = zod.object({
 });
 
 export const tracerTraceSessionGetSessionGraphDataResponseStatusDefault = true;
+
+export const tracerTraceSessionGetSessionGraphDataResponseResultSeriesItemDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionGetSessionGraphDataResponseResultSeriesItemDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionGetSessionGraphDataResponseResultSeriesItemDataItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
 
 export const tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownFactCountMin = 0;
@@ -94707,10 +94824,58 @@ export const TracerTraceSessionGetSessionGraphDataResponse = zod.object({
     .boolean()
     .default(tracerTraceSessionGetSessionGraphDataResponseStatusDefault),
   result: zod.object({
+    split_by: zod.enum(["skill_version"]).optional(),
+    series: zod
+      .array(
+        zod.object({
+          version_id: zod.string().uuid(),
+          label: zod.string().min(1),
+          data: zod.array(
+            zod.object({
+              timestamp: zod.string().min(1),
+              value: zod.number().nullable(),
+              primary_traffic: zod.number().nullish(),
+              cost_coverage: zod
+                .object({
+                  status: zod.enum(["complete", "partial", "unknown"]),
+                  known_subtotal: zod
+                    .number()
+                    .min(
+                      tracerTraceSessionGetSessionGraphDataResponseResultSeriesItemDataItemCostCoverageKnownSubtotalMin,
+                    )
+                    .describe(
+                      "Sum in USD of known observed contributions, never an average.",
+                    ),
+                  known_fact_count: zod
+                    .number()
+                    .min(
+                      tracerTraceSessionGetSessionGraphDataResponseResultSeriesItemDataItemCostCoverageKnownFactCountMin,
+                    )
+                    .describe(
+                      "Observed additive monetary facts with known cost, including zero.",
+                    ),
+                  unknown_fact_count: zod
+                    .number()
+                    .min(
+                      tracerTraceSessionGetSessionGraphDataResponseResultSeriesItemDataItemCostCoverageUnknownFactCountMin,
+                    )
+                    .describe(
+                      "Observed additive monetary facts with unknown cost, not missing requests.",
+                    ),
+                })
+                .optional(),
+              traces: zod.number(),
+              incomplete: zod.number(),
+            }),
+          ),
+        }),
+      )
+      .optional(),
+    totals_note: zod.string().min(1).optional(),
     metric_name: zod.string(),
     name: zod.string().optional(),
     metric_statistic: zod
-      .enum(["count", "sum", "mean", "percentage"])
+      .enum(["count", "sum", "mean", "percentage", "p95"])
       .optional()
       .describe(
         "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
@@ -96200,6 +96365,7 @@ export const TracerTraceGetGraphMethodsBody = zod.object({
       .describe("Stable Property Registry identity."),
     source: zod.enum(["traces", "sessions"]).optional(),
   }),
+  split_by: zod.enum(["skill_version"]).optional(),
   observe_type: zod
     .enum(["trace", "voice"])
     .default(tracerTraceGetGraphMethodsBodyObserveTypeDefault)
@@ -96215,6 +96381,13 @@ export const TracerTraceGetGraphMethodsBody = zod.object({
 });
 
 export const tracerTraceGetGraphMethodsResponseStatusDefault = true;
+
+export const tracerTraceGetGraphMethodsResponseResultSeriesItemDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceGetGraphMethodsResponseResultSeriesItemDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceGetGraphMethodsResponseResultSeriesItemDataItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
 
 export const tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin = 0;
@@ -96246,10 +96419,58 @@ export const TracerTraceGetGraphMethodsResponse = zod.object({
     .boolean()
     .default(tracerTraceGetGraphMethodsResponseStatusDefault),
   result: zod.object({
+    split_by: zod.enum(["skill_version"]).optional(),
+    series: zod
+      .array(
+        zod.object({
+          version_id: zod.string().uuid(),
+          label: zod.string().min(1),
+          data: zod.array(
+            zod.object({
+              timestamp: zod.string().min(1),
+              value: zod.number().nullable(),
+              primary_traffic: zod.number().nullish(),
+              cost_coverage: zod
+                .object({
+                  status: zod.enum(["complete", "partial", "unknown"]),
+                  known_subtotal: zod
+                    .number()
+                    .min(
+                      tracerTraceGetGraphMethodsResponseResultSeriesItemDataItemCostCoverageKnownSubtotalMin,
+                    )
+                    .describe(
+                      "Sum in USD of known observed contributions, never an average.",
+                    ),
+                  known_fact_count: zod
+                    .number()
+                    .min(
+                      tracerTraceGetGraphMethodsResponseResultSeriesItemDataItemCostCoverageKnownFactCountMin,
+                    )
+                    .describe(
+                      "Observed additive monetary facts with known cost, including zero.",
+                    ),
+                  unknown_fact_count: zod
+                    .number()
+                    .min(
+                      tracerTraceGetGraphMethodsResponseResultSeriesItemDataItemCostCoverageUnknownFactCountMin,
+                    )
+                    .describe(
+                      "Observed additive monetary facts with unknown cost, not missing requests.",
+                    ),
+                })
+                .optional(),
+              traces: zod.number(),
+              incomplete: zod.number(),
+            }),
+          ),
+        }),
+      )
+      .optional(),
+    totals_note: zod.string().min(1).optional(),
     metric_name: zod.string(),
     name: zod.string().optional(),
     metric_statistic: zod
-      .enum(["count", "sum", "mean", "percentage"])
+      .enum(["count", "sum", "mean", "percentage", "p95"])
       .optional()
       .describe(
         "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
@@ -97233,6 +97454,232 @@ export const tracerTraceListVoiceCallsCreateResponseQueryAppliedFilterCountMin =
 export const TracerTraceListVoiceCallsCreateResponse =
   TracerTraceListVoiceCallsResponse;
 
+export const tracerTraceSkillProjectionCreateBodyTraceIdsItemMax = 256;
+
+export const tracerTraceSkillProjectionCreateBodyTraceIdsMax = 100;
+
+export const tracerTraceSkillProjectionCreateBodyTraceIdMax = 256;
+
+export const tracerTraceSkillProjectionCreateBodyFiltersItemGroupMin = 0;
+export const tracerTraceSkillProjectionCreateBodyFiltersItemGroupMax = 2147483647;
+
+export const tracerTraceSkillProjectionCreateBodyFiltersDefault = [];
+export const tracerTraceSkillProjectionCreateBodyCursorMax = 2048;
+
+export const tracerTraceSkillProjectionCreateBodyLimitDefault = 100;
+export const tracerTraceSkillProjectionCreateBodyLimitMax = 100;
+
+export const TracerTraceSkillProjectionCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  projection: zod.enum(["page", "detail", "cohort"]),
+  trace_ids: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(tracerTraceSkillProjectionCreateBodyTraceIdsItemMax),
+    )
+    .min(1)
+    .max(tracerTraceSkillProjectionCreateBodyTraceIdsMax)
+    .optional(),
+  trace_id: zod
+    .string()
+    .min(1)
+    .max(tracerTraceSkillProjectionCreateBodyTraceIdMax)
+    .optional(),
+  filters: zod
+    .array(
+      zod.object({
+        column_id: zod
+          .string()
+          .describe("Column or attribute id to filter on."),
+        property_id: zod
+          .string()
+          .optional()
+          .describe("Optional stable namespaced Property Registry identity."),
+        display_name: zod
+          .string()
+          .optional()
+          .describe("Optional UI label for chips and saved views."),
+        source: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+          ),
+        output_type: zod
+          .string()
+          .optional()
+          .describe(
+            "Optional metric output type metadata used by eval and annotation filters.",
+          ),
+        group: zod
+          .number()
+          .min(tracerTraceSkillProjectionCreateBodyFiltersItemGroupMin)
+          .max(tracerTraceSkillProjectionCreateBodyFiltersItemGroupMax)
+          .optional()
+          .describe(
+            "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+          ),
+        filter_config: zod.object({
+          filter_type: zod
+            .string()
+            .describe(
+              "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+            ),
+          filter_op: zod
+            .string()
+            .describe(
+              "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+            ),
+          filter_value: zod
+            .unknown()
+            .optional()
+            .describe(
+              "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+            ),
+          col_type: zod
+            .string()
+            .optional()
+            .describe(
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
+            ),
+          attribute_value_types: zod
+            .array(zod.enum(["string", "number", "boolean"]).nullable())
+            .optional()
+            .describe(
+              "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+            ),
+        }),
+      }),
+    )
+    .default(tracerTraceSkillProjectionCreateBodyFiltersDefault)
+    .describe(
+      "On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+    ),
+  to: zod.string().datetime({ offset: true }).optional(),
+  cursor: zod
+    .string()
+    .min(1)
+    .max(tracerTraceSkillProjectionCreateBodyCursorMax)
+    .optional(),
+  limit: zod
+    .number()
+    .min(1)
+    .max(tracerTraceSkillProjectionCreateBodyLimitMax)
+    .default(tracerTraceSkillProjectionCreateBodyLimitDefault),
+  from: zod.string().datetime({ offset: true }).optional(),
+});
+
+export const TracerTraceSkillProjectionCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    traces: zod
+      .record(
+        zod.string(),
+        zod.object({
+          skills: zod.array(
+            zod.object({
+              skill_id: zod.string().uuid().nullable(),
+              name: zod.string().min(1),
+              version_id: zod.string().uuid().nullable(),
+              version: zod.number().nullable(),
+              requested_label: zod.string(),
+              requested_version: zod.number().nullish(),
+              agent: zod.string(),
+              agent_key: zod.array(zod.string()),
+              evidence: zod.string(),
+              digest_status: zod.enum(["verified", "mismatch"]),
+              loads: zod.number(),
+              span_ids: zod.array(zod.string().min(1)),
+            }),
+          ),
+          failed: zod.array(
+            zod.object({
+              skill_name: zod.string(),
+              error_type: zod.string(),
+              span_id: zod.string().min(1),
+            }),
+          ),
+          more: zod.number(),
+        }),
+      )
+      .optional(),
+    skills: zod
+      .array(
+        zod.object({
+          skill_id: zod.string().uuid().nullable(),
+          name: zod.string().min(1),
+          version_id: zod.string().uuid().nullable(),
+          version: zod.number().nullable(),
+          requested_label: zod.string(),
+          requested_version: zod.number().nullish(),
+          agent: zod.string(),
+          agent_key: zod.array(zod.string()),
+          evidence: zod.string(),
+          digest_status: zod.enum(["verified", "mismatch"]),
+          loads: zod.number(),
+          span_ids: zod.array(zod.string().min(1)),
+        }),
+      )
+      .optional(),
+    failed: zod
+      .array(
+        zod.object({
+          skill_name: zod.string(),
+          error_type: zod.string(),
+          span_id: zod.string().min(1),
+        }),
+      )
+      .optional(),
+    contexts: zod
+      .array(
+        zod.object({
+          context_id: zod.string().uuid(),
+          name: zod.string().min(1),
+          version: zod.number(),
+        }),
+      )
+      .optional(),
+    linked_not_loaded: zod.array(zod.string().min(1)).optional(),
+    coverage: zod
+      .object({
+        spans: zod.number(),
+        stamped_spans: zod.number(),
+        rate: zod.number().nullable(),
+        span_ids_before_first_load: zod.array(zod.string().min(1)),
+      })
+      .optional(),
+    summary: zod
+      .object({
+        traces: zod.number(),
+        incomplete: zod.number(),
+        failed_requests: zod.object({
+          count: zod.number(),
+          rate: zod.number().nullable(),
+        }),
+        latency_ms: zod.object({
+          p95: zod.number().nullable(),
+        }),
+        cost: zod.object({
+          per_trace_mean: zod.number().nullable(),
+        }),
+      })
+      .optional(),
+    next_cursor: zod.string().min(1).nullable(),
+    truncated: zod.boolean(),
+  }),
+});
+
+/**
+ * Query params:
+- trace_id or legacy traceId (required) — UUID of the voice call trace.
+- project_id (optional) — the project the call was opened from.
+- test_execution_id or call_execution_id (optional) — a run the caller
+  can read; the hidden simulation project of that run's agent is read
+  in place of the caller's projects.
+ * @summary Return the heavy / detail-only fields for a single voice call.
+ */
 export const TracerTraceVoiceCallDetailQueryParams = zod.object({
   test_execution_id: zod
     .string()

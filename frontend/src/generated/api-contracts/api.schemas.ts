@@ -39507,17 +39507,11 @@ export interface ObserveGraphDataRequestApi {
   req_data_config: ObserveGraphDataRequestApiReqDataConfig;
 }
 
-/**
- * Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.
- */
-export type ObserveGraphDataResultApiMetricStatistic =
-  (typeof ObserveGraphDataResultApiMetricStatistic)[keyof typeof ObserveGraphDataResultApiMetricStatistic];
+export type ObserveGraphDataResultApiSplitBy =
+  (typeof ObserveGraphDataResultApiSplitBy)[keyof typeof ObserveGraphDataResultApiSplitBy];
 
-export const ObserveGraphDataResultApiMetricStatistic = {
-  count: "count",
-  sum: "sum",
-  mean: "mean",
-  percentage: "percentage",
+export const ObserveGraphDataResultApiSplitBy = {
+  skill_version: "skill_version",
 } as const;
 
 export type CostCoverageApiStatus =
@@ -39547,6 +39541,37 @@ export interface CostCoverageApi {
    */
   unknown_fact_count: number;
 }
+
+export interface SkillVersionGraphPointApi {
+  /** @minLength 1 */
+  timestamp: string;
+  value: number | null;
+  primary_traffic?: number | null;
+  cost_coverage?: CostCoverageApi;
+  traces: number;
+  incomplete: number;
+}
+
+export interface SkillVersionGraphSeriesApi {
+  version_id: string;
+  /** @minLength 1 */
+  label: string;
+  data: SkillVersionGraphPointApi[];
+}
+
+/**
+ * Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.
+ */
+export type ObserveGraphDataResultApiMetricStatistic =
+  (typeof ObserveGraphDataResultApiMetricStatistic)[keyof typeof ObserveGraphDataResultApiMetricStatistic];
+
+export const ObserveGraphDataResultApiMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+  p95: "p95",
+} as const;
 
 /**
  * Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.
@@ -39604,6 +39629,10 @@ export const ObserveGraphDataResultApiQuerySamplingStrategy = {
 } as const;
 
 export interface ObserveGraphDataResultApi {
+  split_by?: ObserveGraphDataResultApiSplitBy;
+  series?: SkillVersionGraphSeriesApi[];
+  /** @minLength 1 */
+  totals_note?: string;
   metric_name: string;
   name?: string;
   /** Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series. */
@@ -41515,6 +41544,13 @@ export type ObserveGraphDataErrorResponseApiDetails = {
   [key: string]: string[];
 };
 
+export type ObserveGraphDataErrorResultApiSplitBy =
+  (typeof ObserveGraphDataErrorResultApiSplitBy)[keyof typeof ObserveGraphDataErrorResultApiSplitBy];
+
+export const ObserveGraphDataErrorResultApiSplitBy = {
+  skill_version: "skill_version",
+} as const;
+
 /**
  * Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.
  */
@@ -41526,6 +41562,7 @@ export const ObserveGraphDataErrorResultApiMetricStatistic = {
   sum: "sum",
   mean: "mean",
   percentage: "percentage",
+  p95: "p95",
 } as const;
 
 export type ObserveGraphDataErrorResultApiQueryProvenance =
@@ -41573,6 +41610,10 @@ export const ObserveGraphDataErrorResultApiQuerySamplingStrategy = {
 } as const;
 
 export interface ObserveGraphDataErrorResultApi {
+  split_by?: ObserveGraphDataErrorResultApiSplitBy;
+  series?: SkillVersionGraphSeriesApi[];
+  /** @minLength 1 */
+  totals_note?: string;
   metric_name: string;
   name?: string;
   /** Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series. */
@@ -42095,6 +42136,13 @@ export type TraceGraphDataRequestApiReqDataConfig = {
   source?: TraceGraphDataRequestApiReqDataConfigSource;
 };
 
+export type TraceGraphDataRequestApiSplitBy =
+  (typeof TraceGraphDataRequestApiSplitBy)[keyof typeof TraceGraphDataRequestApiSplitBy];
+
+export const TraceGraphDataRequestApiSplitBy = {
+  skill_version: "skill_version",
+} as const;
+
 /**
  * Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them.
  */
@@ -42114,6 +42162,7 @@ export interface TraceGraphDataRequestApi {
   /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
   property?: string;
   req_data_config: TraceGraphDataRequestApiReqDataConfig;
+  split_by?: TraceGraphDataRequestApiSplitBy;
   /** Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them. */
   observe_type?: TraceGraphDataRequestApiObserveType;
   /** Voice graphs only: exclude calls placed by a simulator phone, exactly as list_voice_calls' remove_simulation_calls does. */
@@ -42388,6 +42437,181 @@ export interface TraceVoiceCallListQueryApi {
   cursor_mode?: boolean;
   /** Omit for backward-compatible complete bounded pages, which may label count as a lower bound. Send false to require an exact total. Send true to opt in explicitly to lower-bound totals and, on the first page, a clearly labelled bounded partial result when the full ordered prefix cannot be proven inside the read budget. */
   allow_sampled?: boolean;
+}
+
+export type TraceSkillsRequestApiProjection =
+  (typeof TraceSkillsRequestApiProjection)[keyof typeof TraceSkillsRequestApiProjection];
+
+export const TraceSkillsRequestApiProjection = {
+  page: "page",
+  detail: "detail",
+  cohort: "cohort",
+} as const;
+
+export type TraceSkillsRequestApiFiltersItemFilterConfigAttributeValueTypesItem =
+
+    | (typeof TraceSkillsRequestApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof TraceSkillsRequestApiFiltersItemFilterConfigAttributeValueTypesItem]
+    | null;
+
+export const TraceSkillsRequestApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type TraceSkillsRequestApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: TraceSkillsRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type TraceSkillsRequestApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  /**
+   * SKILL row-correlation group; omitted means 0. Groups are ANDed.
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  group?: number;
+  filter_config: TraceSkillsRequestApiFiltersItemFilterConfig;
+};
+
+export interface TraceSkillsRequestApi {
+  project_id: string;
+  projection: TraceSkillsRequestApiProjection;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  trace_ids?: string[];
+  /**
+   * @minLength 1
+   * @maxLength 256
+   */
+  trace_id?: string;
+  /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
+  filters?: TraceSkillsRequestApiFiltersItem[];
+  to?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  from?: string;
+}
+
+export type TraceSkillApiDigestStatus =
+  (typeof TraceSkillApiDigestStatus)[keyof typeof TraceSkillApiDigestStatus];
+
+export const TraceSkillApiDigestStatus = {
+  verified: "verified",
+  mismatch: "mismatch",
+} as const;
+
+export interface TraceSkillApi {
+  skill_id: string | null;
+  /** @minLength 1 */
+  name: string;
+  version_id: string | null;
+  version: number | null;
+  requested_label: string;
+  requested_version?: number | null;
+  agent: string;
+  agent_key: string[];
+  evidence: string;
+  digest_status: TraceSkillApiDigestStatus;
+  loads: number;
+  span_ids: string[];
+}
+
+export interface FailedSkillLoadApi {
+  skill_name: string;
+  error_type: string;
+  /** @minLength 1 */
+  span_id: string;
+}
+
+export interface TraceSkillEntryApi {
+  skills: TraceSkillApi[];
+  failed: FailedSkillLoadApi[];
+  more: number;
+}
+
+export interface TraceContextApi {
+  context_id: string;
+  /** @minLength 1 */
+  name: string;
+  version: number;
+}
+
+export interface TraceScopeCoverageApi {
+  spans: number;
+  stamped_spans: number;
+  rate: number | null;
+  span_ids_before_first_load: string[];
+}
+
+export interface FailedRequestsApi {
+  count: number;
+  rate: number | null;
+}
+
+export interface CohortLatencyApi {
+  p95: number | null;
+}
+
+export interface CohortCostApi {
+  per_trace_mean: number | null;
+}
+
+export interface TraceCohortSummaryApi {
+  traces: number;
+  incomplete: number;
+  failed_requests: FailedRequestsApi;
+  latency_ms: CohortLatencyApi;
+  cost: CohortCostApi;
+}
+
+export type TraceSkillsResultApiTraces = { [key: string]: TraceSkillEntryApi };
+
+export interface TraceSkillsResultApi {
+  traces?: TraceSkillsResultApiTraces;
+  skills?: TraceSkillApi[];
+  failed?: FailedSkillLoadApi[];
+  contexts?: TraceContextApi[];
+  linked_not_loaded?: string[];
+  coverage?: TraceScopeCoverageApi;
+  summary?: TraceCohortSummaryApi;
+  /** @minLength 1 */
+  next_cursor: string | null;
+  truncated: boolean;
+}
+
+export interface SkillsTraceSkillsResultResponseApi {
+  status: boolean;
+  result: TraceSkillsResultApi;
 }
 
 export type TraceVoiceCallDetailResultApiCostBreakdown = {

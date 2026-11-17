@@ -1733,9 +1733,10 @@ class ClickHouseFilterBuilder:
     def skill_live_rows_sql(self, *, failed: bool = False) -> str:
         """Shared live load source for filters and cohort dimensions (ST8)."""
         table = "skill_load_failures" if failed else "skill_trace_links"
+        outcome = "" if failed else "AND status != 'ERROR' "
         return (
             f"SELECT * FROM {table} FINAL WHERE {self._project_scope_predicate()} "
-            "AND is_deleted = 0 AND start_time >= %(start_date)s "
+            f"AND is_deleted = 0 {outcome}AND start_time >= %(start_date)s "
             "AND start_time < %(end_date)s "
             "AND (project_id, trace_id, span_id, _version) IN ("
             + self.skill_live_span_versions_sql() + ")"
@@ -1777,6 +1778,13 @@ class ClickHouseFilterBuilder:
             if selectors:
                 alternatives.append("(" + " AND ".join(selectors) + ")")
         row_predicate = " OR ".join(alternatives) or "1 = 1"
+        if groups and all(any(
+            item["column_id"] == "skill.load_result" and item["filter_config"]["filter_value"] == "failed"
+            for item in members
+        ) for members in groups.values()):
+            # A failed load has no resolved version. Do not borrow a successful
+            # sibling's version just to populate a split of failed-only groups.
+            row_predicate = "0 = 1"
         if verified_identities is None:
             raise _unsupported_filter_shape("Skill cohorts require authoritative version digests")
         if verified_identities:

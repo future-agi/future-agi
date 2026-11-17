@@ -51,13 +51,13 @@ export function useSkillCohortSummary({ projectId, filters, from, to, enabled = 
   return useQuery({
     queryKey: ["observe", "skill-cohort", projectId, filtersKey, from, to],
     queryFn: async ({ signal }) => {
-      const url = traceSkillsEndpoint("cohortSummary");
+      const url = traceSkillsEndpoint();
       const response = await axios.post(
         url,
-        { project_id: projectId, filters: JSON.parse(filtersKey), from, to },
+        { projection: "cohort", project_id: projectId, filters: JSON.parse(filtersKey), from, to },
         { signal },
       );
-      return mapCohortSummary(response?.data?.result ?? response?.data);
+      return mapCohortSummary(response?.data?.result?.summary);
     },
     enabled: active,
     retry: false,

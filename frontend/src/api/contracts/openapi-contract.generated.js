@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1277,
+  endpointCount: 1278,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -52395,6 +52395,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/trace/skill-projection/": {
+      post: {
+        operationId: "tracer_trace_skill-projection_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/TraceSkillsRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SkillsTraceSkillsResultResponse",
+          },
+          400: {
+            $ref: "#/definitions/SkillsError",
+          },
+          401: {
+            $ref: "#/definitions/SkillsError",
+          },
+          403: {
+            $ref: "#/definitions/SkillsError",
+          },
+          404: {
+            $ref: "#/definitions/SkillsError",
+          },
+          409: {
+            $ref: "#/definitions/SkillsConflictError",
+          },
+          410: {
+            $ref: "#/definitions/SkillsError",
+          },
+          413: {
+            $ref: "#/definitions/SkillsError",
+          },
+          422: {
+            $ref: "#/definitions/SkillsChecksError",
+          },
+          428: {
+            $ref: "#/definitions/SkillsError",
+          },
+          503: {
+            $ref: "#/definitions/SkillsError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/trace/voice_call_detail/": {
       get: {
         operationId: "tracer_trace_voice_call_detail",
@@ -98999,6 +99048,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsTraceSkillsResultResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/TraceSkillsResult",
+        },
+      },
+    },
     SkillsUsageResponse: {
       required: ["status", "result"],
       type: "object",
@@ -101543,6 +101605,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           required: ["id", "type"],
           additionalProperties: false,
         },
+        split_by: {
+          title: "Split by",
+          type: "string",
+          enum: ["skill_version"],
+        },
         observe_type: {
           title: "Observe type",
           description:
@@ -102154,6 +102221,152 @@ export const OPENAPI_CONTRACT = Object.freeze({
           default: 30,
           maximum: 500,
           minimum: 1,
+        },
+      },
+    },
+    TraceSkillsRequest: {
+      required: ["project_id", "projection"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        projection: {
+          title: "Projection",
+          type: "string",
+          enum: ["page", "detail", "cohort"],
+        },
+        trace_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 256,
+            minLength: 1,
+          },
+          maxItems: 100,
+          minItems: 1,
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          maxLength: 256,
+          minLength: 1,
+        },
+        filters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column_id: {
+                type: "string",
+                description: "Column or attribute id to filter on.",
+              },
+              property_id: {
+                type: "string",
+                description:
+                  "Optional stable namespaced Property Registry identity.",
+              },
+              display_name: {
+                type: "string",
+                description: "Optional UI label for chips and saved views.",
+              },
+              source: {
+                type: "string",
+                description:
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+              },
+              output_type: {
+                type: "string",
+                description:
+                  "Optional metric output type metadata used by eval and annotation filters.",
+              },
+              group: {
+                type: "integer",
+                minimum: 0,
+                maximum: 2147483647,
+                description:
+                  "SKILL row-correlation group; omitted means 0. Groups are ANDed.",
+              },
+              filter_config: {
+                type: "object",
+                properties: {
+                  filter_type: {
+                    type: "string",
+                    description:
+                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  },
+                  filter_op: {
+                    type: "string",
+                    description:
+                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  },
+                  filter_value: {
+                    description:
+                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  },
+                  col_type: {
+                    type: "string",
+                    description:
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, SKILL, or NORMAL.",
+                  },
+                  attribute_value_types: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: ["string", "number", "boolean"],
+                      "x-nullable": true,
+                    },
+                    description:
+                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  },
+                },
+                required: ["filter_type", "filter_op"],
+                additionalProperties: false,
+              },
+            },
+            required: ["column_id", "filter_config"],
+            additionalProperties: false,
+          },
+          default: [],
+          description:
+            "On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+          "x-boundedDatetimeOperators": [
+            "between",
+            "equals",
+            "greater_than",
+            "greater_than_or_equal",
+            "is_not_null",
+            "is_null",
+            "less_than",
+            "less_than_or_equal",
+            "not_between",
+            "not_equals",
+          ],
+        },
+        to: {
+          title: "To",
+          type: "string",
+          format: "date-time",
+        },
+        cursor: {
+          title: "Cursor",
+          type: "string",
+          maxLength: 2048,
+          minLength: 1,
+        },
+        limit: {
+          title: "Limit",
+          type: "integer",
+          default: 100,
+          maximum: 100,
+          minimum: 1,
+        },
+        from: {
+          title: "From",
+          type: "string",
+          format: "date-time",
         },
       },
     },
@@ -121244,6 +121457,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["metric_name", "data", "message"],
       type: "object",
       properties: {
+        split_by: {
+          title: "Split by",
+          type: "string",
+          enum: ["skill_version"],
+        },
+        series: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SkillVersionGraphSeries",
+          },
+        },
+        totals_note: {
+          title: "Totals note",
+          type: "string",
+          minLength: 1,
+        },
         metric_name: {
           title: "Metric name",
           type: "string",
@@ -121257,7 +121486,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
           type: "string",
-          enum: ["count", "sum", "mean", "percentage"],
+          enum: ["count", "sum", "mean", "percentage", "p95"],
         },
         data: {
           description:
@@ -121402,6 +121631,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["metric_name", "data"],
       type: "object",
       properties: {
+        split_by: {
+          title: "Split by",
+          type: "string",
+          enum: ["skill_version"],
+        },
+        series: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SkillVersionGraphSeries",
+          },
+        },
+        totals_note: {
+          title: "Totals note",
+          type: "string",
+          minLength: 1,
+        },
         metric_name: {
           title: "Metric name",
           type: "string",
@@ -121415,7 +121660,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
           type: "string",
-          enum: ["count", "sum", "mean", "percentage"],
+          enum: ["count", "sum", "mean", "percentage", "p95"],
         },
         data: {
           description:
@@ -135233,6 +135478,60 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    TraceSkillsResult: {
+      required: ["next_cursor", "truncated"],
+      type: "object",
+      properties: {
+        traces: {
+          title: "Traces",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/TraceSkillEntry",
+          },
+        },
+        skills: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TraceSkill",
+          },
+        },
+        failed: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FailedSkillLoad",
+          },
+        },
+        contexts: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TraceContext",
+          },
+        },
+        linked_not_loaded: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        coverage: {
+          $ref: "#/definitions/TraceScopeCoverage",
+        },
+        summary: {
+          $ref: "#/definitions/TraceCohortSummary",
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+      },
+    },
     SkillsHubUsage: {
       required: [
         "days",
@@ -146057,6 +146356,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillVersionGraphSeries: {
+      required: ["version_id", "label", "data"],
+      type: "object",
+      properties: {
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        data: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SkillVersionGraphPoint",
+          },
+        },
+      },
+    },
     MetricSerializerNameAndId: {
       required: ["name"],
       type: "object",
@@ -153482,6 +153803,206 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    FailedSkillLoad: {
+      required: ["skill_name", "error_type", "span_id"],
+      type: "object",
+      properties: {
+        skill_name: {
+          title: "Skill name",
+          type: "string",
+        },
+        error_type: {
+          title: "Error type",
+          type: "string",
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    TraceCohortSummary: {
+      required: [
+        "traces",
+        "incomplete",
+        "failed_requests",
+        "latency_ms",
+        "cost",
+      ],
+      type: "object",
+      properties: {
+        traces: {
+          title: "Traces",
+          type: "integer",
+        },
+        incomplete: {
+          title: "Incomplete",
+          type: "integer",
+        },
+        failed_requests: {
+          $ref: "#/definitions/FailedRequests",
+        },
+        latency_ms: {
+          $ref: "#/definitions/CohortLatency",
+        },
+        cost: {
+          $ref: "#/definitions/CohortCost",
+        },
+      },
+    },
+    TraceContext: {
+      required: ["context_id", "name", "version"],
+      type: "object",
+      properties: {
+        context_id: {
+          title: "Context id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+        },
+      },
+    },
+    TraceScopeCoverage: {
+      required: [
+        "spans",
+        "stamped_spans",
+        "rate",
+        "span_ids_before_first_load",
+      ],
+      type: "object",
+      properties: {
+        spans: {
+          title: "Spans",
+          type: "integer",
+        },
+        stamped_spans: {
+          title: "Stamped spans",
+          type: "integer",
+        },
+        rate: {
+          title: "Rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        span_ids_before_first_load: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    TraceSkill: {
+      required: [
+        "skill_id",
+        "name",
+        "version_id",
+        "version",
+        "requested_label",
+        "agent",
+        "agent_key",
+        "evidence",
+        "digest_status",
+        "loads",
+        "span_ids",
+      ],
+      type: "object",
+      properties: {
+        skill_id: {
+          title: "Skill id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+          "x-nullable": true,
+        },
+        requested_label: {
+          title: "Requested label",
+          type: "string",
+        },
+        requested_version: {
+          title: "Requested version",
+          type: "integer",
+          "x-nullable": true,
+        },
+        agent: {
+          title: "Agent",
+          type: "string",
+        },
+        agent_key: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+        },
+        evidence: {
+          title: "Evidence",
+          type: "string",
+        },
+        digest_status: {
+          title: "Digest status",
+          type: "string",
+          enum: ["verified", "mismatch"],
+        },
+        loads: {
+          title: "Loads",
+          type: "integer",
+        },
+        span_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    TraceSkillEntry: {
+      required: ["skills", "failed", "more"],
+      type: "object",
+      properties: {
+        skills: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TraceSkill",
+          },
+        },
+        failed: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FailedSkillLoad",
+          },
+        },
+        more: {
+          title: "More",
+          type: "integer",
+        },
+      },
+    },
     SkillsHubChannels: {
       required: ["api", "download", "mcp"],
       type: "object",
@@ -157438,6 +157959,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillVersionGraphPoint: {
+      required: ["timestamp", "value", "traces", "incomplete"],
+      type: "object",
+      properties: {
+        timestamp: {
+          title: "Timestamp",
+          type: "string",
+          minLength: 1,
+        },
+        value: {
+          title: "Value",
+          type: "number",
+          "x-nullable": true,
+        },
+        primary_traffic: {
+          title: "Primary traffic",
+          type: "number",
+          "x-nullable": true,
+        },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
+        },
+        traces: {
+          title: "Traces",
+          type: "integer",
+        },
+        incomplete: {
+          title: "Incomplete",
+          type: "integer",
+        },
+      },
+    },
     KeyMoment: {
       required: ["kevinified", "verbatim"],
       type: "object",
@@ -159123,6 +159676,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    CohortCost: {
+      required: ["per_trace_mean"],
+      type: "object",
+      properties: {
+        per_trace_mean: {
+          title: "Per trace mean",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+    },
+    CohortLatency: {
+      required: ["p95"],
+      type: "object",
+      properties: {
+        p95: {
+          title: "P95",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+    },
+    FailedRequests: {
+      required: ["count", "rate"],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        rate: {
+          title: "Rate",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
     },
     StoredToolEndpoint: {
       required: ["url"],
