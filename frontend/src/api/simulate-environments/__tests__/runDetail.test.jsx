@@ -771,6 +771,12 @@ describe("useRunDetail", () => {
           environment_version: { id: "e2", label: "v2" },
           suite_version: { id: "s3", label: "v3" },
           agent_differs: true,
+          resume: {
+            resumable: true,
+            finished: 18,
+            unfinished: 12,
+            history: [{ at: "2026-11-04T09:00:00Z", by: "u1", calls: 12 }],
+          },
           summary: {
             total: 12,
             measured: 12,
@@ -814,6 +820,12 @@ describe("useRunDetail", () => {
       label: "v3",
     });
     expect(result.current.identity.agentDiffers).toBe(true);
+    expect(result.current.identity.resume).toEqual({
+      resumable: true,
+      finished: 18,
+      unfinished: 12,
+      history: [{ at: "2026-11-04T09:00:00Z", by: "u1", calls: 12 }],
+    });
     expect(result.current.stats.total).toBe(12);
     expect(result.current.stats.passRate).toBe(74);
     expect(axios.get).toHaveBeenCalledWith(
@@ -868,6 +880,29 @@ describe("useRunDetail", () => {
     expect(result.current.identity.status).toBe("failed");
     expect(result.current.stats.passed).toBe(8);
     expect(result.current.stats.failed).toBe(4);
+  });
+
+  it("names the fix a check run belongs to, and none for a user's run", async () => {
+    const identityOf = async (execution) => {
+      axios.get.mockResolvedValueOnce({
+        data: { execution: { status: "completed", summary: {}, ...execution } },
+      });
+      const { result } = renderHook(() => useRunDetail("rt1", execution.id), {
+        wrapper: makeWrapper(),
+      });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      return result.current.identity;
+    };
+
+    expect(
+      (
+        await identityOf({
+          id: "ex-check",
+          fix_run: { id: "fix-1", label: "baseline" },
+        })
+      ).fixRun,
+    ).toEqual({ id: "fix-1", label: "baseline" });
+    expect((await identityOf({ id: "ex-user" })).fixRun).toBeNull();
   });
 
   it("marks a running Run stoppable and a cancelling or grading one not", async () => {
@@ -1505,7 +1540,9 @@ describe("useCallTraces", () => {
       wrapper: makeWrapper(),
     });
 
-    await waitFor(() => expect(result.current.projectId).toBe("hidden-project"));
+    await waitFor(() =>
+      expect(result.current.projectId).toBe("hidden-project"),
+    );
     expect(axios.get).toHaveBeenCalledWith(
       endpoints.runResultsV3.traces("exec-1"),
       { params: { call_execution_id: "call-1" } },

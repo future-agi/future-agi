@@ -12,6 +12,8 @@ const CONTACT_URL = "https://futureagi.com/talk-to-human";
 const CAPABILITY_PREVIEW = Object.freeze({
   [CAPABILITY.ERROR_FEED]: "errorFeed",
   [CAPABILITY.FALCON_AI]: "falconAI",
+  [CAPABILITY.INSTANT_EVAL]: "instantEval",
+  [CAPABILITY.INSIGHTS]: "insights",
 });
 
 export default function CapabilityGate({ feature, children }) {

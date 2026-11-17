@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import {
   Checkbox,
   Badge,
@@ -146,6 +147,8 @@ import axios, { endpoints } from "src/utils/axios";
 
 import { PROJECT_SOURCE } from "src/utils/constants";
 import { OBSERVE_LIST_REFRESH_EVENT } from "../observeEvents";
+import { askLink, insightsReportLink } from "../observeHandoff";
+import { viewSeed } from "../observeScope";
 import { useLLMTracingFilters } from "./useLLMTracingFilters";
 import { isTraceListProjectReady } from "./projectSourceMode";
 import { canonicalObserveViewMode } from "./viewMode";
@@ -231,6 +234,12 @@ import {
   REPLAY_TYPES,
 } from "../SessionsView/ReplaySessions/constants";
 import { withoutReplayForRestrictedOrgs } from "../SessionsView/ReplaySessions/replayAccess";
+import CreateEnvironmentTestDialog from "src/sections/simulate/environments/evidence/CreateEnvironmentTestDialog";
+import {
+  EVIDENCE_ACTION_ID,
+  EVIDENCE_COPY,
+} from "src/sections/simulate/environments/evidence/evidence.constants";
+import { MAX_EVIDENCE_SOURCES } from "src/api/simulate-environments/evidenceImports";
 import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { dateFilterEqual, filtersContentEqual } from "../saved-view-utils";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
@@ -285,7 +294,7 @@ const AgentVisualizationProjectScopePrompt = () => (
       color: "text.disabled",
     }}
   >
-    <Typography role="status" variant="body2" sx={{ fontSize: 13 }}>
+    <Typography role="status" variant="body2" sx={{ fontSize: 12 }}>
       Select a project filter to use agent visualizations
     </Typography>
   </Box>
@@ -397,7 +406,7 @@ const COMPARE_DATE_OPTIONS = [
 const comparePillSx = {
   textTransform: "none",
   fontWeight: 500,
-  fontSize: 13,
+  fontSize: 12,
   fontFamily: "'IBM Plex Sans', sans-serif",
   height: 26,
   border: "1px solid",
@@ -468,7 +477,7 @@ export const CompareGraphHeader = ({
       >
         {compareType === "primary" ? "A" : "B"}
       </Box>
-      <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{label}</Typography>
+      <Typography sx={{ fontSize: 12, fontWeight: 600 }}>{label}</Typography>
       <Button
         ref={dateButtonRef}
         variant="outlined"
@@ -779,6 +788,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // In user mode there is no project context — observeId is null and all
   // grids/queries omit project_id so the backend scopes by org.
   const observeId = isUserMode ? null : routeObserveId;
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const {
     primaryProjectId: primaryAgentGraphProjectId,
     compareProjectId: compareAgentGraphProjectId,
@@ -2054,7 +2064,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     if (!dates || dates.length < 2) return "Past 6M";
     try {
       const start = new Date(dates[0]);
-      const end = new Date(dates[1]);
+      const end = getDateRangeDisplayEnd(dates);
       if (isNaN(start.getTime()) || isNaN(end.getTime())) return "Past 6M";
       return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
     } catch {
@@ -2912,6 +2922,65 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     extraFilters,
     navigate,
   ]);
+
+  // Instant eval and Insights ask about exactly the traces the grid shows: its
+  // date window, filters, chips and toggles, as its list request sends them,
+  // and open with the tab's date preset. "Show simulated calls" isn't carried:
+  // it exists only on simulator projects, where neither is offered.
+  const traceViewSeed = useMemo(
+    () =>
+      viewSeed({
+        unit: "traces",
+        filters: toBackendFilters([
+          ...primaryCombinedFilters,
+          ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+          ...(extraFilters || []),
+          ...(metricFilters || []),
+        ]),
+        dateFilter: primaryTraceDateFilter,
+      }),
+    [
+      primaryCombinedFilters,
+      hasEvalFilter,
+      extraFilters,
+      metricFilters,
+      primaryTraceDateFilter,
+    ],
+  );
+  // The Spans tab asks about exactly the spans its grid shows (SpanGrid sends
+  // the same list, its date window included).
+  const spanViewSeed = useMemo(
+    () =>
+      viewSeed({
+        unit: "spans",
+        filters: toBackendFilters([
+          ...primarySpanValidatedFilters,
+          ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+          ...(extraFilters || []),
+          ...(metricFilters || []),
+        ]),
+        dateFilter: primarySpanDateFilter,
+      }),
+    [
+      primarySpanValidatedFilters,
+      hasEvalFilter,
+      extraFilters,
+      metricFilters,
+      primarySpanDateFilter,
+    ],
+  );
+  // Evaluate → Ask a question: the Ask page, about the rows this tab shows.
+  const openAsk = useCallback(() => {
+    navigate(
+      askLink(
+        observeId,
+        selectedTab === "spans" ? spanViewSeed : traceViewSeed,
+      ),
+    );
+  }, [selectedTab, spanViewSeed, traceViewSeed, observeId, navigate]);
+  const openInsights = useCallback(() => {
+    navigate(insightsReportLink(observeId, traceViewSeed));
+  }, [observeId, traceViewSeed, navigate]);
 
   const handleResetView = useCallback(() => {
     setViewMode(DEFAULT_DISPLAY_CONFIG.viewMode);
@@ -4185,6 +4254,27 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         disabledReason:
                           "Selected calls are still in progress. Wait for traces to finish before adding them to an annotation queue.",
                       },
+                      // Shown to every organization, environment-only ones
+                      // included; calls are named one by one.
+                      (() => {
+                        const picked = (selectedCallIds || []).filter(
+                          Boolean,
+                        ).length;
+                        const reason = !observeId
+                          ? EVIDENCE_COPY.actionNoProject
+                          : simCallFilterSelectionMode
+                            ? EVIDENCE_COPY.actionAll
+                            : picked > MAX_EVIDENCE_SOURCES
+                              ? EVIDENCE_COPY.actionTooMany
+                              : null;
+                        return {
+                          id: EVIDENCE_ACTION_ID,
+                          label: EVIDENCE_COPY.action,
+                          icon: "solar:test-tube-linear",
+                          disabled: Boolean(reason),
+                          disabledReason: reason,
+                        };
+                      })(),
                     ],
                     restrictSimulateToEnvironments,
                   );
@@ -4265,7 +4355,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 const isSimulator = projectSource === PROJECT_SOURCE.SIMULATOR;
                 // Voice/calls path: route only its own actions.
                 if (isSimulator) {
-                  if (actionId === "annotation-queue") {
+                  if (actionId === EVIDENCE_ACTION_ID) {
+                    setEvidenceOpen(true);
+                  } else if (actionId === "annotation-queue") {
                     setQueueAnchorEl(anchor);
                   } else if (actionId === "dataset") {
                     setOpenAddDataset(true);
@@ -4434,6 +4526,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 setExcludeSimulationCalls(excludeSimulationCalls ? null : true)
               }
               onAddEvals={handleAddEvals}
+              // Instant eval and Insights are per project: not in the
+              // cross-project user view. Insights doesn't read spans.
+              onInstantEval={observeId ? openAsk : undefined}
+              onInsights={
+                observeId && selectedTab !== "spans" ? openInsights : undefined
+              }
             />
             {/* FilterChips moved above graph section */}
             {/* Hidden: Old secondary Trace/Spans tabs — replaced by top-level tab bar */}
@@ -4756,6 +4854,15 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 bulkItems={tagsBulkItems}
               />
             </Suspense>
+            {evidenceOpen ? (
+              <CreateEnvironmentTestDialog
+                open
+                onClose={() => setEvidenceOpen(false)}
+                projectId={observeId}
+                sourceKind="call"
+                ids={(selectedCallIds || []).filter(Boolean)}
+              />
+            ) : null}
             <Suspense fallback={null}>
               <AddToQueueDialog
                 anchorEl={queueAnchorEl}

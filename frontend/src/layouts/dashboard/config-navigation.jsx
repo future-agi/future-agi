@@ -15,6 +15,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useHostUpdateAccess } from "src/api/hostUpdates/host-update-status";
 import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import {
   ROLES,
@@ -382,6 +383,7 @@ const SettingsIcons = {
 export function useNavSettingsData() {
   const { user } = useAuthContext();
   const { isCloud } = useDeploymentMode();
+  const { allowed: hostUpdatesAllowed } = useHostUpdateAccess();
   const { currentWorkspaceRole } = useWorkspace();
 
   const { data: workspaces = [] } = useWorkspacesList({
@@ -452,11 +454,11 @@ export function useNavSettingsData() {
         icon: SettingsIcons.Providers,
       });
     }
-    // Falcon AI Connectors — same access as integrations
+    // Connectors (tools for Chat) — same access as integrations
     if (canAccess(RoutesName.integrations)) {
       wsSettingsItems.push({
-        title: "Falcon AI Connectors",
-        path: "/dashboard/settings/falcon-ai-connectors",
+        title: "Connectors",
+        path: "/dashboard/settings/connectors",
         icon: SettingsIcons.Integrations,
       });
     }
@@ -520,6 +522,13 @@ export function useNavSettingsData() {
         icon: SettingsIcons.Keys,
       });
     }
+    if (hostUpdatesAllowed) {
+      orgItems.push({
+        title: "Updates",
+        path: paths.dashboard.settings.updates,
+        icon: <Iconify icon="mdi:update" />,
+      });
+    }
     if (wsEnabled && canAccess(RoutesName.workspace)) {
       orgItems.push({
         title: "Workspaces",
@@ -555,6 +564,7 @@ export function useNavSettingsData() {
     wsEnabled,
     workspaces,
     isCloud,
+    hostUpdatesAllowed,
   ]);
 
   return sections;

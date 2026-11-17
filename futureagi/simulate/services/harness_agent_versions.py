@@ -1541,6 +1541,18 @@ def retry_preflight(version: AgentVersion) -> None:
     logger.info("harness_agent_version_retried version=%s", version.id)
 
 
+def queue_check(version: AgentVersion) -> None:
+    """Check a pending version no environment asked to make its default: a new one,
+    or the pending twin a repeated change returned. Its pass moves no default; a run
+    can pick it, and a move makes it the default."""
+    now = timezone.now()
+    pending = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version_id=version.id, preflight_status=Status.PENDING
+    ).update(check_started_at=now, updated_at=now)
+    if pending:
+        transaction.on_commit(lambda: _schedule_preflight(version.id))
+
+
 def _live_duplicate(
     runtime: HarnessAgentVersionRuntime,
 ) -> HarnessAgentVersionRuntime | None:
@@ -1684,14 +1696,28 @@ def _turned_down(
 
 
 def make_default(
-    version: AgentVersion, environment: HostedHarnessJob, *, user: Any
+    version: AgentVersion,
+    environment: HostedHarnessJob,
+    *,
+    user: Any,
+    expected_default_id: Any = None,
 ) -> str:
     """Make a passed version the environment's default because a user asked for it.
 
-    Returns the outcome: ``activated``, ``already_default``, or why it did not move.
+    With ``expected_default_id``, only from that default: another one is ``base_moved``,
+    and a busy environment is left for the caller to ask again, since a deferred move
+    could not hold to that default. Returns the outcome: ``activated``,
+    ``already_default``, or why it did not move.
     """
-    outcome = _activate_on(environment.id, version, explicit=True, user=user)
-    _record_activation(version.id, {str(environment.id): outcome})
+    outcome = _activate_on(
+        environment.id,
+        version,
+        explicit=True,
+        user=user,
+        expected_default_id=expected_default_id,
+    )
+    if expected_default_id is None or outcome != "environment_busy":
+        _record_activation(version.id, {str(environment.id): outcome})
     return outcome
 
 
@@ -1701,10 +1727,12 @@ def _activate_on(
     *,
     explicit: bool = False,
     user: Any = None,
+    expected_default_id: Any = None,
 ) -> str:
     """Move one environment that asked for ``version`` to it, unless a newer version
     of the agent is already its default or the default was moved since; an
-    ``explicit`` request moves it from any default."""
+    ``explicit`` request moves it from any default, or only from
+    ``expected_default_id`` when it names one."""
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
     from simulate.services.harness_versioning.versions import move_agent
     from simulate.services.hosted_harness import agent_version_pickable
@@ -1722,6 +1750,11 @@ def _activate_on(
                 # Asked for again by hand: an earlier request never replaces it.
                 record_hand_move(locked, user, version.id)
             return "already_default"
+        if (
+            expected_default_id is not None
+            and locked.agent_version_id != expected_default_id
+        ):
+            return "base_moved"
         # Locked, so a discard waits until this move is visible to its in-use check.
         runtime = _side_row(version.id, lock=True)
         if runtime is None or runtime.preflight_status != Status.PASSED:

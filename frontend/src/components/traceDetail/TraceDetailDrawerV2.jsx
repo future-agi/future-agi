@@ -2,6 +2,8 @@ import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 import PropTypes from "prop-types";
 import {
+  Alert,
+  AlertTitle,
   Box,
   Button,
   Drawer,
@@ -21,6 +23,7 @@ import { useCreatePromptDraft } from "src/api/develop/prompt";
 import { getOutputFormatFromCatalogType } from "src/sections/develop-detail/RunPrompt/common";
 import logger from "src/utils/logger";
 import DrawerHeader from "./DrawerHeader";
+import { CaptureCoverageNotice } from "./TraceDetailPanel";
 import DrawerToolbar from "./DrawerToolbar";
 import TraceDisplayPanel, { DEFAULT_VIEW_CONFIG } from "./TraceDisplayPanel";
 import {
@@ -142,8 +145,11 @@ const TraceDetailDrawerV2 = ({
   hasNext = true,
   initialFullscreen = false,
   initialSpanId = null,
+  keepInitialSpanVisible = false,
   initialEvalFocus = false,
   refreshParentGrid,
+  hideOpenInNewTab = false,
+  disablePortal = false,
   readOnly = false,
   sharedToken = null,
 }) => {
@@ -533,17 +539,33 @@ const TraceDetailDrawerV2 = ({
     sharedToken,
     open && sharedToken ? traceId : null,
   );
-  const { data, isLoading } = sharedToken ? sharedTrace : ownTrace;
+  const {
+    data: traceData,
+    isLoading,
+    isError,
+    error,
+    isFetching,
+    refetch,
+  } = sharedToken ? sharedTrace : ownTrace;
+  // A failed refresh must not present cached spans or totals as current data.
+  const data = isError ? undefined : traceData;
+  const accessDenied = error?.statusCode === 401 || error?.statusCode === 403;
 
   const handleRefresh = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["trace-detail", traceId] });
-  }, [queryClient, traceId]);
+    refetch();
+  }, [refetch]);
 
   const rawSpans = data?.observation_spans;
   const summary = data?.summary;
   const graph = data?.graph;
 
   // Apply span type filter + span filters to the tree
+  // A caller that pins the span it opened (an evaluation's source span)
+  // keeps that span in the tree whatever filters the user saved. The saved
+  // filters themselves stay as they are. Without a pin this is null, so a
+  // drawer that does not pin (Observe) keeps one spans identity when only the
+  // opened span changes, and the Agent Graph keeps its node positions.
+  const pinnedSpanId = keepInitialSpanVisible ? initialSpanId : null;
   const spans = useMemo(() => {
     if (!rawSpans?.length) return rawSpans;
 
@@ -586,6 +608,7 @@ const TraceDetailDrawerV2 = ({
 
     function matchesSpan(entry) {
       const span = getSpan(entry);
+      if (pinnedSpanId && span.id === pinnedSpanId) return true;
 
       // Span type filter from Display panel
       if (hasTypeFilter) {
@@ -637,7 +660,7 @@ const TraceDetailDrawerV2 = ({
     }
 
     return filterTree(rawSpans);
-  }, [rawSpans, spanFilters, spanTypeFilter]);
+  }, [rawSpans, spanFilters, spanTypeFilter, pinnedSpanId]);
 
   // Auto-select root span when trace data loads (or when trace changes).
   // If caller passed ``initialSpanId`` (e.g. opened from span-grid), prefer
@@ -858,7 +881,8 @@ const TraceDetailDrawerV2 = ({
     // A persistent drawer renders in place, not in a portal. Opened from
     // inside another drawer (a session's View Trace), it would sit inside that
     // drawer's panel and be hidden with it when the drawer stack covers it.
-    <Portal>
+    // A modal host can instead keep it inside its own focus/ARIA boundary.
+    <Portal disablePortal={disablePortal}>
       <Drawer
         anchor="right"
         open={open}
@@ -940,7 +964,7 @@ const TraceDetailDrawerV2 = ({
           }
           isFullscreen={isFullscreen}
           onOpenNewTab={
-            readOnly || initialFullscreen
+            readOnly || initialFullscreen || hideOpenInNewTab
               ? undefined
               : () => {
                   if (traceId && projectId) {
@@ -1178,6 +1202,10 @@ const TraceDetailDrawerV2 = ({
           </Box>
         )}
 
+        {!isError && !isLoading && (
+          <CaptureCoverageNotice coverage={data?.capture_coverage} />
+        )}
+
         {/* Main content area */}
         <Box
           data-drawer-content
@@ -1192,7 +1220,36 @@ const TraceDetailDrawerV2 = ({
             overflow: "hidden",
           }}
         >
-          {isImagineActive ? (
+          {isError ? (
+            <Box sx={{ p: 3, width: "100%" }}>
+              <Alert
+                severity="error"
+                action={
+                  !accessDenied && (
+                    <Button
+                      color="inherit"
+                      size="small"
+                      onClick={handleRefresh}
+                      disabled={isFetching}
+                    >
+                      {isFetching ? "Retrying…" : "Retry"}
+                    </Button>
+                  )
+                }
+              >
+                <AlertTitle>Unable to load trace</AlertTitle>
+                {error?.statusCode === 401
+                  ? "Sign in again to view this trace."
+                  : error?.statusCode === 403
+                    ? "You do not have permission to view this trace. Ask your workspace administrator for access."
+                    : error?.statusCode === 404
+                      ? "This trace is no longer available or cannot be accessed from this view. Return to the trace list and select another trace."
+                      : error?.statusCode === 503
+                        ? "The trace service is unavailable. Try again. If this continues, ask your administrator to check service availability and trace size limits."
+                        : "The trace could not be loaded. Try again, or contact your administrator if the problem continues."}
+              </Alert>
+            </Box>
+          ) : isImagineActive ? (
             <ImagineTab
               traceId={traceId}
               projectId={projectId}
@@ -1374,7 +1431,7 @@ const TraceDetailDrawerV2 = ({
                       width={40}
                       sx={{ mb: 1, opacity: 0.5 }}
                     />
-                    <Typography variant="body2" fontSize={13}>
+                    <Typography variant="body2" fontSize={12}>
                       Select a span to view details
                     </Typography>
                     {summary && (
@@ -1396,9 +1453,13 @@ const TraceDetailDrawerV2 = ({
                           )}
                         </Typography>
                         <Typography variant="caption">
-                          {formatTokenCount(summary.total_tokens)} tokens
+                          {formatTokenCount(summary.total_tokens)}{" "}
+                          {data?.capture_coverage
+                            ? "observed tokens"
+                            : "tokens"}
                         </Typography>
                         <Typography variant="caption">
+                          {data?.capture_coverage && "Observed cost: "}
                           {formatCost(summary.total_cost)}
                         </Typography>
                       </Box>
@@ -1422,7 +1483,7 @@ const TraceDetailDrawerV2 = ({
               sx: {
                 minWidth: 240,
                 borderRadius: "8px",
-                "& .MuiMenuItem-root": { fontSize: 13, gap: 1, py: 0.75 },
+                "& .MuiMenuItem-root": { fontSize: 12, gap: 1, py: 0.75 },
               },
             },
           }}
@@ -1621,8 +1682,11 @@ TraceDetailDrawerV2.propTypes = {
   hasNext: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   initialSpanId: PropTypes.string,
+  keepInitialSpanVisible: PropTypes.bool,
   initialEvalFocus: PropTypes.bool,
   refreshParentGrid: PropTypes.func,
+  hideOpenInNewTab: PropTypes.bool,
+  disablePortal: PropTypes.bool,
   readOnly: PropTypes.bool,
   sharedToken: PropTypes.string,
 };

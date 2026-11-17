@@ -1,5 +1,6 @@
 import { Box, LinearProgress, Skeleton, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import "src/styles/clean-data-table.css";
 import React, {
   useMemo,
@@ -423,6 +424,7 @@ const SessionGrid = React.forwardRef(
               );
               const backendFilters = toBackendFilters(filters);
               const queryKey = JSON.stringify({
+                responseVersion: "capture-coverage-v1",
                 projectId: projectId || null,
                 filters: backendFilters,
                 dateInterval: dateInterval || null,

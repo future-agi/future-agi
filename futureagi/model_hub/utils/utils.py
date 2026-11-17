@@ -22,6 +22,7 @@ from model_hub.models.api_key import ApiKey
 from model_hub.models.choices import DataTypeChoices
 from model_hub.models.conversations import Message, Node
 from model_hub.models.metric import Metric
+from model_hub.services.custom_endpoint import post_custom_endpoint
 from model_hub.utils.azure_endpoints import normalize_azure_custom_model_config
 from tfc.settings.settings import (
     HUGGINGFACE_API_TOKEN,
@@ -416,26 +417,25 @@ def validate_model_working(model_name, api_key, provider):
                 response = litellm.completion(**payload)
             else:
                 try:
-                    url = api_key["config_json"].pop("api_base")
+                    config = api_key["config_json"]
+                    url = config.get("endpoint_url") or config.get("api_base")
                     if not url:
                         raise Exception("Please provide the API Base.")
-                    headers = api_key["config_json"].pop("headers")
-                    response = requests.post(
-                        url,
-                        headers=headers,
-                        json=payload,
-                        timeout=30,  # 30 seconds timeout
+                    response = post_custom_endpoint(
+                        url=url,
+                        headers=config.get("headers", {}),
+                        payload=payload,
                     )
                     # The model's own calls POST to this URL as given too, so
                     # a bare base such as .../v1 is wrong, not just this check.
                     # OpenAI-compatible servers also 404 an unknown model.
                     # Never repeat response.text: it could be an internal page.
                     if response.status_code in (404, 405):
-                        reason = (
-                            response.reason or HTTPStatus(response.status_code).phrase
-                        )
+                        reason = HTTPStatus(response.status_code).phrase
+                        # Credentials can be embedded in the URL path as well
+                        # as its query, so never repeat the configured URL.
                         raise Exception(
-                            f"{url} answered {response.status_code} "
+                            f"Custom model endpoint answered {response.status_code} "
                             f"{reason}. API Base URL must be the full "
                             "chat-completions URL, such as "
                             "https://your-host/v1/chat/completions, and the "

@@ -22,16 +22,24 @@ import (
 
 // Provider implements the Provider interface for OpenAI-compatible APIs.
 type Provider struct {
-	id         string
-	baseURL    string
-	pathPrefix string
-	apiKey     string
-	httpClient *http.Client
-	semaphore  chan struct{}
+	id                 string
+	baseURL            string
+	pathPrefix         string
+	apiKey             string
+	httpClient         *http.Client
+	decisionHTTPClient *http.Client
+	semaphore          chan struct{}
 	// openAIAPI reports whether baseURL points at the official OpenAI API, whose
 	// max_tokens/max_completion_tokens handling differs from other OpenAI-format
 	// upstreams. See normalizeMaxTokens.
 	openAIAPI bool
+	// configType is the provider config's type ("deepinfra", "openrouter", …),
+	// "" when the config sets none.
+	configType string
+	// baseURLHost is base_url's hostname, lower-cased, without a trailing dot.
+	baseURLHost string
+	// ignoreProviderCost is the config's ignore_provider_cost.
+	ignoreProviderCost bool
 }
 
 // officialAPIHost is the host of the official OpenAI API. Other upstreams speak
@@ -70,24 +78,49 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		IdleConnTimeout:     90 * time.Second,
 		ForceAttemptHTTP2:   true,
 		DialContext:         cfg.DialContext,
+		Proxy:               cfg.Proxy,
 	}
 	if cfg.SkipTLS {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // user-opted skip
 		slog.Warn("TLS verification disabled for provider", "provider", id)
 	}
 
+	client := &http.Client{Transport: transport, Timeout: timeout}
+	decisionClient := client
+	if cfg.DecisionProxy != nil || cfg.DecisionDialContext != nil {
+		decisionTransport := transport.Clone()
+		if cfg.DecisionProxy != nil {
+			decisionTransport.Proxy = cfg.DecisionProxy
+		}
+		if cfg.DecisionDialContext != nil {
+			decisionTransport.DialContext = cfg.DecisionDialContext
+		}
+		decisionClient = &http.Client{Transport: decisionTransport, Timeout: timeout}
+	}
+
 	return &Provider{
-		id:         id,
-		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
-		pathPrefix: cfg.EffectiveAPIPathPrefix(),
-		apiKey:     cfg.APIKey,
-		httpClient: &http.Client{
-			Transport: transport,
-			Timeout:   timeout,
-		},
-		semaphore: make(chan struct{}, maxConcurrent),
-		openAIAPI: isOfficialAPI(cfg.BaseURL),
+		id:                 id,
+		baseURL:            strings.TrimRight(cfg.BaseURL, "/"),
+		pathPrefix:         cfg.EffectiveAPIPathPrefix(),
+		apiKey:             cfg.APIKey,
+		httpClient:         client,
+		decisionHTTPClient: decisionClient,
+		semaphore:          make(chan struct{}, maxConcurrent),
+		openAIAPI:          isOfficialAPI(cfg.BaseURL),
+		configType:         cfg.Type,
+		baseURLHost:        hostname(cfg.BaseURL),
+		ignoreProviderCost: cfg.IgnoreProviderCost,
 	}, nil
+}
+
+// hostname is baseURL's hostname, lower-cased and without a trailing dot, or
+// "" when baseURL does not parse.
+func hostname(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
 }
 
 // normalizeMaxTokens rewrites max_tokens to max_completion_tokens for the official
@@ -119,6 +152,15 @@ func (p *Provider) endpoint(path string) string {
 }
 
 func (p *Provider) ID() string { return p.id }
+
+// ConfiguredType is the type the provider's config records, or "".
+func (p *Provider) ConfiguredType() string { return p.configType }
+
+// BaseURLHost is the hostname of the provider's base_url, lower-cased.
+func (p *Provider) BaseURLHost() string { return p.baseURLHost }
+
+// IgnoresProviderCost reports the config's ignore_provider_cost.
+func (p *Provider) IgnoresProviderCost() bool { return p.ignoreProviderCost }
 
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
@@ -240,6 +282,13 @@ func (p *Provider) TextCompletion(ctx context.Context, req *models.CompletionReq
 
 // ChatCompletion sends a non-streaming chat completion request.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	// Decided here, so every caller gets it: the chat handlers, failover and
+	// model fallbacks, async jobs, scheduled completions, batches, the traffic
+	// mirror and the routes that translate their own dialect into a chat
+	// request. See ChatNeedsResponses.
+	if p.ChatNeedsResponses(req) {
+		return p.ChatCompletionViaResponses(ctx, req)
+	}
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
 	}
@@ -297,6 +346,10 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 // StreamChatCompletion sends a streaming chat completion request.
 func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	// As in ChatCompletion: every streaming caller gets the Responses route.
+	if p.ChatNeedsResponses(req) {
+		return p.StreamChatCompletionViaResponses(ctx, req)
+	}
 	chunks := make(chan models.StreamChunk, 64)
 	errs := make(chan error, 1)
 
@@ -1028,6 +1081,9 @@ func (p *Provider) ProxyVectorStoresRequest(ctx context.Context, method string, 
 // Close releases resources.
 func (p *Provider) Close() error {
 	p.httpClient.CloseIdleConnections()
+	if p.decisionHTTPClient != p.httpClient {
+		p.decisionHTTPClient.CloseIdleConnections()
+	}
 	return nil
 }
 

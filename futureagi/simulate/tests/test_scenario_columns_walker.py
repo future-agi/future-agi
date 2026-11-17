@@ -41,9 +41,17 @@ def test_walker_resolves_scenario_columns_dot_path():
 
 def test_walker_resolves_column_name_and_dataset_column_id_subpaths():
     subjects = _subjects_with(
-        {"persona": {"value": "Sarah", "column_name": "persona", "dataset_column_id": "u"}}
+        {
+            "persona": {
+                "value": "Sarah",
+                "column_name": "persona",
+                "dataset_column_id": "u",
+            }
+        }
     )
-    assert walk_subject_path(subjects, "scenario_columns.persona.column_name") == "persona"
+    assert (
+        walk_subject_path(subjects, "scenario_columns.persona.column_name") == "persona"
+    )
     assert (
         walk_subject_path(subjects, "scenario_columns.persona.dataset_column_id") == "u"
     )
@@ -84,15 +92,9 @@ def test_walker_resolves_scenario_graph_node_path():
             "edges": [{"source": "n1", "target": "n2"}],
         }
     )
-    assert (
-        walk_subject_path(subjects, "scenario_graph.nodes.0.type") == "intent"
-    )
-    assert (
-        walk_subject_path(subjects, "scenario_graph.nodes.0.data.label") == "Greet"
-    )
-    assert (
-        walk_subject_path(subjects, "scenario_graph.edges.0.source") == "n1"
-    )
+    assert walk_subject_path(subjects, "scenario_graph.nodes.0.type") == "intent"
+    assert walk_subject_path(subjects, "scenario_graph.nodes.0.data.label") == "Greet"
+    assert walk_subject_path(subjects, "scenario_graph.edges.0.source") == "n1"
 
 
 def test_walker_returns_none_for_unknown_scenario_graph_path():
@@ -107,9 +109,7 @@ def test_walker_returns_none_when_scenario_graph_dict_is_empty():
 
 def test_walker_returns_path_missing_when_scenario_graph_key_absent():
     subjects = _subjects_with(scenario_columns={})
-    assert (
-        walk_subject_path(subjects, "scenario_graph.nodes.0.type") is PATH_MISSING
-    )
+    assert walk_subject_path(subjects, "scenario_graph.nodes.0.type") is PATH_MISSING
 
 
 class _CallStub:
@@ -181,8 +181,7 @@ def test_walker_resolves_deep_dict_value_under_scenario_columns():
         == "Anxious"
     )
     assert (
-        walk_subject_path(subjects, "scenario_columns.persona.value.name")
-        == "Eleanor"
+        walk_subject_path(subjects, "scenario_columns.persona.value.name") == "Eleanor"
     )
 
 
@@ -191,17 +190,30 @@ def test_walker_blocks_secret_shaped_attrs_on_model_subjects():
         agent_name = "Public Agent Name"
 
     blocked = [
-        "api_key", "api_secret", "secret", "secret_key", "password",
-        "token", "access_token", "refresh_token", "access_key",
-        "private_key", "credentials", "credentials_legacy",
+        "api_key",
+        "api_secret",
+        "secret",
+        "secret_key",
+        "password",
+        "token",
+        "access_token",
+        "refresh_token",
+        "access_key",
+        "private_key",
+        "credentials",
+        "credentials_legacy",
     ]
     stub = _Stub()
     for name in blocked:
         setattr(stub, name, f"leaked:{name}")
     subjects = {
-        "call": _CallStub(), "agent": stub,
-        "agent_version": None, "persona": None, "prompt": None,
-        "scenario": None, "simulation": None,
+        "call": _CallStub(),
+        "agent": stub,
+        "agent_version": None,
+        "persona": None,
+        "prompt": None,
+        "scenario": None,
+        "simulation": None,
     }
     for name in blocked:
         for prefix in ("agent.", ""):
@@ -220,15 +232,27 @@ def test_walker_blocks_secret_shaped_attrs_on_model_subjects():
 def test_walker_blocks_secret_shaped_keys_in_dict_traversal():
     """Dict-key lookups (JSONField payloads) must also respect the blocklist."""
     subjects = {
-        "call": type("C", (), {
-            "provider_call_data": {"vapi": {"api_key": "sk-LEAK", "id": "call_xyz"}},
-        })(),
-        "agent": None, "agent_version": None, "persona": None,
-        "prompt": None, "scenario": None, "simulation": None,
+        "call": type(
+            "C",
+            (),
+            {
+                "provider_call_data": {
+                    "vapi": {"api_key": "sk-LEAK", "id": "call_xyz"}
+                },
+            },
+        )(),
+        "agent": None,
+        "agent_version": None,
+        "persona": None,
+        "prompt": None,
+        "scenario": None,
+        "simulation": None,
     }
-    for path in ("provider_call_data.vapi.api_key",
-                 "provider_call_data.vapi.apiKey",
-                 "call.provider_call_data.vapi.api_secret"):
+    for path in (
+        "provider_call_data.vapi.api_key",
+        "provider_call_data.vapi.apiKey",
+        "call.provider_call_data.vapi.api_secret",
+    ):
         result = walk_subject_path(subjects, path)
         assert result in (PATH_MISSING, None), (
             f"dict-key leak: {path!r} returned {result!r}"

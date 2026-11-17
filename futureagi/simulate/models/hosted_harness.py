@@ -132,10 +132,36 @@ class HostedHarnessJob(BaseModel):
     )
     # The name the engine gave a check run ("baseline", "c2-target"); empty on other Runs.
     fix_label = models.CharField(max_length=64, blank=True, default="")
+    # Set on a Run that verifies one agent version on its environment's held-back cases;
+    # such Runs are kept out of every user-facing read, like a fix's check runs. A
+    # nullable link, not a flag, so the read filter holds across outer joins.
+    verify_of = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="verify_runs",
+        db_index=False,
+    )
     # What a fix's check run billed, in US dollars, set once its usage is sealed; until
     # then the fix holds a worst case for it.
     fix_cost_usd = models.DecimalField(
         max_digits=10, decimal_places=4, null=True, blank=True
+    )
+    # What the platform's evals of a fix's check run billed, in US dollars, added as each
+    # one bills. They run after the run's usage is sealed, so they are kept apart.
+    # db_default too: a build from before this column inserts jobs without it.
+    fix_eval_cost_usd = models.DecimalField(
+        max_digits=10, decimal_places=4, default=0, db_default=0
+    )
+    # Set on a check run a retry read again from the failed fix it retries: the retry's
+    # winner grades it, so its evals count against the retry's limit. Null: its own fix's.
+    graded_for = models.ForeignKey(
+        "simulate.AgentFixRun",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="adopted_check_runs",
     )
 
     class Meta:
@@ -150,6 +176,14 @@ class HostedHarnessJob(BaseModel):
                     scenario_count__gte=1, scenario_count__lte=MAX_SCENARIOS_PER_JOB
                 ),
                 name="harness_job_scenario_count_1_5000",
+            ),
+            # One live or completed verify per agent version: a second one would be a
+            # second look. One that failed or was canceled may be followed by another.
+            models.UniqueConstraint(
+                fields=["verify_of", "agent_version"],
+                condition=models.Q(verify_of__isnull=False)
+                & ~models.Q(state__in=["failed", "canceled"]),
+                name="uniq_harness_verify_agent_version",
             ),
         ]
         indexes = [
@@ -622,6 +656,41 @@ class HostedHarnessConversationMessage(BaseModel):
             ),
             models.Index(fields=["conversation", "state"], name="idx_hconv_msg_state"),
         ]
+
+
+class HostedHarnessBuilderTurnUsage(BaseModel):
+    """What a builder chat turn after a build spent, and what it billed.
+
+    Such a turn runs in a chat sandbox of its own, outside any attempt, so no attempt's
+    ledger covers it. One row per command: a replayed ending finds the row and bills nothing
+    new. ``report`` is frozen once written, and None when the turn could not be priced.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        HostedHarnessJob,
+        on_delete=models.CASCADE,
+        related_name="builder_turn_usages",
+    )
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="+"
+    )
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    command_message = models.OneToOneField(
+        HostedHarnessConversationMessage,
+        on_delete=models.CASCADE,
+        related_name="builder_turn_usage",
+    )
+    outcome = models.CharField(max_length=16, default="")
+    # The turn's usage as the guest reported it: tokens, USD, unpriced turns and its models.
+    usage = models.JSONField(default=dict)
+    report = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = "simulate_hosted_harness_builder_turn_usage"
+        indexes = [models.Index(fields=["job"], name="idx_hbturn_job")]
 
 
 class HostedHarnessConversationEvent(BaseModel):

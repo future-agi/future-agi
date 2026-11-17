@@ -806,14 +806,12 @@ test('EVAL-E2E-003: typed executed evaluations retain exact native results and r
       await test.step('UI/API: every invalid family is Error and excluded from successful matches', async () => {
         // Reuse the exact union/range requests captured from supported native UI.
         // New invalid trace IDs may NEVER enter the former valid result set.
-        // UI_READY is one browser action's budget: the replays share one, and each detail
-        // inspection below gets its own. (CI cut the single 60 s step at exactly 60.0 s.)
+        // Keep the existing shared UI_READY ceiling. Each family's two independent
+        // reads inspect the already-terminal CDC results; issue the pair together
+        // rather than serializing ten network round trips inside that ceiling.
+        // Families remain sequential, bounding concurrency at two API reads.
         await test.step('API: invalid traces never enter a former valid result set', async () => {
         for (const saved of positiveRequests) {
-          const replay = await actor.api.post<ListBody>(LIST, saved.params);
-          complete(replay, true);
-          expect.soft(replay.result.table.map(r => r.trace_id).sort(), saved.family.key).toEqual(saved.ids);
-          await attach(`invalid-exclusion-${saved.family.key}`, { params: saved.params, replay, expectedIds: saved.ids });
           // TraceFilterPanel STRING_OPS/NUMBER_OPS + query_builders/filters.py:
           // the public is_not_null predicate covers ANY successful typed value,
           // including an invalid scored choice incorrectly coerced to zero.
@@ -823,7 +821,13 @@ test('EVAL-E2E-003: typed executed evaluations retain exact native results and r
             filter.column_id === saved.family.configId ? { ...filter, filter_config: {
               ...filter.filter_config, filter_op: 'is_not_null', filter_value: null } } : filter);
           const broadParams = { ...saved.params, filters: JSON.stringify(broadFilters) };
-          const broad = await actor.api.post<ListBody>(LIST, broadParams);
+          const [replay, broad] = await Promise.all([
+            actor.api.post<ListBody>(LIST, saved.params),
+            actor.api.post<ListBody>(LIST, broadParams),
+          ]);
+          complete(replay, true);
+          expect.soft(replay.result.table.map(r => r.trace_id).sort(), saved.family.key).toEqual(saved.ids);
+          await attach(`invalid-exclusion-${saved.family.key}`, { params: saved.params, replay, expectedIds: saved.ids });
           complete(broad, true);
           expect.soft(broad.result.table.map(r => r.trace_id).sort(), `${saved.family.key}: no successful invalid value of ANY magnitude`)
             .toEqual(saved.ids);

@@ -11,11 +11,18 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   DEFAULT_API_PATH_PREFIX,
+  apiFormatLabel,
   getApiPathPrefix,
+  isSystemOneFormat,
+  normalizeApiFormat,
   parseTimeoutSeconds,
   withApiPathPrefix,
 } from "./utils";
-import { RESPONSES_ONLY_TAG } from "./modelCompatibility";
+import {
+  DECISIONS_ONLY_TAG,
+  RESPONSES_ONLY_TAG,
+  SYSTEM_ONE_MODELS_HELP,
+} from "./modelCompatibility";
 import AddProviderDialog from "./AddProviderDialog";
 
 const { updateMutate, fetchMutate, fetchState, refreshState, snackbars } =
@@ -732,7 +739,9 @@ describe("AddProviderDialog model discovery", () => {
     // typed by hand for chat completions — but it does list aggregator IDs
     // like `openai/gpt-4o`, which must still get tagged.
     fetchMutate.mockImplementation(
-      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["openai/gpt-4o"] })),
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({ models: ["openai/gpt-4o"] }),
+      ),
     );
     renderEditDialogFor("perplexity", {
       base_url: "https://api.perplexity.ai",
@@ -746,13 +755,539 @@ describe("AddProviderDialog model discovery", () => {
       expect(screen.getAllByText(RESPONSES_ONLY_TAG).length).toBe(1),
     );
 
-    const sonarChip = screen.getByText("sonar").closest("li, [class*='MuiChip']");
+    const sonarChip = screen
+      .getByText("sonar")
+      .closest("li, [class*='MuiChip']");
     expect(sonarChip?.textContent).not.toContain(RESPONSES_ONLY_TAG);
 
     const catalogueChip = screen
       .getByText("openai/gpt-4o")
       .closest("li, [class*='MuiChip']");
     expect(catalogueChip?.textContent).toContain(RESPONSES_ONLY_TAG);
+  });
+});
+
+describe("API format labels", () => {
+  it("names System One, and its typesafe alias, for what it is", () => {
+    expect(apiFormatLabel("systemone")).toBe("System One (decision models)");
+    expect(apiFormatLabel("typesafe")).toBe("System One (decision models)");
+  });
+
+  it("leaves the chat formats as their IDs", () => {
+    expect(apiFormatLabel("openai")).toBe("openai");
+    expect(apiFormatLabel("anthropic")).toBe("anthropic");
+  });
+
+  it("passes an empty format through so the caller's placeholder shows", () => {
+    expect(apiFormatLabel(undefined)).toBeUndefined();
+    expect(apiFormatLabel("")).toBe("");
+  });
+
+  it("maps only the typesafe alias onto System One", () => {
+    expect(normalizeApiFormat("typesafe")).toBe("systemone");
+    expect(normalizeApiFormat("openai")).toBe("openai");
+    expect(isSystemOneFormat("typesafe")).toBe(true);
+    expect(isSystemOneFormat("systemone")).toBe(true);
+    expect(isSystemOneFormat("openai")).toBe(false);
+    expect(isSystemOneFormat(undefined)).toBe(false);
+  });
+
+  it("never adds a path prefix to a System One config", () => {
+    // The dialect row owns the leaf path; the prefix stays the default.
+    const config = { base_url: "https://api.typesafe.ai" };
+    expect(withApiPathPrefix(config, "systemone", "/v1")).toEqual(config);
+  });
+});
+
+describe("AddProviderDialog System One presets", () => {
+  beforeEach(() => {
+    updateMutate.mockReset();
+    fetchState.isPending = false;
+    refreshState.failed = false;
+    snackbars.length = 0;
+    fetchMutate.mockReset();
+    // Would list chat models if anything asked; nothing should.
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["gpt-4o"] })),
+    );
+  });
+
+  // Longer than the dialog's 600ms model-fetch debounce.
+  const pastDebounce = () =>
+    act(() => new Promise((resolve) => setTimeout(resolve, 900)));
+
+  const pickPreset = async (label) => {
+    await userEvent.click(screen.getByRole("combobox", { name: /^Provider/ }));
+    await userEvent.click(screen.getByRole("option", { name: label }));
+  };
+
+  const apiFormatField = () =>
+    screen.getByRole("combobox", { name: /^API Format/ });
+
+  const chipLabels = () =>
+    Array.from(document.querySelectorAll(".MuiChip-label")).map(
+      (el) => el.textContent,
+    );
+
+  it.each([
+    {
+      label: "TypeSafe",
+      name: "typesafe",
+      baseUrl: "https://api.typesafe.ai",
+      models: ["jev-1.13.0", "jev-latest"],
+    },
+    {
+      label: "Perplexity Decider",
+      name: "perplexity-decider",
+      baseUrl: "https://api.perplexity.ai",
+      models: ["pplx-decider-v1.1-27b", "pplx-decider-v1-27b"],
+    },
+  ])(
+    "$label saves System One with its endpoint and built-in models, never probing",
+    async ({ label, name, baseUrl, models }) => {
+      renderCreateDialog();
+      await pickPreset(label);
+
+      expect(screen.getByLabelText(/^Base URL/).value).toBe(baseUrl);
+      expect(apiFormatField().textContent).toBe("System One (decision models)");
+      expect(apiFormatField().getAttribute("aria-disabled")).toBe("true");
+      // System One has no path prefix to set.
+      expect(screen.queryByLabelText("API Path Prefix")).toBeNull();
+      // Offered and already selected: there is no listing to wait for.
+      expect(chipLabels()).toEqual(models);
+      expect(screen.getByText(SYSTEM_ONE_MODELS_HELP)).toBeTruthy();
+
+      await userEvent.type(screen.getByLabelText(/^API Key/), "key-123");
+      await pastDebounce();
+      expect(fetchMutate).not.toHaveBeenCalled();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Add Provider" }),
+      );
+      expect(fetchMutate).not.toHaveBeenCalled();
+      expect(updateMutate).toHaveBeenCalledTimes(1);
+      expect(updateMutate.mock.calls[0][0]).toEqual({
+        gatewayId: "gw-1",
+        name,
+        config: {
+          base_url: baseUrl,
+          api_format: "systemone",
+          api_key: "key-123",
+          models,
+        },
+      });
+    },
+  );
+
+  it("does not read the Perplexity Decider as Perplexity's Responses catalogue", async () => {
+    // Same host as the chat API, whose catalogue is tagged Responses-only.
+    renderCreateDialog();
+    await pickPreset("Perplexity Decider");
+
+    expect(screen.queryByText(RESPONSES_ONLY_TAG)).toBeNull();
+    // So Select All still covers its models.
+    expect(screen.getByRole("button", { name: "Deselect All" })).toBeTruthy();
+  });
+
+  it("requires a base URL for a custom System One endpoint", async () => {
+    renderCreateDialog();
+    await pickPreset("Custom System One endpoint");
+
+    const baseUrl = screen.getByLabelText(/^Base URL/);
+    expect(baseUrl.value).toBe("");
+    expect(baseUrl.required).toBe(true);
+    expect(apiFormatField().textContent).toBe("System One (decision models)");
+    expect(
+      screen.getByText(/the gateway posts to this URL plus \/v1\/systemone/),
+    ).toBeTruthy();
+    // No built-in list for an endpoint we know nothing about.
+    expect(chipLabels()).toEqual([]);
+
+    await userEvent.type(screen.getByLabelText(/^API Key/), "key-123");
+    await userEvent.type(
+      screen.getByPlaceholderText(/comma-separated model IDs/i),
+      "strands-decider{enter}",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect(updateMutate).not.toHaveBeenCalled();
+    expect(
+      screen.getAllByText(/This provider has no preset endpoint/).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("rejects a custom System One base URL that is not http(s)", async () => {
+    renderCreateDialog();
+    await pickPreset("Custom System One endpoint");
+
+    await userEvent.type(
+      screen.getByLabelText(/^Base URL/),
+      "ftp://decider.example.com",
+    );
+    await userEvent.type(screen.getByLabelText(/^API Key/), "key-123");
+    await userEvent.type(
+      screen.getByPlaceholderText(/comma-separated model IDs/i),
+      "strands-decider{enter}",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect(updateMutate).not.toHaveBeenCalled();
+    expect(
+      screen.getAllByText(/Base URL must start with http:\/\/ or https:\/\//)
+        .length,
+    ).toBeGreaterThan(0);
+  });
+
+  it.each(["", "   "])(
+    "saves a keyless custom System One endpoint with clear optional-key help (key %j)",
+    async (apiKey) => {
+      renderCreateDialog();
+      await pickPreset("Custom System One endpoint");
+      fireEvent.change(screen.getByLabelText(/^Base URL/), {
+        target: { value: "https://decider.example.com" },
+      });
+      fireEvent.change(screen.getByLabelText(/^API Key/), {
+        target: { value: apiKey },
+      });
+      expect(screen.getByLabelText(/^API Key/).required).toBe(false);
+      expect(
+        screen.getByText(/Optional for a self-hosted System One endpoint/),
+      ).toBeTruthy();
+      await userEvent.type(
+        screen.getByPlaceholderText(/comma-separated model IDs/i),
+        "strands-decider{enter}",
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Add Provider" }),
+      );
+
+      expect(updateMutate).toHaveBeenCalledTimes(1);
+      expect(updateMutate.mock.calls[0][0]).toEqual({
+        gatewayId: "gw-1",
+        name: "custom-systemone",
+        config: {
+          base_url: "https://decider.example.com",
+          api_format: "systemone",
+          models: ["strands-decider"],
+        },
+      });
+      expect(fetchMutate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "",
+    "https://",
+    "https://bad host.invalid",
+    "https://decider.example.com:invalid",
+  ])("refuses a keyless endpoint with invalid Base URL %j", async (baseUrl) => {
+    renderCreateDialog();
+    await pickPreset("Custom System One endpoint");
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: baseUrl },
+    });
+    expect(screen.getByLabelText(/^API Key/).required).toBe(true);
+    await userEvent.type(
+      screen.getByPlaceholderText(/comma-separated model IDs/i),
+      "strands-decider{enter}",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    expect(updateMutate).not.toHaveBeenCalled();
+    expect(
+      screen.getByLabelText(/^Base URL/).getAttribute("aria-invalid"),
+    ).toBe("true");
+  });
+
+  it.each(["TypeSafe", "Perplexity Decider", "OpenAI"])(
+    "still requires an API key for %s",
+    async (label) => {
+      renderCreateDialog();
+      await pickPreset(label);
+      expect(screen.getByLabelText(/^API Key/).required).toBe(true);
+      if (label === "OpenAI") {
+        await userEvent.type(
+          screen.getByPlaceholderText(/type manually/i),
+          "gpt-4o{enter}",
+        );
+      }
+      await userEvent.click(
+        screen.getByRole("button", { name: "Add Provider" }),
+      );
+      expect(updateMutate).not.toHaveBeenCalled();
+      expect(screen.getAllByText("API key is required").length).toBeGreaterThan(
+        0,
+      );
+    },
+  );
+
+  it.each([
+    "https://API.TypeSafe.AI./v1",
+    "https://api.perplexity.ai",
+    "https://api.openai.com/v1",
+  ])(
+    "requires a key when a custom System One endpoint uses vendor URL %s",
+    async (baseUrl) => {
+      renderCreateDialog();
+      await pickPreset("Custom System One endpoint");
+      fireEvent.change(screen.getByLabelText(/^Base URL/), {
+        target: { value: baseUrl },
+      });
+      expect(screen.getByLabelText(/^API Key/).required).toBe(true);
+      expect(screen.queryByText(/Optional for a self-hosted/)).toBeNull();
+      await userEvent.type(
+        screen.getByPlaceholderText(/comma-separated model IDs/i),
+        "strands-decider{enter}",
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Add Provider" }),
+      );
+      expect(updateMutate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("resaves a keyless custom System One provider without adding a key", async () => {
+    renderEditDialogFor("custom-systemone", {
+      base_url: "https://decider.example.com",
+      api_format: "systemone",
+      models: ["strands-decider"],
+    });
+    expect(screen.getByText(/Optional for a self-hosted/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config).not.toHaveProperty("api_key");
+    expect(fetchMutate).not.toHaveBeenCalled();
+  });
+
+  it("saves a custom System One endpoint with the URL and typed model", async () => {
+    renderCreateDialog();
+    await pickPreset("Custom System One endpoint");
+
+    await userEvent.type(
+      screen.getByLabelText(/^Base URL/),
+      "https://decider.example.com",
+    );
+    await userEvent.type(screen.getByLabelText(/^API Key/), "key-123");
+    await pastDebounce();
+    await userEvent.type(
+      screen.getByPlaceholderText(/comma-separated model IDs/i),
+      "strands-decider{enter}",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect(fetchMutate).not.toHaveBeenCalled();
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    expect(updateMutate.mock.calls[0][0]).toMatchObject({
+      name: "custom-systemone",
+      config: {
+        base_url: "https://decider.example.com",
+        api_format: "systemone",
+        api_key: "key-123",
+        models: ["strands-decider"],
+      },
+    });
+    expect(updateMutate.mock.calls[0][0].config).not.toHaveProperty(
+      "api_path_prefix",
+    );
+  });
+
+  it("goes back to a chat format and an empty list when a chat preset is picked", async () => {
+    renderCreateDialog();
+    await pickPreset("TypeSafe");
+    await pickPreset("OpenAI");
+
+    expect(apiFormatField().textContent).toBe("openai");
+    expect(chipLabels()).toEqual([]);
+    expect(screen.getByLabelText(/^Base URL/).value).toBe(
+      "https://api.openai.com/v1",
+    );
+  });
+
+  it("does not offer System One for a chat preset", async () => {
+    renderCreateDialog();
+    await userEvent.click(apiFormatField());
+
+    const formats = screen.getAllByRole("option").map((o) => o.textContent);
+    expect(formats).toEqual(["openai", "anthropic"]);
+  });
+
+  it("opens a saved TypeSafe provider without listing models", async () => {
+    renderEditDialogFor("typesafe", {
+      base_url: "https://api.typesafe.ai",
+      api_format: "systemone",
+      models: ["jev-1.13.0"],
+    });
+    await pastDebounce();
+
+    expect(fetchMutate).not.toHaveBeenCalled();
+    expect(apiFormatField().textContent).toBe("System One (decision models)");
+    // The other built-in model is still on offer.
+    await userEvent.click(screen.getByRole("button", { name: "Select All" }));
+    expect(chipLabels()).toEqual(["jev-1.13.0", "jev-latest"]);
+
+    const save = screen.getByRole("button", { name: "Save Changes" });
+    expect(save.disabled).toBe(false);
+    await userEvent.click(save);
+    expect(updateMutate.mock.calls[0][0].config).toEqual({
+      base_url: "https://api.typesafe.ai",
+      api_format: "systemone",
+      models: ["jev-1.13.0", "jev-latest"],
+    });
+  });
+
+  it("saves the typesafe alias as System One", async () => {
+    renderEditDialogFor("typesafe", {
+      base_url: "https://api.typesafe.ai",
+      api_format: "typesafe",
+      models: ["jev-latest"],
+    });
+
+    expect(apiFormatField().textContent).toBe("System One (decision models)");
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config.api_format).toBe("systemone");
+    expect(fetchMutate).not.toHaveBeenCalled();
+  });
+
+  it("repairs a decision preset that was saved with a chat format", async () => {
+    // The admin API defaults api_format to openai, which would make TypeSafe a
+    // chat provider; the dialog must not show it as one, or probe it.
+    renderEditDialogFor("perplexity-decider", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      models: ["pplx-decider-v1.1-27b"],
+    });
+
+    expect(apiFormatField().textContent).toBe("System One (decision models)");
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config.api_format).toBe("systemone");
+    expect(fetchMutate).not.toHaveBeenCalled();
+  });
+
+  it("never probes a saved custom System One endpoint, even with a new key", async () => {
+    renderEditDialogFor("custom-systemone", {
+      base_url: "https://decider.example.com",
+      api_format: "systemone",
+      models: ["strands-decider"],
+    });
+
+    await userEvent.type(screen.getByLabelText(/^API Key/), "key-rotated");
+    await pastDebounce();
+
+    expect(fetchMutate).not.toHaveBeenCalled();
+    const save = screen.getByRole("button", { name: "Save Changes" });
+    expect(save.disabled).toBe(false);
+    await userEvent.click(save);
+    expect(updateMutate.mock.calls[0][0].config).toMatchObject({
+      api_format: "systemone",
+      api_key: "key-rotated",
+      models: ["strands-decider"],
+    });
+  });
+});
+
+describe("AddProviderDialog OpenAI decision models", () => {
+  beforeEach(() => {
+    updateMutate.mockReset();
+    fetchState.isPending = false;
+    fetchMutate.mockReset();
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] }),
+      ),
+    );
+  });
+
+  it("offers gpt-6-luna beside OpenAI's listing, tagged and out of Select All", async () => {
+    renderCreateDialog();
+
+    await userEvent.type(screen.getByLabelText(/^API Key/), "sk-good");
+    const input = await screen.findByPlaceholderText(/Select models/i);
+    // The count stays the listing's own.
+    expect(screen.getByText("(2 available)")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "Select All" }));
+    expect(
+      Array.from(document.querySelectorAll(".MuiChip-label")).map(
+        (el) => el.textContent,
+      ),
+    ).toEqual(["gpt-4o", "gpt-4o-mini"]);
+
+    await userEvent.click(input);
+    const luna = await screen.findByRole("option", { name: /gpt-6-luna/ });
+    expect(luna.textContent).toContain(DECISIONS_ONLY_TAG);
+    expect(
+      screen.getByRole("option", { name: /gpt-4o-mini/ }).textContent,
+    ).not.toContain(DECISIONS_ONLY_TAG);
+
+    await userEvent.click(luna);
+    // Closed first: with autoSelect, blurring an open list toggles the
+    // highlighted option again.
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    expect(updateMutate.mock.calls[0][0].config.models).toEqual([
+      "gpt-4o",
+      "gpt-4o-mini",
+      "gpt-6-luna",
+    ]);
+  });
+
+  it("does not let gpt-6-luna stand in for a listing that came back empty", async () => {
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({
+          models: [],
+          error: "Failed to fetch models from provider",
+        }),
+      ),
+    );
+    renderCreateDialog();
+
+    await userEvent.type(screen.getByLabelText(/^API Key/), "sk-bad");
+    await screen.findByText(/check that it is valid for this provider/i);
+
+    await userEvent.click(screen.getByPlaceholderText(/type manually/i));
+    expect(screen.queryByRole("option", { name: /gpt-6-luna/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Add Provider" }).disabled).toBe(
+      true,
+    );
+  });
+
+  it("keeps the gate for a rejected key after gpt-6-luna was picked", async () => {
+    // Picked from the list, so it is not a hand-typed override.
+    let reject = false;
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.(
+          reject
+            ? { models: [], error: "Failed to fetch models from provider" }
+            : { models: ["gpt-4o"] },
+        ),
+      ),
+    );
+    renderCreateDialog();
+
+    await userEvent.type(screen.getByLabelText(/^API Key/), "sk-good");
+    const input = await screen.findByPlaceholderText(/Select models/i);
+    await userEvent.click(input);
+    await userEvent.click(
+      await screen.findByRole("option", { name: /gpt-6-luna/ }),
+    );
+    await userEvent.keyboard("{Escape}");
+    // Selected, with the tag carried into its chip.
+    expect(
+      Array.from(document.querySelectorAll(".MuiChip-label")).map(
+        (el) => el.textContent,
+      ),
+    ).toEqual([`gpt-6-luna${DECISIONS_ONLY_TAG}`]);
+
+    reject = true;
+    await userEvent.clear(screen.getByLabelText(/^API Key/));
+    await userEvent.type(screen.getByLabelText(/^API Key/), "sk-rejected");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add Provider" }).disabled,
+      ).toBe(true),
+    );
+    expect(updateMutate).not.toHaveBeenCalled();
   });
 });
 

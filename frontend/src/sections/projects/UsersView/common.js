@@ -1,3 +1,5 @@
+import { TracerProjectGetUserGraphDataResponse } from "src/generated/api-contracts/api.zod";
+import { isIncompleteCost, monetaryCostLabel } from "../LLMTracing/GraphSection/common";
 import UserIdCellRenderer from "./UserCellRenderers/UserIdCellRenderer";
 import ProjectCellRenderer from "./UserCellRenderers/ProjectCellRenderer";
 import LastActiveCellRenderer from "./UserCellRenderers/LastActiveCellRenderer";
@@ -24,6 +26,7 @@ import {
 } from "date-fns";
 import logger from "src/utils/logger";
 import { canonicalEntries, formatMs } from "../../../utils/utils";
+import { formatCost } from "../LLMTracing/formatters";
 import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
 import { ROW_HEIGHT } from "src/theme/sizes";
 
@@ -120,13 +123,17 @@ export const transformGraphDataToChartData = (response) => {
   if (!response?.result) return [];
 
   const charts = [];
+  const coverage = TracerProjectGetUserGraphDataResponse.shape.result.shape.cost_coverage.parse(
+    response.result.cost_coverage,
+  );
+  const byTimestamp = new Map((coverage || []).map((point) => [point.timestamp, point]));
 
   // canonicalEntries filters out the camelCase aliases the axios
   // response interceptor attaches alongside snake_case metric keys.
   // Without it each metric renders twice (once for `tokens_used` and
   // once for `tokensUsed`, both pointing at the same series).
   for (const [metricKey, metricData] of canonicalEntries(response.result)) {
-    if (!Array.isArray(metricData) || metricData.length === 0) continue;
+    if (metricKey === "cost_coverage" || !Array.isArray(metricData) || metricData.length === 0) continue;
 
     const displayName = toDisplayName(metricKey);
 
@@ -136,18 +143,25 @@ export const transformGraphDataToChartData = (response) => {
       0,
     );
 
+    const incomplete = metricKey === "cost" && coverage?.some(isIncompleteCost);
+    const known = coverage?.reduce((sum, point) => sum + point.known_fact_count, 0) || 0;
+    const subtotal = coverage?.reduce((sum, point) => sum + point.known_subtotal, 0) || 0;
     charts.push({
       id: metricKey,
       label: displayName,
       unit: getUnitForMetric(metricKey),
       total,
+      ...(incomplete ? { totalLabel: monetaryCostLabel(null, {
+        status: known > 0 ? "partial" : "unknown", known_subtotal: subtotal,
+      }) } : {}),
       series: [
         {
           name: displayName,
-          data: metricData.map((item) => [
-            new Date(item.timestamp).getTime(),
-            item[metricKey],
-          ]),
+          data: metricData.map((item) => metricKey === "cost" ? {
+            x: new Date(item.timestamp).getTime(),
+            y: isIncompleteCost(byTimestamp.get(item.timestamp)) ? null : item[metricKey],
+            cost_coverage: byTimestamp.get(item.timestamp),
+          } : [new Date(item.timestamp).getTime(), item[metricKey]]),
         },
       ],
     });
@@ -170,6 +184,16 @@ export const userDefaultFilter = {
 // page lists every project's rows, so the Project column names each row's
 // scope (TH-5037). Inside a project it would repeat one value, so it is
 // omitted there.
+// Coverage changes presentation only, never the numeric grid row.
+export const formatUsersCost = ({ value, data }) => {
+  const coverage = data?.cost_coverage;
+  if (coverage === undefined || coverage.status === "complete") return formatCost(value);
+  if (coverage?.status === "partial") {
+    return `Partial — Known subtotal ${formatCost(coverage.known_subtotal)}`;
+  }
+  return "Unknown";
+};
+
 export const getUsersColumnConfig = ({ includeProject = false } = {}) => {
   const columns = [
     {
@@ -254,9 +278,10 @@ export const getUsersColumnConfig = ({ includeProject = false } = {}) => {
       field: "total_cost",
       minWidth: 200,
       flex: 1,
-      cellRenderer: GeneralStatCellRenderer,
+      cellRenderer: formatUsersCost,
       cellRendererParams: { dataType: "cost" },
-      valueFormatter: (params) => params.value?.toFixed(2),
+      valueFormatter: formatUsersCost,
+      tooltipValueGetter: formatUsersCost,
     },
     {
       headerName: "Avg Latency / Trace (ms)",

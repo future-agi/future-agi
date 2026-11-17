@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "runtime_activation_contract": "standalone-compose-direct-v1",
+  "compose_file": "docker-compose.yml",
+  "automatic_profiles": [],
+  "services": {
+    "app": {
+      "profiles": [],
+      "restart": "unless-stopped",
+      "mounts": [
+        {
+          "type": "volume",
+          "source": "app-data",
+          "target": "/data",
+          "read_only": false
+        },
+        {
+          "type": "bind",
+          "source": "./agentcc-gateway/config.example.yaml",
+          "target": "/etc/futureagi/secrets/agentcc.yaml",
+          "read_only": true
+        },
+        {
+          "type": "bind",
+          "source": "/dev/null",
+          "target": "/etc/futureagi/secrets/vertex.json",
+          "read_only": true
+        }
+      ]
+    },
+    "clickhouse": {
+      "profiles": [],
+      "restart": "unless-stopped",
+      "mounts": [
+        {
+          "type": "bind",
+          "source": "./futureagi/.ci/clickhouse-storage-policy.xml",
+          "target": "/etc/clickhouse-server/config.d/storage-policy.xml",
+          "read_only": true
+        },
+        {
+          "type": "bind",
+          "source": "./deploy/standalone/clickhouse/config.d/zz-small-host.xml",
+          "target": "/etc/clickhouse-server/config.d/zz-small-host.xml",
+          "read_only": true
+        },
+        {
+          "type": "bind",
+          "source": "./deploy/clickhouse/users.d/zz-default-password.xml",
+          "target": "/etc/clickhouse-server/users.d/zz-default-password.xml",
+          "read_only": true
+        },
+        {
+          "type": "bind",
+          "source": "./deploy/standalone/clickhouse/users.d/zz-small-host.xml",
+          "target": "/etc/clickhouse-server/users.d/zz-small-host.xml",
+          "read_only": true
+        },
+        {
+          "type": "volume",
+          "source": "clickhouse-data",
+          "target": "/var/lib/clickhouse",
+          "read_only": false
+        }
+      ]
+    },
+    "code-executor": {
+      "profiles": [
+        "sandbox"
+      ],
+      "restart": "unless-stopped",
+      "mounts": []
+    },
+    "postgres": {
+      "profiles": [],
+      "restart": "unless-stopped",
+      "mounts": [
+        {
+          "type": "volume",
+          "source": "postgres-data",
+          "target": "/var/lib/postgresql/data",
+          "read_only": false
+        }
+      ]
+    },
+    "serving": {
+      "profiles": [
+        "ml"
+      ],
+      "restart": "unless-stopped",
+      "mounts": []
+    }
+  },
+  "volumes": {
+    "app-data": {},
+    "clickhouse-data": {},
+    "postgres-data": {}
+  },
+  "backup_coverage": {
+    "app-data": {
+      "method": "cold_archive",
+      "domains": [
+        "object_store",
+        "shared_files",
+        "temporal"
+      ],
+      "restore": "same_named_volume",
+      "reason": "/data holds MinIO, Temporal SQLite, collector spool and telemetry"
+    },
+    "postgres-data": {
+      "method": "cold_archive",
+      "domains": [
+        "postgres_app"
+      ],
+      "restore": "same_named_volume",
+      "reason": "All PostgreSQL application relations, CDC outbox and migration recorder"
+    },
+    "clickhouse-data": {
+      "method": "cold_archive",
+      "domains": [
+        "clickhouse"
+      ],
+      "restore": "same_named_volume",
+      "reason": "All ClickHouse table parts, dictionaries and observed catalog"
+    }
+  },
+  "service_storage": {
+    "app": {
+      "volumes": ["app-data"],
+      "ephemeral": false,
+      "reason": "All durable embedded service state is under /data; Redis and container scratch are ephemeral"
+    },
+    "postgres": {
+      "volumes": ["postgres-data"],
+      "ephemeral": false,
+      "reason": "The PostgreSQL data directory is cold-archived before target startup"
+    },
+    "clickhouse": {
+      "volumes": ["clickhouse-data"],
+      "ephemeral": false,
+      "reason": "The ClickHouse data directory is cold-archived before target startup"
+    },
+    "serving": {
+      "volumes": [],
+      "ephemeral": true,
+      "reason": "Optional ml profile is unqualified for automatic updates; model caches are disposable"
+    },
+    "code-executor": {
+      "volumes": [],
+      "ephemeral": true,
+      "reason": "Optional sandbox profile is unqualified for automatic updates; execution scratch is disposable"
+    }
+  },
+  "bind_coverage": {
+    "app:/etc/futureagi/secrets/agentcc.yaml": {
+      "method": "saved_private_config",
+      "reason": "Save/verify exact private bytes and metadata; default /dev/null is identity-checked"
+    },
+    "app:/etc/futureagi/secrets/vertex.json": {
+      "method": "empty_device",
+      "reason": "Save/verify exact private bytes and metadata; default /dev/null is identity-checked"
+    },
+    "clickhouse:/etc/clickhouse-server/config.d/storage-policy.xml": {
+      "method": "retained_deployment",
+      "reason": "Authenticated retained deployment file; verify bytes before start and restore"
+    },
+    "clickhouse:/etc/clickhouse-server/config.d/zz-small-host.xml": {
+      "method": "retained_deployment",
+      "reason": "Authenticated retained deployment file; verify bytes before start and restore"
+    },
+    "clickhouse:/etc/clickhouse-server/users.d/zz-default-password.xml": {
+      "method": "retained_deployment",
+      "reason": "Authenticated retained deployment file; verify bytes before start and restore"
+    },
+    "clickhouse:/etc/clickhouse-server/users.d/zz-small-host.xml": {
+      "method": "retained_deployment",
+      "reason": "Authenticated retained deployment file; verify bytes before start and restore"
+    }
+  }
+}

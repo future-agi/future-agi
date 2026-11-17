@@ -75,10 +75,15 @@ func NewEngine(plugins ...Plugin) *Engine {
 
 // Process executes the plugin pipeline: pre-plugins → provider call → post-plugins.
 func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, providerCall ProviderFunc) error {
+	// Make the authoritative request context available to plugins without
+	// copying correlation fields into client-visible metadata or changing the
+	// context passed to the provider.
+	pluginCtx := models.WithRequestContext(ctx, rc)
+
 	// Pre-plugins (always sequential — order matters for security gates).
 	for _, p := range e.plugins {
 		start := time.Now()
-		result := p.ProcessRequest(ctx, rc)
+		result := p.ProcessRequest(pluginCtx, rc)
 		elapsed := time.Since(start)
 		rc.RecordTiming("pre_"+p.Name(), elapsed)
 
@@ -127,7 +132,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			"request_id", rc.RequestID,
 			"provider", rc.Provider,
 			"model", rc.Model,
-			"error", err,
+			"error", loggedError(rc, err),
 			"elapsed", providerElapsed,
 		)
 		e.RunPostPlugins(ctx, rc)
@@ -145,6 +150,32 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	return nil
 }
 
+// CheckAccess runs the request-side checks of the AccessGate plugins, in
+// priority order, and returns the first refusal. A handler that calls the
+// provider without Process, such as a lifecycle read, calls it first so the
+// caller is admitted or refused as Process would.
+func (e *Engine) CheckAccess(ctx context.Context, rc *models.RequestContext) *models.APIError {
+	for _, p := range e.plugins {
+		if g, ok := p.(AccessGate); !ok || !g.IsAccessGate() {
+			continue
+		}
+		if result := p.ProcessRequest(ctx, rc); result.Error != nil {
+			return result.Error
+		}
+	}
+	return nil
+}
+
+// loggedError is what the failure log records. A decision vendor's error
+// text can quote the content being judged, so decision calls log only the
+// error code and status, as the request log and span do.
+func loggedError(rc *models.RequestContext, err error) any {
+	if rc.EndpointType == "decision" {
+		return models.LoggedError(rc.EndpointType, err)
+	}
+	return err
+}
+
 // RunPostPlugins runs post-processing plugins with optimized execution:
 //  1. Sequential plugins run first (in priority order).
 //  2. Parallel-safe plugins run concurrently after sequential ones complete.
@@ -159,6 +190,10 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 // the plugins after it, logging among them, see the request as refused. A
 // streamed response is already sent, so its caller has nothing to refuse.
 func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) *models.APIError {
+	// Streaming handlers can invoke RunPostPlugins directly after Process returns,
+	// so reattach RequestContext here as well.
+	ctx = models.WithRequestContext(ctx, rc)
+
 	isCacheHit := rc.Flags.ShortCircuited && rc.Metadata["cache_status"] == "hit_exact"
 	var blocked *models.APIError
 
@@ -252,4 +287,14 @@ func postPriority(p Plugin) int {
 // PluginCount returns the number of registered plugins.
 func (e *Engine) PluginCount() int {
 	return len(e.plugins)
+}
+
+// Plugin returns a registered plugin for protocol adapters that must bind its policy.
+func (e *Engine) Plugin(name string) Plugin {
+	for _, p := range e.plugins {
+		if p.Name() == name {
+			return p
+		}
+	}
+	return nil
 }

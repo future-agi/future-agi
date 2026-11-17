@@ -629,7 +629,7 @@ function StepCard({ step }) {
           )}
         </Box>
         <Stack gap={0.4} flex={1} minWidth={0}>
-          <Typography fontSize="13px" fontWeight={600} color="text.primary">
+          <Typography fontSize="12px" fontWeight={600} color="text.primary">
             {step.title}
           </Typography>
           {(isRunning || isDone) && (
@@ -845,7 +845,7 @@ function SynthesisCard({ synthesis }) {
       <Box sx={{ mb: 1 }}>
         <AnalyzeMarkdown
           text={head.revealed}
-          fontSize="13px"
+          fontSize="12px"
           color="text.primary"
           sx={{ lineHeight: 1.55 }}
         />
@@ -873,7 +873,7 @@ function SynthesisCard({ synthesis }) {
           <Box sx={{ flex: 1 }}>
             <AnalyzeMarkdown
               text={fix.revealed}
-              fontSize="13px"
+              fontSize="12px"
               color="text.secondary"
               sx={{ lineHeight: 1.6 }}
             />
@@ -931,7 +931,7 @@ function UserQuestionBubble({ text }) {
         }}
       >
         <Typography
-          fontSize="13px"
+          fontSize="12px"
           color="text.primary"
           sx={{ lineHeight: 1.55 }}
         >
@@ -953,7 +953,7 @@ function AssistantIntro({ text }) {
         sx={{ color: "status.discovery.fg", mt: "3px", flexShrink: 0 }}
       />
       <Typography
-        fontSize="13px"
+        fontSize="12px"
         color="text.primary"
         sx={{ lineHeight: 1.55 }}
       >
@@ -1013,7 +1013,7 @@ function SubagentStepRow({ step }) {
       </Box>
       <Stack gap={0.15} sx={{ minWidth: 0 }}>
         <Typography
-          fontSize="13px"
+          fontSize="12px"
           fontWeight={isRunning ? 600 : 500}
           color={
             isRunning
@@ -1052,7 +1052,7 @@ function StreamingMarkdown({ text, identityKey }) {
   const { revealed, isStreaming } = useStreamingText(text, { identityKey });
   return (
     <Box>
-      <AnalyzeMarkdown text={revealed} fontSize="13px" color="text.primary" />
+      <AnalyzeMarkdown text={revealed} fontSize="12px" color="text.primary" />
       {isStreaming && <StreamCursor />}
     </Box>
   );
@@ -1227,7 +1227,7 @@ function FollowUpInput({ disabled, placeholder, onSubmit }) {
         InputProps={{
           disableUnderline: true,
           sx: {
-            fontSize: "13px",
+            fontSize: "12px",
             lineHeight: 1.5,
             py: 0.5,
             // Lighter than `text.secondary` at full opacity but still more
@@ -1557,7 +1557,7 @@ export default function AnalyzeTab({ error }) {
                   sx={{ color: "accent.brand" }}
                 />
               </Box>
-              <Typography fontSize="13px" fontWeight={600} color="text.primary">
+              <Typography fontSize="12px" fontWeight={600} color="text.primary">
                 {readOnly
                   ? "No analysis saved for this issue."
                   : "No analysis yet"}
@@ -1615,7 +1615,7 @@ export default function AnalyzeTab({ error }) {
                   "@keyframes spin": { to: { transform: "rotate(360deg)" } },
                 }}
               />
-              <Typography fontSize="13px" fontWeight={600} color="text.primary">
+              <Typography fontSize="12px" fontWeight={600} color="text.primary">
                 {setupStatus || "Spinning up sub-agents…"}
               </Typography>
               <Typography fontSize="12px" color="text.secondary">
@@ -1673,8 +1673,8 @@ export default function AnalyzeTab({ error }) {
           disabled={isFollowUpStreaming}
           placeholder={
             isFollowUpStreaming
-              ? "Falcon is investigating…"
-              : "Ask Falcon a follow-up…"
+              ? "Investigating…"
+              : "Ask a follow-up…"
           }
           onSubmit={runFollowUp}
         />

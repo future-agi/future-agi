@@ -62,9 +62,7 @@ class TestPlatformCategoryMap:
         ],
     )
     def test_data_sync_platforms_have_data_sync_category(self, platform):
-        assert (
-            PLATFORM_CATEGORY[platform.value] == IntegrationCategory.DATA_SYNC
-        )
+        assert PLATFORM_CATEGORY[platform.value] == IntegrationCategory.DATA_SYNC
 
     def test_action_only_platforms_derived_from_map(self):
         """`ACTION_ONLY_PLATFORMS` is derived; it must match the map."""
@@ -103,17 +101,13 @@ class TestActionOnlyUniqueConstraint:
     (organization, workspace, platform) WHERE platform in action-only set
     AND deleted=False."""
 
-    def test_second_live_linear_raises_integrity_error(
-        self, organization, workspace
-    ):
+    def test_second_live_linear_raises_integrity_error(self, organization, workspace):
         _make_linear(organization, workspace)
         with pytest.raises(IntegrityError):
             with transaction.atomic():
                 _make_linear(organization, workspace, display_name="dup")
 
-    def test_soft_deleted_row_does_not_block_new_insert(
-        self, organization, workspace
-    ):
+    def test_soft_deleted_row_does_not_block_new_insert(self, organization, workspace):
         first = _make_linear(organization, workspace)
         first.deleted = True
         first.save(update_fields=["deleted"])

@@ -63,6 +63,13 @@ vi.mock("notistack", async (importOriginal) => {
   };
 });
 
+// The run's fix launch options; Run Epoch reads which failing cases came
+// from evidence. None by default.
+const fixLaunchOptions = vi.fn();
+vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useFixLaunchOptions: (id, opts) => fixLaunchOptions(id, opts),
+}));
 // Self-improvement is in beta; the launch-flow tests below open it explicitly.
 const useSelfImprovementOpen = vi.fn();
 // Fix my agent is a beta capability; each test sets whether the org has it.
@@ -97,10 +104,23 @@ vi.mock(
 );
 
 // The fix launch form reads launch-options itself; stub it to a marker that
-// names the run it was opened for.
+// names the run it was opened for, and the cases Run Epoch picked.
+const launchFix = vi.hoisted(() => ({ props: null }));
 vi.mock("../../../improvements/LaunchFixDialog", () => ({
-  // eslint-disable-next-line react/prop-types
-  default: ({ open, sourceRunId }) => (open ? <div>{`launch-fix:${sourceRunId}`}</div> : null),
+  // Reads the captured props, which the assertions read too.
+  default: (props) => {
+    launchFix.props = props;
+    const { open, sourceRunId, initialTargets, initialNote } = launchFix.props;
+    return open ? (
+      <>
+        <div>{`launch-fix:${sourceRunId}`}</div>
+        {initialTargets ? (
+          <div>{`fix-targets:${initialTargets.join(",")}`}</div>
+        ) : null}
+        {initialNote ? <div>{`fix-note:${initialNote}`}</div> : null}
+      </>
+    ) : null;
+  },
 }));
 
 function AddEvaluationDrawerStub({ open, executionId }) {
@@ -201,6 +221,7 @@ function RunTraceTableStub({
   evalActions,
   rerunDisabledReason,
   onRerunScenarios,
+  onRerunInRun,
 }) {
   useEffect(() => {
     onQueryChange?.(TABLE_QUERY);
@@ -232,6 +253,7 @@ function RunTraceTableStub({
           rerun ticked
         </button>
       )}
+      {onRerunInRun && <span>rerun-in-run</span>}
       <button
         type="button"
         onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
@@ -251,6 +273,7 @@ RunTraceTableStub.propTypes = {
   evalActions: PropTypes.object,
   rerunDisabledReason: PropTypes.string,
   onRerunScenarios: PropTypes.func,
+  onRerunInRun: PropTypes.func,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
 vi.mock("../CallDrawer", () => ({
@@ -302,6 +325,16 @@ CallDrawerStub.propTypes = {
   onClose: PropTypes.func,
 };
 vi.mock("../CallDrawer", () => ({ default: CallDrawerStub }));
+
+// Resume's mutation, so a test can see the button call it.
+const resumeMutate = vi.fn();
+vi.mock(
+  "src/api/simulate-environments/rerunScenarios",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    useResumeRun: () => ({ mutate: resumeMutate, isPending: false }),
+  }),
+);
 
 const { default: RunDetail } = await import("../RunDetail");
 
@@ -454,6 +487,8 @@ const locationText = () => screen.getByTestId("location").textContent;
 const navArgs = () => callListNavigation.mock.calls.at(-1)[0];
 
 beforeEach(() => {
+  fixLaunchOptions.mockReset();
+  fixLaunchOptions.mockReturnValue({ options: undefined });
   useSelfImprovementOpen.mockReturnValue(true);
   fixMyAgentAllowed.mockReturnValue(true);
   enqueueSnackbar.mockReset();
@@ -490,12 +525,65 @@ beforeEach(() => {
   });
 });
 
+describe("RunDetail resume", () => {
+  const interrupted = (resume) =>
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, status: "failed", runState: "failed", resume },
+      stats: STATS,
+      isLoading: false,
+    });
+
+  it("offers Resume on an interrupted run and says how far it got", async () => {
+    resumeMutate.mockReset();
+    interrupted({ resumable: true, finished: 7, unfinished: 5, history: [] });
+    const user = userEvent.setup();
+    renderDetail();
+
+    expect(screen.getByText(/12 tasks · 5 not finished/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Resume" }));
+    expect(resumeMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "a run that cannot resume",
+      { resumable: false, finished: null, unfinished: null, history: [] },
+    ],
+    ["a backend that says nothing", null],
+  ])("offers no Resume for %s", (_, resume) => {
+    interrupted(resume);
+    renderDetail();
+
+    expect(
+      screen.queryByRole("button", { name: "Resume" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/not finished/)).not.toBeInTheDocument();
+  });
+
+  it("says when a run was resumed", () => {
+    interrupted({
+      resumable: false,
+      finished: null,
+      unfinished: null,
+      history: [{ at: "2026-11-04T09:00:00Z", by: "u1", calls: 12 }],
+    });
+    renderDetail();
+
+    expect(screen.getByText(/resumed /)).toBeInTheDocument();
+  });
+});
+
 describe("RunDetail", () => {
   it("goes back to where it was opened from when the opener says so", async () => {
     const user = userEvent.setup();
     renderDetail({
       initialEntries: [
-        { pathname: "/run", state: { backTo: "/dashboard/simulate/environments/env-1/improvements/fix-1" } },
+        {
+          pathname: "/run",
+          state: {
+            backTo: "/dashboard/simulate/environments/env-1/improvements/fix-1",
+          },
+        },
       ],
     });
     await user.click(screen.getByRole("button", { name: "Back" }));
@@ -590,6 +678,50 @@ describe("RunDetail", () => {
     ).toBeNull();
   });
 
+  it("heads a fix's check run with its fix, not a run number, and offers no Stop", () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        runState: "running",
+        status: "running",
+        stoppable: true,
+        fixRun: { id: "fix-1", label: "c2-target" },
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText(/^Check run c2-target for/)).toHaveTextContent(
+      "Check run c2-target for this fix · agent v2",
+    );
+    expect(screen.getByRole("link", { name: "this fix" })).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/improvements/fix-1",
+    );
+    expect(screen.queryByText(/^Run 3/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Stop simulation" }),
+    ).toBeNull();
+  });
+
+  it("offers no Re-run or Debug failures on a fix's check run", () => {
+    stubTickable = false;
+    const fixRun = { id: "fix-1", label: "c2-target" };
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, fixRun },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun: vi.fn() });
+
+    expect(screen.queryByRole("button", { name: /Run again/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "rerun ticked" })).toBeNull();
+    expect(screen.queryByText("rerun-in-run")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Debug failures" })).toBeNull();
+    stubTickable = true;
+  });
+
   it("shows Cancelling in the header while a stopped run winds down", () => {
     useRunDetail.mockReturnValue({
       identity: {
@@ -654,6 +786,109 @@ describe("RunDetail", () => {
     for (const name of [/Export/, /Debug failures/]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
+  });
+
+  describe("Run Epoch", () => {
+    const scenario = (key, evidence, failing) => ({
+      key,
+      name: key,
+      passed: !failing,
+      failing_sub_goals: failing ? ["booked"] : [],
+      evidence_import_id: evidence,
+    });
+    const finished = () =>
+      useRunDetail.mockReturnValue({
+        identity: IDENTITY,
+        stats: STATS,
+        isLoading: false,
+      });
+
+    it("starts a fix on the failing cases an evidence import added", async () => {
+      const user = userEvent.setup();
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: {
+          scenarios: [
+            scenario("evidence-a", "import-1", true),
+            scenario("ordinary", null, true),
+            scenario("evidence-b", "import-1", false),
+          ],
+        },
+      });
+      renderDetail();
+
+      // It says which cases Epoch starts from.
+      await user.hover(screen.getByRole("button", { name: "Run Epoch" }));
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Starts an epoch from the 1 failing scenario that came from imported evidence.",
+      );
+      await user.click(screen.getByRole("button", { name: "Run Epoch" }));
+
+      expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
+      expect(screen.getByText("fix-targets:evidence-a")).toBeInTheDocument();
+      // Nothing added silently: the form says where its cases came from.
+      expect(
+        screen.getByText("fix-note:1 failing scenario from imported evidence"),
+      ).toBeInTheDocument();
+      expect(fixLaunchOptions).toHaveBeenLastCalledWith("ex1", {
+        enabled: true,
+      });
+    });
+
+    it("tops up with the run's other failing cases to reach the minimum, imported first", async () => {
+      const user = userEvent.setup();
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: {
+          limits: { scenarios_min: 3 },
+          scenarios: [
+            scenario("ordinary-1", null, true),
+            scenario("evidence-a", "import-1", true),
+            scenario("ordinary-2", null, false),
+            scenario("ordinary-3", null, true),
+            scenario("ordinary-4", null, true),
+          ],
+        },
+      });
+      renderDetail();
+
+      await user.click(screen.getByRole("button", { name: "Run Epoch" }));
+
+      expect(
+        screen.getByText("fix-targets:evidence-a,ordinary-1,ordinary-3"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "fix-note:1 from imported evidence, 2 more failing scenarios from this run to reach the minimum",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("is not offered when no failing case came from evidence", () => {
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: {
+          scenarios: [
+            scenario("ordinary", null, true),
+            scenario("evidence-b", "import-1", false),
+          ],
+        },
+      });
+      renderDetail();
+
+      expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
+    });
+
+    it("reads nothing for an org without Fix my agent", () => {
+      finished();
+      fixMyAgentAllowed.mockReturnValue(false);
+      renderDetail();
+
+      expect(fixLaunchOptions).toHaveBeenLastCalledWith("ex1", {
+        enabled: false,
+      });
+      expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
+    });
   });
 
   it("enables the header actions once the run has finished", () => {
@@ -1101,6 +1336,32 @@ describe("RunDetail", () => {
     expect(screen.getByText("3 failing of 12 measured")).toBeInTheDocument();
   });
 
+  it("gives no measured count until the diagnosis has one", async () => {
+    // The run's failing count holds errored calls; its measured count does not.
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, failed: 19, measured: 18 },
+      isLoading: false,
+    });
+    useDebugAnalysis.mockReturnValue(
+      debugHook({
+        ...ANALYSIS,
+        status: "running",
+        isWorking: true,
+        summary: null,
+        goals: [],
+        oneOffs: [],
+      }),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+    expect(screen.getByText("19 failing")).toBeInTheDocument();
+    expect(screen.queryByText(/failing of/)).toBeNull();
+  });
+
   it("folds long tails into one row so the rows still add up", async () => {
     const ways = Array.from({ length: 7 }, (_, i) => ({
       id: `w${i}`,
@@ -1228,18 +1489,18 @@ describe("RunDetail", () => {
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    await user.click(screen.getByRole("button", { name: "Improve" }));
+    await user.click(screen.getByRole("button", { name: "Run Epoch" }));
     expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
     expect(screen.queryByText("optimizer-form")).toBeNull();
   });
 
-  it("hides Improve when the org does not have Fix my agent", async () => {
+  it("hides Run Epoch when the org does not have Epoch", async () => {
     fixMyAgentAllowed.mockReturnValue(false);
     const user = userEvent.setup();
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    expect(screen.queryByRole("button", { name: "Improve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
   });
 
   it("shows the Imagine tab as coming soon (no backend)", async () => {
@@ -1257,7 +1518,7 @@ describe("RunDetail", () => {
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    const cta = screen.getByRole("button", { name: "Improve" });
+    const cta = screen.getByRole("button", { name: "Run Epoch" });
     expect(cta).toBeEnabled();
     expect(cta).not.toHaveTextContent("Beta");
   });

@@ -94,13 +94,34 @@ type Usage struct {
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
+// UnmarshalJSON normalizes input/output token aliases while preserving provider extras.
 func (u *Usage) UnmarshalJSON(data []byte) error {
 	type Alias Usage
-	var a Alias
+	var a struct {
+		Alias
+		PromptTokens     *int `json:"prompt_tokens"`
+		CompletionTokens *int `json:"completion_tokens"`
+		InputTokens      *int `json:"input_tokens"`
+		OutputTokens     *int `json:"output_tokens"`
+	}
 	if err := json.Unmarshal(data, &a); err != nil {
 		return err
 	}
-	*u = Usage(a)
+	*u = Usage(a.Alias)
+	// An explicit zero in the canonical spelling must win over its alias.
+	if a.PromptTokens != nil {
+		u.PromptTokens = *a.PromptTokens
+	} else if a.InputTokens != nil {
+		u.PromptTokens = *a.InputTokens
+	}
+	if a.CompletionTokens != nil {
+		u.CompletionTokens = *a.CompletionTokens
+	} else if a.OutputTokens != nil {
+		u.CompletionTokens = *a.OutputTokens
+	}
+	if u.TotalTokens == 0 {
+		u.TotalTokens = u.PromptTokens + u.CompletionTokens
+	}
 	extra, err := captureExtra(data, reflect.TypeFor[Usage]())
 	if err != nil {
 		return err
@@ -183,10 +204,26 @@ type Delta struct {
 }
 
 type ToolCallDelta struct {
-	Index    int           `json:"index"`
-	ID       string        `json:"id,omitempty"`
-	Type     string        `json:"type,omitempty"`
-	Function *FunctionCall `json:"function,omitempty"`
+	Index    int                `json:"index"`
+	ID       string             `json:"id,omitempty"`
+	Type     string             `json:"type,omitempty"`
+	Function *FunctionCallDelta `json:"function,omitempty"`
+}
+
+// FunctionCallDelta is the function part of one streamed tool-call delta.
+//
+// It is not FunctionCall: a complete call always has a name, but a stream
+// sends the name once, on the first delta of a call, and every later delta
+// carries only an arguments fragment. Name is omitempty so that an
+// arguments-only delta goes out without a "name" key, as OpenAI sends it.
+// Writing "name":"" instead tells a client that accumulates the call that its
+// name is now empty, and the call is lost.
+//
+// Arguments is not omitempty: the first delta of a call carries
+// "arguments":"" in the OpenAI shape, and clients append it either way.
+type FunctionCallDelta struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments"`
 }
 
 // ModelObject represents a model in the /v1/models response.

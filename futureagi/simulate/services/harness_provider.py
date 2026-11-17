@@ -1557,6 +1557,8 @@ class HostedHarnessProvider:
     def run(self, request, pk) -> Response:
         """Create and dispatch one immutable selected-scenario simulation Run."""
 
+        from simulate.selectors.held_back import coding_agent_key
+        from simulate.services.harness_verify import require_default_suite
         from simulate.services.harness_versioning.run_warnings import created_run
         from simulate.services.hosted_harness import (
             HostedHarnessError,
@@ -1586,7 +1588,14 @@ class HostedHarnessProvider:
             if response is not None:
                 return response
             raise
+        coder = coding_agent_key(request)
         try:
+            if coder is not None:
+                # The cases a coding agent may not run are chosen before its first run,
+                # and it runs only the default suite.
+                require_default_suite(
+                    environment, request.validated_data.get("suite_version_id")
+                )
             child, created = create_selected_harness_run(
                 environment,
                 scenario_keys=list(request.validated_data["scenario_ids"]),
@@ -1599,6 +1608,7 @@ class HostedHarnessProvider:
                     ),
                     suite_version_id=request.validated_data.get("suite_version_id"),
                 ),
+                coding_agent_key_id=str(coder.id) if coder is not None else None,
             )
             retry_dispatch = False
             if (
@@ -1848,6 +1858,19 @@ class HostedHarnessProvider:
                     status=status.HTTP_409_CONFLICT,
                 )
         data = request.validated_data
+        if job.state in terminal_states and data["kind"] == "user_message":
+            # After the build, a message starts a builder turn of its own, billed as authoring, so
+            # it is admitted like a build. A running build was admitted already; an answer feeds a
+            # turn already running, and a stop runs none.
+            from simulate.services.harness_usage import require_harness_authoring
+
+            try:
+                require_harness_authoring(str(job.organization_id))
+            except Exception as exc:
+                response = _usage_limit_response(exc)
+                if response is not None:
+                    return response
+                raise
         # Checked before queueing, so a message never waits on a runtime that cannot call back.
         try:
             base_url = _public_base_url(request)

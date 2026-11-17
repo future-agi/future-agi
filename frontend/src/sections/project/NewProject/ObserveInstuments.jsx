@@ -2,7 +2,6 @@ import React from "react";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import {
   Box,
-  LinearProgress,
   Typography,
   Accordion,
   AccordionSummary,
@@ -13,6 +12,7 @@ import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 
 import InstructionCodeCopy from "./InstructionCodeCopy";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const ObserveInstruments = ({
   data,
@@ -49,7 +49,7 @@ const ObserveInstruments = ({
   };
 
   if (isLoading) {
-    return <LinearProgress />;
+    return <LoadingScreen compact />;
   }
   if (error) {
     return <Box>Error fetching Tools</Box>;

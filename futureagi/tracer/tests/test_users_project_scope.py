@@ -250,8 +250,8 @@ class TestUsersEndpointNamesProjects:
 
         assert response.status_code == status.HTTP_200_OK
         header, *rows = [r for r in csv.reader(io.StringIO(body)) if r]
-        assert header[-1] == "Project"
-        assert [(row[0], row[-1]) for row in rows] == [
+        assert header[16] == "Project"
+        assert [(row[0], row[16]) for row in rows] == [
             ("user_123", "Support Bot"),
             ("user_123", "Sales Bot"),
         ]
@@ -265,10 +265,17 @@ class TestUsersExportNamesProject:
         body = "".join(manager.iter_export_csv(cursor_read=_cursor_read([row])))
         header, data = [r for r in csv.reader(io.StringIO(body)) if r]
 
-        assert header == [*_PRE_EXISTING_EXPORT_HEADER, "Project"]
+        assert header == [
+            *_PRE_EXISTING_EXPORT_HEADER,
+            "Project",
+            "Cost coverage",
+            "Known cost subtotal ($)",
+            "Known cost fact count",
+            "Unknown cost fact count",
+        ]
         assert header == [name for name, _ in USERS_EXPORT_COLUMNS]
         assert data[0] == "user_123"
-        assert data[-1] == "Support Bot"
+        assert data[16] == "Support Bot"
 
     def test_export_guards_a_formula_project_name(self):
         # Project names are customer-controlled text; the CSV-injection guard
@@ -279,4 +286,4 @@ class TestUsersExportNamesProject:
         body = "".join(manager.iter_export_csv(cursor_read=_cursor_read([row])))
         _header, data = [r for r in csv.reader(io.StringIO(body)) if r]
 
-        assert data[-1] == '\'=HYPERLINK("https://x")'
+        assert data[16] == '\'=HYPERLINK("https://x")'

@@ -4,11 +4,36 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from simulate.models import AgentDefinition, HostedHarnessJob
+from model_hub.models.develop_dataset import Dataset
+from simulate.models import AgentDefinition, EvidenceImport, HostedHarnessJob
+from simulate.pydantic_schemas.evidence_import import DatasetColumns
+from simulate.selectors.evidence_import import (
+    environment_evidence_import,
+    evidence_dataset,
+    evidence_project,
+    import_bundle,
+    open_evidence_imports,
+)
+from simulate.selectors.held_back import (
+    coding_agent_key,
+    detail_without,
+    members_without,
+    verify_result,
+    verify_run,
+)
 from simulate.selectors.runs import user_executions
+from simulate.serializers.evidence_import import (
+    EvidenceImportAddResponseSerializer,
+    EvidenceImportAddSerializer,
+    EvidenceImportCreateSerializer,
+    EvidenceImportDraftSerializer,
+    EvidenceImportListItemSerializer,
+    EvidenceImportSerializer,
+)
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentVersionCreateSerializer,
@@ -35,6 +60,9 @@ from simulate.serializers.harness_environment import (
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
     HarnessSuiteMemberSerializer,
+    HarnessVerifyCreateResponseSerializer,
+    HarnessVerifyCreateSerializer,
+    HarnessVerifyResultSerializer,
     HarnessVersionDiffQuerySerializer,
     HarnessVersionDiffSerializer,
     HarnessVersionsSerializer,
@@ -44,6 +72,14 @@ from simulate.serializers.harness_job import (
     HarnessRunCreateSerializer,
 )
 from simulate.serializers.response.run_test import SimulateEvalConfigResponseSerializer
+from simulate.services.evidence_import import (
+    TranscriptInput,
+    add_to_suite,
+    create_dataset_import,
+    create_evidence_import,
+    create_transcript_import,
+    discard_evidence_import,
+)
 from simulate.services.harness_environment import (
     annotate_for_list,
     environment_detail,
@@ -57,12 +93,17 @@ from simulate.services.harness_provider import (
     request_workspace,
     scope_jobs,
 )
+from simulate.services.harness_verify import require_default_suite, start_verify
 from simulate.services.harness_versioning import read as version_reads
 from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import EmptyRequestSerializer
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.utils.workspace_scope import (
+    project_queryset_for_request,
+    project_workspace_scope_q,
+)
 
 
 def _touch_content(job):
@@ -96,6 +137,15 @@ def _bound_by_name(run_test, name):
         if name == str(getattr(config.eval_template, "name", "") or ""):
             return config
     return None
+
+
+def _held_back_from(request, job, suite_version_id=None) -> tuple[str, ...]:
+    """The scenarios this caller may not read: the held-back cases for a coding agent,
+    chosen on its first read; none for anyone else. A coding agent may read or pick
+    only the default suite: ``suite_version_id`` is refused as not found otherwise."""
+    if coding_agent_key(request) is None:
+        return ()
+    return require_default_suite(job, suite_version_id).scenario_keys
 
 
 def _uuid_or_none(value):
@@ -180,9 +230,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     @action(
         detail=True,
         methods=["get"],
-        url_path=(
-            r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"
-        ),
+        url_path=(r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"),
     )
     def version_diff(self, request, pk=None, piece=None, version_id=None):
         """What one version changed, against its parent or the ``against`` version."""
@@ -304,14 +352,31 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"], url_path="versions/agent")
     def create_agent_version(self, request, pk=None):
         """A new agent version from an upload, a prompt edit or a settings edit; it is
-        checked next, then made this environment's default."""
+        checked next, then made this environment's default unless make_default is
+        false. A coding agent key pushes only an upload, never made the default."""
         from simulate.services.harness_agent_changes import change_agent_source
 
         version_reads.require_versioning()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        version = change_agent_source(job, **request.validated_data, user=request.user)
+        change = dict(request.validated_data)
+        if coding_agent_key(request) is not None:
+            if "archive_artifact_id" not in change:
+                # The loop is built for uploaded-folder agents; their prompt and
+                # settings stay with people.
+                raise PermissionDenied(
+                    "A coding agent key can push only an uploaded folder",
+                    code="coding_agent_candidate_unsupported",
+                )
+            # Shipping a version stays with people; a coding agent pushes candidates.
+            if change.get("make_default"):
+                raise PermissionDenied(
+                    "A coding agent key cannot make a version the default",
+                    code="coding_agent_cannot_ship",
+                )
+            change["make_default"] = False
+        version = change_agent_source(job, **change, user=request.user)
         job.refresh_from_db(fields=["agent_version"])
         return Response(
             {"agent_version": version_reads.agent_version_item(job, version)},
@@ -325,7 +390,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         url_path=r"versions/suite/(?P<version_id>[0-9a-fA-F-]{36})/members",
     )
     def suite_members(self, request, pk=None, version_id=None):
-        """The scenarios in one suite version, by number."""
+        """The scenarios in one suite version, by number; a coding agent's read leaves
+        out the held-back cases."""
         version_reads.require_versioning()
         job = self._job(request, pk)
         if job is None:
@@ -333,7 +399,47 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         identifier = _uuid_or_none(version_id)
         if identifier is None:
             raise version_reads.version_not_found()
-        return Response(version_reads.suite_members(job, identifier))
+        hidden = _held_back_from(request, job, identifier)
+        members = version_reads.suite_members(job, identifier)
+        return Response(members_without(members, hidden))
+
+    @validated_request(
+        request_serializer=HarnessVerifyCreateSerializer,
+        responses={202: HarnessVerifyCreateResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="verify")
+    def verify(self, request, pk=None):
+        """Verify an agent version on the held-back cases, in a run no user read shows.
+        Its live or completed verify is final: asking again returns it. After one that
+        failed or was canceled, asking again starts a new one."""
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        run = start_verify(job, **request.validated_data)
+        return Response(
+            {"verify_id": str(run.id), "state": run.state},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @validated_request(responses={200: HarnessVerifyResultSerializer})
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"verify/(?P<verify_id>[0-9a-fA-F-]{36})",
+        url_name="verify-detail",
+    )
+    def verify_detail(self, request, pk=None, verify_id=None):
+        """How the verified version did on the held-back cases, as counts only."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        identifier = _uuid_or_none(verify_id)
+        run = verify_run(job, identifier) if identifier is not None else None
+        if run is None:
+            raise NotFound("Verify not found")
+        return Response(verify_result(run))
 
     @validated_request(responses={200: HarnessDraftsSerializer})
     @action(detail=True, methods=["get"], url_path="drafts")
@@ -397,6 +503,211 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return self._not_found()
         discard_draft(job, piece, user=request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @validated_request(
+        request_serializer=EvidenceImportCreateSerializer,
+        responses={201: EvidenceImportSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_evidence_imports",
+    )
+    @action(detail=True, methods=["post"], url_path="evidence-imports")
+    def evidence_imports(self, request, pk=None):
+        """Freeze Observe sessions or calls or dataset rows, or store transcripts
+        a person added, as evidence for this environment's tests; returns what
+        each holds and lacks, and what redaction replaces. Nothing is drafted or
+        run."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        if body["source_kind"] == EvidenceImport.SourceKind.TRANSCRIPT:
+            evidence_import = create_transcript_import(
+                environment=job,
+                transcripts=[
+                    TranscriptInput(one["name"], one["format"], one["text"])
+                    for one in body["transcripts"]
+                ],
+                production=body.get("production", False),
+                user=request.user,
+            )
+            return Response(
+                EvidenceImportSerializer(import_bundle(evidence_import)).data,
+                status=status.HTTP_201_CREATED,
+            )
+        if body["source_kind"] == EvidenceImport.SourceKind.DATASET:
+            # The datasets the caller may read, scoped as Observe's projects are.
+            datasets = Dataset.no_workspace_objects.filter(
+                project_workspace_scope_q(request, project_prefix=""), deleted=False
+            )
+            dataset = evidence_dataset(datasets, job, body["dataset_id"])
+            if dataset is None:
+                raise NotFound("Dataset not found in this environment's workspace")
+            evidence_import, evidence = create_dataset_import(
+                environment=job,
+                dataset=dataset,
+                columns=DatasetColumns(**body["columns"]),
+                row_ids=[str(row_id) for row_id in body["ids"]],
+                production=body.get("production", False),
+                user=request.user,
+            )
+            return Response(
+                EvidenceImportSerializer(import_bundle(evidence_import, evidence)).data,
+                status=status.HTTP_201_CREATED,
+            )
+        project = evidence_project(
+            project_queryset_for_request(request), job, body["project_id"]
+        )
+        if project is None:
+            raise NotFound("Project not found in this environment's workspace")
+        evidence_import, evidence = create_evidence_import(
+            environment=job,
+            project=project,
+            source_kind=body["source_kind"],
+            source_ids=[str(source_id) for source_id in body["ids"]],
+            user=request.user,
+        )
+        return Response(
+            EvidenceImportSerializer(import_bundle(evidence_import, evidence)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @validated_request(
+        responses={200: EvidenceImportListItemSerializer(many=True)},
+        request_methods=["GET"],
+        operation_id="simulate_api_harness-environments_list_evidence_imports",
+    )
+    @evidence_imports.mapping.get
+    def list_evidence_imports(self, request, pk=None):
+        """This environment's imports a person can still finish, newest first.
+        Read from what each import stores: no source is read again."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(
+            EvidenceImportListItemSerializer(open_evidence_imports(job), many=True).data
+        )
+
+    @validated_request(
+        responses={200: EvidenceImportSerializer},
+        operation_id="simulate_api_harness-environments_evidence_import",
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"evidence-imports/(?P<import_id>[0-9a-fA-F-]{36})",
+    )
+    def evidence_import(self, request, pk=None, import_id=None):
+        """One evidence import, read from Observe again: a source deleted since
+        reads as unavailable, and a changed one says so."""
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        return Response(EvidenceImportSerializer(import_bundle(evidence_import)).data)
+
+    @swagger_auto_schema(
+        responses={204: "Discarded"},
+        operation_id="simulate_api_harness-environments_discard_evidence_import",
+    )
+    @evidence_import.mapping.delete
+    def discard_import(self, request, pk=None, import_id=None):
+        """Discard an import never added, and a transcript's stored text with it.
+        Of an import with added cases, only the cases not added are discarded."""
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        discard_evidence_import(evidence_import)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @validated_request(
+        request_serializer=EvidenceImportDraftSerializer,
+        responses={202: EvidenceImportSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"evidence-imports/(?P<import_id>[0-9a-fA-F-]{36})/draft",
+    )
+    def draft_evidence_cases(self, request, pk=None, import_id=None):
+        """Ask the environment's builder to draft a scenario for each of an import's
+        waiting cases. The turn runs in a chat of the import's own; nothing it does
+        reaches the environment until a person adds the drafted cases."""
+        from simulate.services.evidence_drafts import start_drafting
+        from simulate.services.hosted_harness_ingress import _public_base_url
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        start_drafting(
+            evidence_import,
+            [str(case_id) for case_id in request.validated_data["case_ids"]],
+            endpoint_base_url=_public_base_url(request),
+            user=request.user,
+            shows=request.validated_data.get("shows") or {},
+        )
+        # start_drafting links the drafting job on its own locked copy; the answer
+        # must say drafting has started, or the review never asks again.
+        evidence_import.refresh_from_db()
+        return Response(
+            EvidenceImportSerializer(import_bundle(evidence_import)).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @validated_request(
+        request_serializer=EvidenceImportAddSerializer,
+        responses={200: EvidenceImportAddResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"evidence-imports/(?P<import_id>[0-9a-fA-F-]{36})/add",
+    )
+    def add_evidence_cases(self, request, pk=None, import_id=None):
+        """Add an import's drafted cases to the suite: saved with them when the
+        review saw no unsaved changes, else beside those changes in the draft."""
+        from simulate.services.harness_versioning.drafts import DraftRef
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(import_id)
+        if job is None or identifier is None:
+            return self._not_found()
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        body = request.validated_data
+        saved = add_to_suite(
+            evidence_import,
+            [str(case_id) for case_id in body["case_ids"]],
+            expected={
+                piece: DraftRef(str(ref["id"]) if ref["id"] else None, ref["revision"])
+                for piece, ref in body["expected_drafts"].items()
+            },
+            idempotency_key=body["idempotency_key"],
+            user=request.user,
+        )
+        evidence_import = environment_evidence_import(job, identifier)
+        if evidence_import is None:
+            raise NotFound("Evidence import not found")
+        return Response(
+            EvidenceImportAddResponseSerializer(
+                {"saved": saved, "evidence_import": import_bundle(evidence_import)}
+            ).data
+        )
 
     @validated_request(
         query_serializer=HarnessNudgeListQuerySerializer,
@@ -493,6 +804,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if job is None:
             return self._not_found()
         query = request.validated_query_data
+        # A coding agent may plan only on the default suite.
+        _held_back_from(request, job, query.get("suite_version_id"))
         picks = VersionPicks(
             agent_version_id=query.get("agent_version_id"),
             environment_version_id=query.get("environment_version_id"),
@@ -605,7 +918,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         """One environment: overview, contract, world, scenarios, evaluations, settings.
 
         Same shape whichever door built it. A section the pipeline has not reached
-        yet is null, so the client renders "building" rather than an empty pane.
+        yet is null, so the client renders "building" rather than an empty pane. A
+        coding agent's read leaves out the held-back cases.
         """
         job = self._job(request, pk)
         if job is None:
@@ -613,7 +927,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 {"detail": "Environment not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(environment_detail(job))
+        return Response(
+            detail_without(environment_detail(job), _held_back_from(request, job))
+        )
 
     @validated_request(
         request_serializer=HarnessEnvironmentRenameSerializer,

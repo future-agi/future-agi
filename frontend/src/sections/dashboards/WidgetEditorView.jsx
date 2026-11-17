@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import { statusColors } from "src/utils/runStatus";
 import React, {
   useState,
@@ -508,7 +509,7 @@ export function WidgetCatalogOption({ option, onSelect }) {
         variant="body2"
         title={option.name}
         sx={{
-          fontSize: "13px",
+          fontSize: "12px",
           flex: 1,
           overflow: "hidden",
           textOverflow: "ellipsis",
@@ -1433,7 +1434,7 @@ function ToggleButtons({ options, value, onChange, theme }) {
             px: 1.5,
             py: 0.5,
             cursor: "pointer",
-            fontSize: "13px",
+            fontSize: "12px",
             fontWeight: value === opt.value ? 600 : 400,
             color:
               value === opt.value
@@ -1471,14 +1472,7 @@ ToggleButtons.propTypes = {
   theme: PropTypes.object.isRequired,
 };
 
-function AxisSection({
-  title,
-  config,
-  onChange,
-  theme,
-  showReset,
-  onReset,
-}) {
+function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
   return (
     <Box sx={{ mb: 3 }}>
       <Stack
@@ -1542,7 +1536,7 @@ function AxisSection({
           onChange={(e) => onChange("label", e.target.value)}
           placeholder="e.g. Cost ($)"
           inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
-          sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
+          sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "12px" } }}
         />
       </Stack>
 
@@ -1567,7 +1561,7 @@ function AxisSection({
           onChange={(e) =>
             onChange("unit", e.target.value === "custom" ? "" : e.target.value)
           }
-          sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
+          sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "12px" } }}
         >
           {UNIT_PRESETS.map((opt) => (
             <MenuItem key={opt.value} value={opt.value}>
@@ -1683,14 +1677,14 @@ function AxisSection({
             value={config.min}
             onChange={(e) => onChange("min", e.target.value)}
             placeholder="Min"
-            sx={{ width: 80, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
+            sx={{ width: 80, "& .MuiOutlinedInput-root": { fontSize: "12px" } }}
           />
           <TextField
             size="small"
             value={config.max}
             onChange={(e) => onChange("max", e.target.value)}
             placeholder="Max"
-            sx={{ width: 80, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
+            sx={{ width: 80, "& .MuiOutlinedInput-root": { fontSize: "12px" } }}
           />
         </Stack>
       </Stack>
@@ -1821,7 +1815,7 @@ function AggregationPicker({
                       primary={opt.label}
                       primaryTypographyProps={{
                         variant: "body2",
-                        fontSize: "13px",
+                        fontSize: "12px",
                       }}
                     />
                   </ListItemButton>
@@ -1840,7 +1834,7 @@ function AggregationPicker({
                           primary={opt.label}
                           primaryTypographyProps={{
                             variant: "body2",
-                            fontSize: "13px",
+                            fontSize: "12px",
                           }}
                         />
                       </ListItemButton>
@@ -1858,7 +1852,7 @@ function AggregationPicker({
                         primary="Percentile"
                         primaryTypographyProps={{
                           variant: "body2",
-                          fontSize: "13px",
+                          fontSize: "12px",
                           fontWeight: percentileAggs.some(
                             (p) => p.value === value,
                           )
@@ -1890,7 +1884,7 @@ function AggregationPicker({
                     primary="Percentile"
                     primaryTypographyProps={{
                       variant: "body2",
-                      fontSize: "13px",
+                      fontSize: "12px",
                       fontWeight: 600,
                     }}
                   />
@@ -1907,7 +1901,7 @@ function AggregationPicker({
                       primary={opt.label}
                       primaryTypographyProps={{
                         variant: "body2",
-                        fontSize: "13px",
+                        fontSize: "12px",
                       }}
                     />
                   </ListItemButton>
@@ -2273,7 +2267,7 @@ export function FilterValuePickerPopup({
                   variant="body2"
                   noWrap
                   title={`Specify: ${exactSearchValue}`}
-                  sx={{ minWidth: 0, fontSize: "13px" }}
+                  sx={{ minWidth: 0, fontSize: "12px" }}
                 >
                   Specify: <strong>{exactSearchValue}</strong>
                 </Typography>
@@ -2334,7 +2328,7 @@ export function FilterValuePickerPopup({
                     variant="body2"
                     noWrap
                     title={String(opt.label ?? opt.value ?? "")}
-                    sx={{ minWidth: 0, fontSize: "13px" }}
+                    sx={{ minWidth: 0, fontSize: "12px" }}
                   >
                     {opt.label || opt.value}
                   </Typography>
@@ -4048,7 +4042,7 @@ export default function WidgetEditorView() {
       dataLabels: isHorizontal
         ? {
             enabled: true,
-            style: { fontSize: "13px", fontWeight: 500 },
+            style: { fontSize: "12px", fontWeight: 500 },
             formatter: formatVal,
             offsetX: 6,
           }
@@ -4271,7 +4265,7 @@ export default function WidgetEditorView() {
                   theme,
                   pct >= 0 ? "success" : "danger",
                 ).fg;
-                changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
+                changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:12px">from previous</span></div>`;
               }
               return `<div style="display:flex;background:${bg};border:1px solid ${border};border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
                                 <div style="padding:14px 16px;flex:1">
@@ -4483,7 +4477,7 @@ export default function WidgetEditorView() {
           <Link
             underline="hover"
             color="text.secondary"
-            sx={{ cursor: "pointer", fontSize: "13px" }}
+            sx={{ cursor: "pointer", fontSize: "12px" }}
             onClick={() => navigate(paths.dashboard.dashboards.root)}
           >
             Dashboards
@@ -4493,7 +4487,7 @@ export default function WidgetEditorView() {
             color="text.secondary"
             sx={{
               cursor: "pointer",
-              fontSize: "13px",
+              fontSize: "12px",
               maxWidth: 140,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -4529,7 +4523,7 @@ export default function WidgetEditorView() {
               maxWidth: 350,
               "& .MuiOutlinedInput-input": {
                 py: 0.5,
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 500,
               },
             }}
@@ -4538,7 +4532,7 @@ export default function WidgetEditorView() {
           <Typography
             onClick={() => !isReadOnly && setEditingName(true)}
             sx={{
-              fontSize: "13px",
+              fontSize: "12px",
               fontWeight: 500,
               cursor: isReadOnly ? "default" : "pointer",
               maxWidth: 300,
@@ -4604,7 +4598,7 @@ export default function WidgetEditorView() {
                   <Typography
                     ref={measureRef}
                     noWrap
-                    sx={{ fontSize: "13px", minWidth: 0 }}
+                    sx={{ fontSize: "12px", minWidth: 0 }}
                   >
                     {trimmedDescription}
                   </Typography>
@@ -4666,10 +4660,7 @@ export default function WidgetEditorView() {
               }}
             >
               <ListItemIcon>
-                <Iconify
-                  icon="solar:trash-bin-trash-linear"
-                  width={16}
-                />
+                <Iconify icon="solar:trash-bin-trash-linear" width={16} />
               </ListItemIcon>
               <ListItemText>Delete</ListItemText>
             </MenuItem>
@@ -4914,14 +4905,16 @@ export default function WidgetEditorView() {
                     px: 1.5,
                     py: 0.6,
                     cursor: "pointer",
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: timePreset === p.value ? 600 : 400,
                     color:
                       timePreset === p.value
                         ? theme.palette.text.primary
                         : theme.palette.text.secondary,
                     bgcolor:
-                      timePreset === p.value ? "action.selected" : "transparent",
+                      timePreset === p.value
+                        ? "action.selected"
+                        : "transparent",
                     borderRight:
                       i < DATE_PRESETS.length - 1
                         ? `1px solid ${theme.palette.divider}`
@@ -4941,7 +4934,7 @@ export default function WidgetEditorView() {
                     <Iconify icon="solar:calendar-linear" width={16} />
                   )}
                   {p.value === "custom" && customDateRange
-                    ? `${format(customDateRange[0], "MMM dd")} - ${format(customDateRange[1], "MMM dd")}`
+                    ? `${format(customDateRange[0], "MMM dd")} - ${format(getDateRangeDisplayEnd(customDateRange), "MMM dd")}`
                     : p.label}
                 </Box>
               ))}
@@ -4970,7 +4963,7 @@ export default function WidgetEditorView() {
               <Select
                 value={granularity}
                 onChange={(e) => setGranularity(e.target.value)}
-                sx={{ fontSize: "13px", "& .MuiSelect-select": { py: 0.7 } }}
+                sx={{ fontSize: "12px", "& .MuiSelect-select": { py: 0.7 } }}
               >
                 {allowedGranularities.map((g) => (
                   <MenuItem key={g.value} value={g.value}>
@@ -4985,7 +4978,7 @@ export default function WidgetEditorView() {
               <Select
                 value={chartType}
                 onChange={(e) => setChartType(e.target.value)}
-                sx={{ fontSize: "13px", "& .MuiSelect-select": { py: 0.7 } }}
+                sx={{ fontSize: "12px", "& .MuiSelect-select": { py: 0.7 } }}
                 renderValue={(val) => {
                   const ct = CHART_TYPES.find((t) => t.value === val);
                   return (
@@ -5172,7 +5165,7 @@ export default function WidgetEditorView() {
                                 sx={{
                                   color: "text.secondary",
                                   fontWeight: 500,
-                                  fontSize: "13px",
+                                  fontSize: "12px",
                                 }}
                               >
                                 {s.name}
@@ -5262,7 +5255,7 @@ export default function WidgetEditorView() {
                                       minWidth: 160,
                                       flexShrink: 0,
                                       fontWeight: 500,
-                                      fontSize: "13px",
+                                      fontSize: "12px",
                                       color: "text.primary",
                                       overflow: "hidden",
                                       textOverflow: "ellipsis",
@@ -5309,7 +5302,7 @@ export default function WidgetEditorView() {
                                         minWidth: 70,
                                         textAlign: "right",
                                         fontWeight: 600,
-                                        fontSize: "13px",
+                                        fontSize: "12px",
                                         color: "text.primary",
                                         fontVariantNumeric: "tabular-nums",
                                         flexShrink: 0,
@@ -5397,7 +5390,7 @@ export default function WidgetEditorView() {
                             />
                             <Typography
                               variant="body2"
-                              sx={{ fontWeight: 600, fontSize: "13px" }}
+                              sx={{ fontWeight: 600, fontSize: "12px" }}
                             >
                               Select all
                             </Typography>
@@ -5564,7 +5557,7 @@ export default function WidgetEditorView() {
                               style={{
                                 width: "100%",
                                 borderCollapse: "collapse",
-                                fontSize: "13px",
+                                fontSize: "12px",
                               }}
                             >
                               <thead>
@@ -5931,7 +5924,7 @@ export default function WidgetEditorView() {
                       variant="body2"
                       sx={{
                         fontWeight: 600,
-                        fontSize: "13px",
+                        fontSize: "12px",
                         color: "text.primary",
                       }}
                     >
@@ -6056,7 +6049,7 @@ export default function WidgetEditorView() {
                         sx={{
                           flex: 1,
                           maxWidth: 300,
-                          "& .MuiOutlinedInput-root": { fontSize: "13px" },
+                          "& .MuiOutlinedInput-root": { fontSize: "12px" },
                         }}
                       />
                     </Box>
@@ -6066,7 +6059,7 @@ export default function WidgetEditorView() {
                         style={{
                           width: "100%",
                           borderCollapse: "collapse",
-                          fontSize: "13px",
+                          fontSize: "12px",
                           tableLayout: "auto",
                         }}
                       >
@@ -6232,7 +6225,7 @@ export default function WidgetEditorView() {
                                       style={{
                                         color: theme.palette.text.primary,
                                         fontWeight: 500,
-                                        fontSize: "13px",
+                                        fontSize: "12px",
                                       }}
                                     >
                                       {s.name}
@@ -7150,7 +7143,7 @@ export default function WidgetEditorView() {
                                     setFilters(updated);
                                   }}
                                   variant="standard"
-                                  sx={{ fontSize: "13px" }}
+                                  sx={{ fontSize: "12px" }}
                                 >
                                   {ops.map((op) => (
                                     <MenuItem key={op.value} value={op.value}>
@@ -7205,7 +7198,7 @@ export default function WidgetEditorView() {
                                       };
                                       setFilters(updated);
                                     }}
-                                    sx={{ flex: 1, fontSize: "13px" }}
+                                    sx={{ flex: 1, fontSize: "12px" }}
                                   />
                                   <Typography
                                     variant="caption"
@@ -7235,7 +7228,7 @@ export default function WidgetEditorView() {
                                       };
                                       setFilters(updated);
                                     }}
-                                    sx={{ flex: 1, fontSize: "13px" }}
+                                    sx={{ flex: 1, fontSize: "12px" }}
                                   />
                                 </Stack>
                               ) : f.dataType === "boolean" ? (
@@ -7259,7 +7252,7 @@ export default function WidgetEditorView() {
                                     }}
                                     variant="standard"
                                     renderValue={(value) => value || "Value"}
-                                    sx={{ fontSize: "13px" }}
+                                    sx={{ fontSize: "12px" }}
                                   >
                                     <MenuItem disabled value="">
                                       Value
@@ -7285,7 +7278,7 @@ export default function WidgetEditorView() {
                                     };
                                     setFilters(updated);
                                   }}
-                                  sx={{ flex: 1, fontSize: "13px" }}
+                                  sx={{ flex: 1, fontSize: "12px" }}
                                 />
                               )}
                             </Stack>
@@ -7803,7 +7796,7 @@ export default function WidgetEditorView() {
                           inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
                           sx={{
                             width: 180,
-                            "& .MuiOutlinedInput-root": { fontSize: "13px" },
+                            "& .MuiOutlinedInput-root": { fontSize: "12px" },
                           }}
                         />
                       </Stack>

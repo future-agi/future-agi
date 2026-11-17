@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import { Box, Button, ButtonGroup } from "@mui/material";
 import {
   format,
@@ -98,7 +99,7 @@ const TracingControls = ({
 
   const getDateOptionTitle = (option, isSelected) => {
     if (option === "Custom" && isSelected) {
-      return `${format(new Date(dateFilter.dateFilter[0]), "dd/MM/yyyy")} - ${format(new Date(dateFilter.dateFilter[1]), "dd/MM/yyyy")}`;
+      return `${format(new Date(dateFilter.dateFilter[0]), "dd/MM/yyyy")} - ${format(getDateRangeDisplayEnd(dateFilter.dateFilter), "dd/MM/yyyy")}`;
     }
 
     return option;
