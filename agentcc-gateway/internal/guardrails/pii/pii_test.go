@@ -532,6 +532,18 @@ func TestRemediation_MultipleInSameMessage(t *testing.T) {
 	}
 }
 
+func TestRemediation_OverlappingDetections(t *testing.T) {
+	g := New(map[string]interface{}{"remediation": "redact"})
+	input := makeInput("connect to https://admin:hunter2@db.example.com now")
+	g.Check(context.Background(), input) // used to panic: slice bounds out of range
+
+	var content string
+	json.Unmarshal(input.Request.Messages[0].Content, &content)
+	if strings.Contains(content, "hunter2") || strings.Contains(content, "admin") {
+		t.Errorf("credentials leaked after redaction: %q", content)
+	}
+}
+
 // --- Integration with Engine ---
 
 func TestIntegration_EngineBlock(t *testing.T) {

@@ -243,18 +243,30 @@ func marshalContentString(s string) json.RawMessage {
 }
 
 // applyRemediation replaces all detections in text with remediated values.
-// Processes matches in reverse order to preserve positions.
+// Overlapping detections (an email inside a url_credentials match, a phone
+// number inside a card number) keep only the outer one, so offsets stay valid.
 func applyRemediation(text string, detections []Detection, rem Remediation) string {
-	// Sort by start position descending so replacements don't shift offsets.
 	sorted := make([]Detection, len(detections))
 	copy(sorted, detections)
 	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Start > sorted[j].Start
+		if sorted[i].Start != sorted[j].Start {
+			return sorted[i].Start < sorted[j].Start
+		}
+		return sorted[i].End > sorted[j].End
 	})
 
+	kept := sorted[:0]
 	for _, d := range sorted {
-		replacement := remediate(d.Value, d.EntityType, rem)
-		text = text[:d.Start] + replacement + text[d.End:]
+		if len(kept) > 0 && d.Start < kept[len(kept)-1].End {
+			continue
+		}
+		kept = append(kept, d)
+	}
+
+	// Replace right to left so earlier offsets don't shift.
+	for i := len(kept) - 1; i >= 0; i-- {
+		d := kept[i]
+		text = text[:d.Start] + remediate(d.Value, d.EntityType, rem) + text[d.End:]
 	}
 	return text
 }
