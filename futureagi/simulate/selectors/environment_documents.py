@@ -75,29 +75,47 @@ def _reached_as_built(
     agent_version_id: Any,
     suite_version_id: Any,
 ) -> dict[str, Any]:
-    """A version's recorded contract, reaching each tool as the version it was made from runs it.
-
-    How a tool is reached is a build's fact: a build can serve a tool the author's contract imports. An edit made on
-    the author's contract (a rule, a description, one more tool) records that contract again, so in a version no
-    build sealed, each tool whose authored entry the edit left alone is reached as its base runs it; a tool the edit
-    added or changed keeps its own entry, and one it removed is gone. Only ``tool_entrypoints`` are carried."""
-    documents = version.documents or {}
+    """A version's recorded contract, each tool reached as the version it was made from runs it unless this version
+    changed how (``reach_as_built``)."""
     parent_id = getattr(version, "parent_id", None)
-    entries = recorded.get("tool_entrypoints")
-    if (
-        "run_contract" in documents
-        or parent_id is None
-        or not isinstance(entries, list)
-    ):
+    if parent_id is None:
         return recorded
-    parent = type(version)._base_manager.filter(id=parent_id).first()
-    authored = _by_tool((getattr(parent, "documents", None) or {}).get("contract"))
-    if not authored:
-        return recorded
+    return reach_as_built(
+        job,
+        recorded,
+        (version.documents or {}).get("contract"),
+        type(version)._base_manager.filter(id=parent_id).first(),
+        agent_version_id=agent_version_id,
+        suite_version_id=suite_version_id,
+    )
+
+
+def reach_as_built(
+    job: HostedHarnessJob,
+    contract: dict[str, Any],
+    authored: Any,
+    base: Any,
+    *,
+    agent_version_id: Any = None,
+    suite_version_id: Any = None,
+) -> dict[str, Any]:
+    """``contract`` (a version's sealed or recorded one), each tool reached as ``base`` runs it where neither this
+    version's build nor its edit changed how.
+
+    How a tool is reached is a build's fact: a build can serve a tool the author's contract imports, and a later
+    save seals or records the author's entry again. So, tool by tool and matched by name, a tool whose entry here is
+    its ``authored`` one (no build amended it) and is ``base``'s authored one (no edit changed it) is reached as
+    ``base`` runs it; a tool a build amended, or an edit added or changed, keeps its own entry, and one removed is
+    gone. Only ``tool_entrypoints`` are carried."""
+    entries = contract.get("tool_entrypoints")
+    before = _by_tool((getattr(base, "documents", None) or {}).get("contract"))
+    if not isinstance(entries, list) or not before:
+        return contract
+    own = _by_tool(authored)
     built = _by_tool(
         version_contract(
             job,
-            parent,
+            base,
             agent_version_id=agent_version_id,
             suite_version_id=suite_version_id,
         )
@@ -106,11 +124,11 @@ def _reached_as_built(
         built[tool]
         if isinstance(one, dict)
         and (tool := one.get("tool")) in built
-        and authored.get(tool) == one
+        and own.get(tool) == one == before.get(tool)
         else one
         for one in entries
     ]
-    return {**recorded, "tool_entrypoints": reached}
+    return {**contract, "tool_entrypoints": reached}
 
 
 def _by_tool(contract: Any) -> dict[Any, dict[str, Any]]:

@@ -691,19 +691,116 @@ class TestVersionRecordedBeforeItsSealedContract:
         assert blocked == sorted(TOOLS)
         assert set(statuses.values()) == {"unsupported"}
 
-    def test_a_version_its_own_build_sealed_keeps_how_that_build_reaches_the_tools(
+    def test_a_build_that_amends_a_tool_keeps_its_own_entry_for_that_tool(
         self, user, workspace, monkeypatch
     ):
+        from simulate.selectors.environment_documents import version_contract
+
         environment, version, storage = self._version(
             user, workspace, "rc-own-build", monkeypatch
         )
         self._bundle(environment, version, storage)
         edited = {**AUTHORED, "hard_constraints": ["Never refund twice."]}
         saved = self._saved_edit(environment, version, edited)
-        # Its own build kept the tools imported, whatever its base was built with.
+        # Its own build served get_order from another service; it left the other tools as authored.
+        billing = {
+            **AUTHORED["tool_entrypoints"][0],
+            "mode": "service",
+            "service": "billing-api",
+        }
         HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
-            documents={"contract": edited, "run_contract": {**edited, "notes": "built"}}
+            documents={
+                "contract": edited,
+                "run_contract": {
+                    **edited,
+                    "tool_entrypoints": [billing, *AUTHORED["tool_entrypoints"][1:]],
+                },
+            }
         )
         saved.refresh_from_db()
 
-        assert _blocked(environment, saved) == sorted(TOOLS)
+        entries = {
+            one["tool"]: one
+            for one in version_contract(environment, saved)["tool_entrypoints"]
+        }
+        sealed = {one["tool"]: one for one in SEALED["tool_entrypoints"]}
+        assert entries == {**sealed, "get_order": billing}
+
+    def test_a_build_whose_entry_differs_from_this_version_s_authored_one_keeps_it(
+        self, user, workspace, monkeypatch
+    ):
+        """An edit moved get_order and its build sealed the old entry: that is the build's own amendment, kept,
+        never replaced by how the base was built."""
+        from simulate.selectors.environment_documents import version_contract
+
+        environment, version, storage = self._version(
+            user, workspace, "rc-build-reverts", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        old = AUTHORED["tool_entrypoints"][0]
+        moved = {
+            **AUTHORED,
+            "tool_entrypoints": [
+                {**old, "endpoint": "orders/lookup"},
+                *AUTHORED["tool_entrypoints"][1:],
+            ],
+        }
+        saved = self._saved_edit(environment, version, moved)
+        HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
+            documents={
+                "contract": moved,
+                "run_contract": {
+                    **moved,
+                    "tool_entrypoints": AUTHORED["tool_entrypoints"],
+                },
+            }
+        )
+        saved.refresh_from_db()
+
+        entries = {
+            one["tool"]: one
+            for one in version_contract(environment, saved)["tool_entrypoints"]
+        }
+        assert entries["get_order"] == old
+
+
+def test_a_builder_save_that_seals_the_authored_entries_again_runs_as_the_first_build(
+    user, workspace, storage, auth_client
+):
+    """The builder's save reseals the sandbox's tree: its sealed contract carries the author's import entries, not
+    the service ones the first build amended them to."""
+    from simulate.tests.test_harness_versioning_drafts import (
+        NAMES,
+        WORLD_EDIT,
+        _publish,
+    )
+    from simulate.tests.test_harness_versioning_record import (
+        _environment as _record_environment,
+    )
+    from simulate.tests.test_harness_versioning_rollback import _rows
+
+    environment = _record_environment(user, workspace, "rc-builder-save")
+    first = record_authoring(environment, _built(), origin="authoring").environment
+    environment.refresh_from_db()
+    _rows(environment)
+    edited = {**AUTHORED, "hard_constraints": ["Never refund an unshipped order."]}
+    resealed = {
+        "environment-bundle/contract.json": json.dumps(edited),
+        "world.sqlite": WORLD_EDIT,
+    }
+    _publish(environment, storage, NAMES[:2], sequence=10, contract=edited, **resealed)
+
+    _save_drafts(environment)
+
+    saved = environment.environment_version
+    assert saved.id != first.id
+    reached = {
+        one["tool"]: one
+        for one in recorded_contract(saved.documents)["tool_entrypoints"]
+    }
+    assert reached == {one["tool"]: one for one in SEALED["tool_entrypoints"]}
+    base = f"/simulate/api/harness-environments/{environment.id}"
+    plan = auth_client.get(f"{base}/run-plan/").json()
+    contract = auth_client.get(f"{base}/").json()["contract"]
+    assert (plan["blocked_tools"], plan["runnable"]) == ([], True)
+    assert contract["production_only"] == []
