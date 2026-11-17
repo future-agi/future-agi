@@ -486,7 +486,7 @@ export default function SourcesSection({
                   ...[
                     ["agent", "Agent"],
                     ["caller", "Caller"],
-                    ["evaluator", "Evaluator"],
+                    ["evaluator", "Grader"],
                   ].map(
                     ([k, label]) =>
                       `${label}: ${views[k].length ? views[k].map((v) => `${v.source.name} (${v.how.toLowerCase()})`).join(", ") : "none"}`,
@@ -504,7 +504,7 @@ export default function SourcesSection({
                     width: "fit-content",
                   }}
                 >
-                  {`In a run · agent ${views.agent.length} · caller ${views.caller.length} · evaluator ${views.evaluator.length} ${views.evaluator.length === 1 ? "file" : "files"}`}
+                  {`In a run · agent ${views.agent.length} · caller ${views.caller.length} · grader ${views.evaluator.length} ${views.evaluator.length === 1 ? "file" : "files"}`}
                 </Typography>
               </Tooltip>
             </Box>

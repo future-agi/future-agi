@@ -175,10 +175,12 @@ export default function DataProposalCard({
       patch({
         failedEnvChanges: [...(envState.failedEnvChanges || []), ...failed],
       });
-    const n = patches.length - 1;
+    /* Counted like the button: what was picked, less what couldn't apply. */
+    const n = Math.max(0, count - failed.length);
+    const what = `${n}${failed.length ? ` of ${count}` : ""} change${(failed.length ? count : n) === 1 ? "" : "s"}`;
     if (inPlace) {
       enqueueSnackbar(
-        `Added ${n} change${n === 1 ? "" : "s"} to environment ${current}${failed.length ? ` · ${failed.length} couldn't apply` : ""}. No run has used ${current} yet, so they apply now.`,
+        `Added ${what} to environment ${current}${failed.length ? ` · ${failed.length} couldn't apply` : ""}. No run has used ${current} yet, so they apply now.`,
         { variant: "success" },
       );
       if (onSaved) onSaved();
@@ -186,7 +188,7 @@ export default function DataProposalCard({
       return null;
     }
     enqueueSnackbar(
-      `Added ${n} change${n === 1 ? "" : "s"} to your unsaved changes${failed.length ? ` · ${failed.length} couldn't apply` : ""}. Review and save them to make the version.`,
+      `Added ${what} to your unsaved changes${failed.length ? ` · ${failed.length} couldn't apply` : ""}. Review and save them to make the version.`,
       {
         variant: "success",
         action: (key) =>

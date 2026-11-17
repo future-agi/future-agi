@@ -685,9 +685,7 @@ export const participantViewsOf = (sources) => {
     view.evaluator.push({
       source: s,
       how:
-        s.visibility === "evaluator"
-          ? "Only the evaluator"
-          : "To grade against",
+        s.visibility === "evaluator" ? "Only the grader" : "To grade against",
     });
   });
   return view;
@@ -994,7 +992,7 @@ export const dataProposalOf = (
       items.push({
         id: `hidden-${s.id}`,
         kind: "hidden",
-        title: `${s.name} stays evaluator-only`,
+        title: `${s.name} stays grader-only`,
         detail:
           "The agent and the simulated caller can't read it, even though it came through the same chat.",
         cite: { sourceId: s.id, ref: s.name },
@@ -1534,7 +1532,7 @@ export const exportPreviewOf = (source) => {
     return {
       allowed: false,
       reason:
-        "Evaluator-only references aren't exported — they'd leak the expected answers.",
+        "Grader-only files aren't exported — they'd leak the expected answers.",
     };
   const cols = source.parsed?.columns || [];
   const left = cols

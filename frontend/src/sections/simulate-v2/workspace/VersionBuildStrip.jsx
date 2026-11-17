@@ -11,6 +11,7 @@ import {
 } from "../_mock/versionBuild";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { checksStateOf, runChecksPatch } from "../_mock/release";
+import { designSourcesSummary } from "../_mock/designSources";
 import useVersionChange from "./useVersionChange";
 
 /*
@@ -31,6 +32,13 @@ export default function VersionBuildStrip({ env, envState, patch, onGo }) {
   }, [build]);
 
   const prog = versionBuildProgress(build, now);
+  /* Every build that ends on a release saves itself when it's clean and
+     nothing is left to answer — the same rule as useReleaseAutoSave. */
+  const savesItself =
+    !!build?.autoSave ||
+    (!!env?.builtFrom?.releaseStep &&
+      !env?.autoSaveUndone &&
+      !designSourcesSummary(env, envState || {}).needsInput);
   const label = build
     ? build.shownLabel || envLabelOf(env, envState, build.label)
     : "";
@@ -47,8 +55,9 @@ export default function VersionBuildStrip({ env, envState, patch, onGo }) {
       };
       patch?.({ versionBuild: null, versionNews: null, ...checked });
       const passed = checksStateOf(env, { ...envState, ...checked }).ready;
-      /* A clean build saves itself; the page says so with its own notice. */
-      if (passed && build.autoSave) return;
+      /* A clean build saves itself (useReleaseAutoSave); the page says so
+         with its own notice — this one would be a second, contradicting it. */
+      if (passed && savesItself) return;
       enqueueSnackbar(
         passed
           ? `Environment ${label} is built and all five checks passed. Review and save it.`
@@ -137,7 +146,7 @@ export default function VersionBuildStrip({ env, envState, patch, onGo }) {
           />
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {build.first
-              ? build.autoSave
+              ? savesItself
                 ? `Saved as v1 when the checks pass · about ${secs} s left`
                 : `Then you review and save it · about ${secs} s left`
               : `Runs start once it's ready · about ${secs} s left`}
