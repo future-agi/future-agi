@@ -29,6 +29,7 @@ import {
   useArchiveSkill,
   useSkill,
   useSkillVersion,
+  useSkillVersions,
 } from "src/api/skills";
 import { useSkillV11Scope } from 'src/api/skills/testing';
 import { HOST_API } from "src/config-global";
@@ -58,16 +59,48 @@ import J1MigrationExport from './J1MigrationExport';
 import UsageTab from "./UsageTab";
 import UseSkillPanel from "./UseSkillPanel";
 import { resolveViewedVersion } from "./detail-state";
+import RuntimeTab from "../runtime/RuntimeTab";
+import HeaderMoveChip from "../runtime/MoveStateChip";
+import CheckTracing from "../runtime/CheckTracing";
+import { useSkillTracesEnabled } from "../runtime/skillTracesFlag";
 
 // URL values stay stable ("dependents", "usage"); only the labels change (UX-18).
-const TABS = ["files", "tests", "dependents", "versions", "usage", "use"];
+// With `skillTraces` on, Runtime (URL value "runtime") sits between Linked contexts and
+// Versions (SKILL-TRACES §7.3, UX-08). With it off, ?tab=runtime falls back to Files.
+const BASE_TABS = ["files", "tests", "dependents", "versions", "usage", "use"];
+const TRACES_TABS = ["files", "tests", "dependents", "runtime", "versions", "usage", "use"];
 const TAB_LABELS = {
   files: "Files",
   tests: "Tests",
   dependents: "Linked contexts",
+  runtime: "Runtime",
   versions: "Versions",
   usage: "Activity",
   use: "Install",
+};
+// The versions list feeds only the "N versions with no loads recorded" fold of Loaded by.
+const RUNTIME_VERSIONS_PAGE = { page: 1, pageSize: 100 };
+
+// Mounted only with `skillTraces` on, so the flag-off page makes no runtime reads.
+function SkillRuntimeSection({ skill, productionVersion, viewingVersion, onRollback, onCheckTracing }) {
+  const versions = useSkillVersions(skill.id, RUNTIME_VERSIONS_PAGE);
+  return (
+    <RuntimeTab
+      skill={{ id: skill.id, name: skill.name }}
+      versions={versions.data?.results || []}
+      productionVersion={productionVersion}
+      viewingVersion={viewingVersion}
+      onRollback={onRollback}
+      onCheckTracing={onCheckTracing}
+    />
+  );
+}
+SkillRuntimeSection.propTypes = {
+  skill: PropTypes.object.isRequired,
+  productionVersion: PropTypes.number,
+  viewingVersion: PropTypes.number,
+  onRollback: PropTypes.func,
+  onCheckTracing: PropTypes.func,
 };
 
 function DetailContent({ skill, preview }) {
@@ -84,7 +117,9 @@ function DetailContent({ skill, preview }) {
   const [archiveRevision, setArchiveRevision] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [operationError, setOperationError] = useState(null);
-  const tab = TABS.includes(params.get("tab")) ? params.get("tab") : "files";
+  const traces = useSkillTracesEnabled();
+  const tabValues = traces ? TRACES_TABS : BASE_TABS;
+  const tab = tabValues.includes(params.get("tab")) ? params.get("tab") : "files";
   const production = skill.labels.find((label) => label.name === "production");
   const otherDrafts = (skill.drafts || []).filter((draft) => !draft.isMine);
   const { number: downloadNumber } = resolveViewedVersion(
@@ -96,6 +131,21 @@ function DetailContent({ skill, preview }) {
     setParams((previous) => {
       const next = new URLSearchParams(previous);
       next.set("tab", value);
+      return next;
+    });
+  // "Roll back to vN" on the move card opens the existing flow: the Versions tab with
+  // that version in view, where the production label is moved under the usual rules.
+  // Nothing moves from here.
+  const openRollback = (version) =>
+    setParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set("tab", "versions");
+      if (Number.isSafeInteger(version) && version > 0) {
+        next.set("version", String(version));
+        next.set("path", "SKILL.md");
+      }
+      next.delete("move");
+      next.delete("window");
       return next;
     });
   const copyCommand = async () => {
@@ -147,7 +197,7 @@ function DetailContent({ skill, preview }) {
         crumbs={[{ label: "Skills", to: paths.dashboard.skills.root }, { label: skill.name }]}
         title={skill.name}
         purpose={skill.description}
-        identity={<VersionIdentityRow picker={<Box sx={{ minWidth: 140 }}><VersionSelect ariaLabel="Viewing" includeLabels={false} annotate skillId={skill.id} value={downloadNumber} onChange={(value) => setParams((previous) => { const next = new URLSearchParams(previous); next.set('version', String(value)); next.set('path', 'SKILL.md'); return next; })} /></Box>} viewing={{ number: downloadNumber, digest: viewedVersion.data?.digest }} latest={{ number: skill.latestVersion }} production={production ? { number: production.version } : null} draft={skill.hasDraft ? { baseNumber: skill.drafts?.find((draft) => draft.isMine)?.baseVersion } : null} />}
+        identity={<VersionIdentityRow picker={<Box sx={{ minWidth: 140 }}><VersionSelect ariaLabel="Viewing" includeLabels={false} annotate skillId={skill.id} value={downloadNumber} onChange={(value) => setParams((previous) => { const next = new URLSearchParams(previous); next.set('version', String(value)); next.set('path', 'SKILL.md'); return next; })} /></Box>} viewing={{ number: downloadNumber, digest: viewedVersion.data?.digest }} latest={{ number: skill.latestVersion }} production={production ? { number: production.version } : null} draft={skill.hasDraft ? { baseNumber: skill.drafts?.find((draft) => draft.isMine)?.baseVersion } : null} extra={traces ? <HeaderMoveChip skillId={skill.id} /> : undefined} />}
         sx={{ flexWrap: "wrap", gap: 1.5 }}
         actions={
           <>
@@ -194,7 +244,7 @@ function DetailContent({ skill, preview }) {
         scrollButtons="auto"
         aria-label="Skill detail"
       >
-        {TABS.map((value) => (
+        {tabValues.map((value) => (
           <Tab
             key={value}
             value={value}
@@ -222,9 +272,24 @@ function DetailContent({ skill, preview }) {
           ))}
         {tab === "tests" && <TestsTab skill={skill} />}
         {tab === "dependents" && <ContextDependentsPanel skillId={skill.id} state={preview} />}
+        {tab === "runtime" && traces && (
+          <SkillRuntimeSection
+            skill={skill}
+            productionVersion={production?.version}
+            viewingVersion={downloadNumber}
+            onRollback={openRollback}
+            onCheckTracing={() => changeTab("use")}
+          />
+        )}
         {tab === "versions" && <VersionsTab skill={skill} />}
         {tab === "usage" && <UsageTab skill={skill} />}
-        {tab === "use" && <UseSkillPanel skill={skill} />}
+        {tab === "use" && (traces ? (
+          // Check tracing sits below the install instructions (§7.3, UX-14).
+          <Stack spacing={4}>
+            <UseSkillPanel skill={skill} />
+            <CheckTracing kind="skill" id={skill.id} name={skill.name} canCheck={!isViewer} />
+          </Stack>
+        ) : <UseSkillPanel skill={skill} />)}
       </Box>
       <Menu
         id="skill-actions"

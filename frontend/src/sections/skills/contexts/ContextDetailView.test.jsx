@@ -1,17 +1,28 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { setSkillTracesOverride } from '../runtime/skillTracesFlag';
 import ContextDetailView from './ContextDetailView';
 
 // SKILL-TRACES §16 UXF-14 (the release request has one name), UXF-16 ("update rules") and the
-// stable tab URL values the shell owns. No Stream A surface renders in commit 1.
+// stable tab URL values the shell owns. Stream A surfaces render only with `skillTraces` on (end of file).
 
 const state = vi.hoisted(() => ({ upstream: {} }));
 vi.mock('src/api/skills/context-skill-inventory', () => ({ useLinkedSkillUpstream: () => state.upstream }));
 vi.mock('src/components/iconify', () => ({ default: () => null }));
 vi.mock('../utils/access', () => ({ useSkillsAccess: () => ({ ready: true, sameScope: true, isViewer: false, canWrite: true, canAdmin: false }) }));
-afterEach(cleanup);
-beforeEach(() => { state.upstream = {}; try { localStorage.clear(); } catch { /* optional */ } });
+// The "Loaded (7 days)" column comes from lane ST10; this suite checks only that the shell
+// passes it to the Linked skills table and lists loads outside the links under it.
+const loads = vi.hoisted(() => ({ hook: vi.fn() }));
+vi.mock('../runtime/LinkedLoadsCell', () => ({
+  useLinkedLoadsColumn: (...args) => {
+    loads.hook(...args);
+    return { column: { header: 'Loaded (7 days)', cell: ({ link }) => <span>{`${link.skillId} loads`}</span> }, loadedNotLinked: [{ skillId: 'tone', name: 'tone', version: 1 }] };
+  },
+  LoadedNotLinkedList: ({ items }) => (items.length ? <section aria-label="Loaded but not linked here">{items.map((item) => item.name).join(', ')}</section> : null),
+}));
+afterEach(() => { cleanup(); setSkillTracesOverride(null); });
+beforeEach(() => { state.upstream = {}; loads.hook.mockClear(); try { localStorage.clear(); } catch { /* optional */ } });
 
 const scopeKey = 'scope';
 const v1 = { id: 'v1', number: 1, digest: `sha256:${'a'.repeat(64)}` };
@@ -73,4 +84,43 @@ it('says "update rules" for the generated file', () => {
   show(detail({ selectedPath: '.futureagi/context.json' }));
   expect(screen.getByText('Generated file · read-only. Records the update rules and locked skill versions.')).toBeVisible();
   expect(screen.queryByText(/update policies/)).not.toBeInTheDocument();
+});
+
+// SKILL-TRACES §7.4, §15 D5 and §16 UXF-07 (UXF5 commit 2), with `skillTraces` on.
+const traceSections = (props = detail()) => ({ ...props, sections: { ...props.sections, runtime: <p>Context runtime</p>, usage: <p>Context fetches</p> } });
+
+it('orders the context tabs like the skill page when skillTraces is on', () => {
+  setSkillTracesOverride(true);
+  show(traceSections());
+  expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Instructions', 'Linked skills', 'Tests', 'Runtime', 'Versions', 'Connected apps', 'Rollback', 'Activity', 'Install']);
+  fireEvent.click(screen.getByRole('tab', { name: 'Runtime' }));
+  expect(screen.getByLabelText('Location')).toHaveTextContent('tab=runtime');
+  expect(screen.getByText('Context runtime')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: 'Activity' }));
+  expect(screen.getByLabelText('Location')).toHaveTextContent('tab=usage');
+  expect(screen.getByText('Context fetches')).toBeVisible();
+});
+
+it('adds Loaded (7 days) to Linked skills for the viewed version, with loads outside the links below', () => {
+  setSkillTracesOverride(true);
+  show(traceSections(), '/?tab=links');
+  const table = screen.getByRole('table', { name: 'Linked skills' });
+  expect(within(table).getByRole('columnheader', { name: 'Loaded (7 days)' })).toBeVisible();
+  expect(within(table).getByText('follow loads')).toBeVisible();
+  expect(loads.hook).toHaveBeenLastCalledWith('context', 'v1', { enabled: true });
+  expect(screen.getByRole('region', { name: 'Loaded but not linked here' })).toHaveTextContent('tone');
+});
+
+it('shows no Runtime or Activity tab, column or list with skillTraces off, even when sections exist', () => {
+  setSkillTracesOverride(false);
+  show(traceSections(), '/?tab=runtime');
+  expect(screen.queryByRole('tab', { name: 'Runtime' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('tab', { name: 'Activity' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Context runtime')).not.toBeInTheDocument();
+  expect(screen.getByText("That section isn't available here. Showing Instructions.")).toBeVisible();
+  cleanup();
+  show(traceSections(), '/?tab=links');
+  expect(within(screen.getByRole('table', { name: 'Linked skills' })).queryByRole('columnheader', { name: 'Loaded (7 days)' })).not.toBeInTheDocument();
+  expect(loads.hook).not.toHaveBeenCalled();
+  expect(screen.queryByRole('region', { name: 'Loaded but not linked here' })).not.toBeInTheDocument();
 });

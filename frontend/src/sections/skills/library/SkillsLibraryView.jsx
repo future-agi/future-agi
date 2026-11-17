@@ -23,9 +23,16 @@ import NewSkillDialog from "./NewSkillDialog";
 import ImportSkillsDialog from "./ImportSkillsDialog";
 import LibraryEmptyState from "./LibraryEmptyState";
 import SkillRowMenu from "./SkillRowMenu";
+import { LibraryLoadsCell } from "../runtime/LinkedLoadsCell";
+import { LOADED_7_DAYS } from "../runtime/runtimeCopy";
+import { useSkillTracesEnabled } from "../runtime/skillTracesFlag";
+
+// The list serializer's `runtime` field (SKILL-TRACES §6.6 Library): `loaded_7d` and the
+// latest production move. The cell reads either casing; without the field it shows "—".
+const libraryRuntime = (skill) => skill.runtime ?? null;
 
 // Below sm each skill is a stacked card: name and menu, description, then one quiet facts line.
-function SkillCard({ skill, onOpen }) {
+function SkillCard({ skill, onOpen, traces = false }) {
   const production = skill.labels.find((item) => item.name === "production");
   return (
     <Box component="li" onClick={() => onOpen(skill)} sx={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", columnGap: 1, py: 1.5, borderBottom: 1, borderColor: "divider", cursor: "pointer" }}>
@@ -39,15 +46,23 @@ function SkillCard({ skill, onOpen }) {
       <Typography variant="s3" color="text.secondary" sx={{ gridColumn: "1 / -1", mt: 0.5 }}>
         {production ? `Production v${production.version}` : "Not in production"} · {skill.latestVersion ? `Latest v${skill.latestVersion}` : "Not published"} · <When value={skill.updatedAt} />
       </Typography>
+      {/* §7.7: at 390 the "Loaded (7 days)" column moves into the stacked row. */}
+      {traces && (
+        <Stack component="span" direction="row" spacing={0.75} alignItems="baseline" data-library-loads="true" sx={{ gridColumn: "1 / -1", mt: 0.25, typography: "s3", color: "text.secondary" }}>
+          <span>{LOADED_7_DAYS}</span>
+          <LibraryLoadsCell runtime={libraryRuntime(skill)} />
+        </Stack>
+      )}
     </Box>
   );
 }
-SkillCard.propTypes = { skill: PropTypes.object.isRequired, onOpen: PropTypes.func.isRequired };
+SkillCard.propTypes = { skill: PropTypes.object.isRequired, onOpen: PropTypes.func.isRequired, traces: PropTypes.bool };
 
 export default function SkillsLibraryView() {
   const navigate = useNavigate();
   const phone = useMediaQuery((theme) => theme.breakpoints.down("sm"));
   const { canWrite } = useSkillsAccess();
+  const traces = useSkillTracesEnabled();
   const [params, setParams] = useSearchParams();
   const [newTemplate, setNewTemplate] = useState(null);
   const location = useLocation();
@@ -117,6 +132,8 @@ export default function SkillsLibraryView() {
     { accessorKey: "tags", header: "Tags", minSize: 150, meta: { flex: 1 }, cell: ({ getValue }) => <Typography variant="s3" noWrap>{getValue().join(", ") || "—"}</Typography> },
     // A server fetch, not a runtime load (UX-18); "Loaded (7 days)" is a separate column.
     { accessorKey: "fetches7d", header: "Fetched (7 days)", size: 135 },
+    // Flagged (UX-01, UX-16, §15 D12): runtime loads beside fetches, with the short move state.
+    ...(traces ? [{ id: "loaded7d", header: LOADED_7_DAYS, minSize: 150, cell: ({ row: { original: skill } }) => <LibraryLoadsCell runtime={libraryRuntime(skill)} /> }] : []),
     { accessorKey: "updatedAt", header: "Updated", minSize: 170, cell: ({ row: { original: skill } }) => (
       <Stack direction="row" alignItems="center" spacing={1}>
         {skill.updatedBy && <Avatar alt={skill.updatedBy.name} sx={{ width: 20, height: 20, typography: "s3", fontFamily: "inherit" }}>{skill.updatedBy.name?.split(/\s+/).map((part) => part[0]).slice(0, 2).join("")}</Avatar>}
@@ -161,7 +178,7 @@ export default function SkillsLibraryView() {
         : rows.length === 0 ? <EmptyState variant="no-results" title="No skills match these filters." description="Try a different search or clear the filters."
           onClearFilters={() => changeParams({ search: null, tag: null, label: null, state: null })} />
         : <Box sx={{ minWidth: 0 }}>
-          {phone ? <Stack component="ul" aria-label="Skills" sx={{ listStyle: "none", m: 0, p: 0 }}>{rows.map((skill) => <SkillCard key={skill.id} skill={skill} onOpen={openSkill} />)}</Stack>
+          {phone ? <Stack component="ul" aria-label="Skills" sx={{ listStyle: "none", m: 0, p: 0 }}>{rows.map((skill) => <SkillCard key={skill.id} skill={skill} onOpen={openSkill} traces={traces} />)}</Stack>
             : <Box sx={{ height: rows.length * ROW_HEIGHT.twoLine + TABLE_HEADER_HEIGHT.default, "& .MuiDataGrid-row:last-child .MuiDataGrid-cell": { borderBottom: 0 } }}><DataTable columns={columns} data={rows} rowCount={count} rowHeight={ROW_HEIGHT.twoLine} onRowClick={openSkill} /></Box>}
           <Box sx={{ "& > .MuiBox-root": { flexWrap: "wrap", columnGap: { xs: 1, sm: 2 }, px: { xs: 0, sm: 2 } } }}><DataTablePagination page={page - 1} pageSize={pageSize} pageSizeOptions={[10, 25, 50, 100]} total={count}
             disabled={query.isFetching} onPageChange={(nextPage) => changeParams({ page: nextPage + 1 }, false)} onPageSizeChange={(size) => changeParams({ page_size: size })} /></Box>

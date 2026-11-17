@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithRouter } from "src/utils/test-utils";
@@ -7,6 +7,7 @@ import NewSkillDialog from "./NewSkillDialog";
 import ImportSkillsDialog from "./ImportSkillsDialog";
 import ArchivedSkillsView from "./ArchivedSkillsView";
 import { enqueueSnackbar } from "notistack";
+import { setSkillTracesOverride } from "../runtime/skillTracesFlag";
 
 const api = vi.hoisted(() => ({
   isViewer: false, canAdmin: true, restoreReady: false, canArchive: true, list: vi.fn(), templates: vi.fn(), create: vi.fn(), archive: vi.fn(),
@@ -797,5 +798,62 @@ describe("Archived skills (UX iteration 5, LIB1)", () => {
   it("does not show another workspace's rows after a scope change", () => {
     show({ scopeKey: "org:other", query: page() });
     expect(screen.queryByText("refund-policy")).not.toBeInTheDocument();
+  });
+});
+
+// SKILL-TRACES §7.3 "Library column", UX-01, UX-16, §15 D12 (UXF5 commit 2): with `skillTraces` on,
+// "Loaded (7 days)" sits beside "Fetched (7 days)" and reads the list serializer's `runtime` field.
+describe("Loaded (7 days) with skillTraces on", () => {
+  const runtimeSkill = (runtime) => ({ ...skill, runtime });
+  const loadedCells = () => [...document.querySelectorAll('[role="gridcell"][data-field="loaded7d"]')].map((cell) => cell.textContent);
+  afterEach(() => setSkillTracesOverride(null));
+
+  it("adds the column beside Fetched, with the count and the short move state", () => {
+    setSkillTracesOverride(true);
+    api.list.mockReturnValue(listResult({ results: [runtimeSkill({ loaded_7d: 1204, move: { verdict: "watching", to_version: 4 } })] }));
+    renderLibrary();
+    expect(screen.getAllByText("Fetched (7 days)").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Loaded (7 days)").length).toBeGreaterThan(0);
+    expect(loadedCells()).toEqual(["1,204v4 · watching"]);
+    expect(screen.getByText("v4 · watching")).toBeInTheDocument();
+  });
+
+  it("says it can't record loads yet for null, and shows 0 when consumers can record but none arrived", () => {
+    setSkillTracesOverride(true);
+    api.list.mockReturnValue(listResult({ results: [
+      runtimeSkill({ loaded_7d: null }),
+      { ...runtimeSkill({ loaded_7d: 0 }), id: "skill-2", name: "tone" },
+    ] }));
+    renderLibrary();
+    expect(screen.getByLabelText("Can't record loads yet")).toHaveTextContent("—");
+    expect(loadedCells()).toEqual(["—", "0"]);
+  });
+
+  it("shows a dash, never a count, when the list carries no runtime field", () => {
+    setSkillTracesOverride(true);
+    renderLibrary();
+    expect(screen.getAllByText("Loaded (7 days)").length).toBeGreaterThan(0);
+    expect(loadedCells()).toEqual(["—"]);
+    expect(screen.queryByText(/loaded by|in use/i)).not.toBeInTheDocument();
+  });
+
+  it("moves the value into the stacked card below sm", () => {
+    setSkillTracesOverride(true);
+    api.list.mockReturnValue(listResult({ results: [runtimeSkill({ loaded_7d: 31 })] }));
+    vi.stubGlobal("matchMedia", (query) => ({ matches: /max-width/.test(query), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }));
+    try {
+      renderLibrary();
+      const card = within(screen.getByRole("list", { name: "Skills" })).getByRole("listitem");
+      expect(card).toHaveTextContent("Loaded (7 days)31");
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("renders nothing from the runtime column with the flag off", () => {
+    setSkillTracesOverride(false);
+    api.list.mockReturnValue(listResult({ results: [runtimeSkill({ loaded_7d: 1204 })] }));
+    renderLibrary();
+    expect(screen.queryByText("Loaded (7 days)")).not.toBeInTheDocument();
+    expect(loadedCells()).toEqual([]);
+    expect(screen.queryByText("1,204")).not.toBeInTheDocument();
   });
 });

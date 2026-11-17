@@ -1,5 +1,6 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
+import { useInRouterContext, useNavigate } from "react-router-dom";
 import {
   Alert,
   Button,
@@ -30,6 +31,7 @@ import { endpoints } from "src/utils/axios";
 import { formatDate } from "src/utils/report-utils";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
 import { buildSkillTraceLink } from "src/sections/skills/utils/traces";
+import { useSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
 
 const timestamp = (value) =>
   value
@@ -185,7 +187,10 @@ AuthorizedProjectPicker.propTypes = {
   sx: PropTypes.object,
 };
 
-function TraceDialog({ versions, initialVersionId, onClose }) {
+// The legacy fetch-adoption trace link (SKILL-TRACES §7.3 "Activity tab", UX-03).
+// With `skillTraces` on, Observe opens in the same tab through the router, so Back
+// returns here (§7.8, UX-02). With it off, the link keeps opening a new tab.
+function TraceDialog({ versions, initialVersionId, onClose, navigate }) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState(initialVersionId);
   const [windowDates, setWindowDates] = useState(() => {
@@ -213,7 +218,9 @@ function TraceDialog({ versions, initialVersionId, onClose }) {
       subTitle="Choose a workspace project and explicit dates."
       onClose={onClose}
       onSubmit={() => {
-        if (link) window.open(link, "_blank", "noopener,noreferrer");
+        if (!link) return;
+        if (navigate) navigate(link);
+        else window.open(link, "_blank", "noopener,noreferrer");
       }}
       actionBtnTitle="Open traces"
       isValid={Boolean(link)}
@@ -295,7 +302,14 @@ TraceDialog.propTypes = {
   versions: PropTypes.array.isRequired,
   initialVersionId: PropTypes.string.isRequired,
   onClose: PropTypes.func.isRequired,
+  // Set only with `skillTraces` on and inside a router: navigate in the same tab.
+  navigate: PropTypes.func,
 };
+
+function SameTabTraceDialog(props) {
+  const navigate = useNavigate();
+  return <TraceDialog {...props} navigate={navigate} />;
+}
 
 function AdoptionContent({ skill, days: externalDays, summary, about, details, aboutOpen, onAboutToggle }) {
   const preview = usePreviewState();
@@ -304,6 +318,9 @@ function AdoptionContent({ skill, days: externalDays, summary, about, details, a
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [showTraces, setShowTraces] = useState(false);
+  const traces = useSkillTracesEnabled();
+  const inRouter = useInRouterContext();
+  const sameTab = traces && inRouter;
   const query = useSkillAdoption(skill.id, {
     label: "production",
     days,
@@ -482,13 +499,19 @@ function AdoptionContent({ skill, days: externalDays, summary, about, details, a
           </Stack>
         </TechnicalDetails>
       </Stack>
-      {showTraces && target && (
+      {showTraces && target && (sameTab ? (
+        <SameTabTraceDialog
+          versions={versions}
+          initialVersionId={target.versionId}
+          onClose={() => setShowTraces(false)}
+        />
+      ) : (
         <TraceDialog
           versions={versions}
           initialVersionId={target.versionId}
           onClose={() => setShowTraces(false)}
         />
-      )}
+      ))}
     </Section>
   );
 }

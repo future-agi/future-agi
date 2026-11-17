@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { dsPalette, dsTypography } from 'src/theme/ds-tokens';
+import { setSkillTracesOverride } from '../runtime/skillTracesFlag';
 import AdoptionPanel, { AuthorizedProjectPicker, isAuthorizedProject, useAuthorizedProjects } from './AdoptionPanel';
 
 // SKILL-TRACES §7.3: the panel is fetch data only, titled "Fetch adoption after a label move";
@@ -33,7 +34,7 @@ beforeEach(() => {
   mocks.adoption.mockReturnValue(success(observations));
   mocks.projects.mockReturnValue(success(projects));
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); setSkillTracesOverride(null); });
 const theme = createTheme({ palette: dsPalette('light'), typography: dsTypography });
 const show = (ui) => render(<ThemeProvider theme={theme}><MemoryRouter>{ui}</MemoryRouter></ThemeProvider>);
 
@@ -110,5 +111,41 @@ describe('authorized project picker', () => {
     mocks.projects.mockReturnValue(query);
     show(<AuthorizedProjectPicker value="" onChange={vi.fn()} />);
     expect(screen.queryAllByText(text).length + screen.queryAllByLabelText(text).length).toBeGreaterThan(0);
+  });
+});
+
+// SKILL-TRACES §7.3 "Activity tab", §7.8 and UX-02 (UXF5 commit 2): with `skillTraces` on, the
+// legacy fetch-adoption link opens Observe in the same tab; with it off it keeps opening a new tab.
+describe('fetch adoption trace link', () => {
+  function Location() {
+    const location = useLocation();
+    return <output aria-label="Location">{`${location.pathname}${location.search}`}</output>;
+  }
+  const openTraces = async () => {
+    render(<ThemeProvider theme={theme}><MemoryRouter initialEntries={['/dashboard/skills/skill-a?tab=usage']}><AdoptionPanel skill={skill} days={7} /><Location /></MemoryRouter></ThemeProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'View traces' }));
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Project' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'acme-support-production' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open traces' }));
+  };
+
+  it('navigates in the same tab with skillTraces on, so Back returns here', async () => {
+    setSkillTracesOverride(true);
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    await openTraces();
+    expect(open).not.toHaveBeenCalled();
+    const location = screen.getByLabelText('Location').textContent;
+    expect(location).toMatch(/^\/dashboard\/observe\/project-a\/llm-tracing\?/);
+    expect(decodeURIComponent(location)).toContain(versionId);
+    open.mockRestore();
+  });
+
+  it('keeps the new-tab link with skillTraces off', async () => {
+    setSkillTracesOverride(false);
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    await openTraces();
+    expect(open).toHaveBeenCalledWith(expect.stringContaining('/project-a/llm-tracing?'), '_blank', 'noopener,noreferrer');
+    expect(screen.getByLabelText('Location')).toHaveTextContent('/dashboard/skills/skill-a?tab=usage');
+    open.mockRestore();
   });
 });
