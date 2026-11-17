@@ -1859,9 +1859,11 @@ class ClickHouseFilterBuilder:
                     if self.query_mode != self.QUERY_MODE_SPAN:
                         raise _unsupported_filter_shape("skill.in_scope is span-grain only")
                     param = self._next_param("skill_scope")
+                    # hasAny requires an Array literal. Drivers encode tuples
+                    # as SQL tuples, and a singleton tuple becomes a String.
                     self._params[param] = (
-                        tuple(config["filter_value"]) if config["filter_op"] == "in"
-                        else (config["filter_value"],)
+                        list(config["filter_value"]) if config["filter_op"] == "in"
+                        else [config["filter_value"]]
                     )
                     # Residual candidate relations do not project the array.
                     # Resolve it on the current span identity, never a sibling.

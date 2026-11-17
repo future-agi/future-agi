@@ -145,7 +145,11 @@ def test_in_scope_is_span_only_and_does_not_need_projected_array():
     assert "(toUUID(%(project_id)s), trace_id, id) IN" in sql
     assert "argMax(tuple(skill_version_ids, is_deleted), _version)" in sql
     assert "hasAny(scope_state.1" in sql
-    assert (VERSION,) in params.values()
+    assert [VERSION] in params.values()
+    _, membership = compile_filters(
+        [skill("in_scope", [VERSION, OTHER_VERSION], op="in")], mode="span"
+    )
+    assert [VERSION, OTHER_VERSION] in membership.values()
 
 
 def test_exact_graph_does_not_compile_skill_leaves_independently():
@@ -376,7 +380,11 @@ def test_live_span_scope_and_legacy_array_filter(skill_query_client):
         "filter_op": "contains", "filter_value": [VERSION],
     }}
     assert FilterListField().run_validation([raw_array]) == [raw_array]
-    for items in ([skill("in_scope", VERSION)], [raw_array]):
+    for items in (
+        [skill("in_scope", VERSION)],
+        [skill("in_scope", [VERSION, OTHER_VERSION], op="in")],
+        [raw_array],
+    ):
         predicate, params = compile_exact_graph_filter_predicates(
             items, project_id=project, observe_type="span",
         )

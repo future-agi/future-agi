@@ -49,7 +49,7 @@ def load_span(**overrides):
         "id": uuid4().hex[:16],
         "name": "skill.load",
         "observation_type": "unknown",
-        "service_name": "review-service",
+        "resource_attributes": {"service.name": "review-service"},
         "start_time": START,
         "end_time": START + timedelta(milliseconds=2),
         "created_at": START,
