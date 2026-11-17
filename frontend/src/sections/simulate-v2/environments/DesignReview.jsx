@@ -545,7 +545,12 @@ export default function DesignReview({
      part of the proposal as an unboxed list (design system: Page, Panel,
      Table, Banner). */
   if (page) {
-    const flow = env?.builtFrom?.intake?.flow?.trim();
+    const bf = env?.builtFrom || {};
+    /* Built for an agent: what to test is its description, and the agent
+       is named — only a scratch build has none yet. */
+    const flow = (bf.intake?.flow || bf.testRequest || "").trim();
+    const agentName = bf.agentName || bf.connectedAgent?.name || null;
+    const agentVersion = bf.agentVersion?.label || bf.agentVersion || null;
     const brief = [
       [
         "Description",
@@ -564,7 +569,14 @@ export default function DesignReview({
           ]
         : []),
       ["Channel", env?.surface === "voice" ? "Voice" : "Chat"],
-      ["Agent", "None yet — connect one after you save"],
+      [
+        "Agent",
+        agentName
+          ? [agentName, typeof agentVersion === "string" ? agentVersion : null]
+              .filter(Boolean)
+              .join(" · ")
+          : "None yet — connect one after you save",
+      ],
     ];
     return (
       <Box sx={{ px: 3, py: 2.5 }}>

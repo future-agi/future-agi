@@ -48,7 +48,10 @@ import {
   parseEgress,
   usePreflight,
 } from "../agents/connect/preflight";
-import { useConnectBuild } from "../agents/connect/connectSubmit";
+import {
+  BUILD_TEST_MIN,
+  useConnectBuild,
+} from "../agents/connect/connectSubmit";
 import { envValuesSourceOf } from "../_mock/envValues";
 import { addDesignFilesPatch } from "../_mock/designSources";
 import { takeBuild } from "../_mock/pendingBuildFiles";
@@ -1176,14 +1179,18 @@ export function FlowPanel({ choice, prefill = null, bare = false }) {
   /* Files for the environment it builds — every way in, like Build from scratch. */
   const [files, setFiles] = useState([]);
   const [testRequest, setTestRequest] = useState("");
+  /* Build pressed without saying what to test: the field says so. */
+  const [testMissing, setTestMissing] = useState(false);
   const filesCtx = useMemo(
     () => ({
       files,
       setFiles,
       request: testRequest,
       setRequest: setTestRequest,
+      missing: testMissing,
+      setMissing: setTestMissing,
     }),
-    [files, testRequest],
+    [files, testRequest, testMissing],
   );
   return (
     <Shell
@@ -1266,6 +1273,11 @@ function useBuildEnvironment() {
   return (source) => {
     if (connect) {
       connect.onConnect(source);
+      return;
+    }
+    /* What to test is required, as on every other build form. */
+    if (buildFiles && buildFiles.request.trim().length < BUILD_TEST_MIN) {
+      buildFiles.setMissing(true);
       return;
     }
     const runLocation = rt ? rt.runtime.location || "hosted" : null;
@@ -2605,8 +2617,14 @@ function PanelMcpServer() {
   /* A token for an HTTP server, by reference (AC-6.12). */
   const [tokenRef, setTokenRef] = useState("");
   const tokenOk = !tokenRef.trim() || isSecretRef(tokenRef);
+  /* What to test and the files, as on every build form. */
+  const buildFiles = useContext(BuildFilesContext);
+  const testOk =
+    !buildFiles || buildFiles.request.trim().length >= BUILD_TEST_MIN;
   const canGo =
-    !!agent && (source === "gateway" ? !!gw : !!target.trim() && tokenOk);
+    !!agent &&
+    testOk &&
+    (source === "gateway" ? !!gw : !!target.trim() && tokenOk);
   /* A build runs in our sandbox, and a pasted command never runs there. */
   const transports = MCP_TRANSPORTS.map((t) =>
     t.id === "stdio"
@@ -2685,11 +2703,13 @@ function PanelMcpServer() {
         hint={
           !agent
             ? "Pick the agent this environment is for"
-            : source === "gateway"
-              ? "Pick a server from your Gateway"
-              : !target.trim()
-                ? "Add the server"
-                : "Use a reference for the auth token"
+            : !testOk
+              ? "Say what this environment should test"
+              : source === "gateway"
+                ? "Pick a server from your Gateway"
+                : !target.trim()
+                  ? "Add the server"
+                  : "Use a reference for the auth token"
         }
         onClick={() =>
           buildFor(
@@ -2699,6 +2719,8 @@ function PanelMcpServer() {
               version: agent.production || agent.latest,
               count:
                 scenarioCountOf(scenarioCount) || Number(DEFAULT_SCENARIOS),
+              request: buildFiles?.request.trim() || "",
+              files: buildFiles?.files || [],
             },
             source === "gateway"
               ? mcpWorldSource({
@@ -3689,9 +3711,12 @@ function ScenarioCountRow(props) {
   return buildFiles ? (
     <Stack spacing={1.25}>
       <BuildTestField
-        optional
         value={buildFiles.request}
-        onChange={buildFiles.setRequest}
+        onChange={(v) => {
+          buildFiles.setRequest(v);
+          buildFiles.setMissing(false);
+        }}
+        error={buildFiles.missing}
       />
       <ScenarioCountBox {...props} />
       <BuildFilesField

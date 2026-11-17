@@ -7,7 +7,12 @@ import { TextField, Typography, Box } from "@mui/material";
   test). The agent's code says what it can do; this says what to check.
   Shown in the design review, before anything is built.
 */
-export default function BuildTestField({ value, onChange, optional = false }) {
+export default function BuildTestField({
+  value,
+  onChange,
+  optional = false,
+  error = false,
+}) {
   return (
     <Box>
       <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.5 }}>
@@ -39,6 +44,10 @@ export default function BuildTestField({ value, onChange, optional = false }) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="e.g. Refunds inside and outside the 30-day window, and when a manager must approve"
+        error={error}
+        helperText={
+          error ? "Say what it should test — a sentence is enough." : undefined
+        }
         InputProps={{ sx: { typography: "s2" } }}
       />
     </Box>
@@ -49,4 +58,6 @@ BuildTestField.propTypes = {
   value: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
   optional: PropTypes.bool,
+  /* Build was pressed with it empty. */
+  error: PropTypes.bool,
 };
