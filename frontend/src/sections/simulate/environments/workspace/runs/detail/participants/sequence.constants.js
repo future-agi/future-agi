@@ -21,4 +21,23 @@ export const SEQUENCE_COPY = {
   didNotAnswer: (name, n) => `${name} didn't answer step ${n}`,
   failedAt: (name, n) => `${name} failed at step ${n}`,
   times: (text, count) => `${text} ${count} times`,
+  notInRecord: "Not in the record",
+  waited: (time) => `Waited ${time}, no answer`,
+  took: (time) => `Took ${time}`,
+  turns: (count) => `${count} turns`,
+  toolCalls: (count) => `${count} tool ${count === 1 ? "call" : "calls"}`,
+  input: "Input",
+  said: "Said",
+  asked: "Asked",
+  result: "Result",
+  answered: "Answered",
+  showInTranscript: "Show in transcript",
+  openInTrace: "Open in trace",
+  refusedByWorld: (reason) =>
+    `Refused by the world${reason ? ` · ${reason}` : ""}`,
+  cutShort: (state) => `Cut short · ${state}`,
+  copyLink: "Copy a link to this step",
+  linkCopied: "Link copied",
+  pickHint:
+    "Pick a step to see the exact message and what came back. ↑ ↓ move between steps; click a name to follow that participant.",
 };
