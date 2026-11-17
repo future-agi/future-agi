@@ -164,6 +164,8 @@ export function harnessDetailToEnvironment(detail) {
     worldTotalRows: world?.total_rows,
     // `edit`, `list` or null (tab hidden).
     actorsTab: detail.actors_tab,
+    // The workers the app's source declares; a run shows which took part.
+    workers: contract?.workers || null,
     systemPromptExcerpt: contract?.system_prompt_excerpt || null,
     counts: {
       flows: overview.flows_count ?? null,

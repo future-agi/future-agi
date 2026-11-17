@@ -23,6 +23,10 @@ export const TRIAL_CHANGES_COPY = {
   blocked: (one) =>
     `Blocked: ${one.host}${one.method ? ` (${one.method})` : ""} ×${one.count}`,
   noChange: "No change: it committed nothing",
+  // A worker the world told apart from the rest of the agent.
+  worker: (name) => `Worker · ${name}`,
+  refusedHeading: "Refused attempts",
+  refused: (one) => [one.action, one.reason].filter(Boolean).join(": "),
   decisionsHeading: "What the actors chose",
   preRunHeading: "Before the run",
   preRunAbout:
@@ -45,6 +49,23 @@ export const TRIAL_CHANGES_COPY = {
   usageBy: (who, model, line) =>
     `${who}${model ? ` on ${model}` : ""}: ${line}`,
   usageTotal: (line) => `In all: ${line}, counted in the simulator's usage`,
+  // Records two or more participants named; the key states what the calls named, never a database identity.
+  sharedHeading: "Records touched by more than one participant",
+  sharedRecord: (one) => `${one.argument} ${one.value}`,
+  sharedAction: (action, who) =>
+    `${who} · ${action.tool} · ${action.outcome}${action.write === true ? " (write)" : ""}`,
+  committedWrites: (n) =>
+    `Committed writes: ${n} (tools with recorded effects)`,
+  sharedTruncated:
+    "More records not shown: this trial's record reached its size limit",
+  // Each record's served `truncation`; a cut list of records ("records") is said once, for the trial.
+  sharedRecordCut: {
+    actions:
+      "More calls on this record not shown: its record reached its size limit",
+    unknown:
+      "More records or calls may not be shown: this trial's record reached its size limit",
+  },
+  nothing: "Did nothing",
   empty: "Nothing changed in the world in this trial.",
   notRecorded: "World state was not recorded for this trial.",
   loadFailed:

@@ -454,11 +454,10 @@ describe("mapCallDetail", () => {
     expect(d.type).toBe("chat");
     expect(d.turns[0]).toMatchObject({ role: "agent", text: "Refund issued." });
     expect(d.turns[0].toolCalls).toHaveLength(1);
-    expect(d.stats.toolCalls).toBe(1);
     expect(d.recordings).toEqual({});
   });
 
-  it("adds top-level v3 function calls to the transcript and tool count", () => {
+  it("adds top-level v3 function calls to the transcript", () => {
     const d = mapCallDetail({
       id: "chat-with-tool",
       simulation_call_type: "text",
@@ -481,7 +480,36 @@ describe("mapCallDetail", () => {
     });
     expect(d.turns[1].text).toContain('→ args: {"order_id":"AB-1"}');
     expect(d.turns[1].text).toContain('← result: {"status":"shipped"}');
+  });
+
+  it("shows the tool-call count the API gives, and keeps hand-offs in the transcript", () => {
+    const d = mapCallDetail({
+      id: "flow-call",
+      simulation_call_type: "text",
+      transcript: [{ role: "assistant", content: "Here is the post." }],
+      function_calls: [
+        {
+          name: "Shakespearean Bard",
+          delegated_to: "Shakespearean Bard",
+          result: "a draft",
+        },
+        {
+          name: "Character Counter Tool",
+          arguments: { text: "a draft" },
+          result: "208",
+        },
+        {
+          name: "X Post Verifier",
+          delegated_to: "X Post Verifier",
+          result: "valid",
+        },
+      ],
+      tool_call_count: 1,
+      eval_metrics: {},
+    });
+
     expect(d.stats.toolCalls).toBe(1);
+    expect(d.turns.filter((turn) => turn.role === "tool")).toHaveLength(3);
   });
 
   it("returns null for a missing payload", () => {
@@ -1785,5 +1813,193 @@ describe("actor turns in a call", () => {
       ["actor", "Rowan", "roommate", "audio_mix"],
       ["customer", "", "", ""],
     ]);
+  });
+});
+
+describe("useCallWorkers", () => {
+  it("reads an empty answer (204) as no worker record, not a failure", async () => {
+    const { useCallWorkers } = await import("../runDetail");
+    axios.get.mockResolvedValueOnce({ status: 204, data: "" });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const { result } = renderHook(() => useCallWorkers("call-1"), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toBe(null);
+  });
+
+  it("shows Participants once a call has a record, and not while it is still coming or has none", async () => {
+    const { useHasWorkers } = await import("../runDetail");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const has = async (id, response) => {
+      axios.get.mockReset();
+      axios.get.mockResolvedValue(response);
+      const { result } = renderHook(() => useHasWorkers(id), {
+        wrapper: Wrapper,
+      });
+      await waitFor(() => expect(result.current).not.toBeUndefined());
+      return result.current;
+    };
+    expect(
+      await has("with-record", {
+        status: 200,
+        data: { workers: [], events: [], pending: false },
+      }),
+    ).toBe(true);
+    expect(
+      await has("still-coming", {
+        status: 202,
+        data: { pending: true, next_read_at: "2026-11-17T10:00:35+00:00" },
+      }),
+    ).toBe(false);
+    expect(await has("none", { status: 204, data: "" })).toBe(false);
+  });
+
+  it("doesn't know whether a call has workers while unread, and shows the tab when the read fails", async () => {
+    const { useHasWorkers } = await import("../runDetail");
+    const client = new QueryClient();
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockReset();
+    axios.get.mockRejectedValue(new Error("forbidden"));
+    const { result } = renderHook(() => useHasWorkers("call-unread"), {
+      wrapper: Wrapper,
+    });
+    expect(result.current).toBeUndefined();
+    await waitFor(() => expect(axios.get).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        client.getQueryState([
+          "simulation-call-workers-v3",
+          "call-unread",
+          null,
+          null,
+        ]),
+      ).toMatchObject({ status: "error" }),
+    );
+    // The panel says it couldn't load; a hidden tab would read as a call with no other agents.
+    await waitFor(() => expect(result.current).toBe(true));
+  });
+
+  it("reads a call's record again once the call ends while open", async () => {
+    const { useHasWorkers } = await import("../runDetail");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockReset();
+    axios.get
+      .mockResolvedValueOnce({ status: 204, data: "" })
+      .mockResolvedValue({
+        status: 200,
+        data: { workers: [], events: [], pending: false },
+      });
+    const { result, rerender } = renderHook(
+      ({ status }) => useHasWorkers("call-ending", status),
+      { wrapper: Wrapper, initialProps: { status: "ongoing" } },
+    );
+    await waitFor(() => expect(result.current).toBe(false));
+    rerender({ status: "completed" });
+    await waitFor(() => expect(result.current).toBe(true));
+  });
+
+  it("stops checking for a record once a check fails, and leaves the failure to the panel", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { useCallWorkers } = await import("../runDetail");
+      const soon = new Date(Date.now() + 35_000).toISOString();
+      axios.get.mockReset();
+      axios.get
+        .mockResolvedValueOnce({
+          status: 202,
+          data: { pending: true, next_read_at: soon },
+        })
+        .mockRejectedValue(new Error("forbidden"));
+      const client = new QueryClient();
+      const Wrapper = ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      Wrapper.propTypes = { children: PropTypes.node };
+      const { result } = renderHook(() => useCallWorkers("call-failing"), {
+        wrapper: Wrapper,
+      });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      await vi.advanceTimersByTimeAsync(35_000);
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(axios.get).toHaveBeenCalledTimes(2);
+      expect(
+        client.getQueryCache().find({
+          queryKey: ["simulation-call-workers-v3", "call-failing", null, null],
+        }).meta.errorHandled,
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads again once at the time the API says, and stops once nothing is due", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { useCallWorkers } = await import("../runDetail");
+      const record = { workers: [], events: [], pending: false };
+      const at = (seconds) =>
+        new Date(Date.now() + seconds * 1000).toISOString();
+      axios.get.mockReset();
+      axios.get
+        .mockResolvedValueOnce({
+          status: 202,
+          data: { pending: true, next_read_at: at(35) },
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          data: { ...record, pending: true, next_read_at: at(635) },
+        })
+        .mockResolvedValue({ status: 200, data: record });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const Wrapper = ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      Wrapper.propTypes = { children: PropTypes.node };
+      const { result } = renderHook(() => useCallWorkers("call-2"), {
+        wrapper: Wrapper,
+      });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.data).toBe(null);
+      // Nothing is read before the time the API gave.
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(axios.get).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await waitFor(() => expect(result.current.data).not.toBe(null));
+      await vi.advanceTimersByTimeAsync(600_000);
+      await waitFor(() => expect(result.current.data).toEqual(record));
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
+      expect(axios.get).toHaveBeenCalledTimes(3);
+      expect(axios.get).toHaveBeenCalledWith(
+        "/simulate/v3/call-executions/call-2/workers/",
+        undefined,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

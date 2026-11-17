@@ -18,6 +18,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
       isLoading: mocks.loading,
       error: mocks.detailError ?? null,
     }),
+    useHasWorkers: () => false,
     useCallTraces: (...args) => mocks.runTraces(...args),
   };
 });
@@ -60,6 +61,28 @@ describe("ChatCallDrawer share", () => {
 
     await user.click(screen.getByRole("button", { name: "close share" }));
     expect(screen.queryByTestId("share-dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("ChatCallDrawer outcome reason", () => {
+  it("says why a held trial was not graded, and nothing when there is no reason", () => {
+    const reason =
+      "Inconclusive, a problem of the scenario, not the agent: Rebuild the environment to enforce them.";
+    const { rerender } = render(
+      <ChatCallDrawer
+        task={{ id: "call-1", status: "error", outcomeReason: reason }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(reason)).toBeInTheDocument();
+
+    rerender(
+      <ChatCallDrawer
+        task={{ id: "call-1", status: "error" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
   });
 });
 

@@ -104,6 +104,7 @@ export const ENVIRONMENT_RUN = {
   outcome_errored: 0,
   outcome_no_score: 0,
   outcome_skipped: 0,
+  outcome_cancelled: 1,
   outcome_status: "failed",
   pass_rate: 30,
   scored: 10,

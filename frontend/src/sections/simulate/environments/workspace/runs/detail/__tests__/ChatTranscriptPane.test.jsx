@@ -22,7 +22,12 @@ describe("ChatTranscriptPane", () => {
       <Pane
         customerName="Maya"
         participants={[
-          { id: "roommate", name: "Rowan", role: "roommate", channel: "audio_mix" },
+          {
+            id: "roommate",
+            name: "Rowan",
+            role: "roommate",
+            channel: "audio_mix",
+          },
         ]}
         turns={[
           ...plainChat,
@@ -93,11 +98,7 @@ describe("ChatTranscriptPane", () => {
   });
 
   it("shows just Someone for an actor an older call kept no name for", () => {
-    render(
-      <Pane
-        turns={[...plainChat, { role: "actor", text: "Hello?" }]}
-      />,
-    );
+    render(<Pane turns={[...plainChat, { role: "actor", text: "Hello?" }]} />);
     expect(screen.getAllByText("Someone")).toHaveLength(1);
     expect(screen.queryByText(/undefined/)).toBeNull();
   });
@@ -170,5 +171,34 @@ describe("ChatTranscriptPane", () => {
       "percent",
     );
     expect(screen.getByText(/args:/)).toBeInTheDocument();
+  });
+
+  it("marks a tool row apart from the customer, under the label the server gives it", () => {
+    render(
+      <Pane
+        turns={[
+          { role: "customer", text: "Where is my order?" },
+          {
+            role: "tool",
+            text: "get_order",
+            toolCalls: [{ name: "get_order" }],
+          },
+          {
+            role: "tool",
+            text: "Billing",
+            toolCalls: [{ name: "Billing", delegated_to: "Billing" }],
+            toolLabel: "Served label",
+          },
+        ]}
+      />,
+    );
+
+    // The row's kind is the server's to say; the pane never reads it from the calls.
+    expect(screen.getByText(/· Served label$/)).toBeInTheDocument();
+    const tool = screen.getByText(/· Tool call$/).parentElement;
+    const customer = screen.getByText(/· Customer$/).parentElement;
+    expect(getComputedStyle(tool).borderLeftColor).not.toBe(
+      getComputedStyle(customer).borderLeftColor,
+    );
   });
 });

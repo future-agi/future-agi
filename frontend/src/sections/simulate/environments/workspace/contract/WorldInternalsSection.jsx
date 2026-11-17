@@ -11,6 +11,8 @@ import {
   effectLabel,
   inputLine,
 } from "./toolsCard.constants";
+import DeclaredWorkerRows from "./DeclaredWorkerRows";
+import { WORKERS_COPY } from "./workers.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -21,6 +23,7 @@ const MONO = "ui-monospace, Menlo, monospace";
 export default function WorldInternalsSection({ env }) {
   const tables = env?.worldTables;
   const tools = env?.toolStatus || [];
+  const workers = env?.workers || [];
 
   return (
     <Stack spacing={2} sx={{ mb: 2 }}>
@@ -28,6 +31,7 @@ export default function WorldInternalsSection({ env }) {
         <SchemaCard schema={tables} totalRows={env.worldTotalRows} />
       )}
       {tools.length > 0 && <ToolsCard tools={tools} />}
+      {workers.length > 0 && <WorkersCard workers={workers} />}
     </Stack>
   );
 }
@@ -481,3 +485,40 @@ ToolDetail.propTypes = {
 ToolsCard.propTypes = {
   tools: PropTypes.arrayOf(TOOL_SHAPE).isRequired,
 };
+
+/* ── workers ────────────────────────────────────────────────────────── */
+
+function WorkersCard({ workers }) {
+  return (
+    <SectionCard
+      title={WORKERS_COPY.title}
+      subtitle={WORKERS_COPY.subtitle}
+      action={
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {WORKERS_COPY.count(workers.length)}
+        </Typography>
+      }
+    >
+      <DeclaredWorkerRows workers={workers} />
+      <Typography
+        sx={{
+          typography: "s3",
+          color: "text.subtitle",
+          px: 1.5,
+          py: 1,
+          borderTop: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        {WORKERS_COPY.footer}
+      </Typography>
+    </SectionCard>
+  );
+}
+WorkersCard.propTypes = { workers: PropTypes.array };

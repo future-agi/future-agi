@@ -45,6 +45,7 @@ const OUTCOME_ROLES = {
   passed: "success",
   failed: "danger",
   error: "warning",
+  cancelled: "neutral",
   inconclusive: "neutral",
   no_score: "neutral",
   true: "success",
@@ -112,7 +113,9 @@ export function Widget({ id, title, subtitle, help, children, wide = false }) {
             )}
           </Typography>
           {subtitle && (
-            <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}>
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+            >
               {subtitle}
             </Typography>
           )}
@@ -160,7 +163,10 @@ export const chartTooltipProps = (theme) => ({
   labelStyle: { color: theme.palette.text.secondary },
   wrapperStyle: { zIndex: 1 },
 });
-const tickOf = (theme) => ({ fontSize: 11, fill: theme.palette.text.secondary });
+const tickOf = (theme) => ({
+  fontSize: 11,
+  fill: theme.palette.text.secondary,
+});
 const pieLabel = (label) =>
   ({
     true: "Successful",
@@ -171,6 +177,7 @@ const pieLabel = (label) =>
     passed: "Passed",
     failed: "Failed",
     error: "Error",
+    cancelled: STATUS_META.cancelled.label,
     inconclusive: "Inconclusive",
     no_score: STATUS_META.no_score.label,
     positive: "Positive",
@@ -495,10 +502,7 @@ export function TrendLine({
           data={rows}
           margin={{ top: 14, right: 20, left: 0, bottom: 5 }}
         >
-          <CartesianGrid
-            stroke={theme.palette.divider}
-            strokeDasharray="3 4"
-          />
+          <CartesianGrid stroke={theme.palette.divider} strokeDasharray="3 4" />
           <XAxis
             dataKey={xKey}
             type={percentile ? "number" : "category"}
