@@ -81,7 +81,8 @@ def is_evidence_command(command: HostedHarnessConversationMessage | None) -> boo
 
 
 def scenario_key_for(case: EvidenceImportCase) -> str:
-    """The key the builder is told to write a case's scenario under."""
+    """The name the builder is told to give a case's scenario. The builder takes
+    no key for a new scenario and keys it by its name, so this is its key too."""
     return f"evidence-{case.id.hex[:12]}"
 
 
@@ -128,7 +129,7 @@ def turn_message(
     shows = shows or {}
     asks = SHOWN if production else SHOWN_NOT_PRODUCTION
     listed = "\n".join(
-        f"- case {case.id}: write it under scenario_key {scenario_key_for(case)} "
+        f"- case {case.id}: submit its scenario with name {scenario_key_for(case)} "
         f"(the {source_noun(source_kind)} {case.source_id} in the evidence)"
         + (
             f"; the person asks: {asks[shows[str(case.id)]]}"
@@ -189,6 +190,9 @@ def turn_message(
         "evidence contradicts what the person says it records) is not written: say "
         "which case and why in your final reply, naming any existing scenario it "
         "duplicates.\n"
+        "- Give each scenario exactly the name its case lists below, though it reads "
+        "as a code: this import finds a scenario by that name alone, and one under "
+        "any other name is lost.\n"
         "- Do not run scenarios.\n\n"
         f"Cases:\n{listed}"
     )
@@ -277,16 +281,11 @@ def _settle(
     if added is None:
         _block(cases, ENVIRONMENT_CHANGED)
         return
+    documents = suite_documents(split.suite)
     by_token = {
-        _token(spelling): document
-        for document in suite_documents(split.suite)
-        for spelling in (
-            document.get("scenario_key"),
-            document.get("name"),
-            document.get("folder"),
-        )
-        if spelling
+        token: document for document in documents for token in _tokens(document)
     }
+    taken: list[dict] = []
     for case in cases:
         key = scenario_key_for(case)
         document = by_token.get(_token(key))
@@ -294,6 +293,7 @@ def _settle(
         if document is None or proposal is None:
             _block([case], _with_reply(NO_SCENARIO, last_words))
             continue
+        taken.append(document)
         object_key = archives.suite_key(
             environment.organization_id, environment.id, proposal
         )
@@ -323,6 +323,47 @@ def _settle(
         environment=str(environment.id),
         drafted=sum(c.status == EvidenceImportCase.Status.DRAFTED for c in cases),
         blocked=sum(c.status == EvidenceImportCase.Status.BLOCKED for c in cases),
+    )
+    unmatched = _unmatched(environment, documents, taken)
+    if unmatched:
+        # A builder that drafts under names of its own blocks its cases while its
+        # reply says it drafted them; these keys tell that from a turn that wrote
+        # nothing.
+        logger.warning(
+            "evidence_draft_unmatched",
+            environment=str(environment.id),
+            scenarios=unmatched,
+        )
+
+
+def _tokens(document: dict) -> set[str]:
+    return {
+        _token(spelling)
+        for spelling in (
+            document.get("scenario_key"),
+            document.get("name"),
+            document.get("folder"),
+        )
+        if spelling
+    }
+
+
+def _unmatched(
+    environment: HostedHarnessJob, documents: list[dict], taken: list[dict]
+) -> list[str]:
+    """The keys of the scenarios the turn added to the suite it started from
+    that no case took."""
+    basis = drafts.fresh_draft(environment, "suite") or environment.suite_version
+    started = ((basis.documents or {}).get("scenarios") or []) if basis else []
+    known = {token for document in started for token in _tokens(document)}
+    return sorted(
+        str(
+            document.get("scenario_key")
+            or document.get("name")
+            or document.get("folder")
+        )
+        for document in documents
+        if not any(document is one for one in taken) and not _tokens(document) & known
     )
 
 

@@ -18,6 +18,7 @@ import pytest
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
+from structlog.testing import capture_logs
 
 from model_hub.models.ai_model import AIModel
 from simulate.models import (
@@ -172,6 +173,18 @@ def _refreshed(cases):
     return [EvidenceImportCase.objects.get(id=case.id) for case in cases]
 
 
+def test_the_turn_asks_for_each_case_s_scenario_by_its_name(cases):
+    """The builder's submit_scenario takes no key: it keys a new scenario by its
+    name. So the turn asks for the case's key as the scenario's name, never as a
+    scenario_key the builder has no way to pass."""
+    message = evidence_drafts.turn_message(cases, "session")
+
+    for case in cases:
+        key = evidence_drafts.scenario_key_for(case)
+        assert f"- case {case.id}: submit its scenario with name {key} (" in message
+    assert "scenario_key" not in message
+
+
 def test_a_save_before_the_turn_ends_is_refused(environment, cases, storage):
     conversation, command = _command(environment, cases, 10)
     key, digest = _save(
@@ -229,6 +242,28 @@ def test_the_last_save_keeps_each_case_as_a_proposal_and_nothing_else(
     assert environment.suite_version_id == suite_before
     lease.refresh_from_db()
     assert lease.state == HostedHarnessConversationLease.State.EXPIRED
+
+
+def test_a_scenario_drafted_under_another_name_takes_no_case_and_is_logged(
+    environment, cases, storage
+):
+    """The builder drafted the second case under a name of its own: that case is
+    blocked, and the log names the scenario no case took. The suite the turn
+    started from is never reported."""
+    conversation, command = _command(environment, cases, 13)
+    key_one = evidence_drafts.scenario_key_for(cases[0])
+    key, digest = _save(
+        conversation, command, storage, [key_one, "cancel_far_ahead_fee"]
+    )
+    _end_turn(conversation, command, said="Drafted regression scenarios for both.")
+
+    with capture_logs() as logs:
+        _promote(conversation, command, key, digest, 13)
+
+    assert [c.status for c in _refreshed(cases)] == ["drafted", "blocked"]
+    assert [
+        one["scenarios"] for one in logs if one["event"] == "evidence_draft_unmatched"
+    ] == [["cancel-far-ahead-fee"]]
 
 
 def test_an_injected_environment_change_keeps_nothing(environment, cases, storage):
