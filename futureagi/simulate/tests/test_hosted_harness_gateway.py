@@ -2010,6 +2010,7 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
 @pytest.mark.django_db
 def test_an_authored_run_keeps_package_egress(organization, settings, monkeypatch):
     payload = _payload()
+    payload.setdefault("metadata", {})["simulation_only"] = True
     payload["source"] = {
         "kind": "remote",
         "endpoint": "https://agent.example.com",
