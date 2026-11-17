@@ -7,6 +7,9 @@ import { paths } from 'src/routes/paths';
 import IdentityChip from '../components/IdentityChip';
 import TechnicalDetails from '../components/TechnicalDetails';
 import SummaryTable from './SummaryTable';
+import { isSkillTracesEnabled } from '../runtime/skillTracesFlag';
+import ReceiptLoadsLine from '../runtime/ReceiptLoadsLine';
+import ContextReleaseCard from '../runtime/ContextReleaseCard';
 
 // A durable historical record is not a statement about today's production.
 export default function ReleaseReceipt({ receipt, request }) {
@@ -19,6 +22,7 @@ export default function ReleaseReceipt({ receipt, request }) {
   const kind = request?.subjectKind || receipt.subjectKind;
   const resourceUrl = subjectId ? (kind === 'agent_context' ? paths.dashboard.skills.contextDetail(subjectId) : paths.dashboard.skills.detail(subjectId)) : null;
   const receiptUrl = `${paths.dashboard.skills.reviews}?request=${encodeURIComponent(receipt.requestId)}`;
+  const runtime = Boolean(subjectId && after.eventId) && isSkillTracesEnabled();
   return <Stack spacing={1.5} aria-label="Release receipt">
       {/* The page title already states the move ("Production moved from v1 to v2"); the receipt is the record. */}
       <Stack direction="row" gap={0.75} alignItems="baseline" flexWrap="wrap">
@@ -42,6 +46,9 @@ export default function ReleaseReceipt({ receipt, request }) {
           catch { setCopyError(true); }
         }}>Copy receipt link</Button>
       </Stack>
+      {/* With skillTraces on: what loads report since the move, beside delivery (SKILL-TRACES §7.3, §7.4, UX-01, UX-11). */}
+      {runtime && <ReceiptLoadsLine kind={kind === 'agent_context' ? 'agent_context' : 'skill'} subjectId={subjectId} eventId={after.eventId} />}
+      {runtime && kind === 'agent_context' && <ContextReleaseCard contextId={subjectId} eventId={after.eventId} />}
       {!resourceUrl && <Typography variant="s3" color="text.secondary">Version links are unavailable because this retained receipt does not include its resource.</Typography>}
       {copyError && <Alert severity="warning">Couldn&apos;t copy. Receipt link: {receiptUrl}</Alert>}
       <TechnicalDetails title="What was approved"><Stack spacing={1}>

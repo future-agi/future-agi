@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Button, Drawer, IconButton, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Link as RouterLink } from "react-router-dom";
+import { Box, Button, Drawer, IconButton, Link, MenuItem, Stack, TextField, Typography } from "@mui/material";
 
 import ContentSkeleton from "src/components/content-skeleton";
 import EmptyState from "src/components/empty-state";
@@ -10,7 +11,20 @@ import Iconify from "src/components/iconify";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { fDateTime, relativeTime } from "src/utils/format-time";
 import { usePreviewState } from "src/sections/skills/components/SkillsStatePreview";
+import { isSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
+import { HOW_IT_WENT } from "src/sections/skills/runtime/runtimeCopy";
+import { runtimeTabUrl } from "src/sections/skills/utils/traces";
 import useLabelHistoryPage from "./useLabelHistoryPage";
+
+// "How it went" (SKILL-TRACES §7.3 "Links into the card", UX-01): with
+// skillTraces on, a production move that names its event links to the move
+// card. The label-history response carries no event id yet (LabelEvent
+// serializer and mapLabelEvent), so the link appears only once it does.
+function howItWentHref(skillId, event) {
+  const eventId = event.eventId ?? event.id;
+  if (event.label !== "production" || event.toVersion == null || !eventId) return null;
+  return runtimeTabUrl({ id: skillId, eventId, window: "24h" });
+}
 
 function HistoryEvents({ skillId, label }) {
   const filterId = useId();
@@ -22,6 +36,7 @@ function HistoryEvents({ skillId, label }) {
   const loading = preview === "loading" || (!preview && history.isPending);
   const error = preview === "error" || (!preview && history.isError);
   const empty = preview === "empty" || !events.length;
+  const runtimeLinks = isSkillTracesEnabled();
 
   return (
     <>
@@ -83,6 +98,11 @@ function HistoryEvents({ skillId, label }) {
                     >
                       {event.note}
                     </Typography>
+                  )}
+                  {runtimeLinks && howItWentHref(skillId, event) && (
+                    <Link component={RouterLink} to={howItWentHref(skillId, event)} variant="s3" underline="hover" sx={{ alignSelf: "flex-start" }}>
+                      {HOW_IT_WENT}
+                    </Link>
                   )}
                 </Stack>
               </Box>

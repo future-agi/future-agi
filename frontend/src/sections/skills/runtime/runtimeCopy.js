@@ -183,7 +183,7 @@ export const hoursLeft = (hours) => `${Math.max(0, Math.ceil(hours))} h left`;
 export const moveChipText = ({ verdict, toVersion, metric, evalName, agents, hoursElapsed, hoursTotal, hoursRemaining }) => {
   const version = `v${toVersion}`;
   if (verdict === "watching") return `Watching ${version} · ${hoursLeft(hoursRemaining)}`;
-  const phrase = `${metricPhrase(metric, evalName)} ${worseDirection(metric)}`;
+  const phrase = metric ? `${metricPhrase(metric, evalName)} ${worseDirection(metric)}` : "worse";
   if (verdict === "worse_so_far") {
     return `${version}: ${phrase} so far on ${plural(agents, "agent")} · ${Math.floor(hoursElapsed)} of ${Math.round(hoursTotal)} h`;
   }
@@ -192,7 +192,9 @@ export const moveChipText = ({ verdict, toVersion, metric, evalName, agents, hou
 };
 export const libraryMoveText = ({ verdict, toVersion, metric, evalName }) => {
   if (verdict === "watching") return `v${toVersion} · watching`;
-  if (verdict === "worse_so_far" || verdict === "worse") return `v${toVersion} · ${metricPhrase(metric, evalName)} ${worseDirection(metric)}`;
+  if (verdict === "worse_so_far" || verdict === "worse") {
+    return metric ? `v${toVersion} · ${metricPhrase(metric, evalName)} ${worseDirection(metric)}` : `v${toVersion} · worse after the move`;
+  }
   return null;
 };
 
@@ -285,6 +287,7 @@ export const DIAGNOSIS = Object.freeze({
     `Loads recorded from ${plural(agents, "agent")}. ${plural(others, "other consumer")} fetched this ${kind} and can't record loads.`,
   noReadableProjects: (kind) => `You can't open the projects where this ${kind} is loaded. Ask a workspace admin for access.`,
   unknown: "Loads haven't been recorded here yet, and the reason couldn't be worked out from the fetches.",
+  linkedNotRead: "Other skills in this context recorded loads in this window. No app read this one.",
   lowSample: "Rows with fewer than 30 traces show their counts in grey, with no change.",
   noEvals: "No evals ran on these traces.",
   rootMissing: (count) => `${plural(count, "trace")} ${count === 1 ? "has" : "have"} no root span yet and ${count === 1 ? "isn't" : "aren't"} counted.`,
