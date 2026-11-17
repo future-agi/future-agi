@@ -121,7 +121,9 @@ describe("FileTree generated context settings (UX iteration 5, LIB3)", () => {
     expect(item).toHaveTextContent("Context settings (generated)");
     expect(item).toHaveAttribute("title", ".futureagi/context.json");
     expect(item).toHaveAttribute("aria-description", ".futureagi/context.json");
-    expect(screen.getByText("Generated")).toBeVisible();
+    // UXF-16: the editor groups platform files like the read view, not as a ".futureagi Generated" folder.
+    expect(screen.queryByText("Generated")).not.toBeInTheDocument();
+    expect(screen.getByRole("treeitem", { name: "Other files" })).toHaveAttribute("aria-expanded", "true");
   });
   it("closes only the folders it is told to, so the generated settings stay visible", () => {
     render(<FileTree files={files} selectedPath="AGENTS.md" onSelect={vi.fn()} generatedFolders={[".futureagi"]} collapsedFolders={["skills"]} />);
@@ -130,12 +132,64 @@ describe("FileTree generated context settings (UX iteration 5, LIB3)", () => {
     expect(screen.queryByRole("treeitem", { name: "SKILL.md" })).not.toBeInTheDocument();
     expect(screen.getByRole("treeitem", { name: "policy.md" })).toBeVisible();
   });
-  it("keeps generated folders closed by default for other callers, and leaves a context.json elsewhere alone", () => {
+  it("keeps generated files closed by default for other callers, and leaves a context.json elsewhere alone", async () => {
+    const user = userEvent.setup();
     render(<FileTree files={files} selectedPath="AGENTS.md" onSelect={vi.fn()} generatedFolders={[".futureagi"]} />);
-    expect(screen.getByRole("treeitem", { name: ".futureagi" })).toHaveAttribute("aria-expanded", "false");
+    const group = screen.getByRole("treeitem", { name: "Other files" });
+    expect(group).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("treeitem", { name: ".futureagi" })).not.toBeInTheDocument();
+    await user.click(group);
+    expect(screen.getByRole("treeitem", { name: ".futureagi" })).toBeInTheDocument();
     cleanup();
     render(<FileTree files={[{ path: "config/context.json" }]} selectedPath="config/context.json" onSelect={vi.fn()} generatedFolders={[".futureagi"]} />);
     expect(screen.getByRole("treeitem", { name: "context.json" })).toHaveTextContent("context.json");
     expect(screen.getByRole("treeitem", { name: "context.json" })).not.toHaveAttribute("title");
+  });
+});
+
+describe("FileTree generated files in the draft editor (UXF-16)", () => {
+  // Draft files carry no origin; only the generated folders say what the platform added.
+  const draft = [
+    { path: "AGENTS.md" },
+    { path: "references/policy.md" },
+    { path: "skills/refunds/SKILL.md", readOnly: true },
+    { path: ".futureagi/context.json", readOnly: true },
+  ];
+  const props = { files: draft, onSelect: vi.fn(), pinned: ["AGENTS.md"], generatedFolders: [".futureagi"], collapsedFolders: ["skills"] };
+
+  it("puts generated files under Other files: Added by Future AGI, last, as in the read view", () => {
+    render(<FileTree {...props} selectedPath="AGENTS.md" />);
+    const top = screen.getAllByRole("treeitem").filter((item) => item.getAttribute("aria-level") === "1").map((item) => item.getAttribute("aria-label"));
+    expect(top).toEqual(["AGENTS.md", "references", "skills", "Other files"]);
+    const group = screen.getByRole("treeitem", { name: "Other files" });
+    expect(group).toHaveAccessibleDescription("Added by Future AGI so apps load the right versions.");
+    expect(screen.getByRole("treeitem", { name: ".futureagi" })).toHaveAttribute("aria-level", "2");
+    expect(screen.queryByText("Generated")).not.toBeInTheDocument();
+  });
+
+  it("keeps owned and linked files where they were, with their own paths", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<FileTree {...props} onSelect={onSelect} selectedPath="AGENTS.md" />);
+    expect(screen.queryByRole("treeitem", { name: "Instructions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("treeitem", { name: "Linked skills" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("treeitem", { name: "policy.md" }));
+    expect(onSelect).toHaveBeenLastCalledWith("references/policy.md");
+    await user.click(screen.getByRole("treeitem", { name: "context.json" }));
+    expect(onSelect).toHaveBeenLastCalledWith(".futureagi/context.json");
+  });
+
+  it("opens the group when a generated file is selected from elsewhere", () => {
+    const { rerender } = render(<FileTree {...props} collapsedFolders={[".futureagi"]} selectedPath="AGENTS.md" />);
+    expect(screen.getByRole("treeitem", { name: "Other files" })).toHaveAttribute("aria-expanded", "false");
+    rerender(<FileTree {...props} collapsedFolders={[".futureagi"]} selectedPath=".futureagi/context.json" />);
+    expect(screen.getByRole("treeitem", { name: "Other files" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("treeitem", { name: "context.json" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("leaves a plain skill tree ungrouped", () => {
+    render(<FileTree files={[{ path: "SKILL.md" }, { path: "references/policy.md" }]} selectedPath="SKILL.md" onSelect={vi.fn()} />);
+    expect(screen.queryByRole("treeitem", { name: "Other files" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("treeitem")[0]).toHaveAttribute("aria-label", "SKILL.md");
   });
 });
