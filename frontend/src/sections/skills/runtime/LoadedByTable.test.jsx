@@ -29,7 +29,8 @@ describe('LoadedByTable', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Columns' }));
     fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /p50/ }));
     fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /Asked for/ }));
-    const headers = screen.getAllByRole('columnheader').map((cell) => cell.textContent);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    const headers = screen.getAllByRole('columnheader', { hidden: true }).map((cell) => cell.textContent);
     expect(headers).toEqual(expect.arrayContaining(['Traces', 'p50', 'Asked for']));
     expect(screen.getAllByText('Asked for production 96% · asked for v3 4%').length).toBeGreaterThan(0);
   });
@@ -56,6 +57,19 @@ describe('LoadedByTable', () => {
     const evalCell = screen.getByRole('link', { name: 'refund-agent v4 Groundedness: open traces' });
     expect(evalCell).toHaveTextContent('0.82 · 40% evaluated');
     expect(JSON.parse(href(evalCell).searchParams.get('observeLinkFilter'))).toEqual(ROWS[1].links.eval_failed['eval-1'].filters);
+  });
+
+  it('takes the project from the links container or the agent when a sub-link has none', () => {
+    const bare = (value) => ({ ...value, project_id: undefined });
+    const row = { ...ROWS[1], links: { project_id: undefined, all: bare(ROWS[1].links.all), failed: bare(ROWS[1].links.failed), slowest: bare(ROWS[1].links.slowest), eval_failed: {} } };
+    show({ rows: [ROWS[0], row] });
+    expect(href(screen.getByRole('link', { name: 'refund-agent v4 traces: open traces' })).pathname).toBe('/dashboard/observe/p1/llm-tracing');
+    expect(href(screen.getByRole('link', { name: 'refund-agent v4 failed requests: open traces' })).pathname).toBe('/dashboard/observe/p1/llm-tracing');
+  });
+
+  it('never says "0 agents" for a version row without agent rows', () => {
+    show({ rows: [ROWS[3]] });
+    expect(screen.queryByText(/\b0 agents\b/)).not.toBeInTheDocument();
   });
 
   it('opens a project menu, not a dialog, for a version row across several projects', () => {

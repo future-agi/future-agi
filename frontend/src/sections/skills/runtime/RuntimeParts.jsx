@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import PropTypes from 'prop-types';
 import { Link as RouterLink } from 'react-router-dom';
 import { Box, Link, MenuItem, TextField, Tooltip, Typography } from '@mui/material';
@@ -44,9 +45,12 @@ TraceNumber.propTypes = {
 };
 
 /** The one window control of a Runtime tab (24 hours / 7 days / 30 days). */
-export function WindowSelect({ value, onChange, id }) {
+export function WindowSelect({ value, onChange, id: idProp }) {
+  const ownId = useId();
+  const id = idProp || ownId;
   return (
-    <TextField id={id} select size="small" label={WINDOW_LABEL} value={value} onChange={(event) => onChange(event.target.value)} sx={{ minWidth: 140 }}>
+    <TextField id={id} select size="small" label={WINDOW_LABEL} value={value} onChange={(event) => onChange(event.target.value)} sx={{ minWidth: 140 }}
+      SelectProps={{ SelectDisplayProps: { 'aria-labelledby': `${id}-label` } }}>
       {WINDOW_OPTIONS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
     </TextField>
   );

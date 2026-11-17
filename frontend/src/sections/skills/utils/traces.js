@@ -112,8 +112,11 @@ export function buildSkillTraceLink({
 }) {
   const project = projectId ?? link?.project_id;
   if (typeof project !== "string" || !project) return null;
-  const start = windowStart !== undefined || windowEnd !== undefined ? windowStart : link?.from;
-  const end = windowStart !== undefined || windowEnd !== undefined ? windowEnd : link?.to;
+  const callerWindow = windowStart !== undefined || windowEnd !== undefined;
+  // A §6.6 link names its own window; without one it is not the counted cohort.
+  if (link && !callerWindow && (!link.from || !link.to)) return null;
+  const start = callerWindow ? windowStart : link?.from;
+  const end = callerWindow ? windowEnd : link?.to;
   const dates = windowDates(start, end);
   if (!dates) return null;
   const linkSource = source ?? link?.source ?? null;

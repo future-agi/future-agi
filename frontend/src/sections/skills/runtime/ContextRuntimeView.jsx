@@ -124,7 +124,7 @@ export default function ContextRuntimeView({ context, versionId, onRollback, onC
                                 <StatusBadge status={linked ? 'linked' : 'not_linked'} role={linked ? 'neutral' : 'warning'} variant="badge" dot={false} label={linked ? LINKED_BADGE : NOT_LINKED_HERE} />
                               </Stack>
                             </TableCell>
-                            <TableCell>{plural(group.agents.length, 'agent')}</TableCell>
+                            <TableCell>{group.agents.length > 0 ? plural(group.agents.length, 'agent') : null}</TableCell>
                             {columns.map((column) => (
                               <TableCell key={column} align="right">{group.versionRow ? <MetricCell row={group.versionRow} column={column} evalConfig={column === 'topEval' ? topEval : undefined} what={label} /> : null}</TableCell>
                             ))}

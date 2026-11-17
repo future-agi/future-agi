@@ -270,6 +270,11 @@ describe("runtime trace links with skillTraces on", () => {
   ])("rejects a malformed link %#", (override) => {
     expect(buildSkillTraceLink({ kind: "failed", skillTraces: true, ...override })).toBeNull();
   });
+  it("needs the link's own window unless the caller gives one", () => {
+    const noWindow = { ...failedLink, from: undefined, to: undefined };
+    expect(buildSkillTraceLink({ link: noWindow, kind: "failed", skillTraces: true })).toBeNull();
+    expect(buildSkillTraceLink({ link: noWindow, kind: "failed", windowStart: start, windowEnd: end, skillTraces: true })).toMatch(/^\/dashboard\/observe\/project-a\//);
+  });
   it("reads the flag when no explicit mode is given", () => {
     setSkillTracesOverride(true);
     const link = buildSkillTraceLink({ link: failedLink, kind: "failed" });

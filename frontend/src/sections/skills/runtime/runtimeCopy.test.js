@@ -39,8 +39,8 @@ vi.mock('notistack', () => ({ enqueueSnackbar: vi.fn() }));
 
 // §9.1 runtimeCopy.test.js (UX-06): the new components render only §2.1
 // strings. These words must never appear in their rendered text.
-const FORBIDDEN = [/\bused\b/i, /\busing\b/i, /\bin use\b/i, /error rate/i, /in scope/i, /unrecognised digest/i];
-const forbiddenIn = (text) => FORBIDDEN.filter((pattern) => pattern.test(text)).map(String);
+// The module's own list adds "uses", "unused" and "0 agents" to the §9.1 words.
+const forbiddenIn = (text) => copy.forbiddenRuntimeWords(text);
 const rendered = () => document.body.textContent;
 
 const DIAGNOSES = [
@@ -94,6 +94,11 @@ describe('runtime copy (§2.1, UX-06)', () => {
       copy.lastFetchReason({ sdkVersion: '0.9.2', language: 'futureagi-python', tracingMode: 'on', minVersion: '1.4.0' }),
     ];
     samples.forEach((text) => expect(forbiddenIn(text), text).toEqual([]));
+  });
+
+  it('the forbidden list covers every §9.1 word', () => {
+    ['Used (7 days)', 'using v3', 'in use', 'Error rate', 'In scope', 'unrecognised digest', 'Unused', '0 agents'].forEach((text) => expect(copy.forbiddenRuntimeWords(text), text).not.toEqual([]));
+    expect(copy.forbiddenRuntimeWords('Loaded by 3 agents · 10 agents · Ran after loading')).toEqual([]);
   });
 
   it('uses the §2.1 words', () => {

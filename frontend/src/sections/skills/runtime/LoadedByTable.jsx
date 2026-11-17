@@ -107,7 +107,9 @@ AgentName.propTypes = { agent: PropTypes.object };
 export function MetricCell({ row, column, evalConfig, what }) {
   const links = row.links || {};
   const low = Boolean(row.lowSample);
-  const common = { lowSample: low, traces: row.traces, projects: row.projects };
+  // The project may sit on each link, on the row's links, or on the agent (one project per agent row).
+  const projectId = links.project_id ?? row.agent?.projectId ?? undefined;
+  const common = { lowSample: low, traces: row.traces, projects: row.projects, projectId: projectId || undefined };
   switch (column) {
     case 'traces':
       return <TraceNumber {...common} lowSample={false} link={links.all} kind="all" what={`${what} traces`}>{formatCount(row.traces)}</TraceNumber>;
@@ -234,7 +236,7 @@ export default function LoadedByTable({ skill, rows = [], allVersions = [], prod
                   <TableCell>
                     <Stack direction="row" spacing={0.5} alignItems="center">
                       <Iconify icon={open ? 'solar:alt-arrow-down-linear' : 'solar:alt-arrow-right-linear'} width={14} aria-hidden />
-                      <Typography variant="s1" component="span">{plural(group.agents.length, 'agent')}</Typography>
+                      {group.agents.length > 0 && <Typography variant="s1" component="span">{plural(group.agents.length, 'agent')}</Typography>}
                     </Stack>
                   </TableCell>
                   <TableCell>
@@ -257,7 +259,7 @@ export default function LoadedByTable({ skill, rows = [], allVersions = [], prod
                 {open && group.agents.map((agentRow) => {
                   const agentName = agentRow.agent?.nameSource === 'project' ? unnamedAgent(agentRow.agent.projectName) : agentRow.agent?.name;
                   const agentPrimary = onOpenAgent ? { label: `Open ${agentName}`, onClick: () => onOpenAgent(agentRow) } : null;
-                  const agentHref = agentRow.links?.all ? buildSkillTraceLink({ link: agentRow.links.all, kind: 'all' }) : null;
+                  const agentHref = agentRow.links?.all ? buildSkillTraceLink({ link: agentRow.links.all, kind: 'all', projectId: agentRow.links.all.project_id ?? agentRow.links.project_id ?? agentRow.agent?.projectId }) : null;
                   return (
                     <TableRow key={`${group.versionId}:${agentKey(agentRow.agent)}`} {...rowLinkProps(agentPrimary)} data-row="agent">
                       <TableCell sx={{ pl: { sm: 4 } }}><AgentName agent={agentRow.agent} /></TableCell>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { isFeatureEnabled, onFeatureFlags } from "src/utils/PostHog/posthog";
+import posthog from "posthog-js";
 
 // The `skillTraces` UI flag (SKILL-TRACES §7, §10 "The skillTraces flag",
 // verification item V12).
@@ -15,6 +15,10 @@ import { isFeatureEnabled, onFeatureFlags } from "src/utils/PostHog/posthog";
 //      PostHog is not initialised there;
 //   2. the PostHog feature flag `skillTraces` is on for the workspace.
 // Tests use `setSkillTracesOverride(true | false | null)`.
+//
+// posthog-js is read directly (not through src/utils/PostHog) so this module
+// loads no app config: many suites mock src/config-global partially, and the
+// flag must stay importable, and off, there.
 //
 // The flag only hides or shows screens. Every runtime read is still
 // authorized by the server against the projects the person can open.
@@ -39,7 +43,7 @@ export function isSkillTracesEnabled() {
   if (override !== null) return override;
   if (buildSetting()) return true;
   try {
-    return Boolean(isFeatureEnabled(SKILL_TRACES_FLAG));
+    return Boolean(posthog?.__loaded && posthog.isFeatureEnabled(SKILL_TRACES_FLAG));
   } catch {
     return false;
   }
@@ -62,7 +66,7 @@ export function useSkillTracesEnabled() {
     listeners.add(update);
     let unsubscribe;
     try {
-      unsubscribe = onFeatureFlags(update);
+      unsubscribe = posthog?.__loaded ? posthog.onFeatureFlags(update) : undefined;
     } catch {
       unsubscribe = undefined;
     }

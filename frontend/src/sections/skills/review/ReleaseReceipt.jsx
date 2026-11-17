@@ -22,7 +22,8 @@ export default function ReleaseReceipt({ receipt, request }) {
   const kind = request?.subjectKind || receipt.subjectKind;
   const resourceUrl = subjectId ? (kind === 'agent_context' ? paths.dashboard.skills.contextDetail(subjectId) : paths.dashboard.skills.detail(subjectId)) : null;
   const receiptUrl = `${paths.dashboard.skills.reviews}?request=${encodeURIComponent(receipt.requestId)}`;
-  const runtime = Boolean(subjectId && after.eventId) && isSkillTracesEnabled();
+  // The comparison reads production moves only.
+  const runtime = Boolean(subjectId && after.eventId) && label === 'production' && isSkillTracesEnabled();
   return <Stack spacing={1.5} aria-label="Release receipt">
       {/* The page title already states the move ("Production moved from v1 to v2"); the receipt is the record. */}
       <Stack direction="row" gap={0.75} alignItems="baseline" flexWrap="wrap">
