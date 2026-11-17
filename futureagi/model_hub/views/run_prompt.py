@@ -24,6 +24,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from agentic_eval.core_evals.run_prompt.model_pricing import listed_pricing
 from model_hub.serializers.decision_models import (
     DecisionModelGroupSerializer,
     ModelListQuerySerializer,
@@ -36,7 +37,6 @@ from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 # (available_models always available)
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
-from agentic_eval.core_evals.run_prompt.model_pricing import listed_pricing
 from agentic_eval.core_evals.run_prompt.other_services.manager import (
     get_model_parameters,
 )
@@ -2610,6 +2610,7 @@ class LiteLLMModelListView(APIView):
         # Cache provider logo URLs to avoid repeated lookups
         logo_cache = {}
         response_data = []
+        catalogue_rows = {}
 
         # Pre-compute provider checks
         json_provider_set = set(PROVIDERS_WITH_JSON)
@@ -2642,10 +2643,13 @@ class LiteLLMModelListView(APIView):
                 "cutoff": model.get("cutoff"),
                 "rate_limits": model.get("rate_limits"),
                 "latency": model.get("latency"),
-                "pricing": listed_pricing(model),
+                # Filled in below for the models on the page only: pricing a row
+                # looks up two tables, and the page shows a fraction of the list.
+                "pricing": None,
                 "type": key_type,
             }
             response_data.append(model_data)
+            catalogue_rows[id(model_data)] = model
 
         # Sort by isAvailable (available models first)
         response_data.sort(key=lambda x: not x["is_available"])
@@ -2653,6 +2657,8 @@ class LiteLLMModelListView(APIView):
         # Pagination
         paginator = ExtendedPageNumberPagination()
         paginated_models = paginator.paginate_queryset(response_data, request)
+        for model_data in paginated_models:
+            model_data["pricing"] = listed_pricing(catalogue_rows[id(model_data)])
 
         return paginator.get_paginated_response(paginated_models)
 

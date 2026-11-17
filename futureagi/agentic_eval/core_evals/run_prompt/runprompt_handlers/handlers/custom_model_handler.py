@@ -19,7 +19,6 @@ import requests
 import structlog
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import request_started_at
-
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
     BaseModelHandler,
     HandlerResponse,

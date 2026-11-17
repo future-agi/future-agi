@@ -2823,17 +2823,39 @@ class GetDatasetTableView(APIView):
                             if column_config_only:
                                 # Use DB aggregation instead of per-cell Python loop;
                                 # each cell is priced at the rate of its date.
-                                stats = cell_token_cost(
-                                    Cell.objects.filter(
-                                        column=column,
-                                        deleted=False,
-                                    ).exclude(
-                                        status=CellStatus.ERROR.value,
-                                    ),
-                                    model_name,
-                                )
-                                cell_count = stats["cell_count"]
-                                if cell_count:
+                                try:
+                                    # A savepoint, so a failed aggregate does not
+                                    # abort the transaction the rest of the read uses.
+                                    with transaction.atomic():
+                                        stats = cell_token_cost(
+                                            Cell.objects.filter(
+                                                column=column,
+                                                deleted=False,
+                                            ).exclude(
+                                                status=CellStatus.ERROR.value,
+                                            ),
+                                            model_name,
+                                        )
+                                except DatabaseError:
+                                    # Say so, rather than drop the column and
+                                    # answer 200 with a column_config that lacks it.
+                                    logger.exception(
+                                        "Could not aggregate the run-prompt stats of a column.",
+                                        column_id=str(column.id),
+                                    )
+                                    stats = None
+                                    metadata.update(
+                                        {
+                                            "stats_unavailable": True,
+                                            "average_latency": None,
+                                            "average_cost": None,
+                                            "average_tokens": None,
+                                        }
+                                    )
+                                cell_count = stats["cell_count"] if stats else 0
+                                if stats is None:
+                                    pass  # marked unavailable above
+                                elif cell_count:
                                     total_prompt = stats["prompt_tokens"]
                                     total_completion = stats["completion_tokens"]
                                     total_response = stats["response_time"]

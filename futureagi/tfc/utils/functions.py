@@ -9,15 +9,16 @@ from django.db.models import Case, Count, DateTimeField, F, Q, Sum, When
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast, Coalesce
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from agentic_eval.core_evals.run_prompt.model_pricing import price_change_dates
 from model_hub.models.choices import CellStatus, SourceChoices
 from model_hub.models.develop_dataset import RUN_STARTED_AT_PATTERN, Cell, Column
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.utils.SQL_queries import SQLQueryHandler
-from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.constants.api_calls import APICallStatusChoices
+from tfc.utils.clickhouse import ClickHouseClientSingleton
+
+logger = structlog.get_logger(__name__)
 
 
 def add_one_day_in_date(date_str):

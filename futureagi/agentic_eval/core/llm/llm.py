@@ -27,7 +27,10 @@ from openai import AsyncOpenAI, OpenAI
 from agentic_eval.core.database.ch_vector import get_clickhouse_client_kwargs
 from agentic_eval.core.utils.functions import download_image_to_base64
 from agentic_eval.core.utils.model_config import ModelConfigs
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.fi_utils.token_count_helper import (
+    cached_input_tokens_from,
+    calculate_total_cost,
+)
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core.llm.audio_utils import (
@@ -604,7 +607,7 @@ class LLM:
         return model_pricing._utc_now()
 
     def _update_token_usage(
-        self, response: Any, started_at: Optional[datetime] = None
+        self, response: Any, started_at: datetime | None = None
     ) -> None:
         """
         Update token usage statistics from the response.
@@ -628,7 +631,10 @@ class LLM:
             cache_create = (
                 getattr(response.usage, "cache_creation_input_tokens", 0) or 0
             )
-            cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
+            # One count of the cache read, whichever shape the provider reports it
+            # in (Anthropic's cache_read_input_tokens, OpenAI's
+            # prompt_tokens_details.cached_tokens): the largest, never their sum.
+            cache_read = cached_input_tokens_from(response.usage)
             if cache_create or cache_read:
                 self.token_usage["cache_creation_input_tokens"] = (
                     self.token_usage.get("cache_creation_input_tokens", 0)
@@ -637,12 +643,18 @@ class LLM:
                 self.token_usage["cache_read_input_tokens"] = (
                     self.token_usage.get("cache_read_input_tokens", 0) + cache_read
                 )
+                # The key the cost function prices the cache read from; it equals
+                # cache_read_input_tokens, which it also reads, so nothing is counted twice.
+                self.token_usage["cached_input_tokens"] = (
+                    self.token_usage.get("cached_input_tokens", 0) + cache_read
+                )
                 added["cache_creation_input_tokens"] = cache_create
                 added["cache_read_input_tokens"] = cache_read
+                added["cached_input_tokens"] = cache_read
             self._add_to_usage_bucket(added, started_at)
 
     def _add_to_usage_bucket(
-        self, added: dict[str, int], started_at: Optional[datetime] = None
+        self, added: dict[str, int], started_at: datetime | None = None
     ) -> None:
         """Add one call's tokens to the bucket of the price in force when it started."""
         now = started_at if started_at is not None else self._call_started_at()

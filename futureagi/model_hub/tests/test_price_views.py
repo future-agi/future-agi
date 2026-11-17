@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import ast
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from django.db import OperationalError
+from django.utils import timezone
 
 from agentic_eval.core_evals.run_prompt import model_pricing
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
@@ -33,6 +37,8 @@ from model_hub.models.choices import (
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.run_prompt import RunPrompter
+from model_hub.services.dataset_snapshot import create_dataset_snapshot
+from model_hub.views import run_prompt as run_prompt_view
 from tfc.utils import functions
 from tfc.utils.functions import cell_token_cost, get_prompt_stats
 
@@ -118,6 +124,98 @@ def test_image_and_transcription_rows_keep_their_own_price():
     assert listed_pricing({"model_name": "flux-general-en", "mode": "stt"}) == {
         "input_per_minute": 0.0077
     }
+
+
+# --- The model list response
+
+
+MODEL_LIST_URL = "/model-hub/api/models_list/"
+
+
+@pytest.mark.django_db
+def test_the_model_list_response_shows_the_price_billed_now(at_january_2, auth_client):
+    response = auth_client.get(
+        MODEL_LIST_URL, {"search": "gemini-3.7-flash", "model_type": "llm"}
+    )
+
+    assert response.status_code == 200, response.data
+    row = _row(response.data["results"], "gemini/gemini-3.7-flash")
+    # Billed 1.5/7.5 from 1 January 2027; the response carries it, JSON and all.
+    assert row["pricing"] == {
+        "input_per_1M_tokens": 1.5,
+        "output_per_1M_tokens": 7.5,
+        "cached_input_per_1M_tokens": 0.15,
+    }
+    assert row["type"] == "chat"
+
+
+@pytest.mark.django_db
+def test_the_model_list_response_shows_a_speech_row_its_own_price(auth_client):
+    response = auth_client.get(MODEL_LIST_URL, {"name": "blizzard"})
+
+    assert response.status_code == 200, response.data
+    (row,) = response.data["results"]
+    assert row["model_name"] == "blizzard"
+    assert row["pricing"] == {"input_per_1M_characters": 12.0}
+
+
+@pytest.mark.django_db
+def test_the_model_list_response_shows_no_price_for_a_name_no_table_prices(
+    auth_client,
+):
+    response = auth_client.get(
+        MODEL_LIST_URL, {"search": "openrouter/google/gemini-pro-1.5"}
+    )
+
+    assert response.status_code == 200, response.data
+    row = _row(response.data["results"], "openrouter/google/gemini-pro-1.5")
+    assert row["pricing"] is None
+
+
+@pytest.fixture
+def priced_rows(monkeypatch):
+    """Records the rows ``listed_pricing`` is asked about by the model list view."""
+    asked = []
+    real = run_prompt_view.listed_pricing
+
+    def counting(row, **kwargs):
+        asked.append(row["model_name"])
+        return real(row, **kwargs)
+
+    monkeypatch.setattr(run_prompt_view, "listed_pricing", counting)
+    return asked
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("page", [1, 2, 3])
+def test_the_model_list_prices_only_the_models_on_the_page(
+    auth_client, priced_rows, page
+):
+    response = auth_client.get(
+        MODEL_LIST_URL, {"search": "gemini", "limit": 4, "page": page}
+    )
+
+    assert response.status_code == 200, response.data
+    listed = [row["model_name"] for row in response.data["results"]]
+    assert response.data["count"] > 12
+    assert len(listed) == 4
+    # Four lookups for four rows, not one per model the search matched.
+    assert priced_rows == listed
+
+
+@pytest.mark.django_db
+def test_the_prices_on_a_page_are_those_of_the_catalogue_rows(
+    auth_client, organization
+):
+    response = auth_client.get(MODEL_LIST_URL, {"search": "gemini", "limit": 8})
+
+    assert response.status_code == 200, response.data
+    by_name = {
+        row["model_name"]: row
+        for row in LiteLLMModelManager("", organization_id=organization.id).models
+    }
+    for row in response.data["results"]:
+        assert row["pricing"] == listed_pricing(by_name[row["model_name"]])
 
 
 # --- Dataset views
@@ -317,6 +415,52 @@ def test_the_dataset_column_metadata_averages_the_dated_cost(auth_client, dated_
     assert config["metadata"]["average_cost"] == pytest.approx(22.5 / 3)
     assert config["metadata"]["average_tokens"] == pytest.approx(2_000_000)
     assert config["metadata"]["average_latency"] == pytest.approx(2.0)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_failed_stats_aggregate_is_reported_not_dropped(
+    auth_client, dated_cells, monkeypatch
+):
+    dataset, _, column = dated_cells
+
+    def failing(cells, model_name):
+        raise OperationalError("canceling statement due to statement timeout")
+
+    monkeypatch.setattr("model_hub.views.develop_dataset.cell_token_cost", failing)
+
+    response = auth_client.get(
+        f"/model-hub/develops/{dataset.id}/get-dataset-table/",
+        {"column_config_only": "true", "page_size": 10, "current_page_index": 0},
+    )
+
+    # The column is still there, and it says its stats are unavailable: not a 200
+    # whose column_config silently lacks it.
+    assert response.status_code == 200
+    columns = response.json()["result"]["column_config"]
+    config = next(item for item in columns if item["id"] == str(column.id))
+    assert config["metadata"]["stats_unavailable"] is True
+    assert config["metadata"]["average_cost"] is None
+    assert config["metadata"]["average_tokens"] is None
+    assert config["metadata"]["average_latency"] is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_stats_aggregate_that_works_is_not_marked_unavailable(
+    auth_client, dated_cells
+):
+    dataset, _, column = dated_cells
+
+    response = auth_client.get(
+        f"/model-hub/develops/{dataset.id}/get-dataset-table/",
+        {"column_config_only": "true", "page_size": 10, "current_page_index": 0},
+    )
+
+    config = next(
+        item
+        for item in response.json()["result"]["column_config"]
+        if item["id"] == str(column.id)
+    )
+    assert "stats_unavailable" not in config["metadata"]
 
 
 def test_the_change_dates_follow_the_key_that_sets_the_price():
@@ -698,6 +842,131 @@ def test_embedding_a_cell_keeps_its_audio_duration_and_sets_its_own_key(
     bare.refresh_from_db()
     assert kept.column_metadata == {"audio_duration_seconds": 3.5, "embedding": True}
     assert bare.column_metadata == {"audio_duration_seconds": 0, "embedding": True}
+
+
+# --- The run start survives a save and a copy
+
+
+@pytest.mark.django_db
+def test_an_annotation_saved_on_a_cell_does_not_move_its_price(
+    prompt_column, monkeypatch
+):
+    dataset, run_prompter, column = prompt_column
+    stamped = _cell(dataset, column, 0, BEFORE_2027, run_started_at=BEFORE_2027)
+    legacy = _cell(dataset, column, 1, BEFORE_2027)
+
+    # The saves below happen after the price change.
+    monkeypatch.setattr(timezone, "now", lambda: AFTER_2027)
+    for cell in (stamped, legacy):
+        cell.refresh_from_db()
+        # A reviewer's annotation and an edit of the value, saved as the views do.
+        cell.feedback_info = {"annotation": {"verified": True, "label_id": "x"}}
+        cell.value = "edited after the price change"
+        cell.save()
+
+    stamped.refresh_from_db()
+    legacy.refresh_from_db()
+    assert stamped.updated_at == AFTER_2027
+    assert legacy.updated_at == AFTER_2027
+    assert stamped.column_metadata == {"run_started_at": BEFORE_2027.isoformat()}
+    assert legacy.column_metadata == {}
+    stats = cell_token_cost(Cell.objects.filter(column=column), run_prompter.model)
+    # Both ran before the change: 4.5 each, not 9.0 each.
+    assert stats["cost"] == 9.0
+
+
+def _snapshot_of(dataset, column, raw_sql):
+    experiment = SimpleNamespace(
+        id=uuid.uuid4(), snapshot_dataset=None, save=lambda **kwargs: None
+    )
+    _, columns, _ = create_dataset_snapshot(
+        dataset, experiment, use_raw_sql_cells=raw_sql
+    )
+    return columns[column.id]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("raw_sql", [False, True], ids=["orm", "raw-sql"])
+def test_a_snapshot_copy_keeps_the_run_start_of_the_cell(prompt_column, raw_sql):
+    dataset, run_prompter, column = prompt_column
+    # Run before the change; the cell itself was created after it.
+    _cell(dataset, column, 0, AFTER_2027, run_started_at=BEFORE_2027)
+
+    copied = _snapshot_of(dataset, column, raw_sql)
+
+    copy = Cell.objects.get(column=copied)
+    assert copy.column_metadata == {"run_started_at": BEFORE_2027.isoformat()}
+    stats = cell_token_cost(Cell.objects.filter(column=copied), run_prompter.model)
+    assert stats["cost"] == 4.5
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("raw_sql", [False, True], ids=["orm", "raw-sql"])
+def test_a_snapshot_copy_of_a_cell_with_no_run_start_is_priced_at_the_source(
+    prompt_column, raw_sql
+):
+    dataset, run_prompter, column = prompt_column
+    # Written before run_started_at existed, in 2027. The copy is made now.
+    _cell(dataset, column, 0, AFTER_2027)
+
+    copied = _snapshot_of(dataset, column, raw_sql)
+
+    copy = Cell.objects.get(column=copied)
+    assert datetime.fromisoformat(copy.column_metadata["run_started_at"]) == AFTER_2027
+    assert copy.created_at < AFTER_2027
+    stats = cell_token_cost(Cell.objects.filter(column=copied), run_prompter.model)
+    # 1M in and 1M out at the 2027 rates, not at the rates of the day of the copy.
+    assert stats["cost"] == 9.0
+    copy.save()  # the stamp reads as a valid column_metadata
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("raw_sql", [False, True], ids=["orm", "raw-sql"])
+def test_a_snapshot_copy_keeps_other_metadata_and_stamps_only_token_cells(
+    prompt_column, raw_sql
+):
+    dataset, _, column = prompt_column
+    audio = _cell(dataset, column, 0, AFTER_2027)
+    Cell.objects.filter(id=audio.id).update(
+        column_metadata={"audio_duration_seconds": 3.0}
+    )
+    no_tokens = _cell(dataset, column, 1, AFTER_2027)
+    Cell.objects.filter(id=no_tokens.id).update(
+        prompt_tokens=None, completion_tokens=None, column_metadata={"embedding": True}
+    )
+
+    copied = _snapshot_of(dataset, column, raw_sql)
+
+    copies = {cell.row.order: cell for cell in Cell.objects.filter(column=copied)}
+    assert set(copies[0].column_metadata) == {
+        "audio_duration_seconds",
+        "run_started_at",
+    }
+    assert copies[0].column_metadata["audio_duration_seconds"] == 3.0
+    assert copies[1].column_metadata == {"embedding": True}
+
+
+@pytest.mark.django_db
+def test_the_copied_metadata_is_the_stamp_the_price_query_reads(prompt_column):
+    from model_hub.services.dataset_snapshot import copied_column_metadata
+
+    dataset, run_prompter, column = prompt_column
+    legacy = _cell(dataset, column, 0, AFTER_2027)
+    legacy.refresh_from_db()
+
+    assert copied_column_metadata(legacy) == {"run_started_at": AFTER_2027.isoformat()}
+    no_tokens = Cell(prompt_tokens=None, completion_tokens=None, column_metadata={})
+    assert copied_column_metadata(no_tokens) == {}
+    stamped = Cell(
+        prompt_tokens=1,
+        column_metadata={"run_started_at": BEFORE_2027.isoformat()},
+        created_at=AFTER_2027,
+    )
+    assert copied_column_metadata(stamped) == {
+        "run_started_at": BEFORE_2027.isoformat()
+    }
+    odd = Cell(prompt_tokens=1, column_metadata=["not", "an", "object"])
+    assert copied_column_metadata(odd) == ["not", "an", "object"]
 
 
 # --- The cell writers leave the token counts and the run start alone

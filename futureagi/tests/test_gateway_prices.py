@@ -139,6 +139,138 @@ def test_the_loader_drops_an_entry_the_gateway_cannot_decode(tmp_path):
     assert list(load_gateway_prices(path)) == ["good"]
 
 
+def test_a_null_element_of_a_string_list_is_not_a_refusal(tmp_path):
+    # Go reads a null element of a []string as "" and decodes the entry.
+    path = _write(
+        tmp_path,
+        json.dumps({"listed": {**GOOD_ENTRY, "supported_regions": ["us", None]}}),
+    )
+
+    assert list(load_gateway_prices(path)) == ["listed"]
+
+
+@pytest.mark.parametrize("number", ["1e999", "-1e999", "1e400000000", "1" + "0" * 400])
+def test_a_number_out_of_float64_range_is_a_refusal(tmp_path, number):
+    # Go: "cannot unmarshal number 1e999 into Go struct field of type float64".
+    good = json.dumps(GOOD_ENTRY)
+    path = _write(
+        tmp_path, f'{{"good": {good}, "huge": {{"input_cost_per_token": {number}}}}}'
+    )
+
+    assert list(load_gateway_prices(path)) == ["good"]
+
+
+def test_a_number_that_underflows_is_zero_not_a_refusal(tmp_path):
+    # Go reads 1e-999 as 0 with no error; the entry is then zero-priced and dropped
+    # as such, while an entry with a good price next to it loads.
+    path = _write(
+        tmp_path,
+        '{"tiny": {"input_cost_per_token": 1e-999, "output_cost_per_token": 1e-6}, '
+        f'"good": {json.dumps(GOOD_ENTRY)}}}',
+    )
+
+    assert list(load_gateway_prices(path)) == ["good"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '{"input_cost_per_token": "x", "input_cost_per_token": 1e-6}',
+        '{"input_cost_per_token": 1e-6, "input_cost_per_token": "x"}',
+        '{"input_cost_per_token": 1e-6, "INPUT_COST_PER_TOKEN": "x"}',
+    ],
+)
+def test_a_repeated_key_is_decoded_every_time_so_a_bad_value_refuses_the_entry(
+    tmp_path, body
+):
+    # Go decodes key by key, so the bad value is met even when a good one follows
+    # (or precedes) it. Reading the object as a dict would keep only the last.
+    path = _write(tmp_path, f'{{"good": {json.dumps(GOOD_ENTRY)}, "twice": {body}}}')
+
+    assert list(load_gateway_prices(path)) == ["good"]
+
+
+def test_a_repeated_key_with_good_values_takes_the_last(tmp_path):
+    path = _write(
+        tmp_path,
+        '{"twice": {"input_cost_per_token": 1e-6, "input_cost_per_token": 3e-6}}',
+    )
+
+    assert load_gateway_prices(path)["twice"][1]["input_per_1M_tokens"] == 3.0
+
+
+def test_a_repeated_model_key_takes_the_last_entry(tmp_path):
+    path = _write(
+        tmp_path,
+        '{"m": {"input_cost_per_token": 1e-6}, "m": {"input_cost_per_token": 2e-6}}',
+    )
+
+    assert load_gateway_prices(path)["m"][1]["input_per_1M_tokens"] == 2.0
+
+
+def test_a_rejected_entry_is_logged_with_its_model_and_the_reason(tmp_path, caplog):
+    path = _write(
+        tmp_path,
+        json.dumps(
+            {
+                "not-an-object": "str",
+                "bad-number": {"input_cost_per_token": "1"},
+                "bad-mode": {**GOOD_ENTRY, "mode": 5},
+                "bad-flag": {**GOOD_ENTRY, "supports_vision": "yes"},
+                "bad-list": {**GOOD_ENTRY, "supported_regions": [1]},
+                "good": GOOD_ENTRY,
+            }
+        ),
+    )
+
+    with caplog.at_level("WARNING", logger=gateway_prices.logger.name):
+        loaded = load_gateway_prices(path)
+
+    assert list(loaded) == ["good"]
+    messages = {
+        record.args[0]: str(record.args[1])
+        for record in caplog.records
+        if record.name == gateway_prices.logger.name
+    }
+    assert set(messages) == {
+        "not-an-object",
+        "bad-number",
+        "bad-mode",
+        "bad-flag",
+        "bad-list",
+    }
+    assert "str, not an object" in messages["not-an-object"]
+    assert messages["bad-number"].startswith("input_cost_per_token:")
+    assert "not a number" in messages["bad-number"]
+    assert "not a string" in messages["bad-mode"]
+    assert "not a boolean" in messages["bad-flag"]
+    assert "not an array of strings" in messages["bad-list"]
+
+
+def test_an_entry_dropped_as_zero_priced_is_not_logged_as_rejected(tmp_path, caplog):
+    path = _write(
+        tmp_path,
+        json.dumps(
+            {
+                "free": {"mode": "chat", "output_cost_per_token": 1e-6},
+                "good": GOOD_ENTRY,
+            }
+        ),
+    )
+
+    with caplog.at_level("WARNING", logger=gateway_prices.logger.name):
+        load_gateway_prices(path)
+
+    assert not caplog.records
+
+
+def test_the_real_copy_logs_no_rejected_entry(caplog):
+    with caplog.at_level("WARNING", logger=gateway_prices.logger.name):
+        load_gateway_prices(GATEWAY_PRICES_PATH)
+
+    assert not caplog.records
+
+
 def test_the_loader_applies_the_gateways_mode_and_zero_rules(tmp_path):
     path = _write(
         tmp_path,

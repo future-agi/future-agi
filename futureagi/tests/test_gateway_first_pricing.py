@@ -228,24 +228,28 @@ def test_the_callers_own_price_comes_before_both_tables():
     assert result["pricing_source"] == "fallback"
 
 
-@pytest.mark.parametrize(
-    "fallback",
-    [
-        {"input_per_1M_tokens": 0.0, "output_per_1M_tokens": 0.0},
-        {"output_per_1M_tokens": 2.0},
-    ],
-    ids=["zero-price", "no-input-price"],
-)
-def test_a_callers_price_with_no_input_rate_is_no_price(fallback):
+def test_a_callers_price_with_no_rate_at_all_is_no_price():
     # A custom model that sets no price arrives as 0.0/0.0 and must not bill $0.
     result = _cost(
         "acme/gpt-4o",
         {"prompt_tokens": 1000, "completion_tokens": 500},
-        fallback_pricing=fallback,
+        fallback_pricing={"input_per_1M_tokens": 0.0, "output_per_1M_tokens": 0.0},
     )
 
     assert result["total_cost"] == 0.0075
     assert result["pricing_source"] == "gateway_table"
+
+
+def test_a_callers_price_with_only_an_output_rate_is_a_price():
+    # A free input with a paid output is the caller's price (TH-9538), not no price.
+    result = _cost(
+        "acme/gpt-4o",
+        {"prompt_tokens": 1000, "completion_tokens": 500},
+        fallback_pricing={"output_per_1M_tokens": 2.0},
+    )
+
+    assert result["total_cost"] == 0.001
+    assert result["pricing_source"] == "fallback"
 
 
 def test_a_decision_model_is_priced_before_the_gateway_table():

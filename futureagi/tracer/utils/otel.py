@@ -1733,7 +1733,7 @@ def bulk_convert_otel_spans_to_observation_spans(
         )
 
 
-def _span_started_at(otel_span: dict) -> Optional[datetime]:
+def _span_started_at(otel_span: dict) -> datetime | None:
     """The instant the span started, in UTC, or None when it carries no start.
 
     A span is priced at its start, as the gateway prices a request at its start.
@@ -1758,7 +1758,7 @@ def calculate_cost(
     completion_tokens: Optional[int],
     model: Optional[str],
     organization_id: Optional[str] = None,
-    at: Optional[datetime] = None,
+    at: datetime | None = None,
 ):
     """
     Calculates cost for a span. Checks user-provided cost attributes first
@@ -1828,8 +1828,8 @@ def calculate_cost(
 
 
 def _dated_token_cost(
-    model: str, prompt_tokens: int, completion_tokens: int, at: Optional[datetime]
-) -> Optional[float]:
+    model: str, prompt_tokens: int, completion_tokens: int, at: datetime | None
+) -> float | None:
     """The cost at ``at`` for a model whose price the dated schedule changes, else None."""
     if not isinstance(model, str):
         return None
@@ -1853,7 +1853,7 @@ def calculate_cost_from_tokens(
     completion_tokens: Optional[int],
     model: Optional[str],
     organization_id: Optional[str] = None,
-    at: Optional[datetime] = None,
+    at: datetime | None = None,
 ):
     """
     Calculates the cost of a model call based on the number of prompt and completion tokens.

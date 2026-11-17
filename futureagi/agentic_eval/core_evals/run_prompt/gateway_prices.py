@@ -13,9 +13,13 @@ Standard library only.
 """
 
 import json
+import logging
+import math
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
+
+logger = logging.getLogger(__name__)
 
 GATEWAY_PRICES_PATH = Path(__file__).with_name("gateway_prices.json")
 
@@ -90,29 +94,67 @@ def _reject_constant(name: str):
     )
 
 
-def _decode_entry(raw) -> dict | None:
-    """The fields of one entry as Go decodes them, or None where Go refuses it."""
+class _Object(tuple):
+    """A JSON object as its ``(key, value)`` pairs in file order, duplicates kept.
+
+    Go decodes an entry key by key, so a repeated key is decoded twice and a bad
+    first value refuses the entry even when a later one is good. A dict would keep
+    only the last.
+    """
+
+
+class _Rejected(Exception):
+    """Go would refuse this entry; the message says why."""
+
+
+def _fits_float64(value) -> bool:
+    """A JSON number Go stores in a float64: not a bool, and in range."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
+
+
+def _describe(value) -> str:
+    if isinstance(value, _Object):
+        return "object"
+    return type(value).__name__
+
+
+def _decode_entry(raw) -> dict:
+    """The fields of one entry as Go decodes them.
+
+    Raises ``_Rejected`` where Go refuses the entry (``json.Unmarshal`` returns an
+    error and ``parseLiteLLM`` skips it).
+    """
     if raw is None:
         return {}
-    if not isinstance(raw, dict):
-        return None
+    if not isinstance(raw, _Object):
+        raise _Rejected(f"the entry is a {_describe(raw)}, not an object")
     fields = {}
-    for name, value in raw.items():
+    for name, value in raw:
         field = name if name in _KIND else _BY_LOWER.get(name.lower())
         if field is None or value is None:
             continue
         kind = _KIND[field]
         if kind == "float":
-            if isinstance(value, bool) or not isinstance(value, int | float):
-                return None
+            if not _fits_float64(value):
+                if isinstance(value, bool) or not isinstance(value, int | float):
+                    raise _Rejected(f"{name}: a {_describe(value)} is not a number")
+                raise _Rejected(f"{name}: {value!r} is out of range for a float64")
         elif kind == "string":
             if not isinstance(value, str):
-                return None
+                raise _Rejected(f"{name}: a {_describe(value)} is not a string")
         elif kind == "bool":
             if not isinstance(value, bool):
-                return None
-        elif not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-            return None
+                raise _Rejected(f"{name}: a {_describe(value)} is not a boolean")
+        # Go reads a null element of a []string as "".
+        elif not isinstance(value, list) or not all(
+            v is None or isinstance(v, str) for v in value
+        ):
+            raise _Rejected(f"{name}: not an array of strings")
         fields[field] = value
     return fields
 
@@ -143,22 +185,29 @@ def load_gateway_prices(path) -> dict[str, tuple[str, MappingProxyType]]:
             "agentcc-gateway/internal/modeldb/litellm.json."
         ) from None
     try:
-        data = json.loads(text, parse_constant=_reject_constant)
+        data = json.loads(
+            text, parse_constant=_reject_constant, object_pairs_hook=_Object
+        )
     except json.JSONDecodeError as exc:
         raise GatewayPricesError(
             f"The gateway price copy {path} is not valid JSON: {exc}"
         ) from exc
-    if not isinstance(data, dict):
+    if not isinstance(data, _Object):
         raise GatewayPricesError(
             f"The gateway price copy {path} must hold an object of model keys"
         )
 
     prices = {}
-    for key, raw in data.items():
+    # A repeated model key: the last one wins, as in Go's map.
+    for key, raw in dict(data).items():
         if key == "sample_spec":
             continue
-        fields = _decode_entry(raw)
-        if fields is None:
+        try:
+            fields = _decode_entry(raw)
+        except _Rejected as rejected:
+            logger.warning(
+                "skipping unparseable gateway price entry %s: %s", key, rejected
+            )
             continue
         mode = map_mode(fields.get("mode"))
         if is_zero_pricing(mode, fields):

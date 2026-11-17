@@ -1,7 +1,7 @@
 import re
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import NamedTuple, Optional
+from typing import Literal, NamedTuple, Optional, TypedDict
 
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 from agentic_eval.core_evals.run_prompt.gateway_prices import gateway_token_rates
@@ -370,16 +370,121 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+class TokenPricing(TypedDict, total=False):
+    """A price per million tokens: the unit a token call is billed by."""
+
+    input_per_1M_tokens: float
+    output_per_1M_tokens: float
+    cached_input_per_1M_tokens: float
+    # A few catalogue rows also price image inputs.
+    input_per_image: float
+    image_input_per_image: float
+
+
+class CharacterPricing(TypedDict):
+    """A price per million characters (speech synthesis)."""
+
+    input_per_1M_characters: float
+
+
+class ThousandCharacterPricing(TypedDict, total=False):
+    """A price per thousand characters; a token call is not billed by it."""
+
+    input_per_1k_characters: float
+    output_per_1k_characters: float
+
+
+class MinutePricing(TypedDict):
+    """A price per minute of audio (transcription)."""
+
+    input_per_minute: float
+
+
+class AudioMinutePricing(TypedDict):
+    """The catalogue's other spelling of a price per minute of audio."""
+
+    per_minute_audio: float
+
+
+class ImagePricing(TypedDict, total=False):
+    """A price per image, flat or by quality."""
+
+    per_image: float
+    low_quality_per_image: float
+    medium_quality_per_image: float
+    high_quality_per_image: float
+
+
+class OtherPricing(TypedDict, total=False):
+    """Catalogue prices in a unit nothing here bills by (shown, never billed)."""
+
+    per_1M_tokens: float
+    per_1000_pairs: float
+    details: dict
+
+
+Pricing = (
+    TokenPricing
+    | CharacterPricing
+    | ThousandCharacterPricing
+    | MinutePricing
+    | AudioMinutePricing
+    | ImagePricing
+    | OtherPricing
+)
+
+PricingSource = Literal["decision", "gateway_table", "available_models"]
+PricingUnit = Literal[
+    "per_1M_tokens",
+    "per_1M_characters",
+    "per_1k_characters",
+    "per_minute",
+    "per_image",
+    "other",
+]
+
+_UNIT_KEYS: tuple[tuple[PricingUnit, tuple[str, ...]], ...] = (
+    ("per_1M_tokens", ("input_per_1M_tokens", "output_per_1M_tokens")),
+    ("per_1M_characters", ("input_per_1M_characters",)),
+    ("per_1k_characters", ("input_per_1k_characters", "output_per_1k_characters")),
+    ("per_minute", ("input_per_minute", "per_minute_audio")),
+    (
+        "per_image",
+        (
+            "per_image",
+            "low_quality_per_image",
+            "medium_quality_per_image",
+            "high_quality_per_image",
+        ),
+    ),
+)
+
+
+def pricing_unit(pricing: Pricing) -> PricingUnit:
+    """The unit a price is quoted in, read from its keys."""
+    for unit, keys in _UNIT_KEYS:
+        if any(key in pricing for key in keys):
+            return unit
+    return "other"
+
+
 class PricingLookup(NamedTuple):
     """A price and where it came from.
 
-    ``source`` is "decision", "gateway_table" or "available_models". ``key`` is the
-    gateway key or catalogue name that set the price (None for a decision model).
+    ``model`` is the name that was asked for, kept so the price is never read
+    against another model. ``source`` is "decision", "gateway_table" or
+    "available_models". ``key`` is the gateway key or catalogue name that set the
+    price (None for a decision model). ``unit`` says what ``pricing`` is quoted per.
     """
 
-    pricing: dict
-    source: str
+    pricing: Pricing
+    source: PricingSource
     key: str | None
+    model: str
+
+    @property
+    def unit(self) -> PricingUnit:
+        return pricing_unit(self.pricing)
 
 
 def _check_at(at: datetime | None) -> datetime:
@@ -428,6 +533,7 @@ def lookup_pricing(
             },
             "decision",
             None,
+            model_name,
         )
 
     if not non_token_call:
@@ -438,7 +544,7 @@ def lookup_pricing(
             if dated:
                 rates.update(dated)
             if rates["input_per_1M_tokens"] > 0:
-                return PricingLookup(rates, "gateway_table", key)
+                return PricingLookup(rates, "gateway_table", key, model_name)
 
     found = _catalogue_pricing(model_name)
     if found is None:
@@ -451,7 +557,7 @@ def lookup_pricing(
             priced.update(dated)
     if priced.get("input_per_1M_tokens") == 0:
         return None
-    return PricingLookup(priced, "available_models", resolved_name)
+    return PricingLookup(priced, "available_models", resolved_name, model_name)
 
 
 def get_model_pricing(
@@ -459,7 +565,7 @@ def get_model_pricing(
     *,
     at: datetime | None = None,
     non_token_call: bool = False,
-) -> dict | None:
+) -> Pricing | None:
     """
     Get pricing information for a model, as in force at a moment.
 
@@ -505,11 +611,23 @@ def price_change_dates(
 _TOKEN_CALL_MODES = frozenset({"chat", "completion"})
 
 
-def listed_pricing(row: dict, *, at: datetime | None = None) -> dict | None:
+def listed_pricing(row: dict, *, at: datetime | None = None) -> Pricing | None:
     """The price the model list shows for one of its rows: the one billed now.
 
-    None for a custom model (the organisation sets its own price) and for a row
-    whose billed price is not a per-token one the list can show.
+    Returns:
+        The price in force at ``at`` (None means now), in the unit the row is
+        billed by. For a chat or completion row that is always a ``TokenPricing``
+        with an ``input_per_1M_tokens``. For any other mode (image, speech,
+        transcription, embedding, ...) it is whatever the table or catalogue holds
+        for the name, which need not be per-token: ``per_image``,
+        ``input_per_1M_characters``, ``input_per_minute`` and so on. Read the unit
+        with ``pricing_unit``, never assume tokens.
+
+        None when nothing prices the row in a way the list can show: a custom
+        model (the organisation sets its own price, so no table's is shown), a name
+        no table prices, and a chat or completion row whose table price has no
+        per-token input rate (a call to it is billed the default, so the table's
+        figure would mislead).
     """
     if row.get("custom"):
         return None

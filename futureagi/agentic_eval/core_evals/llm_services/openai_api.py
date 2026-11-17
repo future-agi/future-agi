@@ -6,7 +6,6 @@ from retrying import retry
 
 import structlog
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.fi_model import Model
 from agentic_eval.core_evals.fi_utils.json import JsonHelper
 from agentic_eval.core_evals.fi_utils.token_count_helper import (
@@ -14,6 +13,8 @@ from agentic_eval.core_evals.fi_utils.token_count_helper import (
     request_started_at,
 )
 from agentic_eval.core_evals.llm_services.abstract_llm import AbstractLlmService
+
+logger = structlog.get_logger(__name__)
 
 DEFAULT_TEMPERATURE = 0.0
 
