@@ -52,6 +52,7 @@ from simulate.services.agent_overview import (
     recent_agent_runs,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
+from simulate.views.agent_version import _preflight_by_version
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -178,7 +179,9 @@ class AgentDefinitionView(APIView):
 
             page = int(request.query_params.get("page", 1))
             if required_agent and page == 1:
-                agents = agents.exclude(id=required_agent.id).order_by("-created_at")
+                agents = agents.exclude(id=required_agent.id).order_by(
+                    "-updated_at", "-created_at"
+                )
                 paginator = ExtendedPageNumberPagination()
                 result_page = paginator.paginate_queryset(agents, request)
                 paginator.page.paginator.count += 1
@@ -188,7 +191,7 @@ class AgentDefinitionView(APIView):
             else:
                 if required_agent:
                     agents = agents.exclude(id=required_agent.id)
-                agents = agents.order_by("-created_at")
+                agents = agents.order_by("-updated_at", "-created_at")
                 paginator = ExtendedPageNumberPagination()
                 result_page = paginator.paginate_queryset(agents, request)
 
@@ -424,15 +427,21 @@ class AgentDefinitionDetailView(APIView):
             agent_data = AgentDefinitionResponseSerializer(agent).data
 
             # Get version information
-            versions = agent.get_version_history()
-            versions_data = AgentVersionListResponseSerializer(versions, many=True).data
-
-            # Get active version
+            versions = list(agent.get_version_history())
             active_version = agent.active_version
+            # One read of the checks for the whole list and the active version.
+            ids = [v.id for v in versions]
+            if active_version:
+                ids.append(active_version.id)
+            context = {"preflight": _preflight_by_version(ids)}
+            versions_data = AgentVersionListResponseSerializer(
+                versions, many=True, context=context
+            ).data
+
             active_version_data = None
             if active_version:
                 active_version_data = AgentVersionListResponseSerializer(
-                    active_version
+                    active_version, context=context
                 ).data
 
             return Response(

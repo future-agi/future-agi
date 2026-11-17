@@ -33994,6 +33994,8 @@ export const SimulateAgentDefinitionsVersionsListResponseItem = zod.object({
     .describe("Commit message for the agent version"),
   is_active: zod.string().optional(),
   is_latest: zod.string().optional(),
+  preflight_status: zod.string().min(1).nullable().optional(),
+  preflight_report: zod.object({}).passthrough().nullable().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
 });
 export const SimulateAgentDefinitionsVersionsListResponse = zod.array(
@@ -34138,6 +34140,8 @@ export const SimulateAgentDefinitionsVersionsReadResponse = zod.object({
   is_latest: zod.string().optional(),
   agent_kind: zod.string().min(1).optional(),
   api_key: zod.string().min(1).optional(),
+  preflight_status: zod.string().min(1).nullable().optional(),
+  preflight_report: zod.object({}).passthrough().nullable().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -34221,6 +34225,8 @@ export const SimulateAgentDefinitionsVersionsActivateCreateResponse =
         is_latest: zod.string().optional(),
         agent_kind: zod.string().min(1).optional(),
         api_key: zod.string().min(1).optional(),
+        preflight_status: zod.string().min(1).nullable().optional(),
+        preflight_report: zod.object({}).passthrough().nullable().optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })
@@ -34725,6 +34731,8 @@ export const SimulateAgentDefinitionsVersionsRestoreCreateResponse = zod.object(
         is_latest: zod.string().optional(),
         agent_kind: zod.string().min(1).optional(),
         api_key: zod.string().min(1).optional(),
+        preflight_status: zod.string().min(1).nullable().optional(),
+        preflight_report: zod.object({}).passthrough().nullable().optional(),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })

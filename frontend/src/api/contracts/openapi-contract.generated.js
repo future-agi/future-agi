@@ -51936,6 +51936,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
         },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_report: {
+          title: "Preflight report",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
         created_at: {
           title: "Created at",
           type: "string",
@@ -52072,6 +52085,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
           minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_report: {
+          title: "Preflight report",
+          type: "object",
+          readOnly: true,
           "x-nullable": true,
         },
         created_at: {

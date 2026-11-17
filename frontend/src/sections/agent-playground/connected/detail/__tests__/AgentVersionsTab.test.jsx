@@ -118,6 +118,73 @@ beforeEach(() => {
   servePages([[V2, V1]]);
 });
 
+describe("AgentVersionsTab check", () => {
+  const withCheck = (version, status, report) => ({
+    ...version,
+    preflight_status: status,
+    preflight_report: report,
+  });
+
+  it("shows why a failed check failed", async () => {
+    const report = {
+      checks: [{ id: "creds", label: "Credentials", status: "failed" }],
+    };
+    servePages([[withCheck(V2, "failed", report), V1]]);
+    renderTab();
+    await screen.findAllByTestId("version-entry");
+    expect(screen.getByText("Check failed")).toBeInTheDocument();
+    expect(screen.getByText("Credentials: failed")).toBeInTheDocument();
+  });
+
+  it("says so when a failed check left no reason", async () => {
+    servePages([[withCheck(V2, "failed", { checks: [] }), V1]]);
+    renderTab();
+    await screen.findAllByTestId("version-entry");
+    expect(
+      screen.getByText("The check failed without saying why."),
+    ).toBeInTheDocument();
+  });
+
+  it.each(["passed", "pending"])(
+    "shows the badge but no lines for a %s check",
+    async (status) => {
+      const report = {
+        checks: [{ id: "creds", label: "Credentials", status: "passed" }],
+      };
+      servePages([[withCheck(V2, status, report), V1]]);
+      renderTab();
+      await screen.findAllByTestId("version-entry");
+      expect(
+        screen.getByText(status === "passed" ? "Check passed" : "Checking…"),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("preflight-report")).not.toBeInTheDocument();
+    },
+  );
+
+  // A discarded check keeps the failed report it had; neither status labels it.
+  it.each(["legacy", "discarded"])(
+    "shows nothing for a %s check, whatever report it kept",
+    async (status) => {
+      const report = {
+        checks: [{ id: "creds", label: "Credentials", status: "failed" }],
+      };
+      servePages([[withCheck(V2, status, report), V1]]);
+      renderTab();
+      await screen.findAllByTestId("version-entry");
+      expect(screen.queryByTestId("preflight-report")).not.toBeInTheDocument();
+      expect(screen.queryByText("Credentials: failed")).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Check /)).not.toBeInTheDocument();
+    },
+  );
+
+  it("shows nothing for a version with no check", async () => {
+    renderTab();
+    await screen.findAllByTestId("version-entry");
+    expect(screen.queryByTestId("preflight-report")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Check /)).not.toBeInTheDocument();
+  });
+});
+
 describe("AgentVersionsTab", () => {
   it("reads versions from the paginated versions list", async () => {
     renderTab();

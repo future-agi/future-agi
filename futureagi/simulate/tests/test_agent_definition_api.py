@@ -15,10 +15,15 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
 
 from accounts.models.workspace import Workspace
-from simulate.models import AgentDefinition, AgentVersion
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    HarnessAgentVersionRuntime,
+)
 from simulate.models.agent_definition import ProviderCredentials
 from simulate.views import agent_definition as agent_definition_views
 from tracer.services import observability_switch
@@ -134,6 +139,51 @@ class TestListAgentDefinitions:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["results"][0]["id"] == str(agent_definition.id)
+
+    def test_an_older_agent_touched_since_lists_first(
+        self, auth_client, agent_definition, agent_definition_text
+    ):
+        AgentDefinition.no_workspace_objects.filter(id=agent_definition.id).update(
+            updated_at=timezone.now()
+        )
+
+        response = auth_client.get("/simulate/agent-definitions/")
+
+        assert [r["id"] for r in response.json()["results"]] == [
+            str(agent_definition.id),
+            str(agent_definition_text.id),
+        ]
+
+    def test_the_required_agent_stays_first_and_the_rest_order_by_update(
+        self,
+        auth_client,
+        agent_definition,
+        agent_definition_text,
+        organization,
+        workspace,
+    ):
+        newest = AgentDefinition.objects.create(
+            agent_name="Newest Text Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description="Created last, never touched",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        AgentDefinition.no_workspace_objects.filter(id=agent_definition.id).update(
+            updated_at=timezone.now()
+        )
+
+        response = auth_client.get(
+            f"/simulate/agent-definitions/?agent_definition_id={agent_definition_text.id}"
+        )
+
+        assert [r["id"] for r in response.json()["results"]] == [
+            str(agent_definition_text.id),
+            str(agent_definition.id),
+            str(newest.id),
+        ]
 
     def test_pagination(self, auth_client, agent_definition, agent_definition_text):
         response = auth_client.get("/simulate/agent-definitions/?page=1&limit=1")
@@ -430,6 +480,31 @@ class TestGetAgentDefinition:
         assert "active_version" in data
         assert "version_count" in data
         assert data["version_count"] == 1
+
+    def test_the_embedded_versions_carry_their_check(
+        self, auth_client, agent_definition, agent_version
+    ):
+        report = {"checks": [{"name": "credentials", "ok": False, "detail": "bad key"}]}
+        HarnessAgentVersionRuntime.no_workspace_objects.create(
+            agent_version=agent_version,
+            agent_definition=agent_definition,
+            organization=agent_definition.organization,
+            workspace=agent_definition.workspace,
+            hash="sha256:" + agent_version.id.hex.ljust(64, "0"),
+            source_kind="github",
+            trigger="creation",
+            preflight_status="failed",
+            preflight_report=report,
+        )
+
+        data = auth_client.get(
+            f"/simulate/agent-definitions/{agent_definition.id}/"
+        ).json()
+
+        assert data["versions"][0]["preflight_status"] == "failed"
+        assert data["versions"][0]["preflight_report"] == report
+        assert data["active_version"]["preflight_status"] == "failed"
+        assert data["active_version"]["preflight_report"] == report
 
     def test_not_found(self, auth_client):
         fake_id = uuid.uuid4()

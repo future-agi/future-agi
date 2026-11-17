@@ -738,6 +738,28 @@ export type ${jsonAlias} = JsonValueApi;`,
       }
     }
 
+    // A version with no check row reports null status and report.
+    for (const typeName of [
+      "AgentVersionListResponseApi",
+      "AgentVersionResponseApi",
+    ]) {
+      for (const [field, valueType] of [
+        ["preflight_status", "string"],
+        [
+          "preflight_report",
+          `${typeName.replace(/Api$/, "")}ApiPreflightReport`,
+        ],
+      ]) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          `readonly ${field}?: ${valueType};`,
+          `readonly ${field}?: ${valueType} | null;`,
+          `${typeName}.${field} nullable`,
+        );
+      }
+    }
+
     // Orval drops Swagger 2.0 x-nullable: environment versions carry null labels
     // (unnumbered drafts), creators, origins, hashes, parents and pre-versioning
     // diffs. A draft item is a version item plus its editor (its parent and
@@ -1133,6 +1155,28 @@ export type ${jsonAlias} = JsonValueApi;`,
       );
     }
 
+    for (const response of [
+      "SimulateAgentDefinitionsVersionsListResponseItem",
+      "SimulateAgentDefinitionsVersionsReadResponse",
+      "SimulateAgentDefinitionsVersionsActivateCreateResponse",
+      "SimulateAgentDefinitionsVersionsRestoreCreateResponse",
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        `export const ${response} =`,
+        '"preflight_status": zod.string().min(1)',
+        '"preflight_status": zod.string().min(1).nullable()',
+        `${response}.preflight_status nullable`,
+      );
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${response} =`,
+        /("preflight_report": zod\.object\(\{\s*\}\)\.passthrough\(\))/g,
+        "$1.nullable()",
+        `${response}.preflight_report nullable`,
+      );
+    }
+
     // The same nullable version fields, in every list of the versions responses.
     const VERSIONS_RESPONSES = [
       "SimulateApiHarnessEnvironmentsVersionsResponse",
@@ -1517,7 +1561,8 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
     );
 
-    const modelListResponse = "export const ModelHubApiModelsListListResponse = zod.object({";
+    const modelListResponse =
+      "export const ModelHubApiModelsListListResponse = zod.object({";
     for (const [field, schema] of [
       ["next", "zod.string()"],
       ["previous", "zod.string()"],

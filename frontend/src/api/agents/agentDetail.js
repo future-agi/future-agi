@@ -46,6 +46,8 @@ export const toVersion = (v) => ({
   isLatest: !!v.is_latest,
   commitMessage: v.commit_message ?? null,
   createdAt: v.created_at ?? null,
+  preflightStatus: v.preflight_status ?? null,
+  preflightReport: v.preflight_report ?? null,
 });
 
 export const mapAgentDetail = (raw) => ({
@@ -80,6 +82,8 @@ export const mapVersionDetail = (raw) => ({
   agentKind: raw.agent_kind ?? null,
   apiKey: raw.api_key ?? null,
   config: raw.configuration_snapshot ?? {},
+  preflightStatus: raw.preflight_status ?? null,
+  preflightReport: raw.preflight_report ?? null,
 });
 
 export function useAgentDetail(agentId) {

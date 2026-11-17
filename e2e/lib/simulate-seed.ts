@@ -169,29 +169,112 @@ export function resolveBackendContainer(
   return runtimes[0][0];
 }
 
+/** Runs a seed script inside the stack's backend container; its last stdout line is JSON. */
+function runSeedScript<T>(script: string, dirPrefix: string, env: Record<string, string>): T {
+  const container = resolveBackendContainer();
+  const suffix = `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
+  const dir = mkdtempSync(join(tmpdir(), dirPrefix));
+  const scriptPath = join(dir, `seed-${suffix}.py`);
+  writeFileSync(scriptPath, script);
+  try {
+    execFileSync('docker', ['cp', scriptPath, `${container}:/tmp/seed-${suffix}.py`]);
+    const stdout = execFileSync('docker', ['exec',
+      ...Object.entries({ ...env, SEED_SUFFIX: suffix }).flatMap(([k, v]) => ['-e', `${k}=${v}`]),
+      container, 'sh', '-c',
+      `cd /app/backend && PYTHONPATH=/app/backend python /tmp/seed-${suffix}.py`,
+    ], { encoding: 'utf-8' });
+    const lastLine = stdout.trim().split('\n').pop() ?? '';
+    return JSON.parse(lastLine) as T;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 export function seedCallExecutions(opts: {
   organizationId: string;
   workspaceId: string;
   count?: number;
 }): CallExecutionSeed {
-  const container = resolveBackendContainer();
-  const suffix = `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
-  const dir = mkdtempSync(join(tmpdir(), 'e2e-pag5-'));
-  const scriptPath = join(dir, `seed-${suffix}.py`);
-  writeFileSync(scriptPath, SEED_SCRIPT);
-  try {
-    execFileSync('docker', ['cp', scriptPath, `${container}:/tmp/seed-${suffix}.py`]);
-    const stdout = execFileSync('docker', ['exec',
-      '-e', `SEED_ORG_ID=${opts.organizationId}`,
-      '-e', `SEED_WORKSPACE_ID=${opts.workspaceId}`,
-      '-e', `SEED_SUFFIX=${suffix}`,
-      '-e', `SEED_CALL_COUNT=${opts.count ?? 12}`,
-      container, 'sh', '-c',
-      `cd /app/backend && PYTHONPATH=/app/backend python /tmp/seed-${suffix}.py`,
-    ], { encoding: 'utf-8' });
-    const lastLine = stdout.trim().split('\n').pop() ?? '';
-    return JSON.parse(lastLine) as CallExecutionSeed;
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  return runSeedScript<CallExecutionSeed>(SEED_SCRIPT, 'e2e-pag5-', {
+    SEED_ORG_ID: opts.organizationId,
+    SEED_WORKSPACE_ID: opts.workspaceId,
+    SEED_CALL_COUNT: String(opts.count ?? 12),
+  });
+}
+
+export interface AgentListSeed {
+  /** Created first, so it is the older of the two by `created_at`. */
+  olderId: string;
+  olderName: string;
+  newerId: string;
+  newerName: string;
+}
+
+// Two AgentDefinitions with one AgentVersion each. The older one is then given
+// a later `updated_at`, which is what a reuse does (create_agent_version touches
+// the definition); the Agents list orders by it. Created, versioned and touched
+// directly through the ORM for the reason the call-execution seed gives above.
+const AGENT_LIST_SEED_SCRIPT = `
+import json
+import os
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
+import django
+django.setup()
+
+from django.utils import timezone
+
+from accounts.models import Organization
+from accounts.models.workspace import Workspace
+from simulate.models import AgentDefinition, AgentVersion
+
+
+def main():
+    organization = Organization.objects.get(id=os.environ["SEED_ORG_ID"])
+    workspace = Workspace.objects.get(id=os.environ["SEED_WORKSPACE_ID"])
+    suffix = os.environ["SEED_SUFFIX"]
+
+    def make(label):
+        agent = AgentDefinition.objects.create(
+            agent_name=f"e2e-agent-order-{label}-{suffix}",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description=f"e2e agent list order seed {label}",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        AgentVersion.objects.create(
+            agent_definition=agent,
+            organization=organization,
+            workspace=workspace,
+            description=f"e2e seed version {label}",
+            commit_message="e2e seed",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        return agent
+
+    older = make("older")
+    newer = make("newer")
+    AgentDefinition.no_workspace_objects.filter(id=older.id).update(
+        updated_at=timezone.now()
+    )
+    print(json.dumps({
+        "olderId": str(older.id),
+        "olderName": older.agent_name,
+        "newerId": str(newer.id),
+        "newerName": newer.agent_name,
+    }))
+
+
+main()
+`;
+
+export function seedAgentListOrder(opts: {
+  organizationId: string;
+  workspaceId: string;
+}): AgentListSeed {
+  return runSeedScript<AgentListSeed>(AGENT_LIST_SEED_SCRIPT, 'e2e-agent-order-', {
+    SEED_ORG_ID: opts.organizationId,
+    SEED_WORKSPACE_ID: opts.workspaceId,
+  });
 }

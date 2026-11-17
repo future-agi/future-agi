@@ -8,7 +8,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from model_hub.models.develop_dataset import KnowledgeBaseFile
-from simulate.models import AgentDefinition, AgentVersion, CallExecution
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    CallExecution,
+    HarnessAgentVersionRuntime,
+)
 from simulate.serializers.requests.agent_version import (
     AgentVersionCreateRequestSerializer,
 )
@@ -97,7 +102,11 @@ class AgentVersionListView(APIView):
             paginator = ExtendedPageNumberPagination()
             result_page = paginator.paginate_queryset(versions, request)
 
-            serializer = AgentVersionListResponseSerializer(result_page, many=True)
+            serializer = AgentVersionListResponseSerializer(
+                result_page,
+                many=True,
+                context={"preflight": _preflight_by_version(v.id for v in result_page)},
+            )
             return paginator.get_paginated_response(serializer.data)
 
         except AgentDefinition.DoesNotExist:
@@ -111,6 +120,17 @@ class AgentVersionListView(APIView):
                 f"Failed to retrieve agent versions: {str(e)}",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+def _preflight_by_version(version_ids):
+    """``{version_id: (status, report)}`` in one query, without the credential blob."""
+    rows = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version_id__in=list(version_ids)
+    ).only("agent_version_id", "preflight_status", "preflight_report")
+    return {
+        row.agent_version_id: (row.preflight_status, row.preflight_report)
+        for row in rows
+    }
 
 
 class CreateAgentVersionView(APIView):
@@ -211,10 +231,10 @@ class CreateAgentVersionView(APIView):
                 agent.knowledge_base_id = kb_id
                 changed_fields.append("knowledge_base")
             with transaction.atomic():
-                if changed_fields:
-                    # Only these columns: a full save would write back this
-                    # request's stale copy of the observability link.
-                    agent.save(update_fields=[*changed_fields, "updated_at"])
+                # Only these columns: a full save would write back this
+                # request's stale copy of the observability link. The agent is
+                # touched even with no column sent, since a new version uses it.
+                agent.save(update_fields=[*changed_fields, "updated_at"])
 
                 # Resolve masked secrets *before* creating the new version so we read
                 # them from the active version rather than the brand-new one. The UI
@@ -391,7 +411,9 @@ class AgentVersionDetailView(APIView):
 
             version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
 
-            serializer = AgentVersionResponseSerializer(version)
+            serializer = AgentVersionResponseSerializer(
+                version, context={"preflight": _preflight_by_version([version.id])}
+            )
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except AgentDefinition.DoesNotExist:
@@ -440,7 +462,9 @@ class ActivateAgentVersionView(APIView):
 
             response_data = {
                 "message": "Agent version activated successfully",
-                "version": AgentVersionResponseSerializer(version).data,
+                "version": AgentVersionResponseSerializer(
+                    version, context={"preflight": _preflight_by_version([version.id])}
+                ).data,
             }
             return Response(response_data, status=status.HTTP_200_OK)
 
@@ -554,7 +578,9 @@ class RestoreAgentVersionView(APIView):
             response_data = {
                 "message": "Agent definition restored successfully from version",
                 "agent": AgentDefinitionResponseSerializer(restored_agent).data,
-                "version": AgentVersionResponseSerializer(version).data,
+                "version": AgentVersionResponseSerializer(
+                    version, context={"preflight": _preflight_by_version([version.id])}
+                ).data,
             }
             return Response(response_data, status=status.HTTP_200_OK)
 

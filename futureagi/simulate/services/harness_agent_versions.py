@@ -784,6 +784,11 @@ def create_agent_version(
         definition = AgentDefinition.no_workspace_objects.select_for_update().get(
             id=definition.id
         )
+        # Every route that versions or reuses an agent comes through here; the
+        # Agents list orders by this so the agent just used is not buried.
+        AgentDefinition.no_workspace_objects.filter(id=definition.id).update(
+            updated_at=timezone.now()
+        )
         organization = definition.organization
         if parent is not None and parent.agent_definition_id != definition.id:
             raise HostedHarnessError(

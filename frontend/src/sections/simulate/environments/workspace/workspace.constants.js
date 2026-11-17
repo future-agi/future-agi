@@ -278,6 +278,7 @@ export const AGENT_VERSIONS_COPY = {
   missing: (names) => `Missing: ${names.join(", ")}`,
   invalid: (names) => `Rejected by the provider: ${names.join(", ")}`,
   checkError: (code) => `The check couldn't finish (${code}).`,
+  preflightNoDetail: "The check failed without saying why.",
   // Why a version whose check passed is not this environment's default.
   activation: {
     environment_busy: "Not made default: the environment was busy",

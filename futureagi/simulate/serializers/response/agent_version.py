@@ -11,6 +11,16 @@ from tracer.services.observability_switch import snapshot_as_shown
 logger = structlog.get_logger(__name__)
 
 
+def _preflight(context, version):
+    """The check's (status, report) the view read for this version, else nulls.
+
+    The fields sit on a side table, so the views read a page of them in one
+    query; a serializer without that context (create, activate, restore) or a
+    version with no row reports nothing rather than querying per row.
+    """
+    return (context.get("preflight") or {}).get(version.id, (None, None))
+
+
 class AgentVersionResponseSerializer(serializers.ModelSerializer):
     """
     Response serializer for AgentVersion detail endpoints.
@@ -24,6 +34,8 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     agent_kind = serializers.SerializerMethodField()
     api_key = serializers.SerializerMethodField()
+    preflight_status = serializers.SerializerMethodField()
+    preflight_report = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentVersion
@@ -47,6 +59,8 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
             "is_latest",
             "agent_kind",
             "api_key",
+            "preflight_status",
+            "preflight_report",
             "created_at",
             "updated_at",
         ]
@@ -106,6 +120,18 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
         api_key = resolve_api_key_for_version(obj)
         return mask_key(api_key) if api_key else None
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
+    def get_preflight_status(self, obj) -> str | None:
+        return _preflight(self.context, obj)[0]
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.JSONField(allow_null=True)
+    )
+    def get_preflight_report(self, obj) -> dict | None:
+        return _preflight(self.context, obj)[1]
+
 
 class AgentVersionListResponseSerializer(serializers.ModelSerializer):
     """
@@ -117,6 +143,8 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     is_active = serializers.ReadOnlyField()
     is_latest = serializers.ReadOnlyField()
+    preflight_status = serializers.SerializerMethodField()
+    preflight_report = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentVersion
@@ -134,6 +162,8 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
             "commit_message",
             "is_active",
             "is_latest",
+            "preflight_status",
+            "preflight_report",
             "created_at",
         ]
         read_only_fields = fields
@@ -143,6 +173,18 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
         if obj.version_name:
             return obj.version_name
         return f"v{obj.version_number}"
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
+    def get_preflight_status(self, obj) -> str | None:
+        return _preflight(self.context, obj)[0]
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.JSONField(allow_null=True)
+    )
+    def get_preflight_report(self, obj) -> dict | None:
+        return _preflight(self.context, obj)[1]
 
 
 class AgentVersionCreateResponseSerializer(serializers.Serializer):

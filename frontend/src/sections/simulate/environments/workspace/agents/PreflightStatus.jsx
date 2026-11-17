@@ -15,17 +15,23 @@ export function PreflightBadge({ status }) {
 }
 PreflightBadge.propTypes = { status: PropTypes.string };
 
-// The last check: each step's status and the names it found missing.
-export function PreflightReport({ report }) {
-  if (!report) return null;
-  const checks = Array.isArray(report.checks) ? report.checks : [];
-  const missing = Array.isArray(report.missing) ? report.missing : [];
-  const invalid = Array.isArray(report.invalid) ? report.invalid : [];
-  if (!checks.length && !missing.length && !invalid.length && !report.error)
-    return null;
+// The last check: each step's status and the names it found missing. A caller
+// that knows the check failed passes `fallback` for a report with nothing in it.
+export function PreflightReport({ report, fallback }) {
+  const checks = Array.isArray(report?.checks) ? report.checks : [];
+  const missing = Array.isArray(report?.missing) ? report.missing : [];
+  const invalid = Array.isArray(report?.invalid) ? report.invalid : [];
   const line = (text, color = "text.secondary") => (
     <Typography sx={{ typography: "s3", color }}>{text}</Typography>
   );
+  if (!checks.length && !missing.length && !invalid.length && !report?.error) {
+    if (!fallback) return null;
+    return (
+      <Stack spacing={0.25} sx={{ mt: 0.5 }} data-testid="preflight-report">
+        {line(fallback, "status.danger.fg")}
+      </Stack>
+    );
+  }
   return (
     <Stack spacing={0.25} sx={{ mt: 0.5 }} data-testid="preflight-report">
       {checks.map((check) => (
@@ -46,4 +52,7 @@ export function PreflightReport({ report }) {
     </Stack>
   );
 }
-PreflightReport.propTypes = { report: PropTypes.object };
+PreflightReport.propTypes = {
+  report: PropTypes.object,
+  fallback: PropTypes.string,
+};

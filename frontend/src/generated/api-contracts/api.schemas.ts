@@ -17122,6 +17122,10 @@ export const AgentVersionListResponseApiStatus = {
   deprecated: "deprecated",
 } as const;
 
+export type AgentVersionListResponseApiPreflightReport = {
+  [key: string]: unknown;
+};
+
 export interface AgentVersionListResponseApi {
   readonly id?: string;
   /** Version number of the agent */
@@ -17154,6 +17158,9 @@ export interface AgentVersionListResponseApi {
   readonly commit_message?: string;
   readonly is_active?: string;
   readonly is_latest?: string;
+  /** @minLength 1 */
+  readonly preflight_status?: string | null;
+  readonly preflight_report?: AgentVersionListResponseApiPreflightReport | null;
   readonly created_at?: string;
 }
 
@@ -17238,6 +17245,8 @@ export type AgentVersionResponseApiConfigurationSnapshot = {
   [key: string]: unknown;
 };
 
+export type AgentVersionResponseApiPreflightReport = { [key: string]: unknown };
+
 export interface AgentVersionResponseApi {
   readonly id?: string;
   /** Version number of the agent */
@@ -17285,6 +17294,9 @@ export interface AgentVersionResponseApi {
   readonly agent_kind?: string;
   /** @minLength 1 */
   readonly api_key?: string;
+  /** @minLength 1 */
+  readonly preflight_status?: string | null;
+  readonly preflight_report?: AgentVersionResponseApiPreflightReport | null;
   readonly created_at?: string;
   readonly updated_at?: string;
 }

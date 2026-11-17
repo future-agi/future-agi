@@ -131,7 +131,22 @@ describe("toVersion", () => {
       isLatest: true,
       commitMessage: "Shorter greeting",
       createdAt: "2026-10-15T09:00:00Z",
+      preflightStatus: null,
+      preflightReport: null,
     });
+  });
+
+  it("maps a version's check", () => {
+    const report = {
+      checks: [{ id: "c", label: "Credentials", status: "failed" }],
+    };
+    expect(
+      toVersion({
+        ...HOSTED_AGENT_DETAIL.versions[0],
+        preflight_status: "failed",
+        preflight_report: report,
+      }),
+    ).toMatchObject({ preflightStatus: "failed", preflightReport: report });
   });
 });
 
@@ -180,6 +195,21 @@ describe("mapVersionDetail", () => {
       isLatest: true,
       commitMessage: null,
       createdAt: "2026-10-15T09:00:00Z",
+    });
+  });
+
+  it("maps a version's check", () => {
+    const report = { error: "bad_key" };
+    expect(
+      mapVersionDetail({
+        ...HOSTED_VERSION_DETAIL,
+        preflight_status: "failed",
+        preflight_report: report,
+      }),
+    ).toMatchObject({ preflightStatus: "failed", preflightReport: report });
+    expect(mapVersionDetail(HOSTED_VERSION_DETAIL)).toMatchObject({
+      preflightStatus: null,
+      preflightReport: null,
     });
   });
 
