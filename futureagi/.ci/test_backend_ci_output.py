@@ -30,5 +30,25 @@ class BackendOutputTest(unittest.TestCase):
         self.assertIn("--junitxml=junit-${{ matrix.group }}.xml", shard)
 
 
+class EvaluatorJobTest(unittest.TestCase):
+    def test_standalone_evaluator_suite_is_a_required_backend_dependency(self):
+        workflow = (ROOT / ".github/workflows/backend-ci.yml").read_text()
+        gate = workflow.split("  backend-tests:\n", 1)[1]
+        needs = gate.split("    needs:\n", 1)[1].split("    if:", 1)[0]
+        self.assertIn("agentic-eval,", needs)
+
+    def test_evaluator_job_keeps_its_own_root_and_backend_working_directory(self):
+        workflow = (ROOT / ".github/workflows/backend-ci.yml").read_text()
+        job = workflow.split("  agentic-eval:\n", 1)[1].split("  slim-smoke:\n", 1)[0]
+        self.assertIn("working-directory: futureagi", job)
+        self.assertIn("uv sync --frozen --extra dev", job)
+        self.assertIn(
+            "-c agentic_eval/pytest.ini --confcutdir=agentic_eval agentic_eval", job
+        )
+        self.assertIn("--junitxml=agentic-eval-junit.xml", job)
+        self.assertNotIn("continue-on-error:", job)
+        self.assertNotIn("--ignore=", job)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -25,18 +25,9 @@ def pytest_configure(config):
     # explicit app_label and isn't in an application in INSTALLED_APPS."
     # The root suite already uses the real module for this; match it.
     #
-    # This has to stay here rather than move to pytest.ini's
-    # DJANGO_SETTINGS_MODULE (or an exported env var), even though that is
-    # the idiomatic pytest-django spot. Setting it before pytest starts
-    # makes pytest-django configure Django during plugin init, and
-    # tfc.settings.test's LOGGING binds a logging.StreamHandler to whatever
-    # sys.stderr is at that moment — pytest's capture stream. When capture
-    # is torn down the handler keeps writing to a closed file and the run
-    # dies at interpreter shutdown with "ValueError: I/O operation on
-    # closed file. / lost sys.stderr" and a non-zero exit, with no test
-    # ever reporting a failure. Setting it inside pytest_configure avoids
-    # that. Verified both ways on this tree: unset -> 39 passed, exit 0;
-    # pre-exported -> exit 1 with the shutdown crash.
+    # Configure here, before collection, rather than during plugin loading:
+    # the test settings' logging handler must not retain pytest's temporary
+    # startup capture stream after that stream has closed.
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.test")
 
     try:
