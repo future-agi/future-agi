@@ -1941,24 +1941,40 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request(
                     "Eval configs not found for project: " + ", ".join(invalid_eval_ids)
                 )
-            eval_task = serializer.save()
-
-            # The workflow's first step materializes entries, so create returns
-            # immediately even for large tasks.
-            start_eval_task_workflow_sync(eval_task)
-
-            return self._gm.success_response({"id": eval_task.id})
+            # DRF saves the row before assigning its M2M relations. Both must
+            # roll back together if any part of persistence fails.
+            with transaction.atomic(using="default"):
+                eval_task = serializer.save()
 
         except ValidationError as exc:
             return self._gm.bad_request(exc.detail)
         except FilterPrincipalContextError as exc:
             return self._gm.bad_request(str(exc))
         except Exception as exc:
-            logger.exception(
+            logger.warning(
                 "eval_task.create_failed",
-                error_type=type(exc).__name__,
+                error_type=type(exc).__name__[:80],
+                exc_info=False,
             )
             return self._gm.bad_request("Evaluation task could not be created")
+
+        def dispatch_saved_task():
+            try:
+                # Initial, non-replacing start only. An uncertain acknowledgement
+                # cannot justify a second start or any saved-state compensation.
+                start_eval_task_workflow_sync(eval_task)
+            except Exception as exc:
+                logger.warning(
+                    "eval_task.create_start_unconfirmed",
+                    error_type=type(exc).__name__[:80],
+                    exc_info=False,
+                )
+
+        # Outside the failed-create boundary: dispatch must see the actual
+        # primary commit, including any outer transaction. An outer rollback
+        # discards this callback. HTTP 200 acknowledges saving, not running.
+        transaction.on_commit(dispatch_saved_task, using="default", robust=True)
+        return self._gm.success_response({"id": eval_task.id})
 
     @action(detail=False, methods=["get"], pagination_class=None)
     @validated_request(
