@@ -122,6 +122,21 @@ SENSITIVE_KEY_SUBSTRINGS = (
 )
 _REDACTED = "[Filtered]"
 
+# Modules whose stack frames hold a raw span batch: the OTLP receivers, the
+# payload store, the ingestion task and the span helpers that catch and log
+# their own errors. Span content sits under ordinary names (data, raw,
+# attributes), so the key-name scrubbers miss it. An event with one of these
+# frames in any stack sends no frame variables. Matched on a dot boundary.
+RAW_SPAN_MODULES = (
+    "tfc.utils.payload_storage",
+    "tracer.services.grpc",
+    "tracer.utils.otel",
+    "tracer.utils.pii_scrubber",
+    "tracer.utils.trace_ingestion",
+    "tracer.views.http_otlp",
+    "tracer.views.otlp",
+)
+
 # Sample rates - configurable via env, lower in production to reduce costs
 # Production: 10% sampling, Staging: 100% sampling
 TRACES_SAMPLE_RATE = float(
@@ -290,6 +305,36 @@ def _scrub_deployment_telemetry_event(event: dict) -> dict:
     return event
 
 
+def _is_raw_span_frame(frame: Any) -> bool:
+    """True for a frame of RAW_SPAN_MODULES, or for one whose module is unknown."""
+    module = frame.get("module") if isinstance(frame, dict) else None
+    if not isinstance(module, str) or not module:
+        return True  # Cannot tell where it ran, so assume it holds a batch.
+    return any(m == module or module.startswith(f"{m}.") for m in RAW_SPAN_MODULES)
+
+
+def _strip_raw_span_frame_vars(event: dict) -> dict | None:
+    """Drop every frame's variables when any frame comes from trace ingestion.
+
+    Exceptions, logged errors (attach_stacktrace) and a top-level stacktrace
+    each carry frames, and ``iter_event_frames`` walks all three. The other
+    frames go too: callers and library frames hold the same batch. Returns
+    None, which drops the event, when the stacks cannot be walked, because
+    they may hold a batch that cannot be removed.
+    """
+    from sentry_sdk.utils import iter_event_frames
+
+    try:
+        frames = list(iter_event_frames(event))
+    except Exception:
+        return None
+    if any(_is_raw_span_frame(frame) for frame in frames):
+        for frame in frames:
+            if isinstance(frame, dict):
+                frame.pop("vars", None)
+    return event
+
+
 def _get_before_send() -> Callable:
     """
     Create the before_send hook that runs on every error event.
@@ -335,7 +380,11 @@ def _get_before_send() -> Callable:
         if message and any(s in message for s in IGNORED_MESSAGE_SUBSTRINGS):
             return None
 
-        # 4. Scrub secrets/PII from the surviving event.
+        # 4. Scrub secrets/PII from the surviving event. Raw span content goes
+        # first, outside the try below: it fails closed, not open.
+        event = _strip_raw_span_frame_vars(event)
+        if event is None:
+            return None
         try:
             _scrub_event(event)
         except Exception:

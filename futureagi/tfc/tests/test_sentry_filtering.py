@@ -221,3 +221,24 @@ def test_transaction_scrubber_keeps_mapping_breadcrumb_contract():
     assert out["breadcrumbs"]["values"][0]["data"] == {
         "url": "https://example.test/telemetry/heartbeat/"
     }
+
+
+def test_a_frame_with_no_module_drops_every_frames_vars():
+    """When the scrub cannot tell where a frame ran, it assumes trace ingestion."""
+    frames = [
+        {"function": "<generated>", "vars": {"batch": "span text"}},
+        {"module": "accounts.views", "vars": {"user_id": "1"}},
+    ]
+    event = {"threads": {"values": [{"stacktrace": {"frames": frames}}]}}
+
+    out = before_send(event, {})
+
+    assert out is not None
+    assert [
+        f for f in out["threads"]["values"][0]["stacktrace"]["frames"] if "vars" in f
+    ] == []
+
+
+def test_an_event_whose_stacks_cannot_be_walked_is_dropped():
+    """Stacks it cannot read may hold a span batch it cannot remove."""
+    assert before_send({"message": "boom", "threads": ["not-a-mapping"]}, {}) is None
