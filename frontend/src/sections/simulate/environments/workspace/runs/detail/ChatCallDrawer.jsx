@@ -34,7 +34,7 @@ import {
   ownsArrowKeys,
 } from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
-import { TRIAL_CHANGES_COPY } from "./trialChanges.constants";
+import { TRIAL_CHANGES_COPY, TRIAL_UNDER_WAY } from "./trialChanges.constants";
 import { Meta, Cell, Attr, OutcomeReason } from "./chatDrawerCells";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
@@ -342,6 +342,7 @@ export default function ChatCallDrawer({
                       ).trial_state
                     : callDetail?.trial_state ?? null
                 }
+                underWay={!attempt && TRIAL_UNDER_WAY.has(task.status)}
               />
             ) : showTraces ? (
               <Box

@@ -86,9 +86,13 @@ RecordsSection.propTypes = {
 
 // A start that differs is reported among the notices instead.
 // Attempted, refused and committed are never summed into one number.
-export default function TrialChangesPanel({ trialState }) {
+export default function TrialChangesPanel({ trialState, underWay = false }) {
   if (!trialState)
-    return <Typography sx={{ ...quiet, p: 2 }}>{C.notRecorded}</Typography>;
+    return (
+      <Typography sx={{ ...quiet, p: 2 }}>
+        {underWay ? C.collecting : C.notRecorded}
+      </Typography>
+    );
   if (trialState.recorded === false)
     return (
       <Typography sx={{ ...quiet, p: 2 }}>{trialState.why_label}</Typography>
@@ -98,6 +102,8 @@ export default function TrialChangesPanel({ trialState }) {
 
 TrialChangesPanel.propTypes = {
   trialState: PropTypes.object,
+  // The call has not ended: no World state yet is not "not recorded".
+  underWay: PropTypes.bool,
 };
 
 function WorldState({ trialState }) {

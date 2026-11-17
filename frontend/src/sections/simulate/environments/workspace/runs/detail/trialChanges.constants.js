@@ -68,6 +68,8 @@ export const TRIAL_CHANGES_COPY = {
   nothing: "Did nothing",
   empty: "Nothing changed in the world in this trial.",
   notRecorded: "World state was not recorded for this trial.",
+  collecting:
+    "This trial is still running: its World state shows here once it ends.",
   loadFailed:
     "This call's World state could not be loaded. Try again in a moment.",
   unreadable:
@@ -83,3 +85,6 @@ export const TRIAL_CHANGES_COPY = {
   notCompared: (table, why) => `Not compared: ${table} (${why})`,
   truncated: (n) => `And ${n} more changes.`,
 };
+
+// A call's outcome while it is still under way (the server's `queued` and `in_progress`): its World state is not in yet.
+export const TRIAL_UNDER_WAY = new Set(["queued", "in_progress"]);

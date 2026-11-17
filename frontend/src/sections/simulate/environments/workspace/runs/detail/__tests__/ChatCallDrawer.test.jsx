@@ -223,6 +223,25 @@ describe("ChatCallDrawer World state", () => {
     mocks.callDetail = null;
   });
 
+  it.each(["queued", "in_progress"])(
+    "says a %s call's World state shows once it ends, never that it was not recorded",
+    async (status) => {
+      mocks.callDetail = { trial_state: null };
+      render(
+        <ChatCallDrawer
+          task={{ id: `call-execution-${status}`, status }}
+          onClose={vi.fn()}
+        />,
+      );
+      await userEvent.click(screen.getByRole("tab", { name: "World state" }));
+      expect(
+        screen.getByText(TRIAL_CHANGES_COPY.collecting),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(TRIAL_CHANGES_COPY.notRecorded)).toBeNull();
+      mocks.callDetail = null;
+    },
+  );
+
   it("says the call's World state could not be loaded when its detail fails, never that it was not recorded", async () => {
     mocks.callDetail = null;
     mocks.detailError = new Error("Request failed with status code 500");

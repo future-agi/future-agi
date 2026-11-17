@@ -27,7 +27,7 @@ import {
   ownsArrowKeys,
 } from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
-import { TRIAL_CHANGES_COPY } from "./trialChanges.constants";
+import { TRIAL_CHANGES_COPY, TRIAL_UNDER_WAY } from "./trialChanges.constants";
 
 // The annotate / queue / dataset / tags actions need project + annotation
 // context this embedded drawer doesn't wire; hide them rather than leave dead
@@ -193,6 +193,7 @@ export default function VoiceCallDrawer({
                       .trial_state
                   : data?.trial_state ?? null
               }
+              underWay={!attempt && TRIAL_UNDER_WAY.has(task.status)}
             />
           </>
         ),
