@@ -92,7 +92,7 @@ export default function MixpanelCredentials({
         size="small"
         fullWidth
         type={showSecret ? "text" : "password"}
-        helperText="Optional — enables historical data import via /import endpoint"
+        helperText="Optional legacy authentication. Your project token also supports historical imports."
         placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         InputProps={{
           endAdornment: (
