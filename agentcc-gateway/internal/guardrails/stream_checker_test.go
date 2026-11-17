@@ -358,8 +358,8 @@ type countingGuardrail struct {
 	callCount *int
 }
 
-func (g *countingGuardrail) Name() string  { return g.name }
-func (g *countingGuardrail) Stage() Stage  { return g.stage }
+func (g *countingGuardrail) Name() string { return g.name }
+func (g *countingGuardrail) Stage() Stage { return g.stage }
 func (g *countingGuardrail) Check(ctx context.Context, input *CheckInput) *CheckResult {
 	*g.callCount++
 	return g.result
@@ -371,8 +371,8 @@ type inspectorGuardrail struct {
 	onCheck func(*CheckInput) *CheckResult
 }
 
-func (g *inspectorGuardrail) Name() string  { return g.name }
-func (g *inspectorGuardrail) Stage() Stage  { return g.stage }
+func (g *inspectorGuardrail) Name() string { return g.name }
+func (g *inspectorGuardrail) Stage() Stage { return g.stage }
 func (g *inspectorGuardrail) Check(ctx context.Context, input *CheckInput) *CheckResult {
 	return g.onCheck(input)
 }
