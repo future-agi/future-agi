@@ -71,6 +71,21 @@ func CachedTokensInPrompt(p Provider) bool {
 	return ok && c.CachedTokensInPrompt()
 }
 
+// VertexLocator is implemented by providers that know which Vertex AI
+// location their requests are sent to.
+type VertexLocator interface {
+	VertexLocation() string
+}
+
+// VertexLocation returns the Vertex AI location p's requests are sent to, or
+// "" when p is not on Vertex AI or cannot tell.
+func VertexLocation(p Provider) string {
+	if l, ok := p.(VertexLocator); ok {
+		return l.VertexLocation()
+	}
+	return ""
+}
+
 // EmbeddingProvider is implemented by providers that support embedding generation.
 type EmbeddingProvider interface {
 	CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error)

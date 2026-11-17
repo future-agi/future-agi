@@ -932,6 +932,22 @@ func (h *Handlers) servingProvider(rc *models.RequestContext) (providers.Provide
 	return h.registry.GetProvider(rc.Provider)
 }
 
+// servedVertexLocationKey carries, to the cost step, the Vertex AI location
+// of the provider instance that served a chat request.
+const servedVertexLocationKey = "served_vertex_location"
+
+// noteServedVertexLocation records where p, the instance that has just served
+// rc, sends its requests on Vertex AI. It is read from p itself rather than
+// looked up again by provider ID: an org's own instance and the config's can
+// share an ID, and an internal key or a fallback may be served by either.
+func noteServedVertexLocation(rc *models.RequestContext, p providers.Provider) {
+	if location := providers.VertexLocation(p); location != "" {
+		rc.Metadata[servedVertexLocationKey] = location
+		return
+	}
+	delete(rc.Metadata, servedVertexLocationKey)
+}
+
 // resolveTimeout returns the effective timeout for a request.
 // Priority: request header > the org's model timeout > config.yaml model
 // timeout > server default, and never above server.max_request_timeout.
@@ -1435,6 +1451,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		if err == nil {
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
+			noteServedVertexLocation(rc, provider)
 			return nil
 		}
 
@@ -1454,6 +1471,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
 			if fbCallErr == nil {
 				servingProvider = fbProvider
+				noteServedVertexLocation(rc, fbProvider)
 				rc.Response = fbResp
 				rc.ResolvedModel = fbResp.Model
 				rc.Flags.FallbackUsed = true
@@ -1515,6 +1533,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				return err
 			}
 			servingProvider = p
+			noteServedVertexLocation(rc, p)
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
 			return nil
@@ -1547,6 +1566,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
 				if fbCallErr == nil {
 					servingProvider = fbProvider
+					noteServedVertexLocation(rc, fbProvider)
 					rc.Response = fbResp
 					rc.ResolvedModel = fbResp.Model
 					rc.Flags.FallbackUsed = true
@@ -1628,6 +1648,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 		upstreamStreamCancel = attemptCancel
 		servingProvider = callProvider
+		noteServedVertexLocation(rc, callProvider)
 		chunks = candidateChunks
 		errCh = candidateErrCh
 		firstChunk = chunk
@@ -2299,7 +2320,7 @@ func isBlockedMetadataKey(key string) bool {
 	// else, while any prefix wide enough to cover them also swallows
 	// cost_center and cost_code — ordinary business dimensions. A new internal cost_* key must be added here by hand.
 	switch lower {
-	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source", "cost_cached_tokens", usageEstimatedKey, metadataErrorKey:
+	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source", "cost_cached_tokens", "cost_vertex_location", "cost_region_uplift", servedVertexLocationKey, usageEstimatedKey, metadataErrorKey:
 		return true
 	}
 	return false

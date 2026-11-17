@@ -1144,6 +1144,46 @@ func TestNew_VertexAI_NoEmbedIfMissingProjectOrLocation(t *testing.T) {
 	}
 }
 
+func TestVertexLocationFromTheBaseURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		headers map[string]string
+		want    string
+	}{
+		{"regional path", "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1", nil, "us-central1"},
+		{"global path with a leftover location header", "https://aiplatform.googleapis.com/v1beta1/projects/p/locations/global", map[string]string{"x-gcp-project": "p2", "x-gcp-location": "us-central1"}, "global"},
+		{"regional host with headers builds the path", "https://us-central1-aiplatform.googleapis.com", map[string]string{"x-gcp-project": "p", "x-gcp-location": "us-central1"}, "us-central1"},
+		{"global host with headers builds a regional path", "https://aiplatform.googleapis.com", map[string]string{"x-gcp-project": "p", "x-gcp-location": "us-east5"}, "us-east5"},
+		{"regional host alone", "https://europe-west4-aiplatform.googleapis.com", nil, "europe-west4"},
+		{"regional host with locations/global path", "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/global", nil, "global"},
+		{"upper case", "https://US-EAST5-aiplatform.googleapis.com/v1/projects/p/Locations/US-EAST5", nil, "us-east5"},
+		{"project named locations on the global endpoint", "https://aiplatform.googleapis.com/v1/projects/locations/locations/global", nil, "global"},
+		{"project named locations on a regional endpoint", "https://us-central1-aiplatform.googleapis.com/v1/projects/locations/locations/us-central1", nil, "us-central1"},
+		{"project named locations built from headers", "https://aiplatform.googleapis.com", map[string]string{"x-gcp-project": "locations", "x-gcp-location": "global"}, "global"},
+		{"proxy prefix with a locations segment", "https://aiplatform.googleapis.com/locations/eu/v1/projects/p/locations/global", nil, "global"},
+		{"proxy prefix with a projects and locations sequence", "https://aiplatform.googleapis.com/projects/x/locations/eu/v1/projects/p/locations/global", nil, "global"},
+		{"locations segment outside projects gives no location", "https://aiplatform.googleapis.com/locations/eu/v1", nil, ""},
+		{"locations segment not under projects gives no location", "https://aiplatform.googleapis.com/v1/locations/us-central1", nil, ""},
+		{"empty location in the last sequence does not fall back to an earlier one", "https://aiplatform.googleapis.com/projects/x/locations/eu/v1/projects/p/locations/", nil, ""},
+		{"empty location in the last sequence on a regional host gives the host's region", "https://us-central1-aiplatform.googleapis.com/projects/x/locations/eu/v1/projects/p/locations/", nil, "us-central1"},
+		{"global host alone", "https://aiplatform.googleapis.com", nil, ""},
+		{"multi-region host is not Vertex AI", "https://aiplatform.us.rep.googleapis.com/v1/projects/p/locations/us", nil, ""},
+		{"Gemini API", "https://generativelanguage.googleapis.com", nil, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := New("vertex", config.ProviderConfig{BaseURL: tt.baseURL, APIKey: "k", Headers: tt.headers})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			if got := p.VertexLocation(); got != tt.want {
+				t.Errorf("VertexLocation() = %q, want %q (base URL %q)", got, tt.want, p.baseURL)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Vertex AI: Integration tests
 // ---------------------------------------------------------------------------

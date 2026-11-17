@@ -37,6 +37,10 @@ type ModelInfo struct {
 	DeprecationDate string          `json:"deprecation_date,omitempty"`
 	Regions         []string        `json:"regions,omitempty"`
 
+	// RegionalUplift is the factor Vertex AI adds to this model's token prices
+	// away from its global endpoint; 0 when the table states none.
+	RegionalUplift float64 `json:"regional_uplift,omitempty"`
+
 	// priceOverride is the config price override New merged into Pricing. A
 	// dated row in force replaces token prices, so PricingAt merges it again.
 	priceOverride *PricingOverride

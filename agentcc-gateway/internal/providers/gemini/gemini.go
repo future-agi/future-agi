@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -110,6 +111,40 @@ func (p *Provider) PriceTableName() string {
 // CachedTokensInPrompt is true: promptTokenCount includes
 // cachedContentTokenCount, on the Gemini API and on Vertex AI.
 func (p *Provider) CachedTokensInPrompt() bool { return true }
+
+// VertexLocation is the Vertex AI location requests are sent to, in lower
+// case: the <name> in the base URL's projects/<id>/locations/<name> path, else its
+// <name>-aiplatform.googleapis.com host; "" off Vertex AI or when the URL
+// names neither. Only the URL counts: a location header the URL does not
+// carry does not change where requests go.
+func (p *Provider) VertexLocation() string {
+	if !p.vertexAI {
+		return ""
+	}
+	u, err := url.Parse(p.baseURL)
+	if err != nil {
+		return ""
+	}
+	segments := strings.Split(u.Path, "/")
+	// The location is the segment after projects/<id>/locations, the sequence
+	// the API's own paths use. The last such sequence counts, so a proxy prefix
+	// in front of it, or a project named "locations", does not change the answer.
+	// If that last sequence names no location, the host decides, not an earlier
+	// sequence.
+	for i := len(segments) - 3; i >= 0; i-- {
+		if strings.EqualFold(segments[i], "projects") && strings.EqualFold(segments[i+2], "locations") {
+			if i+3 < len(segments) && segments[i+3] != "" {
+				return strings.ToLower(segments[i+3])
+			}
+			break
+		}
+	}
+	host := strings.ToLower(u.Hostname())
+	if location, ok := strings.CutSuffix(host, "-aiplatform.googleapis.com"); ok && location != "" && !strings.Contains(location, ".") {
+		return location
+	}
+	return ""
+}
 
 // ClientTimeout reports the timeout on this provider's HTTP client. It bounds
 // the whole exchange, a streamed body included, so it is a hard ceiling on any
