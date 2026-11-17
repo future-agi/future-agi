@@ -323,6 +323,22 @@ class _GrpcServerContext:
         raise grpc.aio.AbortError()
 
 
+@contextlib.contextmanager
+def _as_grpcrunaioserver_serves(close_old_connections=None):
+    """django_socio_grpc in the async mode grpcrunaioserver sets. Its middleware
+    closes stale database connections around each call. A test skips that, as
+    Django's test client skips close_old_connections, so a connection an
+    earlier test left open is never touched. Pass a failing mock to make it fail."""
+    with (
+        mock.patch.object(grpc_settings, "GRPC_ASYNC", True),
+        mock.patch(
+            "django_socio_grpc.middlewares._close_old_connections",
+            close_old_connections or mock.Mock(),
+        ),
+    ):
+        yield
+
+
 def test_a_failed_grpc_export_through_the_framework_sends_no_raw_request(
     refusing_redis, initialized_sentry
 ):
@@ -331,7 +347,7 @@ def test_a_failed_grpc_export_through_the_framework_sends_no_raw_request(
     through the framework's own servicer proxy, as grpcrunaioserver serves it."""
     _client, events = initialized_sentry
     with (
-        mock.patch.object(grpc_settings, "GRPC_ASYNC", True),
+        _as_grpcrunaioserver_serves(),
         mock.patch.object(
             ObservationSpanService, "authentication_classes", [_ResolvedApiKey]
         ),
@@ -363,7 +379,7 @@ def test_a_rejected_grpc_call_leaves_a_breadcrumb_without_the_request(django_sen
     later events, unrelated ones too."""
     _client, events = django_sentry
     with (
-        mock.patch.object(grpc_settings, "GRPC_ASYNC", True),
+        _as_grpcrunaioserver_serves(),
         mock.patch.object(
             ObservationSpanService, "authentication_classes", [_ApiKeyLookupDown]
         ),
@@ -400,6 +416,79 @@ def test_a_grpc_framework_breadcrumb_it_cannot_read_is_dropped(initialized_sentr
     assert "django_socio_grpc.request" not in categories
     assert "accounts.views" in categories
     assert SPAN_TEXT not in json.dumps(events, default=str)
+
+
+def test_a_grpc_call_that_fails_in_the_framework_sends_no_raw_request(
+    initialized_sentry,
+):
+    """A failure before Export, inside the framework (its connection-closing
+    middleware with the database down), logs at ERROR with the container and
+    no ingestion frame on the stack. The framework's logger marks the event."""
+    _client, events = initialized_sentry
+    database_down = mock.Mock(side_effect=RuntimeError("database unavailable"))
+    with _as_grpcrunaioserver_serves(close_old_connections=database_down):
+        servicer = ObservationSpanService.as_servicer()
+        with pytest.raises(grpc.aio.AbortError):
+            asyncio.run(servicer.Export(_export_request(), _GrpcServerContext()))
+
+    [event] = events
+    assert event["logger"] == "django_socio_grpc.request"
+    assert "tracer.services.grpc" not in _frame_modules(event)
+    assert "status_code" in event["extra"]
+    assert "request" not in event["extra"]
+    assert [frame for frame in iter_event_frames(event) if "vars" in frame] == []
+    assert SPAN_TEXT not in json.dumps(events, default=str)
+
+
+def test_a_sibling_grpc_framework_logger_cannot_carry_the_request(
+    initialized_sentry,
+):
+    """The rule matches the framework's logger prefix, not one logger name."""
+    _client, events = initialized_sentry
+    held = SPAN_TEXT  # a local, as a framework frame holds the request
+    logging.getLogger("django_socio_grpc.middlewares").warning(
+        "x", extra={"request": f"[{held}]"}
+    )
+    logging.getLogger("django_socio_grpc.services").error(
+        "y", extra={"request": f"[{held}]"}
+    )
+
+    [event] = events
+    assert event["logger"] == "django_socio_grpc.services"
+    assert "request" not in event["extra"]
+    [crumb] = [
+        c
+        for c in event["breadcrumbs"]["values"]
+        if c.get("category") == "django_socio_grpc.middlewares"
+    ]
+    assert "request" not in crumb["data"]
+    assert [frame for frame in iter_event_frames(event) if "vars" in frame] == []
+    assert SPAN_TEXT not in json.dumps(events, default=str)
+
+
+@pytest.mark.parametrize("shape", ["mapping", "list"])
+def test_the_transaction_hook_drops_a_langfuse_body(initialized_sentry, shape):
+    """init_sentry's before_send_transaction shares the body rule: a transaction
+    for the ingestion endpoint keeps no body, in either breadcrumb shape."""
+    client, _events = initialized_sentry
+    url = "http://testserver/api/public/ingestion"
+    crumbs = [
+        {
+            "category": "httplib",
+            "data": {"url": url, "method": "POST", "body": SPAN_TEXT},
+        }
+    ]
+    event = {
+        "type": "transaction",
+        "request": {"url": url, "method": "POST", "data": {"batch": [SPAN_TEXT]}},
+        "breadcrumbs": {"values": crumbs} if shape == "mapping" else crumbs,
+    }
+
+    sent = client.options["before_send_transaction"](event, {})
+
+    assert sent["request"] == {"url": url, "method": "POST"}
+    assert crumbs[0]["data"] == {"url": url, "method": "POST"}
+    assert SPAN_TEXT not in json.dumps(sent, default=str)
 
 
 class _ResolvedApiKey:

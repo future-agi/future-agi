@@ -322,18 +322,32 @@ def _is_raw_span_frame(frame: Any) -> bool:
     return any(m == module or module.startswith(f"{m}.") for m in RAW_SPAN_MODULES)
 
 
+# django_socio_grpc's loggers. Its request logger reports each finished call
+# with extra={"request": GRPCRequestContainer}, whose repr holds the whole
+# protobuf request, spans included. The only gRPC service is trace ingestion,
+# so every event from these loggers is an ingestion event, even when the call
+# failed in the framework, before any ingestion frame ran. Matched as a prefix,
+# so a sibling logger cannot carry the container past the rule.
+_GRPC_FRAMEWORK_LOGGER = "django_socio_grpc"
+
+
+def _is_grpc_framework_logger(name: Any) -> bool:
+    return isinstance(name, str) and (
+        name == _GRPC_FRAMEWORK_LOGGER or name.startswith(f"{_GRPC_FRAMEWORK_LOGGER}.")
+    )
+
+
 def _strip_raw_span_content(event: dict) -> dict | None:
-    """Drop every frame's variables, and ``extra.request``, when any frame
-    comes from trace ingestion.
+    """Drop every frame's variables, and ``extra.request``, from an ingestion
+    event: one with a trace-ingestion frame, or one from the gRPC framework's
+    loggers.
 
     Exceptions, logged errors (attach_stacktrace) and a top-level stacktrace
     each carry frames, and ``iter_event_frames`` walks all three. The other
-    frames go too: callers and library frames hold the same batch.
-    django_socio_grpc logs a failed call with ``extra={"request": ...}``, and
-    that container's repr holds the whole protobuf request. Changes the event
-    in place and returns it. Returns None, which drops the event, when the
-    stacks cannot be walked, because they may hold a batch that cannot be
-    removed.
+    frames go too: callers and library frames hold the same batch. Changes
+    the event in place and returns it. Returns None, which drops the event,
+    when the stacks cannot be walked, because they may hold a batch that
+    cannot be removed.
     """
     # Inline, like every sentry_sdk import here: settings imports this module in
     # every process, and the SDK (~75 ms) loads only when Sentry is on.
@@ -345,7 +359,9 @@ def _strip_raw_span_content(event: dict) -> dict | None:
         # What the walker raises on a malformed stack: .get on a non-mapping,
         # or iterating a value that is not a list.
         return None
-    if any(_is_raw_span_frame(frame) for frame in frames):
+    if _is_grpc_framework_logger(event.get("logger")) or any(
+        _is_raw_span_frame(frame) for frame in frames
+    ):
         for frame in frames:
             if isinstance(frame, dict):
                 frame.pop("vars", None)
@@ -353,12 +369,6 @@ def _strip_raw_span_content(event: dict) -> dict | None:
         if isinstance(extra, dict):
             extra.pop("request", None)
     return event
-
-
-# The logger django_socio_grpc reports each finished call on. A failed call's
-# record carries extra={"request": GRPCRequestContainer}, whose repr holds the
-# whole protobuf request, spans included.
-_GRPC_REQUEST_LOGGER = "django_socio_grpc.request"
 
 
 def _before_breadcrumb(
@@ -369,10 +379,10 @@ def _before_breadcrumb(
     The logging integration copies a record's extras into the crumb's ``data``,
     and a crumb rides on every later event in its isolation scope, unrelated
     ones too: the gRPC server's calls all share one. The SDK builds ``crumb``
-    as a dict. A crumb from that logger whose ``data`` is not a mapping cannot
-    be cleaned, so it is dropped.
+    as a dict. A crumb from those loggers whose ``data`` is not a mapping
+    cannot be cleaned, so it is dropped.
     """
-    if crumb.get("category") != _GRPC_REQUEST_LOGGER:
+    if not _is_grpc_framework_logger(crumb.get("category")):
         return crumb
     data = crumb.get("data")
     if data is None:
