@@ -17,7 +17,7 @@ from tfc.temporal.common.activity_thread import OwnThreadActivityInterceptor
 # Queues in this set have their own workload-level concurrency boundary. A
 # generic local ``--all-queues`` worker must not also poll them, otherwise its
 # much higher concurrency silently defeats that admission control.
-_DEDICATED_TASK_QUEUES = frozenset({"exact_aggregation"})
+_DEDICATED_TASK_QUEUES = frozenset({"exact_aggregation", "sql_workbench"})
 
 
 # Blocking provider calls share these queues with the short polls that must keep running.
