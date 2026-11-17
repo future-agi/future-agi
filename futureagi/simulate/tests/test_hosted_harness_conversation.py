@@ -10,14 +10,21 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from django.db import transaction
 from rest_framework.test import APIClient
 
-from simulate.models import HostedHarnessConversationMessage, HostedHarnessJob
+from simulate.models import (
+    HostedHarnessAttempt,
+    HostedHarnessConversationLease,
+    HostedHarnessConversationMessage,
+    HostedHarnessJob,
+)
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
     create_hosted_job,
     create_selected_harness_run,
+    hash_secret,
 )
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
@@ -26,6 +33,25 @@ from simulate.services.hosted_harness_conversation import (
 )
 
 BASE = "/simulate/api/harness/conversations"
+
+
+class _Stops(list):
+    error: Exception | None = None
+
+
+@pytest.fixture(autouse=True)
+def stops(monkeypatch):
+    from simulate.tasks import harness_nudges
+
+    recorded = _Stops()
+
+    def record(conversation_id, provider_ref):
+        if recorded.error is not None:
+            raise recorded.error
+        recorded.append((conversation_id, provider_ref))
+
+    monkeypatch.setattr(harness_nudges, "schedule_sandbox_stop", record)
+    return recorded
 
 
 def _payload():
@@ -1328,6 +1354,165 @@ def test_give_up_reply_says_whether_the_turn_started(organization, started):
         assert "not delivered" not in reply.content
     else:
         assert reply.content.startswith("The environment chat could not start")
+
+
+def _lease_of(conversation):
+    return HostedHarnessConversationLease.no_workspace_objects.get(
+        conversation=conversation
+    )
+
+
+def _stale_turn(organization, key, **lease_fields):
+    conversation, command = _started_turn(
+        organization,
+        key,
+        queued_ago=timedelta(minutes=40),
+        polled_ago=timedelta(minutes=16),
+    )
+    HostedHarnessConversationLease.no_workspace_objects.filter(
+        conversation=conversation
+    ).update(**lease_fields)
+    return conversation, command
+
+
+@pytest.mark.django_db
+def test_abandon_stops_the_sandbox_after_commit(
+    organization, stops, django_capture_on_commit_callbacks
+):
+    from simulate.services.hosted_harness_conversation import _abandon_outstanding
+
+    conversation, command = _stale_turn(organization, "abandon-stop")
+    lease = _lease_of(conversation)
+
+    with django_capture_on_commit_callbacks(execute=False) as callbacks:
+        assert _abandon_outstanding(conversation.id) == 1
+
+    command.refresh_from_db()
+    lease.refresh_from_db()
+    assert command.state == HostedHarnessConversationMessage.State.FAILED
+    assert lease.state == "expired"
+    assert stops == []
+    assert len(callbacks) == 1
+    callbacks[0]()
+    assert stops == [(str(conversation.id), "sandbox")]
+
+
+@pytest.mark.django_db
+def test_abandon_leaves_an_attempts_sandbox_alone(
+    organization, stops, django_capture_on_commit_callbacks
+):
+    from django.utils import timezone
+
+    from simulate.services.hosted_harness_conversation import _abandon_outstanding
+
+    conversation, _command = _stale_turn(organization, "abandon-attempt")
+    attempt = HostedHarnessAttempt.no_workspace_objects.create(
+        job=conversation.job,
+        attempt_number=1,
+        token_hash=hash_secret("a"),
+        fence_hash=hash_secret("b"),
+        expires_at=timezone.now(),
+    )
+    HostedHarnessConversationLease.no_workspace_objects.filter(
+        conversation=conversation
+    ).update(attempt=attempt, control_only=True)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        assert _abandon_outstanding(conversation.id) == 1
+
+    assert _lease_of(conversation).state == "expired"
+    assert stops == []
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("kind", ["starting", "pending"])
+def test_abandon_does_not_stop_a_sandbox_that_never_started(
+    organization, stops, django_capture_on_commit_callbacks, kind
+):
+    from django.utils import timezone
+
+    from simulate.services.hosted_harness_conversation import _abandon_outstanding
+
+    conversation, _command = _started_turn(
+        organization,
+        f"abandon-{kind}",
+        queued_ago=timedelta(minutes=40),
+        polled_ago=timedelta(minutes=16),
+    )
+    # A start older than its window; an active lease that last polled before the
+    # give-up (its wait counts from that poll).
+    fields = (
+        {
+            "state": "starting",
+            "provider_ref": "sandbox-real",
+            "heartbeat_at": timezone.now() - timedelta(minutes=11),
+        }
+        if kind == "starting"
+        else {"state": "active", "provider_ref": "pending:abc"}
+    )
+    HostedHarnessConversationLease.no_workspace_objects.filter(
+        conversation=conversation
+    ).update(**fields)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        assert _abandon_outstanding(conversation.id) == 1
+
+    assert stops == []
+
+
+@pytest.mark.django_db
+def test_abandon_schedules_no_stop_when_the_transaction_rolls_back(
+    organization, stops, django_capture_on_commit_callbacks
+):
+    from simulate.services.hosted_harness_conversation import _abandon_outstanding
+
+    conversation, _command = _stale_turn(organization, "abandon-rollback")
+
+    with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        with pytest.raises(RuntimeError), transaction.atomic():
+            assert _abandon_outstanding(conversation.id) == 1
+            raise RuntimeError
+
+    assert callbacks == []
+    assert stops == []
+
+
+@pytest.mark.django_db
+def test_abandon_stops_nothing_before_the_give_up(
+    organization, stops, django_capture_on_commit_callbacks
+):
+    from simulate.services.hosted_harness_conversation import _abandon_outstanding
+
+    conversation, _command = _started_turn(
+        organization,
+        "abandon-early",
+        # Not live (last poll 2 min ago), but not past the give-up either.
+        queued_ago=timedelta(minutes=16),
+        polled_ago=timedelta(minutes=2),
+    )
+
+    with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        assert _abandon_outstanding(conversation.id) == 0
+
+    assert callbacks == []
+    assert stops == []
+
+
+@pytest.mark.django_db
+def test_abandon_survives_a_failed_stop(
+    organization, stops, caplog, django_capture_on_commit_callbacks
+):
+    from simulate.services.hosted_harness_conversation import _abandon_outstanding
+
+    conversation, command = _stale_turn(organization, "abandon-raise")
+    stops.error = RuntimeError("temporal down")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        assert _abandon_outstanding(conversation.id) == 1
+
+    command.refresh_from_db()
+    assert command.state == HostedHarnessConversationMessage.State.FAILED
+    assert "stop_chat_sandboxes_failed" in caplog.text
 
 
 @pytest.mark.django_db
