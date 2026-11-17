@@ -947,7 +947,13 @@ def read_bounded_filter_page(
         callable(anchor_builder) and callable(anchor_support) and bool(anchor_support())
     ):
         raise ValueError("graph key witness probe is unavailable")
-    ordered_seed_builder = getattr(builder, "build_filter_ordered_seed_page", None)
+    cohort_capability = getattr(builder, "has_runtime_cohort", None)
+    runtime_cohort = bool(callable(cohort_capability) and cohort_capability())
+    # Runtime datetime bounds describe load evidence, not root timestamps. An
+    # unordered load witness scan must exhaust before publishing root order.
+    ordered_seed_builder = (
+        None if runtime_cohort else getattr(builder, "build_filter_ordered_seed_page", None)
+    )
     candidate_seed_builder = getattr(builder, "build_filter_candidate_seed_page", None)
     candidate_seed_support = getattr(
         builder, "supports_filter_candidate_seed_page", None
@@ -1141,6 +1147,7 @@ def read_bounded_filter_page(
         cursor_key is not None
         and not cursor_seed_keyset_is_safe
         and not callable(ordered_seed_builder)
+        and not runtime_cohort
     ):
         raise ValueError("unsafe cursor seeds require an ordered seed builder")
     if request_start >= request_end:
@@ -1436,7 +1443,7 @@ def read_bounded_filter_page(
         max(1, max_query_count // 4),
     )
     candidate_witness_probe_started: float | None = None
-    if cursor_key is not None and cursor_key[0] < request_start:
+    if cursor_key is not None and cursor_key[0] < request_start and not runtime_cohort:
         return BoundedFilterPage(
             rows=[],
             has_more=False,
