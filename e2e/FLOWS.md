@@ -3097,3 +3097,57 @@
 - the launch form asks launch-options for the epoch's own run and locks the model its spans named, gpt-4o-mini
 - the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
+
+### SIM-E2E-009 — a run with too few failing cases to fix sends the builder a request for more like them
+
+**Goal:** A developer whose run has too few failing cases to start a fix sends the builder a request for more cases like them
+
+**Spec:** `flows/simulate/add-cases-to-builder.spec.ts:166`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a finished run of the environment with 2 failing cases
+2. open Debug failures
+3. press Run Epoch
+4. read the launch form footer
+5. press Add cases with the builder
+6. read the confirmation
+7. press Open the builder
+8. read the builder chat
+
+**Browser observations:**
+
+- the footer reads that at least 3 failing cases are needed, ends with "Add cases with the builder", and the form's Run Epoch is disabled
+- the link asks first: the confirmation says the page will be left, the choices dropped, and that the user saves, runs again and improves from the new run, while the URL stays on the run
+- Open the builder lands on the environment's Scenarios tab
+- the builder chat holds exactly the request naming refund-over-200 (escalated) and identity-phone (verified_identity), unsent
+- no fix is launched (no POST to agent-fix-runs)
+
+### SIM-E2E-010 — a candidate only its must-pass check refused ships on the developer's reason
+
+**Goal:** A developer ships an epoch's candidate that broke only must-pass checks, giving a reason, and sees which candidate is now the default and who shipped it, when and why
+
+**Spec:** `flows/simulate/ship-anyway.spec.ts:169`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a finished epoch with a winner and a candidate only must-pass refused
+2. read that candidate's row
+3. press Ship
+4. pick that candidate in the Candidate dropdown
+5. read the checks it broke
+6. type the reason
+7. press Make default
+8. read the header and the candidate's row
+
+**Browser observations:**
+
+- Candidate 2's row reads "Broke must-pass: on-time-cancel: escalated"
+- Ship opens on the winner; picking Candidate 2 shows "Must-pass on-time-cancel: escalated" and keeps Make default disabled until a reason is typed
+- exactly one POST goes to Candidate 2's make-default, with exactly the minted reason as override_reason
+- the header reads "Candidate 2 is the default"
+- Candidate 2's row reads "Shipped anyway by E2E Developer" with the minted reason

@@ -1,6 +1,14 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  InputBase,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
@@ -13,32 +21,134 @@ import {
 } from "src/api/simulate-environments/fixRuns";
 
 import { downloadText } from "./downloadText";
-import ShipConfirmDialog from "./ShipConfirmDialog";
-import { gradingNote, isShipped, winnerOf } from "./fixRunView";
+import ShipConfirmDialog, { Row } from "./ShipConfirmDialog";
+import { gradingNote, isShipped, overridableOf, winnerOf } from "./fixRunView";
 
-const shipHint = (fix, winner) =>
-  fix.agent?.kind === "github"
-    ? `Opens a pull request with Candidate ${winner.attempt}'s change on the agent's repository`
-    : `Makes Candidate ${winner.attempt}'s version the environment's default`;
+const REASON_MAX = 2000;
 
-// Ship: only the fix's winner, only once the fix is ready, and only after the
-// user confirms what it will do. An uploaded agent's winner becomes the
-// environment's default; a GitHub agent's opens a pull request, with the patch
-// as the way out when the repository cannot take one.
+// Ship refusals in the product's words; the server's are written for logs.
+const SHIP_ERROR_COPY = {
+  fix_override_reason_required: "Give a reason to ship this candidate anyway.",
+  fix_override_not_needed:
+    "This candidate passed every check. Ship it without a reason.",
+  fix_candidate_not_proven:
+    "This candidate can't ship: it failed more than a must-pass check.",
+  fix_run_active: "Wait for the epoch to finish, then ship.",
+};
+
+const shipHint = (fix, candidate, anyway) => {
+  if (anyway) {
+    return `Ships Candidate ${candidate.attempt} although it broke must-pass checks, with your reason`;
+  }
+  return fix.agent?.kind === "github"
+    ? `Opens a pull request with Candidate ${candidate.attempt}'s change on the agent's repository`
+    : `Makes Candidate ${candidate.attempt}'s version the environment's default`;
+};
+
+const trialLabel = (c) =>
+  `Candidate ${c.attempt} · ${c.outcome === "winner" ? "Winner" : "Broke must-pass checks"}`;
+
+// Which trial ships, when more than one can: the winner first, then each trial
+// only its must-pass check refused.
+function TrialPicker({ trials, picked, onPick }) {
+  return (
+    <Row label="Candidate">
+      {/* The house picker, as RunDialog's version fields. */}
+      <TextField
+        select
+        size="small"
+        fullWidth
+        value={picked.id}
+        onChange={(e) => onPick(e.target.value)}
+        inputProps={{ "aria-label": "Candidate to ship" }}
+      >
+        {trials.map((c) => (
+          <MenuItem key={c.id} value={c.id}>
+            {trialLabel(c)}
+          </MenuItem>
+        ))}
+      </TextField>
+    </Row>
+  );
+}
+TrialPicker.propTypes = {
+  trials: PropTypes.array.isRequired,
+  picked: PropTypes.object.isRequired,
+  onPick: PropTypes.func.isRequired,
+};
+
+// A trial shipped anyway: the must-pass checks it broke, and the reason, which
+// is required.
+function AnywayFields({ picked, reason, onReason }) {
+  return (
+    <>
+      <Row label="Broke">
+        {picked.override.regressions.map((r) => (
+          <Typography key={r} sx={{ typography: "s2" }}>
+            {`Must-pass ${r}`}
+          </Typography>
+        ))}
+      </Row>
+      <Row label="Reason">
+        <InputBase
+          multiline
+          minRows={3}
+          fullWidth
+          value={reason}
+          onChange={(e) => onReason(e.target.value)}
+          placeholder="Why ship it anyway? Required, and kept with your name."
+          inputProps={{
+            maxLength: REASON_MAX,
+            "aria-label": "Why ship it anyway?",
+          }}
+          sx={{
+            typography: "s2",
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "6px",
+            px: 1.25,
+            py: 1,
+          }}
+        />
+        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
+          {`${reason.length}/${REASON_MAX}`}
+        </Typography>
+      </Row>
+    </>
+  );
+}
+AnywayFields.propTypes = {
+  picked: PropTypes.object.isRequired,
+  reason: PropTypes.string.isRequired,
+  onReason: PropTypes.func.isRequired,
+};
+
+// One Ship for every trial that can ship: the winner once the fix is ready, and
+// any trial only its must-pass check refused, on the user's reason. With no
+// winner it reads Ship anyway. It acts only after the user confirms. An
+// uploaded agent's trial becomes the environment's default; a GitHub agent's
+// opens a pull request, with the patch as the way out when the repository
+// cannot take one.
 export default function ShipButton({ fix }) {
-  const winner = winnerOf(fix);
+  const winner = fix.state === "ready" ? winnerOf(fix) : null;
+  const trials = [winner, ...overridableOf(fix)].filter(Boolean);
   const ship = useShipCandidate(fix);
   const [offerPatch, setOfferPatch] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  if (fix.state !== "ready" || !winner) return null;
+  const [pickedId, setPickedId] = useState(null);
+  const [reason, setReason] = useState("");
+  const shipped = trials.find((c) => c.pull_request_url || isShipped(fix, c));
+  const candidate = trials.find((c) => c.id === pickedId) || trials[0];
+  if (!candidate) return null;
+  const anyway = candidate.outcome !== "winner";
 
-  if (winner.pull_request_url) {
+  if (shipped?.pull_request_url) {
     return (
       <Button
         size="small"
         variant="contained"
-        href={winner.pull_request_url}
+        href={shipped.pull_request_url}
         target="_blank"
         rel="noopener noreferrer"
         endIcon={<Iconify icon="solar:arrow-right-up-linear" width={14} />}
@@ -47,10 +157,11 @@ export default function ShipButton({ fix }) {
       </Button>
     );
   }
-  if (isShipped(fix, winner)) {
+  if (shipped) {
+    // Named, since the page leads with the winner and a trial shipped anyway may be another.
     return (
       <Button size="small" variant="contained" disabled>
-        Default
+        {`Candidate ${shipped.attempt} is the default`}
       </Button>
     );
   }
@@ -62,8 +173,8 @@ export default function ShipButton({ fix }) {
         startIcon={<Iconify icon="solar:download-linear" width={16} />}
         onClick={async () =>
           downloadText(
-            patchFileName(fix.id, winner.attempt),
-            await fetchCandidatePatch(fix.id, winner.id),
+            patchFileName(fix.id, candidate.attempt),
+            await fetchCandidatePatch(fix.id, candidate.id),
           )
         }
       >
@@ -71,16 +182,20 @@ export default function ShipButton({ fix }) {
       </Button>
     );
   }
-  const shipWinner = async () => {
+  const shipIt = async () => {
     setBusy(true);
     try {
-      await ship.mutateAsync(winner.id);
+      await ship.mutateAsync({
+        candidateId: candidate.id,
+        overrideReason: anyway ? reason.trim() : undefined,
+      });
       setConfirming(false);
     } catch (error) {
       const parsed = fixErrorOf(error);
       if (parsed.offerPatch) setOfferPatch(true);
       setConfirming(false);
-      enqueueSnackbar(parsed.message || "Could not ship this change", {
+      const message = SHIP_ERROR_COPY[parsed.code] || parsed.message;
+      enqueueSnackbar(message || "Could not ship this change", {
         variant: "error",
       });
     } finally {
@@ -99,7 +214,12 @@ export default function ShipButton({ fix }) {
             {note}
           </Typography>
         )}
-        <CustomTooltip show title={shipHint(fix, winner)} size="small" arrow>
+        <CustomTooltip
+          show
+          title={shipHint(fix, trials[0], !winner)}
+          size="small"
+          arrow
+        >
           <Box component="span">
             <Button
               size="small"
@@ -109,19 +229,37 @@ export default function ShipButton({ fix }) {
               startIcon={<Iconify icon="solar:upload-linear" width={16} />}
               onClick={() => setConfirming(true)}
             >
-              Ship
+              {winner ? "Ship" : "Ship anyway"}
             </Button>
           </Box>
         </CustomTooltip>
       </Stack>
       <ShipConfirmDialog
         fix={fix}
-        winner={winner}
+        candidate={candidate}
         open={confirming}
         busy={busy}
+        confirmDisabled={anyway && !reason.trim()}
         onClose={() => setConfirming(false)}
-        onConfirm={shipWinner}
-      />
+        onConfirm={shipIt}
+        picker={
+          trials.length > 1 && (
+            <TrialPicker
+              trials={trials}
+              picked={candidate}
+              onPick={setPickedId}
+            />
+          )
+        }
+      >
+        {anyway && (
+          <AnywayFields
+            picked={candidate}
+            reason={reason}
+            onReason={setReason}
+          />
+        )}
+      </ShipConfirmDialog>
     </>
   );
 }

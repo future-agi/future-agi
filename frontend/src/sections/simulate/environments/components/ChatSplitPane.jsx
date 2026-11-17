@@ -11,6 +11,7 @@ import { Box, IconButton, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
+import { subscribeComposerScaffold } from "../buildEnvironment/console/composerScaffoldBus";
 import { ENV_TAB_RAIL_HEIGHT } from "../environmentOptions";
 import {
   CHAT_PANE_COPY as COPY,
@@ -161,6 +162,8 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
 
   const collapse = useCallback(() => setOpen(false), [setOpen]);
   const expand = useCallback(() => setOpen(true), [setOpen]);
+  // A message pinned in the chat from elsewhere on the page needs the chat shown.
+  useEffect(() => subscribeComposerScaffold(expand), [expand]);
 
   const onPointerDown = (event) => {
     // Primary button only: a right-click opens the context menu, which can

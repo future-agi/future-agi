@@ -15,7 +15,7 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
-import { ClosableDialog } from "src/components/custom-dialog";
+import { ClosableDialog, ConfirmDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { paths } from "src/routes/paths";
@@ -31,6 +31,7 @@ import {
   NO_MODELS_NOTE,
   UNMEASURED_NOTE,
   UNTRACED_NOTE,
+  addCasesMessage,
   blockedByDraft,
   blockedReason as blockedReasonOf,
   budgetSteps,
@@ -181,6 +182,7 @@ export default function LaunchFixDialog({
   const [costMargin, setCostMargin] = useState(0);
   const [costLimit, setCostLimit] = useState("");
   const [picking, setPicking] = useState(false);
+  const [confirmingAddCases, setConfirmingAddCases] = useState(false);
 
   useEffect(() => {
     if (!options || !open) return;
@@ -244,6 +246,7 @@ export default function LaunchFixDialog({
   const blockedReason = blockedReasonOf(options, targets.length);
   const draftBlocks = blockedByDraft(options, targets.length);
   const variations = variationsNote(targets.length, limits, agent.kind);
+  const addCases = addCasesMessage(options);
   const startDisabled = !!blockedReason || !!error || launch.isPending;
   const agentLine = [
     `${agent.name} · agent v${agent.version_number}`,
@@ -532,7 +535,7 @@ export default function LaunchFixDialog({
 
       <Stack
         direction="row"
-        alignItems="center"
+        alignItems="flex-start"
         spacing={1.5}
         sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}
       >
@@ -546,6 +549,26 @@ export default function LaunchFixDialog({
           {blockedReason ||
             error ||
             "A winner comes back for you to review. Nothing changes until you ship it."}
+          {/* With too few in the run and any picked, the error is the case minimum. */}
+          {addCases && !blockedReason && targets.length > 0 && (
+            <>
+              {" "}
+              <Typography
+                component="button"
+                type="button"
+                onClick={() => setConfirmingAddCases(true)}
+                sx={{
+                  ...linkSx,
+                  typography: "s3",
+                  color: "text.primary",
+                  fontWeight: 600,
+                  textDecoration: "underline",
+                }}
+              >
+                Add cases with the builder
+              </Typography>
+            </>
+          )}
         </Typography>
         {draftBlocks && (
           <Button
@@ -576,6 +599,35 @@ export default function LaunchFixDialog({
           Run Epoch
         </Button>
       </Stack>
+      <ConfirmDialog
+        open={confirmingAddCases}
+        onClose={() => setConfirmingAddCases(false)}
+        title="Add cases in the builder?"
+        content={
+          <Typography component="span" sx={{ typography: "s1" }}>
+            You&apos;ll leave this page, and your choices here won&apos;t be
+            kept. Once the builder adds cases, save them, run the environment
+            again, then improve from the new run.
+          </Typography>
+        }
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            onClick={() => {
+              onClose();
+              // The workspace pins it in the builder chat, for the user to send.
+              navigate(
+                `${paths.dashboard.simulate.environments.detail(envId)}?tab=scenarios`,
+                { state: { builderMessage: addCases } },
+              );
+            }}
+          >
+            Open the builder
+          </Button>
+        }
+      />
     </ClosableDialog>
   );
 }

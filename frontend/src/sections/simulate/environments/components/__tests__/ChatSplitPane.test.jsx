@@ -13,6 +13,7 @@ import { act } from "@testing-library/react";
 import { render, screen, fireEvent } from "src/utils/test-utils";
 
 import ChatSplitPane from "../ChatSplitPane";
+import { injectComposerScaffold } from "../../buildEnvironment/console/composerScaffoldBus";
 import {
   CHAT_PANE_DEFAULT_WIDTH,
   CHAT_PANE_MIN_WIDTH,
@@ -124,6 +125,13 @@ describe("ChatSplitPane", () => {
     expect(
       screen.queryByRole("button", { name: "Expand chat" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("reopens when a message is pinned in the chat from elsewhere", () => {
+    renderSplit();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse chat" }));
+    act(() => injectComposerScaffold("Add more cases"));
+    expect(chatPane()).toBeVisible();
   });
 
   it("passes the open state to the chat render prop", () => {

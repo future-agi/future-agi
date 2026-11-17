@@ -175,6 +175,20 @@ export function launchError({
   return null;
 }
 
+// When the run itself has too few cases to fix, what to ask the environment's
+// builder for: more cases like the failing ones. Null when the run has enough,
+// so picking more is the way forward, or none to model new cases on.
+export function addCasesMessage(options) {
+  const failing = options.scenarios.filter((s) => s.failing_sub_goals.length);
+  const min = options.limits.scenarios_min;
+  if (!failing.length || failing.length >= min) return null;
+  const cases = failing
+    .map((s) => `${s.key} (${s.failing_sub_goals.join(", ")})`)
+    .join("; ");
+  // As many per case as the fix writes itself, so some can pass and still leave enough.
+  return `Add ${options.limits.variations_per_case} more cases like each of these, which fail in this run, checking the same sub-goals: ${cases}. Improving the agent needs at least ${min} failing cases.`;
+}
+
 export const scenarioStatus = (passed) => {
   if (passed === true) return "Passing";
   if (passed === false) return "Failing";

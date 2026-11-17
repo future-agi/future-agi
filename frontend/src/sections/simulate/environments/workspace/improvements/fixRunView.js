@@ -99,6 +99,10 @@ export function identityLine(fix) {
 export const winnerOf = (fix) =>
   (fix.candidates || []).find((c) => c.outcome === "winner");
 
+// Trials only their must-pass check refused, which may ship on the user's reason.
+export const overridableOf = (fix) =>
+  (fix.candidates || []).filter((c) => c.override?.allowed);
+
 export const isShipped = (fix, candidate) =>
   !!candidate &&
   candidate.agent_version_id === fix.environment?.default_agent_version_id;

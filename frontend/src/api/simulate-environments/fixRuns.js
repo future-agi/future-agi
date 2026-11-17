@@ -125,17 +125,20 @@ export async function stopFixRun(fixId) {
   return res.data;
 }
 
-export async function shipCandidate(fix, candidateId) {
+// The winner ships as is; a trial only its must-pass check refused ships with
+// the user's reason (overrideReason).
+export async function shipCandidate(fix, candidateId, overrideReason) {
+  const body = overrideReason ? { override_reason: overrideReason } : {};
   if (fix.agent?.kind === "github") {
     const res = await axios.post(
       endpoints.agentFixRuns.pullRequest(fix.id, candidateId),
-      {},
+      body,
     );
     return { kind: "pull_request", url: res.data?.pull_request_url };
   }
   const res = await axios.post(
     endpoints.agentFixRuns.makeDefault(fix.id, candidateId),
-    {},
+    body,
   );
   return {
     kind:
@@ -185,7 +188,8 @@ export function useShipCandidate(fix) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { errorHandled: true },
-    mutationFn: (candidateId) => shipCandidate(fix, candidateId),
+    mutationFn: ({ candidateId, overrideReason }) =>
+      shipCandidate(fix, candidateId, overrideReason),
     onSuccess: () => refreshFix(queryClient, fix),
   });
 }

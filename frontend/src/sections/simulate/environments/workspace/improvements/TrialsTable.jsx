@@ -5,6 +5,7 @@ import { Box, Link, Stack, Typography } from "@mui/material";
 
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 import { RouterLink } from "src/routes/components";
+import { fDateTime } from "src/utils/format-time";
 import { paths } from "src/routes/paths";
 
 import { runColor, runColorValue } from "../runs/runs.constants";
@@ -46,6 +47,25 @@ function PassCell({ rate }) {
   );
 }
 PassCell.propTypes = { rate: PropTypes.arrayOf(PropTypes.number) };
+
+// A trial only its must-pass check refused: the checks it broke and, once
+// shipped anyway, who shipped it, when and why.
+function OverrideLines({ override }) {
+  if (!override?.allowed) return null;
+  return (
+    <>
+      <Typography sx={{ typography: "s3", color: BUILD_TONES.amber }}>
+        {`Broke must-pass: ${override.regressions.join(", ")}`}
+      </Typography>
+      {override.at && (
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+          {`Shipped anyway by ${override.by?.name || "a teammate"} · ${fDateTime(override.at)}: ${override.reason}`}
+        </Typography>
+      )}
+    </>
+  );
+}
+OverrideLines.propTypes = { override: PropTypes.object };
 
 // The design's trials table, contract columns only: what each trial tried,
 // how it ended, and its pass rate on the target scenarios.
@@ -127,6 +147,7 @@ export default function TrialsTable({ fix }) {
                 >
                   {`Tried: ${c.summary}`}
                 </Typography>
+                <OverrideLines override={c.override} />
               </Box>
             </Stack>
             {live ? (

@@ -2,6 +2,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Button, Stack } from "@mui/material";
 import {
+  useLocation,
   useNavigate,
   useParams,
   useMatch,
@@ -40,6 +41,7 @@ import EmptyState from "../components/EmptyState";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
 import { subscribeScenarioSelection } from "../buildEnvironment/console/scenarioSelectionBus";
+import { injectComposerScaffold } from "../buildEnvironment/console/composerScaffoldBus";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
@@ -269,6 +271,17 @@ export default function EnvironmentWorkspace() {
 
   const executionMatch = useMatch(EXECUTION_PATTERN);
   const improvementMatch = useMatch(IMPROVEMENT_PATTERN);
+
+  // A message another page left for the builder (Add cases on the launch form):
+  // pinned once the chat is mounted, then dropped so a reload doesn't pin it again.
+  const location = useLocation();
+  const builderMessage = location.state?.builderMessage;
+  const chatMounted = !!env && !executionMatch && !improvementMatch;
+  useEffect(() => {
+    if (!builderMessage || !chatMounted) return;
+    injectComposerScaffold(builderMessage);
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [builderMessage, chatMounted, location.pathname, location.search, navigate]);
 
   if (notFound) {
     return (

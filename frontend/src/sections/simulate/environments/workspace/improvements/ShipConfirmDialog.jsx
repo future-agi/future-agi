@@ -10,7 +10,7 @@ import { parseDiff } from "./parseDiff";
 
 const num = { fontVariantNumeric: "tabular-nums" };
 
-function Row({ label, children }) {
+export function Row({ label, children }) {
   return (
     <Stack direction="row" spacing={1.5} alignItems="flex-start">
       <Typography
@@ -32,12 +32,12 @@ Row.propTypes = {
   children: PropTypes.node,
 };
 
-function ChangeSummary({ fix, winner }) {
+function ChangeSummary({ fix, candidate }) {
   // Same key and staleness as the Changes tab, so a patch is read once. A
   // failure shows inline below, not as a second, global error.
   const { data, isLoading, error } = useQuery({
-    queryKey: ["agent-fix-run-patch", fix.id, winner.id],
-    queryFn: () => fetchCandidatePatch(fix.id, winner.id),
+    queryKey: ["agent-fix-run-patch", fix.id, candidate.id],
+    queryFn: () => fetchCandidatePatch(fix.id, candidate.id),
     staleTime: Infinity,
     meta: { errorHandled: true },
   });
@@ -78,18 +78,23 @@ function ChangeSummary({ fix, winner }) {
 }
 ChangeSummary.propTypes = {
   fix: PropTypes.object.isRequired,
-  winner: PropTypes.object.isRequired,
+  candidate: PropTypes.object.isRequired,
 };
 
 // What Ship is about to do, before it does it: where a GitHub agent's pull
 // request goes, or which version becomes the default, and the change itself.
+// With more than one trial that can ship, `picker` leads; a trial shipped
+// anyway adds its broken checks and reason as children.
 export default function ShipConfirmDialog({
   fix,
-  winner,
+  candidate,
   open,
   busy,
+  confirmDisabled = false,
   onClose,
   onConfirm,
+  picker,
+  children,
 }) {
   const github = fix.agent?.kind === "github";
   const limitedNote = github
@@ -102,11 +107,12 @@ export default function ShipConfirmDialog({
       closeDisabled={busy}
       title={
         github
-          ? `Open a pull request for Candidate ${winner.attempt}?`
-          : `Make Candidate ${winner.attempt}'s version the default?`
+          ? `Open a pull request for Candidate ${candidate.attempt}?`
+          : `Make Candidate ${candidate.attempt}'s version the default?`
       }
       content={
         <Stack spacing={1.25}>
+          {picker}
           {github ? (
             <>
               {fix.agent?.repository && (
@@ -127,13 +133,14 @@ export default function ShipConfirmDialog({
           ) : (
             <Row label="Version">
               <Typography sx={{ typography: "s2" }}>
-                {`${fix.agent?.name ?? "Agent"} · v${winner.version_number}`}
+                {`${fix.agent?.name ?? "Agent"} · v${candidate.version_number}`}
               </Typography>
             </Row>
           )}
           <Row label="Change">
-            {open && <ChangeSummary fix={fix} winner={winner} />}
+            {open && <ChangeSummary fix={fix} candidate={candidate} />}
           </Row>
+          {children}
           {fix.limited_validation && (
             <Typography sx={{ typography: "s2", color: BUILD_TONES.amber }}>
               {limitedNote}
@@ -146,7 +153,7 @@ export default function ShipConfirmDialog({
           size="small"
           variant="contained"
           color="primary"
-          disabled={busy}
+          disabled={busy || confirmDisabled}
           onClick={onConfirm}
         >
           {github ? "Open pull request" : "Make default"}
@@ -158,9 +165,12 @@ export default function ShipConfirmDialog({
 
 ShipConfirmDialog.propTypes = {
   fix: PropTypes.object.isRequired,
-  winner: PropTypes.object.isRequired,
+  candidate: PropTypes.object.isRequired,
   open: PropTypes.bool.isRequired,
   busy: PropTypes.bool,
+  confirmDisabled: PropTypes.bool,
+  picker: PropTypes.node,
+  children: PropTypes.node,
   onClose: PropTypes.func.isRequired,
   onConfirm: PropTypes.func.isRequired,
 };
