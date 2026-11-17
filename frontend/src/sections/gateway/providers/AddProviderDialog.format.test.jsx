@@ -191,16 +191,46 @@ describe("provider format transitions", () => {
     ]);
   });
 
-  it("retains explicit format selection for a saved custom name", async () => {
-    renderDialog({
-      name: "my-proxy",
-      config: {
-        base_url: "https://provider.example.test",
-        api_format: "anthropic",
-        models: ["synthetic-model"],
-      },
-    });
-    expect(formatField()).toHaveTextContent("anthropic");
-    expect(formatField()).not.toHaveAttribute("aria-disabled", "true");
-  });
+  it.each(["my-proxy", "constructor", "toString"])(
+    "reopens saved custom provider %s and saves an explicitly changed format",
+    async (name) => {
+      renderDialog({
+        name,
+        config: {
+          base_url: "https://provider.example.test",
+          api_format: "anthropic",
+          models: ["synthetic-model"],
+        },
+      });
+      expect(formatField()).toHaveTextContent("anthropic");
+      expect(formatField()).not.toHaveAttribute("aria-disabled", "true");
+      await userEvent.click(formatField());
+      expect(
+        screen.getAllByRole("option").map((option) => option.textContent),
+      ).toEqual([
+        "openai",
+        "anthropic",
+        "cohere",
+        "google",
+        "gemini",
+        "azure",
+        "bedrock",
+        "System One (decision models)",
+      ]);
+      await userEvent.click(
+        screen.getByRole("option", { name: "google", exact: true }),
+      );
+      expect(formatField()).toHaveTextContent("google");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Save Changes" }),
+      );
+      expect(updateMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name,
+          config: expect.objectContaining({ api_format: "google" }),
+        }),
+        expect.any(Object),
+      );
+    },
+  );
 });

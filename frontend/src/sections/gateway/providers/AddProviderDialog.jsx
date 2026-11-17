@@ -180,10 +180,14 @@ const PROVIDER_PRESETS = {
   },
 };
 
+// Saved custom provider names can also be names inherited from Object.
+const providerPresetFor = (name) =>
+  Object.hasOwn(PROVIDER_PRESETS, name) ? PROVIDER_PRESETS[name] : undefined;
+
 // The built-in models of a System One preset, or none for any other provider.
 // A copy, so state never aliases the preset.
 const systemOneModelsFor = (providerName) => {
-  const preset = PROVIDER_PRESETS[providerName];
+  const preset = providerPresetFor(providerName);
   return isSystemOneFormat(preset?.apiFormat) ? [...preset.models] : [];
 };
 
@@ -455,7 +459,7 @@ const AddProviderDialog = ({
       // admin API defaults to openai) is shown, and saved, as System One rather
       // than with a blank, locked format.
       const storedFormat = isSystemOneFormat(
-        PROVIDER_PRESETS[provider.name]?.apiFormat,
+        providerPresetFor(provider.name)?.apiFormat,
       )
         ? SYSTEMONE_API_FORMAT
         : normalizeApiFormat(c.api_format ?? c.apiFormat ?? "openai");
@@ -506,8 +510,8 @@ const AddProviderDialog = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isEditMode]);
 
-  const isAwsAuth = PROVIDER_PRESETS[name]?.authType === "aws";
-  const isVertexAuth = PROVIDER_PRESETS[name]?.authType === "gcp";
+  const isAwsAuth = providerPresetFor(name)?.authType === "aws";
+  const isVertexAuth = providerPresetFor(name)?.authType === "gcp";
   const requiresDeploymentIds = apiFormat === "azure";
   const isSystemOne = isSystemOneFormat(apiFormat);
   const keyIsOptional = allowsKeylessSystemOne(name, apiFormat, baseUrl);
@@ -564,7 +568,7 @@ const AddProviderDialog = ({
       return;
     }
     // Don't fetch if base URL is required but empty (azure, custom)
-    const preset = PROVIDER_PRESETS[name];
+    const preset = providerPresetFor(name);
     if (preset && !preset.baseUrl && !baseUrl.trim()) {
       setFetchScheduled(false);
       return;
@@ -668,7 +672,7 @@ const AddProviderDialog = ({
   const handleProviderChange = (newName) => {
     fetchSeqRef.current += 1;
     setName(newName);
-    const preset = PROVIDER_PRESETS[newName];
+    const preset = providerPresetFor(newName);
     if (preset) {
       if (preset.authType === "aws") {
         setBaseUrl(`https://bedrock-runtime.${awsRegion}.amazonaws.com`);
@@ -819,7 +823,7 @@ const AddProviderDialog = ({
       }
     } else {
       // Base URL validation — required for providers without a preset URL
-      const preset = PROVIDER_PRESETS[name];
+      const preset = providerPresetFor(name);
       const needsBaseUrl = !preset || !preset.baseUrl;
       if (needsBaseUrl && !baseUrl.trim()) {
         newErrors.baseUrl =
@@ -944,7 +948,7 @@ const AddProviderDialog = ({
     !apiKey.trim() &&
     !manualModels;
 
-  const preset = PROVIDER_PRESETS[name] || PROVIDER_PRESETS.custom;
+  const preset = providerPresetFor(name) || PROVIDER_PRESETS.custom;
 
   // A key FIELD_LABELS does not know goes last rather than dropping silently.
   const errorKeys = Object.keys(errors).filter((key) => errors[key]);
@@ -1209,7 +1213,7 @@ const AddProviderDialog = ({
           )}
 
           {(() => {
-            const currentPreset = PROVIDER_PRESETS[name];
+            const currentPreset = providerPresetFor(name);
             // Keep a saved adapter until the user explicitly chooses the native one.
             const visibleFormats =
               currentPreset && name !== "custom"
