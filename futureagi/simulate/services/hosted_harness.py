@@ -3095,11 +3095,11 @@ def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
 
     try:
         if not HostedHarnessConversationMessage.no_workspace_objects.filter(
-            conversation__job_id=job_id, client_request_id=f"build-{attempt_id}"
+            conversation__job__id=job_id, client_request_id=f"build-{attempt_id}"
         ).exists():
             return
         if HostedHarnessConversationMessage.no_workspace_objects.filter(
-            conversation__job_id=job_id, client_request_id=f"check-{attempt_id}"
+            conversation__job__id=job_id, client_request_id=f"check-{attempt_id}"
         ).exists():
             # A retried clean-up asks nothing more; the recovery sweep restarts a failed first ask.
             return

@@ -196,6 +196,13 @@ def settle_stop_only_queue(conversation: HostedHarnessConversation) -> bool:
     return True
 
 
+def _command_ids(turn: HostedHarnessConversationEvent) -> list[str]:
+    """The command a turn ran, as an ``id__in`` list: empty when the turn names none, so
+    the lookup finds nothing (as ``id=None`` did)."""
+    command_id = (turn.payload or {}).get("command_message_id")
+    return [str(command_id)] if command_id else []
+
+
 def _platform_check_checkpoint(
     turn: HostedHarnessConversationEvent | None,
 ) -> HostedHarnessConversationEvent | None:
@@ -205,7 +212,7 @@ def _platform_check_checkpoint(
         return None
     command = HostedHarnessConversationMessage.no_workspace_objects.filter(
         conversation_id=turn.conversation_id,
-        id=(turn.payload or {}).get("command_message_id"),
+        id__in=_command_ids(turn),
         role=HostedHarnessConversationMessage.Role.USER,
     ).first()
     if (
@@ -273,7 +280,7 @@ def record_platform_landing_refused(conversation_id: str, turn_sequence: int) ->
     try:
         committed = _platform_check_checkpoint(
             HostedHarnessConversationEvent.no_workspace_objects.filter(
-                conversation_id=conversation_id,
+                conversation__id=conversation_id,
                 kind="turn_completed",
                 sequence=turn_sequence,
             ).first()
@@ -316,13 +323,13 @@ def start_chat_after_platform_landing(conversation_id: str, turn_sequence: int) 
 
     try:
         turn = HostedHarnessConversationEvent.no_workspace_objects.filter(
-            conversation_id=conversation_id,
+            conversation__id=conversation_id,
             kind="turn_completed",
             sequence=turn_sequence,
         ).first()
         command = (
             HostedHarnessConversationMessage.no_workspace_objects.filter(
-                id=(turn.payload or {}).get("command_message_id"),
+                id__in=_command_ids(turn),
                 role=HostedHarnessConversationMessage.Role.USER,
             ).first()
             if turn is not None
@@ -2021,7 +2028,7 @@ def promote_turn_checkpoint(
 
     command = HostedHarnessConversationMessage.no_workspace_objects.filter(
         conversation=conversation,
-        id=(turn.payload or {}).get("command_message_id"),
+        id__in=_command_ids(turn),
         role=HostedHarnessConversationMessage.Role.USER,
     ).first()
     nudge = rebuild.nudge_for_command(command)
