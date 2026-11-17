@@ -184,6 +184,7 @@ agentcc/contracts/gateway_admin.py:0: error: Incompatible types in assignment (e
 agentcc/contracts/gateway_admin.py:0: error: Incompatible types in assignment (expression has type "EllipsisType", variable has type "list[SyncedKey]")  [assignment]
 agentcc/contracts/gateway_admin.py:0: error: Incompatible types in assignment (expression has type "EllipsisType", variable has type "str")  [assignment]
 agentcc/contracts/gateway_admin.py:0: error: Incompatible types in assignment (expression has type "EllipsisType", variable has type "str")  [assignment]
+agentcc/contracts/gateway_admin.py:0: error: Incompatible types in assignment (expression has type "EllipsisType", variable has type "str")  [assignment]
 agentcc/serializers/contracts.py:0: error: Incompatible types in assignment (expression has type "CharField", base class "Field" defined the type as "str | _StrPromise | None")  [assignment]
 agentcc/serializers/contracts.py:0: error: Incompatible types in assignment (expression has type "CharField", base class "Field" defined the type as "str | _StrPromise | None")  [assignment]
 agentcc/serializers/contracts.py:0: error: Incompatible types in assignment (expression has type "CharField", base class "Serializer" defined the type as "ReturnDict[Any, Any]")  [assignment]
