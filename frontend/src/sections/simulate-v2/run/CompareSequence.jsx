@@ -226,18 +226,15 @@ export default function CompareSequence({ seqA, seqB, a, b, onStop, onPick }) {
     return items;
   };
 
-  const whenOf = (u) => {
-    const step = u.row.type === "go" || u.row.type === "tool";
-    return step ? u.step.at : u.step.answer?.at;
-  };
   /* The missing side: the same step at another moment, or not asked. */
-  const missingText = (r, mine) => {
+  /* Said by where the partner's row is drawn — above is earlier, below is
+     later — so the word never contradicts the picture. */
+  const missingText = (r) => {
     if (!r.partner) return "not asked";
-    const t = whenOf(r.partner);
-    const o = whenOf(mine);
-    const rel =
-      t != null && o != null ? (t < o ? "earlier" : "later") : "moved";
-    return rel;
+    const here = all.indexOf(r);
+    const there = all.findIndex((x) => x.a === r.partner || x.b === r.partner);
+    if (here < 0 || there < 0) return "moved";
+    return there < here ? "earlier" : "later";
   };
   const gutterText = (u) => {
     if (!u) return "not asked";

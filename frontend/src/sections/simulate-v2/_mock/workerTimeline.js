@@ -114,7 +114,9 @@ export const participantsFromTimeline = (tl) => {
   blocks.forEach((b) => {
     if (b.delegatedAt == null)
       b.delegatedAt = b.calls[0]?.at ?? b.endedAt ?? null;
-    if (b.endedAt == null)
+    /* One that never returned keeps no end: the sequence draws its
+       no-answer where the turn gave up, never a made-up "waited 0.0 s". */
+    if (b.endedAt == null && b.state !== "timeout")
       b.endedAt = b.calls.at(-1)?.at ?? b.delegatedAt ?? null;
   });
   /* Siblings from the same agent whose spans overlap ran in parallel. */

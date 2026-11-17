@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -32,10 +32,13 @@ import Iconify from "src/components/iconify";
     · ↑ ↓ (or j k) move between steps, Esc clears (Datadog, Langfuse)
 */
 
-const GUT = 56; // step pill only — no clock, no took column (Chintan, 17 Nov)
+/* No step column: each step's number rides on its own arrow (Chintan, 17 Nov). */
+const GUT = 0;
 const LANE_PAD = 64; // half a lane header, plus air
 const MIN_GAP = 118; // lanes closer than this scroll sideways
-const ROW_H = { go: 44, tool: 34, back: 36, none: 38, took: 38 };
+const ROW_H = { go: 44, tool: 34, back: 36, none: 38, took: 38, turn: 34 };
+/* A call longer than this groups by the caller's turns (Chintan, 17 Nov). */
+const LONG_STEPS = 12;
 const CH = 6.4; // average character width at 12px
 /* A step says how long it took only when that's part of what happened. */
 const SLOW_SEC = 20;
@@ -557,8 +560,30 @@ export default function SequenceDiagram({
   const width = useWidth(wrapRef);
   const [hover, setHover] = useState(null);
   const [lane, setLane] = useState(null); // followed participant
+  /* Following a lane ends with a click anywhere else on the screen (or
+     Esc) — not only Show all or its name again. */
+  useEffect(() => {
+    if (!lane) return undefined;
+    const off = (e) => {
+      if (e.target?.closest?.("[data-lane-head]")) return;
+      setLane(null);
+    };
+    const esc = (e) => {
+      if (e.key === "Escape") setLane(null);
+    };
+    document.addEventListener("click", off);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("click", off);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [lane]);
   const [foldTools, setFoldTools] = useState(false);
   const [problemsOnly, setProblemsOnly] = useState(false);
+  /* Loops open on click; a long call's turns fold (open: those with a
+     problem, or the picked step). */
+  const [openLoops, setOpenLoops] = useState(() => new Set());
+  const [turnOpen, setTurnOpen] = useState({});
   const c = {
     fg: theme.palette.text.primary,
     sub: theme.palette.text.secondary,
@@ -589,12 +614,53 @@ export default function SequenceDiagram({
     });
   const hasProblems = chain.size > 0;
 
+  const loops = seq.loops || [];
+  const loopById = Object.fromEntries(loops.map((l) => [l.id, l]));
+  /* Open when asked, when the picked step is inside, or when a failed
+     sub-goal sits on a step inside — never hidden in a closed loop. */
+  const loopOpen = (l) =>
+    openLoops.has(l.id) ||
+    (selected != null && selected !== l.first && l.steps.includes(selected)) ||
+    failures.some((f) => f.n != null && f.n !== l.first && l.steps.includes(f.n)) ||
+    /* Problems only never hides a problem inside a loop. */
+    (problemsOnly && hasProblems && l.steps.some((n) => n !== l.first && chain.has(n)));
+  const toggleLoop = (id) =>
+    setOpenLoops((was) => {
+      const next = new Set(was);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const turnGroups = seq.turnGroups || [];
+  const long = seq.steps.length > LONG_STEPS && turnGroups.length > 1;
+  const turnIsOpen = (g) =>
+    !long ||
+    (turnOpen[g.turn] ??
+      (g.bad ||
+        failures.some((f) => f.n != null && g.steps.includes(f.n)) ||
+        (selected != null && g.steps.includes(selected))));
+  /* Picking a step (from a problem line, a link, ↑ ↓) opens its turn even
+     if it was folded; folding it again afterwards still works. */
+  const selTurn = selected != null ? byN[selected]?.turn : null;
+  useEffect(() => {
+    if (selTurn == null) return;
+    setTurnOpen((was) => (was[selTurn] === false ? { ...was, [selTurn]: true } : was));
+  }, [selected, selTurn]);
+  const foldedTurn = new Set(
+    turnGroups.filter((g) => !turnIsOpen(g)).map((g) => g.turn),
+  );
+  /* A closed loop shows only its first step, standing for all of them. */
+  const inClosedLoop = (s) =>
+    s.loop && !loopOpen(loopById[s.loop]) && s.n !== loopById[s.loop].first;
+
   /* What's on show: tool calls folded into their hand-off, or only the
      problems and the steps that led to them. Numbers never change. */
   const shown = seq.steps.filter(
     (s) =>
       !(foldTools && s.kind === "tool") &&
-      !(problemsOnly && hasProblems && !chain.has(s.n)),
+      !(problemsOnly && hasProblems && !chain.has(s.n)) &&
+      !inClosedLoop(s) &&
+      !foldedTurn.has(s.turn),
   );
   const shownSet = new Set(shown.map((s) => s.n));
   const involves = (s) => !lane || s.from === lane || s.to === lane;
@@ -625,14 +691,31 @@ export default function SequenceDiagram({
     return right >= Math.min(260, left) ? { left: false, room: right } : { left: true, room: left };
   };
 
+  /* Rows on show: a closed loop is its first step's row with no replies;
+     a long call puts each turn's header above its rows. */
+  const rowOn = (r) => {
+    if (!shownSet.has(r.n)) return false;
+    const st = byN[r.n];
+    const l = st.loop ? loopById[st.loop] : null;
+    return !(l && !loopOpen(l) && r.type !== "go" && r.type !== "tool");
+  };
+  const asRow = (r) => {
+    const st = byN[r.n];
+    const l = st.loop ? loopById[st.loop] : null;
+    return l && st.n === l.first ? { ...r, loop: l, closed: !loopOpen(l) } : r;
+  };
+  const ordered = long
+    ? turnGroups.flatMap((g) => [
+        { type: "turn", n: null, group: g },
+        ...seq.rows.filter((r) => byN[r.n].turn === g.turn && rowOn(r)).map(asRow),
+      ])
+    : seq.rows.filter(rowOn).map(asRow);
   let y = top;
-  const rows = seq.rows
-    .filter((r) => shownSet.has(r.n))
-    .map((r) => {
-      const out = { ...r, y };
-      y += ROW_H[r.type];
-      return out;
-    });
+  const rows = ordered.map((r) => {
+    const out = { ...r, y };
+    y += ROW_H[r.type];
+    return out;
+  });
   const H = y + 6;
 
   const pick = (n) => onSelect(selected === n ? null : n);
@@ -655,11 +738,13 @@ export default function SequenceDiagram({
       next = order[i < 0 ? 0 : Math.min(order.length - 1, i + 1)];
     else if (e.key === "ArrowUp" || e.key === "k")
       next = order[i < 0 ? 0 : Math.max(0, i - 1)];
-    else if (e.key === "Escape" && selected != null) {
-      /* Clears the step; a second Esc closes the drawer as usual. */
+    else if (e.key === "Escape" && (lane || selected != null)) {
+      /* Stops following first, then clears the step; one more Esc closes
+         the drawer as usual. */
       e.preventDefault();
       e.stopPropagation();
-      onSelect(null);
+      if (lane) setLane(null);
+      else onSelect(null);
       return;
     } else return;
     /* Inside the diagram the arrows move between steps, not between calls
@@ -710,7 +795,8 @@ export default function SequenceDiagram({
     tabIndex: 0,
     ...(r.type === "go" || r.type === "tool" ? { "data-row": s.n } : {}),
     "aria-label": `Step ${s.n}: ${s.label}`,
-    onClick: () => pick(s.n),
+    onClick: () =>
+      r.loop && r.closed ? toggleLoop(r.loop.id) : pick(s.n),
     onKeyDown: keyPick(s.n),
     onMouseEnter: () => setHover(s.n),
     onMouseLeave: () => setHover(null),
@@ -722,46 +808,120 @@ export default function SequenceDiagram({
     },
   });
 
-  /* The fixed column: the step pill. A reply has no number of its own —
-     only steps are numbered (17 Nov); the reply says which step it answers. */
-  const gutterRow = (r) => {
-    const s = byN[r.n];
-    const yy = r.y;
-    const on = selected === s.n;
-    const step = r.type === "go" || r.type === "tool";
-    const w = s.n > 9 ? 26 : 20;
-    const bad = step && s.bad;
+  /* A step's number, on its arrow (or beside its tool loop). */
+  const bubble = (cx, cy, s, text = String(s.n)) => {
+    const w = Math.max(18, text.length * 6.6 + 8);
     return (
-      <g key={`${r.type}-${r.n}`} {...rowProps(s, r)}>
-        {bandOf(r, GUT, on)}
-        {step ? (
-          <>
-            <rect
-              x={14}
-              y={yy - 9}
-              width={w}
-              height={18}
-              rx={9}
-              fill={bad ? c.bad : c.fg}
-            />
-            <text
-              x={14 + w / 2}
-              y={yy + 4}
-              textAnchor="middle"
-              fontSize="11"
-              fontWeight="600"
-              fill={bad ? "#fff" : c.paper}
-            >
-              {s.n}
-            </text>
-          </>
-        ) : null}
+      <g key="bubble">
+        <rect
+          x={cx - w / 2}
+          y={cy - 9}
+          width={w}
+          height={18}
+          rx={9}
+          fill={s.bad ? c.bad : c.fg}
+          stroke={c.paper}
+          strokeWidth="2"
+        />
+        <text
+          x={cx}
+          y={cy + 4}
+          textAnchor="middle"
+          fontSize="11"
+          fontWeight="600"
+          fill={s.bad ? "#fff" : c.paper}
+        >
+          {text}
+        </text>
+      </g>
+    );
+  };
+  /* What a loop row says: how many times, and how many went wrong. */
+  const loopChip = (l) =>
+    l.closed
+      ? `↻ ${l.times} times${l.with?.length ? ` · with ${l.with.join(", ")}` : ""}${[
+          l.outcomes?.failed && `${l.outcomes.failed} failed`,
+          l.outcomes?.refused && `${l.outcomes.refused} refused`,
+          l.outcomes?.noAnswer && `${l.outcomes.noAnswer} no answer`,
+        ]
+          .filter(Boolean)
+          .map((x) => ` · ${x}`)
+          .join("")}`
+      : `↻ 1 of ${l.times} · fold`;
+  const loopText = (r) =>
+    r.loop && r.closed ? `${r.loop.first}–${r.loop.last}` : undefined;
+
+  /* The lanes part of a row: the arrow and its words, or the tool box. */
+  /* A long call's turn: what the caller said, how many steps, the workers it
+     went to; click to open or fold it. */
+  const turnRow = (r) => {
+    const g = r.group;
+    const open = !foldedTurn.has(g.turn);
+    const yy = r.y;
+    const who = [
+      ...new Set(
+        g.steps
+          .map((n) => byN[n])
+          .flatMap((x) => [x.from, x.to])
+          .filter((id) => id && id !== seq.lanes[0].id && id !== seq.lanes[1]?.id),
+      ),
+    ].map(seq.nameOf);
+    const probs = (seq.problems || []).filter((pr) => g.steps.includes(pr.n)).length;
+    /* The record's own turn numbers; back-to-back turns answered alone are
+       one step, so its header names them all ("Turns 4–8"). */
+    const merged = Math.max(1, ...g.steps.map((n) => byN[n].turns || 1));
+    const name =
+      merged > 1 ? `Turns ${g.turn}–${g.turn + merged - 1}` : `Turn ${g.turn}`;
+    const words = `${name} · ${g.label ? `“${cut(g.text || g.label, 46)}”` : `${seq.nameOf(seq.lanes[1]?.id)} follows up`} · ${g.steps.length} ${g.steps.length === 1 ? "step" : "steps"}${who.length ? ` · ${who.join(", ")}` : ""}`;
+    const toggle = () =>
+      setTurnOpen((was) => ({ ...was, [g.turn]: !open }));
+    return (
+      <g
+        key={`turn-${g.turn}`}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        aria-label={`${open ? "Fold" : "Open"} turn ${g.turn}`}
+        onClick={toggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggle();
+          }
+        }}
+        style={{ cursor: "pointer", outline: "none" }}
+      >
+        <rect
+          x={0}
+          y={yy - ROW_H.turn / 2 + 2}
+          width={svgW}
+          height={ROW_H.turn - 4}
+          fill={c.code}
+        />
+        <text x={10} y={yy + 4} fontSize="11.5" fill={c.sub}>
+          {open ? "▾" : "▸"}
+        </text>
+        <text x={24} y={yy + 4} fontSize="11.5" fontWeight="600" fill={c.fg}>
+          {cut(words, Math.floor((svgW - 140) / 6.2))}
+        </text>
+        {probs > 0 && (
+          <text
+            x={svgW - 10}
+            y={yy + 4}
+            textAnchor="end"
+            fontSize="11"
+            fontWeight="600"
+            fill={c.bad}
+          >
+            {`${probs} ${probs === 1 ? "problem" : "problems"}`}
+          </text>
+        )}
       </g>
     );
   };
 
-  /* The lanes part of a row: the arrow and its words, or the tool box. */
   const laneRow = (r) => {
+    if (r.type === "turn") return turnRow(r);
     const s = byN[r.n];
     const yy = r.y;
     const on = selected === s.n;
@@ -781,10 +941,16 @@ export default function SequenceDiagram({
         s.answer?.kind !== "none";
       const chip =
         [
+          r.loop && loopChip({ ...r.loop, closed: r.closed }),
           s.turns > 1 && `×${s.turns} turns`,
           foldTools &&
             s.tools > 0 &&
-            `+${s.tools} tool ${s.tools === 1 ? "call" : "calls"}`,
+            `+${s.tools} tool ${s.tools === 1 ? "call" : "calls"}${(() => {
+              const bad = seq.steps.filter(
+                (x) => x.kind === "tool" && x.parent === s.n && x.bad,
+              ).length;
+              return bad ? ` · ${bad} failed` : "";
+            })()}`,
           slow && `slow · ${took(s.dur)}`,
         ]
           .filter(Boolean)
@@ -818,10 +984,24 @@ export default function SequenceDiagram({
           <title>{s.full || s.label}</title>
           {label}
         </text>,
+        bubble(
+          x1 + dir * ((loopText(r) || "").length * 3.3 + 16),
+          yy + 6,
+          s,
+          loopText(r),
+        ),
       );
       if (chip)
         items.push(
-          <g key="chip">
+          <g
+            key="chip"
+            {...(r.loop && !r.closed && {
+              onClick: (e) => {
+                e.stopPropagation();
+                toggleLoop(r.loop.id);
+              },
+            })}
+          >
             <rect
               x={mid + lw / 2 + 6}
               y={yy - 15}
@@ -891,10 +1071,12 @@ export default function SequenceDiagram({
       const mono = "ui-monospace, SFMono-Regular, Menlo, monospace";
       const slow = s.dur != null && s.dur >= SLOW_SEC;
       const tail = slow ? ` · slow · ${took(s.dur)}` : "";
+      const lchip = r.loop ? loopChip({ ...r.loop, closed: r.closed }) : null;
+      const lchipW = lchip ? lchip.length * 5.9 + 12 : 0;
       const nameW = 6.6;
       const name = cut(s.tool, Math.floor((side.room * 0.55) / nameW));
       const resRoom = Math.floor(
-        (side.room - name.length * nameW - 18) / 6.1,
+        (side.room - name.length * nameW - 18 - lchipW) / 6.1,
       );
       const res = cut(`→ ${s.result || ""}${tail}`, resRoom);
       const textW = name.length * nameW + 8 + res.length * 6.1;
@@ -928,6 +1110,14 @@ export default function SequenceDiagram({
           }
           fill={s.bad ? c.bad : c.muted}
         />,
+        bubble(
+          side.left
+            ? x + 16 + (loopText(r) || "").length * 3.3
+            : x - 16 - (loopText(r) || "").length * 3.3,
+          yy,
+          s,
+          loopText(r),
+        ),
         <text
           key="n"
           x={tx}
@@ -952,13 +1142,49 @@ export default function SequenceDiagram({
           {res}
         </text>,
       );
+      if (lchip)
+        items.push(
+          <g
+            key="lchip"
+            {...(!r.closed && {
+              onClick: (e) => {
+                e.stopPropagation();
+                toggleLoop(r.loop.id);
+              },
+            })}
+          >
+            <rect
+              x={tx + textW + 8}
+              y={yy - 8}
+              width={lchipW}
+              height={16}
+              rx={4}
+              fill={c.code}
+            />
+            <text
+              x={tx + textW + 8 + lchipW / 2}
+              y={yy + 4}
+              textAnchor="middle"
+              fontSize="10.5"
+              fontWeight="500"
+              fill={r.loop.badCount && r.closed ? c.bad : c.sub}
+            >
+              {lchip}
+            </text>
+          </g>,
+        );
     }
     /* A failed sub-goal tied to this row: a tag beside the lane of the
        participant it came from. */
     const rowKind =
       r.type === "back" ? "answer" : r.type === "tool" ? "tool" : r.type;
     failures
-      .filter((f) => f.n === s.n && f.row === rowKind)
+      /* A sub-goal on a reply also sits on a reply that never came. */
+      .filter(
+        (f) =>
+          f.n === s.n &&
+          (f.row === rowKind || (f.row === "answer" && rowKind === "none")),
+      )
       .forEach((f, k) => {
         const unsure = f.status === "inconclusive";
         const col = unsure ? c.warn : c.bad;
@@ -1009,7 +1235,6 @@ export default function SequenceDiagram({
     display: "block",
     fontFamily: "Inter, system-ui, sans-serif",
   };
-  const labelY = 10 + headH + 18;
   const followed = lane ? seq.lanes.find((l) => l.id === lane) : null;
   const followedCount = followed ? shown.filter(involves).length : 0;
 
@@ -1027,6 +1252,19 @@ export default function SequenceDiagram({
           <Legend seq={seq} />
         </Box>
         <Stack direction="row" spacing={0.75}>
+          {long && (
+            <Toggle
+              on={turnGroups.every((g) => !foldedTurn.has(g.turn))}
+              onClick={() => {
+                const allOpen = turnGroups.every((g) => !foldedTurn.has(g.turn));
+                setTurnOpen(
+                  Object.fromEntries(turnGroups.map((g) => [g.turn, !allOpen])),
+                );
+              }}
+            >
+              All turns
+            </Toggle>
+          )}
           {hasTools && (
             <Toggle on={foldTools} onClick={() => setFoldTools((v) => !v)}>
               Fold tool calls
@@ -1104,24 +1342,6 @@ export default function SequenceDiagram({
           },
         }}
       >
-        <svg
-          width={GUT}
-          height={H}
-          viewBox={`0 0 ${GUT} ${H}`}
-          style={{ ...svgStyle, flexShrink: 0 }}
-        >
-          <text
-            x={14}
-            y={labelY}
-            fontSize="10.5"
-            fontWeight="600"
-            letterSpacing="0.05em"
-            fill={c.faint}
-          >
-            STEP
-          </text>
-          {rows.map(gutterRow)}
-        </svg>
         <Box sx={{ flex: 1, minWidth: 0, overflowX: "auto" }}>
           <svg
             width={svgW}
@@ -1156,6 +1376,7 @@ export default function SequenceDiagram({
                   role="button"
                   tabIndex={0}
                   aria-pressed={on}
+                  data-lane-head="true"
                   aria-label={
                     on ? `Stop following ${ln.name}` : `Follow ${ln.name}`
                   }

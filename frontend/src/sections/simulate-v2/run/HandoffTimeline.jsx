@@ -19,6 +19,7 @@ import {
 import { participantsGraphOf } from "../_mock/participantsGraph";
 import { sequenceOf } from "../_mock/participantsSequence";
 import { placeFailures } from "../_mock/participantsSubGoals";
+import { LONG_CALL } from "../_mock/participantsLong";
 import { routesOf } from "../_mock/participantsTrials";
 import TrialRoutes from "./TrialRoutes";
 import CompareSequence from "./CompareSequence";
@@ -193,7 +194,7 @@ function Issues({ seq, placed, onGo }) {
   const lines = [
     ...seq.problems.map((x) => ({
       key: `p-${x.n}`,
-      at: `Step ${x.n}`,
+      at: x.range ? `Steps ${x.range[0]}–${x.range[1]}` : `Step ${x.n}`,
       text: x.text.replace(/\s+(at |to )?step \d+$/i, ""),
       n: x.n,
     })),
@@ -277,12 +278,16 @@ export default function HandoffTimeline({
 }) {
   const sample = contractSample();
   const partial = knob("participants") === "partial";
+  /* ?participants=long: a 26-step call with loops (Chintan, 17 Nov). */
+  const long = knob("participants") === "long";
   const p = useMemo(() => {
     const rec = sample
       ? participantsFromTimeline(CONTRACT_SAMPLES[sample])
-      : participants || participantsOf({ agent, task });
+      : long
+        ? LONG_CALL
+        : participants || participantsOf({ agent, task });
     return rec && partial ? { ...rec, partial: PARTIAL_NOTE } : rec;
-  }, [agent, task, participants, sample, partial]);
+  }, [agent, task, participants, sample, partial, long]);
   /* The actor on the call names the caller's node (concept audit, 12 Nov). */
   const g = useMemo(
     () => participantsGraphOf(p, { callerName: task?.persona?.name || null }),
@@ -294,8 +299,8 @@ export default function HandoffTimeline({
   );
   /* Failed sub-goals placed on the step their evidence points to. */
   const placed = useMemo(
-    () => placeFailures(seq, sample ? [] : failures || []),
-    [seq, failures, sample],
+    () => placeFailures(seq, sample || long ? [] : failures || []),
+    [seq, failures, sample, long],
   );
   /* Every trial of this scenario (proposal 8): its sequence and failures. */
   const trialSeqs = useMemo(
@@ -387,7 +392,7 @@ export default function HandoffTimeline({
         <Issues seq={seq} placed={placed} onGo={setPicked} />
         {p.partial && <Quiet>{p.partial}</Quiet>}
       </Stack>
-      {routes && !sample && (
+      {routes && !sample && !long && (
         <TrialRoutes
           routes={routes}
           current={trialIdx}

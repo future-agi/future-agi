@@ -89,11 +89,13 @@ export const placeFailures = (seq, failures = []) => {
           (s.from === coordId && s.to === caller)),
     );
     const replyAt = (s) => (s.from === caller ? s.answer?.at : s.at);
+    /* A turn with no reply ends where the next turn starts — never at the
+       end of the call, or it would claim every later moment. */
+    const endOf = (s, i) =>
+      replyAt(s) ?? turns[i + 1]?.at ?? Infinity;
     const inTurn = turns.find(
-      (s) =>
-        s.at != null &&
-        s.at <= f.at + 0.3 &&
-        (replyAt(s) ?? Infinity) >= f.at - 0.3,
+      (s, i) =>
+        s.at != null && s.at <= f.at + 0.3 && endOf(s, i) >= f.at - 0.3,
     );
     const nearest = turns
       .filter((s) => replyAt(s) != null)

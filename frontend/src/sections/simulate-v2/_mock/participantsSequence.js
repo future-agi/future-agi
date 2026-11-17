@@ -75,6 +75,7 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
         at: start,
         label: shortLineOf(t.request),
         full: t.request,
+        turn: t.n,
         spanId: `t${t.n}`,
         alone: !ws.length && !own.length,
         answer: t.reply
@@ -101,6 +102,7 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
         at: start,
         label: shortLineOf(t.reply),
         full: t.reply,
+        turn: t.n,
         spanId: `t${t.n}`,
         answer: null,
       });
@@ -150,6 +152,7 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
         at: w.delegatedAt,
         label: handoffLabelOf(w),
         full: handoffMessageOf(w) || w.task || null,
+        turn: t.n,
         spanId: `t${t.n}:${w.id}`,
         model: w.model ?? null,
         tokens: tokensOf(w),
@@ -164,7 +167,8 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
           tool: c.name,
           at: c.at,
           label: c.name,
-          result: callLabelOf(c),
+          result: c.resultLabel || callLabelOf(c),
+          turn: t.n,
           input: c.input ?? null,
           output: c.output ?? null,
           bad: !!(c.blocked || c.failed),
@@ -188,7 +192,8 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
         tool: c.name,
         at: c.at,
         label: c.name,
-        result: callLabelOf(c),
+        result: c.resultLabel || callLabelOf(c),
+        turn: t.n,
         input: c.input ?? null,
         output: c.output ?? null,
         bad: !!(c.blocked || c.failed),
@@ -218,8 +223,10 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
     ) {
       prev.turns = (prev.turns || 1) + 1;
       prev.turnTexts.push(s.full);
+      prev.turnNums.push(s.turn);
+      /* The record's own turn numbers, not 1, 2, 3 inside the step. */
       prev.full = prev.turnTexts
-        .map((x, i) => `Turn ${i + 1}: ${x}`)
+        .map((x, i) => `Turn ${prev.turnNums[i] ?? i + 1}: ${x}`)
         .join("\n");
       prev.answer = {
         ...s.answer,
@@ -228,7 +235,11 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
       };
       return;
     }
-    steps.push({ ...s, turnTexts: s.kind === "message" ? [s.full] : [] });
+    steps.push({
+      ...s,
+      turnTexts: s.kind === "message" ? [s.full] : [],
+      turnNums: s.kind === "message" ? [s.turn] : [],
+    });
   });
   steps.forEach((s, i) => {
     s.n = i + 1;
@@ -239,7 +250,14 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
      record are rounded to a tenth of a second). */
   [...steps].reverse().forEach((s) => {
     if (s.kind !== "handoff" || s.answer?.at == null) return;
-    const kids = steps.filter((x) => x.n > s.n && x.from === s.to);
+    /* Only its own round: the next hand-off to the same worker starts a new
+       one (a worker asked again in a loop answers each time). */
+    const again = steps.find(
+      (x) => x.n > s.n && x.kind === "handoff" && x.to === s.to,
+    );
+    const kids = steps.filter(
+      (x) => x.n > s.n && x.from === s.to && (!again || x.n < again.n),
+    );
     const latest = Math.max(
       s.answer.at,
       ...kids.map((x) => Math.max(x.at ?? 0, x.answer?.at ?? 0)),
@@ -354,13 +372,118 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
     }
   });
 
+  /* Loops (Chintan, 17 Nov — a 20–30 step call with loops can't be read
+     step by step): inside one turn, the same steps repeated 3 or more times
+     in a row — one step (a tool retried) or a short cycle (hand off, the
+     worker calls a tool, hand off again). Each becomes one row that opens. */
+  const keyOf = (s) =>
+    s.kind === "tool" ? `t:${s.from}:${s.tool}` : `${s.kind}:${s.from}:${s.to}`;
+  const loops = [];
+  for (let i = 0; i < steps.length; ) {
+    let best = null;
+    for (let per = 1; per <= 3; per += 1) {
+      const block = steps.slice(i, i + per);
+      if (block.length < per || block.some((x) => x.kind === "message")) break;
+      if (block.some((x) => x.turn !== block[0].turn)) break;
+      let times = 1;
+      while (
+        steps
+          .slice(i + times * per, i + (times + 1) * per)
+          .map(keyOf)
+          .join("|") === block.map(keyOf).join("|") &&
+        steps[i + times * per]?.turn === block[0].turn
+      )
+        times += 1;
+      if (times >= 3 && (!best || times * per > best.times * best.per))
+        best = { per, times };
+    }
+    if (best) {
+      const span = steps.slice(i, i + best.per * best.times);
+      loops.push({
+        id: `loop-${span[0].n}`,
+        first: span[0].n,
+        last: span[span.length - 1].n,
+        per: best.per,
+        times: best.times,
+        turn: span[0].turn,
+        steps: span.map((x) => x.n),
+        bad: span.some((x) => x.bad || x.answer?.bad),
+        badCount: span.filter((x) => x.bad || x.answer?.bad).length,
+        /* Each outcome counted apart: a no-answer isn't a failure. */
+        outcomes: {
+          failed: span.filter(
+            (x) =>
+              (x.kind === "tool" && x.bad && !x.refused) ||
+              (x.kind !== "tool" && x.bad && x.answer?.kind !== "none"),
+          ).length,
+          refused: span.filter((x) => x.kind === "tool" && x.refused).length,
+          noAnswer: span.filter(
+            (x) => x.answer?.kind === "none" && x.answer?.bad,
+          ).length,
+        },
+        /* The other steps of each round, named on the loop's row. */
+        with: span
+          .slice(1, best.per)
+          .map((x) => (x.kind === "tool" ? x.tool : x.label)),
+      });
+      span.forEach((x) => {
+        x.loop = `loop-${span[0].n}`;
+      });
+      i += best.per * best.times;
+    } else i += 1;
+  }
+  /* The same problem repeated in a loop is one line, with its count. */
+  const loopOf = Object.fromEntries(loops.map((l) => [l.id, l]));
+  /* Grouped by loop and by what went wrong, in the record's words: a
+     refusal, a failure and a no-answer in one loop are three lines. */
+  const baseOf = (t) => t.replace(/ at step \d+$/, "").replace(/ step \d+$/, "");
+  const merged = [];
+  problems.forEach((pr) => {
+    const st = byN[pr.n];
+    const l = st?.loop ? loopOf[st.loop] : null;
+    if (!l) return merged.push(pr);
+    const group = `${l.id}|${baseOf(pr.text)}`;
+    if (merged.some((m) => m.group === group)) return undefined;
+    const same = problems
+      .filter((q) => byN[q.n]?.loop === l.id && baseOf(q.text) === baseOf(pr.text))
+      .map((q) => q.n);
+    return merged.push({
+      n: pr.n,
+      loop: l.id,
+      group,
+      range: same.length > 1 ? [same[0], same[same.length - 1]] : null,
+      text: same.length > 1 ? `${baseOf(pr.text)} ${same.length} times` : pr.text,
+    });
+  });
+  /* The caller's turns, for grouping a long call (each step keeps its turn). */
+  const turnGroups = [];
+  steps.forEach((s) => {
+    let g = turnGroups.find((x) => x.turn === s.turn);
+    if (!g) {
+      g = { turn: s.turn, steps: [], label: null, bad: false };
+      turnGroups.push(g);
+    }
+    g.steps.push(s.n);
+    if (!g.label && s.kind === "message") {
+      g.label = s.label;
+      /* The header quotes what was said, not just its first sentence. */
+      g.text = s.turnTexts?.[0] || s.full || s.label;
+    }
+    if (s.bad || s.answer?.bad) g.bad = true;
+  });
+  turnGroups.forEach((g, i) => {
+    g.index = i + 1;
+  });
+
   return {
     lanes,
     steps,
     chain,
     rows,
     groups,
-    problems,
+    loops,
+    turnGroups,
+    problems: merged,
     nameOf,
     end: last,
     notRun: p.observed ? p.notRun || [] : [],

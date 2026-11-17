@@ -3,6 +3,7 @@ import { sequenceOf } from "../participantsSequence";
 import { participantsFromTimeline } from "../workerTimeline";
 import { CONTRACT_SAMPLES } from "../workerTimelineSamples";
 import { USER_NODE } from "../participantsGraph";
+import { LONG_CALL } from "../participantsLong";
 
 const rec = (name) => participantsFromTimeline(CONTRACT_SAMPLES[name]);
 
@@ -110,6 +111,63 @@ describe("sequenceOf · attribution (plan MA-2)", () => {
       expect(s.from).not.toBe(seq.lanes[1].id);
       const lane = seq.lanes.find((l) => l.id === s.from);
       expect(lane.role).toBe("Unknown");
+    });
+  });
+});
+
+describe("long calls: turns and loops (Chintan, 17 Nov)", () => {
+  const seq = sequenceOf(LONG_CALL, { callerName: "Jamal Carter" });
+
+  it("keeps every step's caller turn", () => {
+    expect(seq.steps).toHaveLength(26);
+    expect(seq.turnGroups.map((g) => g.steps.length)).toEqual([4, 7, 9, 5, 1]);
+    expect(seq.turnGroups[1].bad).toBe(true);
+  });
+
+  it("finds a retried tool and a repeated round as loops", () => {
+    const [retry, rounds] = seq.loops;
+    expect(retry).toMatchObject({ first: 7, last: 11, per: 1, times: 5, badCount: 5 });
+    expect(rounds).toMatchObject({ first: 13, last: 20, per: 2, times: 4, badCount: 0 });
+    expect(rounds.with).toEqual(["check_queue"]);
+  });
+
+  it("says a problem repeated in a loop once, with its steps", () => {
+    const loopProblem = seq.problems.find((p) => p.loop);
+    expect(loopProblem.text).toBe("issue_refund failed 5 times");
+    expect(loopProblem.range).toEqual([7, 11]);
+    expect(seq.problems).toHaveLength(2);
+  });
+
+  it("keeps different problems in one loop apart, each with its count", () => {
+    const p = structuredClone(LONG_CALL);
+    p.turns[1].workers[0].calls[0].blocked = true;
+    p.turns[1].workers[0].calls[0].failed = false;
+    const texts = sequenceOf(p).problems.filter((x) => x.loop).map((x) => x.text);
+    expect(texts).toEqual(["issue_refund was refused at step 7", "issue_refund failed 4 times"]);
+  });
+
+  it("says a no-answer inside a loop as its own problem, not a failure", () => {
+    const p = structuredClone(LONG_CALL);
+    Object.assign(p.turns[2].workers[3], { state: "timeout", endedAt: null });
+    const seq = sequenceOf(p);
+    expect(seq.problems.map((x) => x.text)).toContain("Escalations didn't answer step 19");
+    expect(seq.loops[1].outcomes).toEqual({ failed: 0, refused: 0, noAnswer: 1 });
+  });
+
+  it("names merged turns by the record's own numbers", () => {
+    const p = structuredClone(LONG_CALL);
+    p.turns.push(
+      { n: 6, at: 92, request: "One more thing.", reply: "Sure.", replyAt: 94, workers: [], own: [] },
+      { n: 7, at: 96, request: "Bye.", reply: "Bye!", replyAt: 97, workers: [], own: [] },
+    );
+    const last = sequenceOf(p).steps.at(-1);
+    expect(last.turns).toBe(3);
+    expect(last.full).toMatch(/^Turn 5: Okay, thanks\.\nTurn 6: One more thing\.\nTurn 7: Bye\.$/);
+  });
+
+  it("finds no loop in a short call", () => {
+    Object.keys(CONTRACT_SAMPLES).forEach((name) => {
+      expect(sequenceOf(rec(name)).loops).toEqual([]);
     });
   });
 });

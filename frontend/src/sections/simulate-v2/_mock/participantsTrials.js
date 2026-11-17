@@ -93,14 +93,18 @@ export const routesOf = (trials, { showTools = false } = {}) => {
   /* Each trial's steps as keyed occurrences: "go:a>b#0", "go:a>b#1"… */
   const keyed = trials.map((t) => {
     const seen = {};
+    /* A step standing for N turns answered alone counts N times, so a
+       trial that asked twice is never read as "not asked". */
     return t.seq.steps
       .filter((s) => showTools || s.kind !== "tool")
-      .map((s) => {
-        const base = stepKey(s);
-        const k = seen[base] || 0;
-        seen[base] = k + 1;
-        return { key: `${base}#${k}`, step: s };
-      });
+      .flatMap((s) =>
+        Array.from({ length: s.kind === "message" ? s.turns || 1 : 1 }, () => {
+          const base = stepKey(s);
+          const k = seen[base] || 0;
+          seen[base] = k + 1;
+          return { key: `${base}#${k}`, step: s };
+        }),
+      );
   });
   /* Column order: the first trial's, others' extras after their neighbour. */
   const order = [];
