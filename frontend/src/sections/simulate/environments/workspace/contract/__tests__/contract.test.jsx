@@ -192,8 +192,8 @@ describe("Workers card", () => {
       allowed_tools: ["get_order", "list_refunds"],
       tools_shown: ["get_order", "list_refunds"],
       binding: "separate",
-      enforcement: "held_at_world",
-      enforcement_label: "Held at the world: its own channel",
+      enforcement: "unknown",
+      enforcement_label: "Not known: held only when a trial shows it",
     },
     {
       id: "refund",

@@ -126,9 +126,10 @@ export default function ChatCallDrawer({
     setChosenArtifact("traces");
   };
   const hasWorkers = useHasWorkers(task.id, task.status);
-  // Stays on Participants while the next call's record is unread; a call known to have none falls back.
+  // Stays on Participants while the next call's record is unread; a call known to have none falls back, unless an
+  // earlier attempt is chosen, whose record is read on its own.
   const artifact =
-    chosenArtifact === "workers" && hasWorkers === false
+    chosenArtifact === "workers" && hasWorkers === false && !attempt
       ? "transcript"
       : chosenArtifact;
   // An earlier attempt's record is read on its own, whatever the latest attempt kept.

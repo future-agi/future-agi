@@ -11,8 +11,8 @@ const ORDER_LOOKUP = {
   allowed_tools: ["get_order"],
   tools_shown: ["get_order"],
   binding: "separate",
-  enforcement: "held_at_world",
-  enforcement_label: "Held at the world: its own channel",
+  enforcement: "unknown",
+  enforcement_label: "Not known: held only when a trial shows it",
 };
 const REFUND = {
   id: "refund",

@@ -288,9 +288,11 @@ describe("ChatCallDrawer, an earlier attempt", () => {
     await user.click(
       screen.getByRole("option", { name: /Attempt 1, re-run at/ }),
     );
-    expect(
-      screen.getByRole("tab", { name: "Participants" }),
-    ).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Participants" }));
+    expect(screen.getByRole("tab", { name: "Participants" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     mocks.callDetail = null;
   });
 });
