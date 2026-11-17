@@ -125,19 +125,19 @@ SENSITIVE_KEY_SUBSTRINGS = (
 )
 _REDACTED = "[Filtered]"
 
-# Modules whose stack frames hold a raw span batch: the OTLP receivers, the
-# payload store, the ingestion task and the span helpers that catch and log
-# their own errors. Span content sits under ordinary names (data, raw,
-# attributes), so the key-name scrubbers miss it. An event with one of these
-# frames in any stack sends no frame variables. Matched on a dot boundary.
+# Modules whose stack frames hold a raw span batch: the gRPC OTLP receiver, the
+# Langfuse-compatible ingestion view, the payload store, the ingestion task and
+# the span helpers that catch and log their own errors. Span
+# content sits under ordinary names (data, raw, attributes), so the key-name
+# scrubbers miss it. An event with one of these frames in any stack sends no
+# frame variables. Matched on a dot boundary.
 RAW_SPAN_MODULES = (
     "tfc.utils.payload_storage",
     "tracer.services.grpc",
     "tracer.utils.otel",
     "tracer.utils.pii_scrubber",
     "tracer.utils.trace_ingestion",
-    "tracer.views.http_otlp",
-    "tracer.views.otlp",
+    "tracer.views.langfuse_ingestion",
 )
 
 # Sample rates - configurable via env, lower in production to reduce costs
@@ -309,7 +309,13 @@ def _scrub_deployment_telemetry_event(event: dict) -> dict:
 
 
 def _is_raw_span_frame(frame: Any) -> bool:
-    """True for a frame of RAW_SPAN_MODULES, or for one whose module is unknown."""
+    """True for a frame of RAW_SPAN_MODULES, or for one whose module is unknown.
+
+    Code compiled without ``__name__`` in its globals has no module: a live
+    Jinja2 template frame is one. So an error logged while a template renders
+    loses its frame variables too. A template exception keeps them, because
+    Jinja2 rewrites its frames to the module ``<template>``.
+    """
     module = frame.get("module") if isinstance(frame, dict) else None
     if not isinstance(module, str) or not module:
         return True  # Cannot tell where it ran, so assume it holds a batch.

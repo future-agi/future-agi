@@ -11,6 +11,8 @@ that keep the issue stream clean and safe:
 
 from __future__ import annotations
 
+import pytest
+
 from tfc.logging.sentry import (
     _REDACTED,
     _event_scrubber,
@@ -237,6 +239,30 @@ def test_a_frame_with_no_module_drops_every_frames_vars():
     assert [
         f for f in out["threads"]["values"][0]["stacktrace"]["frames"] if "vars" in f
     ] == []
+
+
+@pytest.mark.parametrize(
+    ("module", "stripped"),
+    [
+        ("tracer.utils.trace_ingestion", True),  # the module itself
+        ("tracer.utils.otel.media", True),  # a dotted child
+        ("tracer.utils.otel_metrics", False),  # a neighbour sharing the prefix
+        ("tracer.utils", False),  # the parent package
+    ],
+)
+def test_the_module_match_stops_at_a_dot(module, stripped):
+    frames = [
+        {"module": module, "vars": {"batch": "span text"}},
+        {"module": "accounts.views", "vars": {"user_id": "1"}},
+    ]
+    event = {"exception": {"values": [{"stacktrace": {"frames": frames}}]}}
+
+    out = before_send(event, {})
+
+    assert out is not None
+    [value] = out["exception"]["values"]
+    with_vars = [f for f in value["stacktrace"]["frames"] if "vars" in f]
+    assert len(with_vars) == (0 if stripped else 2)
 
 
 def test_an_event_whose_stacks_cannot_be_walked_is_dropped():

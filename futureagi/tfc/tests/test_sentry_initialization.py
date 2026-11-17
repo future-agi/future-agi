@@ -3,28 +3,54 @@
 import asyncio
 import contextlib
 import json
+import logging
+import sys
 from types import SimpleNamespace
 from unittest import mock
 
+import grpc
+import jinja2
 import pytest
 import sentry_sdk
 import structlog
+from django.core.handlers.asgi import ASGIHandler
+from django.core.signals import request_finished, request_started
+from django.db import close_old_connections
+from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+    ExportTraceServiceRequest,
+)
 from redis.exceptions import RedisError
 from sentry_sdk.utils import iter_event_frames
 
 from tfc.logging import sentry
 from tfc.temporal.common.sentry_interceptor import SentryActivityInboundInterceptor
 from tfc.utils.payload_storage import get_payload_storage
-from tracer.utils import otel, trace_ingestion
-from tracer.views.http_otlp import OTLPTraceHTTPView
+from tracer.services.grpc import ObservationSpanService
+from tracer.utils import otel, pii_scrubber, trace_ingestion
+from tracer.views import langfuse_ingestion
+from tracer.views.langfuse_ingestion import LangfuseIngestionView
 
 
 @pytest.fixture
 def initialized_sentry(request, monkeypatch):
+    # A test can ask for another event level: @pytest.mark.parametrize(..., indirect=True).
+    level = getattr(request, "param", "ERROR")
+    with _sentry_for(monkeypatch, "temporal", level, tags={"queue": "tasks_l"}) as pair:
+        yield pair
+
+
+@pytest.fixture
+def django_sentry(monkeypatch):
+    """The web process's Sentry: its Django integration attaches the request."""
+    with _sentry_for(monkeypatch, "django", "ERROR") as pair:
+        yield pair
+
+
+@contextlib.contextmanager
+def _sentry_for(monkeypatch, component, level, tags=None):
     events = []
     real_init = sentry_sdk.init
-    # A test can ask for another event level: @pytest.mark.parametrize(..., indirect=True).
-    monkeypatch.setenv("SENTRY_LOG_LEVEL", getattr(request, "param", "ERROR"))
+    monkeypatch.setenv("SENTRY_LOG_LEVEL", level)
     global_scope = sentry_sdk.get_global_scope()
     previous_client = global_scope.client
 
@@ -45,7 +71,7 @@ def initialized_sentry(request, monkeypatch):
     monkeypatch.setattr(sentry, "_initialized_components", set())
     with sentry_sdk.isolation_scope():
         try:
-            assert sentry.init_sentry(component="temporal", tags={"queue": "tasks_l"})
+            assert sentry.init_sentry(component=component, tags=tags)
             yield sentry_sdk.get_client(), events
         finally:
             client = global_scope.client
@@ -121,8 +147,10 @@ def _ingestion_batch(**stubs):
         "bulk_convert_otel_spans_to_observation_spans": mock.Mock(return_value=[]),
         **stubs,
     }
+    # The task's metering import, stubbed so the run needs no ee/ (OSS boots without it).
+    oss = SimpleNamespace(DeploymentMode=SimpleNamespace(is_oss=lambda: True))
     with (
-        mock.patch("ee.usage.deployment.DeploymentMode.is_oss", return_value=True),
+        mock.patch.dict(sys.modules, {"ee.usage.deployment": oss}),
         mock.patch.object(
             trace_ingestion.transaction, "atomic", contextlib.nullcontext
         ),
@@ -202,26 +230,145 @@ def test_a_span_helper_that_logs_its_own_failure_sends_no_frame_vars(
     _assert_sent_without_frame_vars(events, "tracer.utils.otel")
 
 
+def test_a_pii_helper_that_logs_its_own_failure_sends_no_frame_vars(
+    initialized_sentry,
+):
+    """find_pii catches a failed analysis and logs it: no task frame either."""
+    _client, events = initialized_sentry
+    analyzer = SimpleNamespace(
+        BatchAnalyzerEngine=mock.Mock(side_effect=RuntimeError("analyzer down"))
+    )
+    with (
+        mock.patch.object(pii_scrubber, "_ensure_engines", return_value=True),
+        mock.patch.dict(sys.modules, {"presidio_analyzer": analyzer}),
+    ):
+        assert pii_scrubber.find_pii([SPAN_TEXT]) is None
+
+    [event] = events
+    assert "tracer.utils.trace_ingestion" not in _frame_modules(event)
+    _assert_sent_without_frame_vars(events, "tracer.utils.pii_scrubber")
+
+
+class _GrpcContext:
+    """The servicer context Export receives once django_socio_grpc has authenticated."""
+
+    def __init__(self):
+        self.user = SimpleNamespace(id=7, organization=SimpleNamespace(id=8))
+        self.workspace = None
+        self.aborted = None
+
+    async def abort(self, code, details):
+        self.aborted = code
+
+
 @pytest.mark.parametrize("failure", ["store", "enqueue"])
-def test_a_receiver_that_cannot_queue_a_batch_sends_no_frame_vars(
+def test_the_grpc_receiver_that_cannot_queue_a_batch_sends_no_frame_vars(
     refusing_redis, initialized_sentry, failure
 ):
-    """The OTLP receiver logs the failure while its frame holds the request body."""
+    """The OTLP receiver logs the failure while its frame holds the request bytes."""
     _client, events = initialized_sentry
     if failure == "enqueue":
         refusing_redis.setex.side_effect = None
-    request = mock.Mock(data={"resourceSpans": [{"note": SPAN_TEXT}]})
-    with mock.patch.object(
-        trace_ingestion.bulk_create_observation_span_task,
-        "apply_async",
-        side_effect=RuntimeError("Temporal is not reachable"),
+    export = ExportTraceServiceRequest()
+    export.resource_spans.add().scope_spans.add().spans.add().name = SPAN_TEXT
+    context = _GrpcContext()
+    # The ee rate limiter, stubbed so the run needs no ee/.
+    allowed = SimpleNamespace(check=lambda org, kind: SimpleNamespace(allowed=True))
+    limiter = SimpleNamespace(RateLimiter=allowed)
+    with (
+        mock.patch.dict(sys.modules, {"ee.usage.services.rate_limiter": limiter}),
+        mock.patch.object(
+            trace_ingestion.bulk_create_observation_span_task,
+            "apply_async",
+            side_effect=RuntimeError("Temporal is not reachable"),
+        ),
     ):
-        response = OTLPTraceHTTPView().post(request)
+        asyncio.run(ObservationSpanService().Export(export, context))
 
-    assert response.status_code == 500
+    assert context.aborted == grpc.StatusCode.INTERNAL
     refusing_redis.setex.assert_called_once()
     assert len(events) == 1
-    _assert_sent_without_frame_vars(events, "tracer.views.http_otlp")
+    _assert_sent_without_frame_vars(events, "tracer.services.grpc")
+
+
+class _ResolvedApiKey:
+    """What the API-key authenticator resolves, without a database."""
+
+    def authenticate(self, request):
+        user = SimpleNamespace(
+            id=7, is_authenticated=True, organization=SimpleNamespace(id=8)
+        )
+        return user, None
+
+
+def _post_through_asgi(path, body):
+    """One HTTP request through Django's ASGIHandler, as granian serves it.
+    Sentry wraps that handler: its middleware adds the request URL, and the
+    Django integration adds the parsed body."""
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": [
+            (b"host", b"testserver"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+        ],
+        "client": ("127.0.0.1", 50000),
+        "server": ("testserver", 80),
+    }
+    incoming = [{"type": "http.request", "body": body, "more_body": False}]
+    sent = []
+
+    async def receive():
+        if incoming:
+            return incoming.pop(0)
+        # The client stays connected: Django cancels this wait once it responds.
+        await asyncio.Future()
+
+    async def send(message):
+        sent.append(message)
+
+    # As Django's test client does: the request must not close the run's connections.
+    request_started.disconnect(close_old_connections)
+    request_finished.disconnect(close_old_connections)
+    try:
+        asyncio.run(ASGIHandler()(scope, receive, send))
+    finally:
+        request_started.connect(close_old_connections)
+        request_finished.connect(close_old_connections)
+    return next(m["status"] for m in sent if m["type"] == "http.response.start")
+
+
+def test_a_failed_langfuse_batch_sends_no_frame_vars_and_no_body(django_sentry):
+    """The Langfuse-compatible receiver, through Django's ASGI handler: its
+    frames and the parsed body the Django integration attaches hold the trace."""
+    _client, events = django_sentry
+    batch = [
+        {"id": "e1", "type": "trace-create", "body": {"id": "t1", "input": SPAN_TEXT}}
+    ]
+    with (
+        mock.patch.object(
+            LangfuseIngestionView, "authentication_classes", [_ResolvedApiKey]
+        ),
+        mock.patch.object(
+            langfuse_ingestion, "_resolve_project", side_effect=RuntimeError("db down")
+        ),
+    ):
+        status = _post_through_asgi(
+            "/api/public/ingestion", json.dumps({"batch": batch}).encode()
+        )
+
+    assert status == 207
+    [event] = events
+    assert event["request"]["url"].endswith("/api/public/ingestion")
+    assert "data" not in event["request"]
+    _assert_sent_without_frame_vars(events, "tracer.views.langfuse_ingestion")
 
 
 @pytest.mark.parametrize("initialized_sentry", ["WARNING"], indirect=True)
@@ -252,3 +399,38 @@ def test_events_from_other_code_keep_their_frame_vars(initialized_sentry):
         assert __name__ in _frame_modules(event)
         frame_vars = [frame.get("vars") for frame in iter_event_frames(event)]
         assert kept in json.dumps(frame_vars, default=str)
+
+
+# Jinja2 templates: the guard's fail-closed rule and its diagnostic trade-off.
+
+
+def test_a_template_error_keeps_its_frame_vars(initialized_sentry):
+    """Jinja2 rewrites a failed template's frames to the module "<template>",
+    so the guard can tell them from ingestion and keeps their variables."""
+    _client, events = initialized_sentry
+    kept = "visible-local-5e1a"
+    env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+    try:
+        env.from_string("Hi {{ user.name }}").render(user={})
+    except jinja2.UndefinedError as exc:
+        sentry_sdk.capture_exception(exc)
+
+    [event] = events
+    assert "<template>" in _frame_modules(event)
+    frame_vars = [frame.get("vars") for frame in iter_event_frames(event)]
+    assert kept in json.dumps(frame_vars, default=str)
+
+
+def test_an_error_logged_while_a_template_renders_loses_frame_vars(
+    initialized_sentry,
+):
+    """A live template frame has no module name, so the guard fails closed:
+    the whole event loses its frame variables. A known diagnostic trade-off."""
+    _client, events = initialized_sentry
+    env = jinja2.Environment()
+    env.globals["report"] = lambda: logging.getLogger("accounts.views").error("x")
+    env.from_string("{{ report() }}").render()
+
+    [event] = events
+    assert None in _frame_modules(event)
+    assert [frame for frame in iter_event_frames(event) if "vars" in frame] == []
