@@ -160,7 +160,12 @@ describe("ChatCallDrawer World state", () => {
 
   it("says why World state were not recorded for an in-process agent", async () => {
     mocks.callDetail = {
-      trial_state: { recorded: false, why: "in_process_tools" },
+      trial_state: {
+        recorded: false,
+        why: "in_process_tools",
+        why_label:
+          "World state is not recorded for this agent: its tools run inside it, where the test world cannot see them.",
+      },
     };
     render(
       <ChatCallDrawer

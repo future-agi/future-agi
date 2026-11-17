@@ -47,8 +47,6 @@ export const TRIAL_CHANGES_COPY = {
   usageTotal: (line) => `In all: ${line}, counted in the simulator's usage`,
   empty: "Nothing changed in the world in this trial.",
   notRecorded: "World state was not recorded for this trial.",
-  inProcess:
-    "World state is not recorded for this agent: its tools run inside it, where the test world cannot see them.",
   unreadable:
     "What changed in the world could not be read for this trial. Checks that needed it read Unmeasured.",
   endStateLead: "The world as this trial ended is kept:",

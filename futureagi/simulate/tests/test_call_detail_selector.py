@@ -343,3 +343,41 @@ def test_a_trial_on_a_seal_built_before_the_world_door_says_its_world_actions_ar
     assert in_process["why_label"].startswith(
         "World state is not recorded for this agent"
     )
+
+
+# A trial stored before the platform read pre-door seals: the agent's counts are zeros while its 8 calls were recorded.
+OLD_PRE_DOOR_RECORD = {
+    "start": {"state": "seeded", "tables": [], "against": "sealed_seed"},
+    "state_changes": [
+        {
+            "who": "agent",
+            "name": "the agent",
+            "read": 0,
+            "faulted": 0,
+            "refused": 0,
+            "attempted": 0,
+            "committed": 0,
+            "duplicate": 0,
+            "no_change": True,
+            "read_actions": [],
+            "committed_actions": [],
+        }
+    ],
+    "records": {"changes": [], "skipped": [], "truncated": 0},
+}
+
+
+def test_a_stored_trial_whose_agent_calls_never_reached_the_world_reads_not_known_not_zero():
+    calls = [{"name": "find_items", "arguments": {"query": "kayak"}}] * 8
+
+    shown = trial_state(_call(OLD_PRE_DOOR_RECORD), calls=calls)
+
+    assert (shown["recorded"], shown["why"]) == (False, "calls_not_seen")
+    assert "not known" in shown["why_label"] and "attempted" not in shown["why_label"]
+
+
+def test_a_stored_trial_with_no_tool_calls_keeps_its_counts():
+    shown = trial_state(_call(OLD_PRE_DOOR_RECORD), calls=[])
+
+    assert "recorded" not in shown
+    assert shown["state_changes"][0]["attempted"] == 0

@@ -254,7 +254,31 @@ NOT_RECORDED_LABELS = {
     "cannot see them.",
     "sealed_without_door": "This environment was built before world actions were recorded, so this trial's are not "
     "known. Rebuild it to see them.",
+    "calls_not_seen": "None of the agent's tool calls in this trial reached the test world, so what they changed is "
+    "not known. An environment built before world actions were recorded reads this way; rebuild it to see them.",
 }
+CALLS_NOT_SEEN = "calls_not_seen"
+
+
+def _calls_not_seen(
+    changes: Sequence[Mapping[str, Any]], calls: Sequence[Mapping[str, Any]]
+) -> bool:
+    """Whether the agent called tools in this trial while the world's door recorded nothing of it at all."""
+    agent = [one for one in changes if one.get("who") == AGENT]
+    quiet = bool(agent) and all(
+        not one.get(count)
+        for one in agent
+        for count in (
+            "attempted",
+            "committed",
+            "read",
+            "refused",
+            "faulted",
+            "duplicate",
+        )
+    )
+    return quiet and any(not one.get("handoff") for one in calls)
+
 
 # How far each call actor got, in the words the call shows.
 DELIVERY_LABELS: dict[CallActorDelivery, str] = {
@@ -921,6 +945,10 @@ def trial_state(
         + _approval_notices(calls)
         + [cast(TrialNotice, one) for one in _entries(state.get("notices"))],
     }
+    if state.get("recorded") is not False and _calls_not_seen(changes, calls):
+        # A record from a trial whose agent called tools that never passed the world's door (a seal built before it):
+        # its zeros are not "no change", so they are not shown as one.
+        state = {**state, "recorded": False, "why": CALLS_NOT_SEEN}
     if state.get("recorded") is False:
         shown["recorded"] = False
         shown["why"] = str(state.get("why") or "")
