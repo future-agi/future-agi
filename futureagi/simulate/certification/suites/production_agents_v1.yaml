@@ -21,7 +21,6 @@ defaults:
   max_duration_seconds: 1800
   artifacts:
     level: full
-  trace_reference: https://traces.internal/certification/production_agents_v1
 
 cases:
   - case_key: ride_booking__primary
@@ -33,8 +32,8 @@ cases:
       source: { repository: https://github.com/future-agi/ride-voice-agent }
     target: { kind: hosted_service }
     interactions:
-      - { interaction: 1, config_ref: futureagi/simulate/certification/fixtures/outbound_voice.yaml, config_sha256: 84fb18c1226d1096f3473389d29a622f178bf70bb34f859414be67c7dad7d82c }
-      - { interaction: 2, config_ref: futureagi/simulate/certification/fixtures/outbound_voice.yaml, config_sha256: 84fb18c1226d1096f3473389d29a622f178bf70bb34f859414be67c7dad7d82c }
+      - { interaction: 1, config_ref: simulate/certification/fixtures/outbound_voice.yaml, config_sha256: 84fb18c1226d1096f3473389d29a622f178bf70bb34f859414be67c7dad7d82c }
+      - { interaction: 2, config_ref: simulate/certification/fixtures/outbound_voice.yaml, config_sha256: 84fb18c1226d1096f3473389d29a622f178bf70bb34f859414be67c7dad7d82c }
 
   - case_key: front_desk__primary
     enabled: false

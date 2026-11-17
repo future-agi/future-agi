@@ -277,6 +277,8 @@ def test_hosted_service_requires_endpoint_review():
     case = _enabled_case()
     case["target"] = {"kind": "hosted_service", "ref": "agents.example.com"}
     _err(lambda: validate_manifest(_doc([case])), "authorization_unverified")
+    case["authorization"]["target_endpoint_reviewed"] = "false"
+    _err(lambda: validate_manifest(_doc([case])), "authorization_unverified")
     case["authorization"]["target_endpoint_reviewed"] = True
     normalized = validate_manifest(_doc([case]))
     assert normalized["cases"][0]["target"]["kind"] == "hosted_service"
@@ -331,18 +333,21 @@ def test_rejects_config_ref_escape():
 # ---------------------------------------------------------------------------
 
 
-def test_config_ref_materialized_from_repo(tmp_path: Path):
-    fixture = tmp_path / "conf" / "ride.yaml"
+def test_config_ref_materialized_from_backend_root(tmp_path: Path):
+    backend_root = tmp_path / "app" / "backend"
+    fixture = backend_root / "simulate" / "certification" / "fixtures" / "ride.yaml"
     fixture.parent.mkdir(parents=True)
     fixture.write_bytes(b"mode: connect_only\nconfig:\n  assistant_id: ride\n")
     case = _enabled_case()
     for i in case["interactions"]:
-        i["config_ref"] = "conf/ride.yaml"
+        i["config_ref"] = "simulate/certification/fixtures/ride.yaml"
         i["config_sha256"] = hashlib.sha256(
             b"mode: connect_only\nconfig:\n  assistant_id: ride\n"
         ).hexdigest()
-    normalized = validate_manifest(_doc([case]), repo_root=tmp_path)
-    assert normalized["cases"][0]["interactions"][0]["config_ref"] == "conf/ride.yaml"
+    normalized = validate_manifest(_doc([case]), repo_root=backend_root)
+    assert normalized["cases"][0]["interactions"][0]["config_ref"] == (
+        "simulate/certification/fixtures/ride.yaml"
+    )
     assert normalized["cases"][0]["interactions"][0]["agent_config"]["config"] == {
         "assistant_id": "ride"
     }
