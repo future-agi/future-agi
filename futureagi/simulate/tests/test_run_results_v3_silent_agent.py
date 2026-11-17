@@ -13,6 +13,7 @@ from simulate.services.run_results_v3_queries import (
     run_calls_queryset,
 )
 from simulate.utils.processing_outcomes import (
+    HARNESS_VERDICT_WITHHELD_KEY,
     SILENT_AGENT_SKIP_REASON,
     set_processing_skip_metadata,
 )
@@ -50,6 +51,7 @@ def _sealed_pass(*, skipped=False, reason=SILENT_AGENT_SKIP_REASON):
     }
     if skipped:
         metadata = set_processing_skip_metadata(metadata, skipped=True, reason=reason)
+        metadata[HARNESS_VERDICT_WITHHELD_KEY] = reason == SILENT_AGENT_SKIP_REASON
     return metadata
 
 

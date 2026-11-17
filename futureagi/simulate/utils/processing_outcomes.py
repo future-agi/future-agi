@@ -8,12 +8,25 @@ SILENT_AGENT_SKIP_REASON = (
 )
 
 
+# Own key for the withheld verdict: the executor rewrites ``processing_skip_reason``
+# when the platform eval job runs, but it never writes this one.
+HARNESS_VERDICT_WITHHELD_KEY = "harness_verdict_withheld"
+
+
 def is_silent_agent_skip(call_metadata: Any) -> bool:
     """Whether the call was withheld because the agent never answered it."""
     return (
         isinstance(call_metadata, dict)
         and call_metadata.get("processing_skipped") is True
         and call_metadata.get("processing_skip_reason") == SILENT_AGENT_SKIP_REASON
+    )
+
+
+def is_harness_verdict_withheld(call_metadata: Any) -> bool:
+    """Whether the harness verdict of this call is withheld, whatever the receipt sealed."""
+    return (
+        isinstance(call_metadata, dict)
+        and call_metadata.get(HARNESS_VERDICT_WITHHELD_KEY) is True
     )
 
 

@@ -1007,7 +1007,8 @@ def test_a_skipped_call_with_a_harness_pass_is_inconclusive_in_all_three_copies(
     execution, scenario = run
     metadata = {"harness_outcome_status": "passed"}
     if skipped is not None:
-        metadata["processing_skipped"] = skipped
+        metadata["harness_verdict_withheld"] = skipped
+        metadata["processing_skipped"] = True
         metadata["processing_skip_reason"] = SILENT_AGENT_SKIP_REASON
     call = CallExecution.objects.create(
         test_execution=execution,
@@ -1027,29 +1028,41 @@ def test_a_skipped_call_with_a_harness_pass_is_inconclusive_in_all_three_copies(
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    ("reason", "harness_status", "expected"),
+    ("withheld", "reason", "harness_status", "expected"),
     [
-        # The agent never answered: a harness failure still reads failed, a pass never does.
-        (SILENT_AGENT_SKIP_REASON, "failed", "failed"),
-        (SILENT_AGENT_SKIP_REASON, "passed", "inconclusive"),
+        # The agent never answered: a harness failure still reads failed, a pass never does,
+        # whatever reason the eval job has since written over the silent one.
+        (True, SILENT_AGENT_SKIP_REASON, "failed", "failed"),
+        (True, SILENT_AGENT_SKIP_REASON, "passed", "inconclusive"),
+        (True, "Call too short to process.", "passed", "inconclusive"),
+        (
+            True,
+            "We could not find enough conversation from either side to process this call.",
+            "passed",
+            "inconclusive",
+        ),
         # The executor's own skips never override the harness verdict.
         (
+            False,
             "We could not find enough customer conversation to process this call.",
             "failed",
             "failed",
         ),
         (
+            False,
             "We could not find enough customer conversation to process this call.",
             "passed",
             "passed",
         ),
-        ("Call too short to process.", "failed", "failed"),
-        (None, "failed", "failed"),
-        (None, "passed", "passed"),
+        # The silent reason alone, without the withheld key, is the executor's wording.
+        (False, SILENT_AGENT_SKIP_REASON, "passed", "passed"),
+        (False, "Call too short to process.", "failed", "failed"),
+        (False, None, "failed", "failed"),
+        (False, None, "passed", "passed"),
     ],
 )
 def test_a_skip_never_hides_a_harness_failure_in_all_three_copies(
-    run, reason, harness_status, expected
+    run, withheld, reason, harness_status, expected
 ):
     execution, scenario = run
     call = CallExecution.objects.create(
@@ -1059,6 +1072,7 @@ def test_a_skip_never_hides_a_harness_failure_in_all_three_copies(
         started_at=timezone.now(),
         call_metadata={
             "harness_outcome_status": harness_status,
+            "harness_verdict_withheld": withheld,
             "processing_skipped": True,
             "processing_skip_reason": reason,
         },

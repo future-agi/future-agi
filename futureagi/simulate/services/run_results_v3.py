@@ -52,7 +52,10 @@ from simulate.services.scoring_status import (
     scoring_input_from_call,
 )
 from simulate.utils.eval_summary import iter_live_eval_outputs
-from simulate.utils.processing_outcomes import is_silent_agent_skip
+from simulate.utils.processing_outcomes import (
+    HARNESS_VERDICT_WITHHELD_KEY,
+    is_harness_verdict_withheld,
+)
 
 OUTCOME_LABELS = {
     "queued": "Queued",
@@ -107,6 +110,7 @@ CALL_ROW_METADATA_KEYS = (
     "harness_trial_index",
     "processing_skipped",
     "processing_skip_reason",
+    HARNESS_VERDICT_WITHHELD_KEY,
     *SCORING_META_KEYS,
 )
 
@@ -214,7 +218,7 @@ def call_outcome(
     if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
         return "failed"
     # A call the agent never answered holds no pass, whatever the harness said.
-    if is_silent_agent_skip(metadata):
+    if is_harness_verdict_withheld(metadata):
         return "inconclusive"
     if "error" in verdicts:
         return "inconclusive"
@@ -695,7 +699,7 @@ def build_call_rows(
             or []
         )
         # A call the agent never answered holds no verdict, whatever the receipt sealed.
-        silent_agent = is_silent_agent_skip(metadata)
+        silent_agent = is_harness_verdict_withheld(metadata)
         sub_goal_results = []
         for item in raw_sub_goals:
             name = item.get("name") if isinstance(item, dict) else item

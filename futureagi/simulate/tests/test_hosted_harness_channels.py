@@ -44,6 +44,7 @@ from simulate.services.hosted_harness_ingestion import (
     ingest_artifact,
     ingest_result_receipt,
 )
+from simulate.utils.processing_outcomes import SILENT_AGENT_SKIP_REASON
 
 BASE = "/simulate/api/harness/attempts"
 
@@ -2433,3 +2434,71 @@ def test_hosted_receipt_the_agent_answered_keeps_its_pass(
     assert not call.call_metadata.get("processing_skipped")
     assert call_outcome(call, {}) == "passed"
     assert job.completed_count == 1
+
+
+_EITHER_SIDE_REASON = (
+    "We could not find enough conversation from either side to process this call."
+)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("modality", ["text", "voice"])
+@pytest.mark.parametrize("signals", [None, (2, False, False)])
+def test_platform_eval_job_after_a_silent_ingest_keeps_the_call_inconclusive(
+    organization, workspace, modality, signals
+):
+    """The eval job rewrites the skip reason; the withheld verdict must outlive it."""
+    from model_hub.models.evals_metric import EvalTemplate
+    from simulate.models.eval_config import SimulateEvalConfig
+    from simulate.services.run_results_v3 import build_call_rows, call_outcome
+    from simulate.services.test_executor import TestExecutor
+
+    job, capability, scenario_id = _begin_hosted_scenario(
+        organization, workspace, key=f"hosted-eval-job-{modality}", modality=modality
+    )
+    receipt = _hosted_receipt(job, capability, scenario_id, modality=modality)
+    call = _ingest_hosted(job, capability, receipt)
+    assert call.call_metadata["processing_skipped"] is True
+    template = EvalTemplate.objects.create(
+        name="Tone", config={"prompt": "Judge the tone"}, organization=organization
+    )
+    eval_config = SimulateEvalConfig.objects.create(
+        name="Tone", eval_template=template, run_test=call.test_execution.run_test
+    )
+    run_test = call.test_execution.run_test
+    run_test.enable_tool_evaluation = False
+    run_test.save(update_fields=["enable_tool_evaluation"])
+
+    executor = TestExecutor()
+    patches = [
+        patch("simulate.services.test_executor.close_old_connections", lambda: None),
+        patch.object(
+            TestExecutor,
+            "_get_call_transcript_data",
+            return_value={"transcript": ""},
+        ),
+    ]
+    if signals is not None:
+        patches.append(
+            patch.object(
+                TestExecutor, "_get_conversation_presence_signals", return_value=signals
+            )
+        )
+    for item in patches:
+        item.start()
+    try:
+        executor._run_simulate_evaluations(call, eval_config_ids=[eval_config.id])
+    finally:
+        for item in patches:
+            item.stop()
+
+    call.refresh_from_db()
+    # The executor's own skip reason replaced the silent one ...
+    assert call.call_metadata["processing_skip_reason"] != SILENT_AGENT_SKIP_REASON
+    if signals is not None:
+        assert call.call_metadata["processing_skip_reason"] == _EITHER_SIDE_REASON
+    # ... but the verdict stays withheld on every surface that reads it.
+    assert call_outcome(call, {}) == "inconclusive"
+    rows, _ = build_call_rows(call.test_execution, [call], [], set())
+    assert rows[0]["outcome"] == "inconclusive"
+    assert rows[0]["harness_outcome_status"] is None

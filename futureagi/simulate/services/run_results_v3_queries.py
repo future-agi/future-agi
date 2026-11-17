@@ -97,13 +97,11 @@ from simulate.services.run_results_v3_scoring import (
     resolve_eval_scoring_spec,
     score_tokens,
 )
-from simulate.utils.processing_outcomes import SILENT_AGENT_SKIP_REASON
+from simulate.utils.processing_outcomes import HARNESS_VERDICT_WITHHELD_KEY
 
-# A call withheld because the agent never answered it; the executor's own skips differ.
-_SILENT_AGENT_SKIP = Q(
-    call_metadata__processing_skipped=True,
-    call_metadata__processing_skip_reason=SILENT_AGENT_SKIP_REASON,
-)
+# A call whose harness verdict is withheld because the agent never answered it. Its own
+# key: the platform eval job rewrites ``processing_skip_reason``, never this one.
+_SILENT_AGENT_SKIP = Q(**{f"call_metadata__{HARNESS_VERDICT_WITHHELD_KEY}": True})
 OUTCOMES = tuple(OUTCOME_LABELS)
 # Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
 # so they are reported as run health rather than counted against the agent.

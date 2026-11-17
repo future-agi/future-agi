@@ -47,7 +47,7 @@ from simulate.services.scoring_status import (
     TRANSPORT_RUN_STATUSES,
     settle_run_after_commit,
 )
-from simulate.utils.processing_outcomes import SILENT_AGENT_SKIP_REASON
+from simulate.utils.processing_outcomes import HARNESS_VERDICT_WITHHELD_KEY
 from tracer.services.observability_switch import (
     ObservabilityRefused,
     refusal_body,
@@ -3039,8 +3039,7 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
         # failed call.
         # A call the agent never answered holds no verdict, whatever its receipt sealed.
         silent_calls = CallExecution.no_workspace_objects.filter(
-            call_metadata__processing_skipped=True,
-            call_metadata__processing_skip_reason=SILENT_AGENT_SKIP_REASON,
+            **{f"call_metadata__{HARNESS_VERDICT_WITHHELD_KEY}": True}
         )
         silent_receipts = receipts.filter(
             Q(execution__call_execution__in=silent_calls)

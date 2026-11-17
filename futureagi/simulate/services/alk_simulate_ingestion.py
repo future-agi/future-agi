@@ -50,8 +50,10 @@ from simulate.services.test_executor import (
 )
 from simulate.utils.ended_reason import to_canonical_ended_reason
 from simulate.utils.processing_outcomes import (
+    HARNESS_VERDICT_WITHHELD_KEY,
     SILENT_AGENT_SKIP_REASON,
     build_skipped_eval_output_payload,
+    is_harness_verdict_withheld,
     is_silent_agent_skip,
     set_processing_skip_metadata,
 )
@@ -1877,10 +1879,14 @@ def _skip_harness_evals_without_agent(call_execution: CallExecution) -> bool:
     if has_agent_message:
         # A transcript stored later (recovery, a replacing receipt) can answer a
         # call an earlier apply marked silent; drop that mark, never the executor's.
-        if is_silent_agent_skip(call_execution.call_metadata):
-            call_execution.call_metadata = set_processing_skip_metadata(
-                call_execution.call_metadata, skipped=False
-            )
+        metadata = call_execution.call_metadata
+        if is_silent_agent_skip(metadata):
+            metadata = set_processing_skip_metadata(metadata, skipped=False)
+        if is_harness_verdict_withheld(metadata):
+            metadata = {
+                k: v for k, v in metadata.items() if k != HARNESS_VERDICT_WITHHELD_KEY
+            }
+        call_execution.call_metadata = metadata
         return False
 
     outputs = dict(call_execution.eval_outputs or {})
@@ -1894,11 +1900,14 @@ def _skip_harness_evals_without_agent(call_execution: CallExecution) -> bool:
                 "source": "harness",
             }
     call_execution.eval_outputs = outputs
-    call_execution.call_metadata = set_processing_skip_metadata(
-        call_execution.call_metadata,
-        skipped=True,
-        reason=_SILENT_AGENT_SKIP_REASON,
-    )
+    call_execution.call_metadata = {
+        **set_processing_skip_metadata(
+            call_execution.call_metadata,
+            skipped=True,
+            reason=_SILENT_AGENT_SKIP_REASON,
+        ),
+        HARNESS_VERDICT_WITHHELD_KEY: True,
+    }
     return True
 
 
