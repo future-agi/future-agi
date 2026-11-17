@@ -79,6 +79,97 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             ORDER BY value LIMIT %(page_limit)s
         """, params
 
+    def build_usage_loads(self, *, identities, skill_names, label=None, context_id=None, agent=None, failed=False, mismatch=False):
+        """Bounded facts for exact overlapping cohorts; never return a prefix."""
+        params = {**self.params, "identities": tuple(identities), "skill_names": tuple(skill_names)}
+        predicate = "skill_name IN %(skill_names)s" if failed else "(skill_id, skill_version_id, skill_digest) IN %(identities)s AND status != 'ERROR'"
+        if mismatch:
+            params["skill_ids"] = tuple(sorted({identity[0] for identity in identities}))
+            predicate = "skill_id IN %(skill_ids)s AND (skill_id, skill_version_id, skill_digest) NOT IN %(identities)s AND status != 'ERROR'"
+        if not (skill_names if failed else identities):
+            predicate = "0 = 1"
+        if label is not None:
+            params["label"] = label
+            predicate += " AND requested_label = %(label)s"
+        if context_id is not None:
+            params["context_id"] = str(context_id)
+            predicate += " AND context_id = %(context_id)s"
+        if agent is not None:
+            params.update(agent_project=str(agent[0]), service=agent[1], agent=agent[2])
+            predicate += " AND toString(project_id) = %(agent_project)s AND service_name = %(service)s AND agent_name = %(agent)s"
+        return f"SELECT * FROM ({self._live_source(failed=failed)}) WHERE {predicate} LIMIT 20001", params
+
+    def build_context_members(self, *, resource_id, identities):
+        """Context cohorts include stamped spans even without a leaf skill load.
+
+        The value-index candidate is replayed before testing the final identity,
+        so an attribute removal or attribute-less tombstone cannot resurrect it.
+        """
+        params = {**self.params, "resource_id": str(resource_id), "context_identities": tuple(identities)}
+        return """
+            SELECT project_id, trace_id, id AS span_id, state.2 AS start_time,
+                   state.5 AS service_name,
+                   if(state.4['gen_ai.agent.name'] != '', state.4['gen_ai.agent.name'], state.4['fi.context.name']) AS agent_name,
+                   state.4['fi.context.id'] AS context_id,
+                   state.4['fi.context.version_id'] AS context_version_id,
+                   context_version_id AS skill_version_id,
+                   state.4['fi.context.requested_label'] AS requested_label,
+                   0 AS requested_version, '' AS via_context_version_id,
+                   NULL AS cached, state.1 = 'context.load' AS is_load
+            FROM (
+                SELECT project_id, trace_id, id,
+                       argMax(tuple(name, start_time, status, attrs_string, service_name, is_deleted), _version) AS state
+                FROM spans
+                WHERE project_id IN %(project_ids)s AND (project_id, trace_id, id) IN (
+                    SELECT project_id, trace_id, id FROM spans
+                    WHERE project_id IN %(project_ids)s
+                      AND start_time >= %(start_date)s AND start_time < %(end_date)s
+                      AND attrs_string['fi.context.id'] = %(resource_id)s
+                )
+                GROUP BY project_id, trace_id, id
+            )
+            WHERE state.6 = 0 AND (state.1 != 'context.load' OR state.3 != 'ERROR')
+              AND state.4['fi.context.id'] = %(resource_id)s
+              AND (state.4['fi.context.id'], state.4['fi.context.version_id'], state.4['fi.context.digest']) IN %(context_identities)s
+              AND state.2 >= %(start_date)s AND state.2 < %(end_date)s
+            LIMIT 20001
+        """, params
+
+    def build_usage_spans(self, *, members):
+        """Replay complete traces, not just spans started in the load window."""
+        params = {**self.params, "members": tuple(members)}
+        return """
+            SELECT project_id, trace_id, id, state.1 AS parent_span_id,
+                   state.2 AS status, state.3 AS latency_ms, state.4 AS cost,
+                   state.5 AS total_tokens, state.6 AS skill_version_ids,
+                   state.7 AS start_time, state.8 AS context_version_id
+            FROM (
+                SELECT project_id, trace_id, id,
+                       argMax(tuple(parent_span_id, status, latency_ms, cost,
+                                    total_tokens, skill_version_ids, start_time, attrs_string['fi.context.version_id']), _version) AS state
+                FROM spans
+                WHERE project_id IN %(project_ids)s
+                  AND (toString(project_id), trace_id) IN %(members)s
+                GROUP BY project_id, trace_id, id
+                HAVING argMax(is_deleted, _version) = 0
+            ) LIMIT 20001
+        """, params
+
+    def build_usage_evals(self, *, config_ids, members):
+        # Config IDs are PG-authorized by project. Trace IDs use the same textual
+        # UUID join as EvalMetricsQueryBuilderV2; results on ANY live span count.
+        params = {**self.params, "config_ids": tuple(config_ids), "trace_ids": tuple(sorted({trace for _, trace in members}))}
+        return """
+            SELECT toString(trace_id) AS trace_id, observation_span_id,
+                   toString(custom_eval_config_id) AS config_id,
+                   output_float, output_bool, output_str
+            FROM tracer_eval_logger_v2 FINAL
+            WHERE is_deleted = 0 AND error = 0
+              AND toString(custom_eval_config_id) IN %(config_ids)s
+              AND toString(trace_id) IN %(trace_ids)s
+            LIMIT 20001
+        """, params
+
     def build_library_counts(self, *, verified_identities):
         """One CH read for the page. Identities are (skill, version, digest).
 
