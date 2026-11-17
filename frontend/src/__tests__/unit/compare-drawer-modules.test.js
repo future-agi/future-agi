@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { test } from "vitest";
 
-const sourceRoot = fileURLToPath(new URL("../../", import.meta.url));
+const sourceRoot = path.resolve("src");
 const projectRoot = path.join(sourceRoot, "sections/project-detail");
 const obsoleteModules = ["CompareDrawer", "CompareSection", "AnnotateSection"];
 
