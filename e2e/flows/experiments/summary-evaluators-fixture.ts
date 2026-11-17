@@ -12,17 +12,19 @@ const TEMPLATES = '/model-hub/eval-templates/create-v2/';
 const PROMPTS = '/model-hub/prompt-templates/create-draft/';
 const EXPERIMENTS = '/model-hub/experiments/v2/';
 type Envelope<T> = { result: T };
+interface SummaryTemplateConfig {
+  eval_type_id: string; output: string; required_keys: string[]; rule_prompt: string;
+}
 
 export const attachIds = (info: TestInfo, name: string, value: unknown) =>
   info.attach(name, { contentType: 'application/json', body: JSON.stringify(value, null, 2) });
 
 // API-only seed. No SQL writes, fabricated terminal states, launch overrides, or deployment changes.
-// Prerequisite: the walk stack must already support Python code evaluations (executor or its
-// existing local fallback); this fixture intentionally does not enable either implementation.
+// Prompt, row and summary evaluations use scoped mock LLM replies; no code executor is needed.
 export async function seedSummaryExperiment(actor: TestActor, probe: StateProbe, mock: MockUpstream,
   prefix: string, info: TestInfo) {
   const output = `${prefix}-completed-output`;
-  const reason = `${prefix}-mean-of-two-sealed-rows`;
+  const reason = `${prefix}-sealed-run-summary`;
   const markers = [`${prefix}-alpha`, `${prefix}-beta`];
   const templateName = `${prefix}-mean`;
   const summaryName = `${prefix}-summary`;
@@ -46,19 +48,28 @@ export async function seedSummaryExperiment(actor: TestActor, probe: StateProbe,
   }
   await attachIds(info, 'summary-source-rows', { rows, columns });
 
-  // Existing MockUpstream named reply contract, server.mjs: non-stream assistant content.
-  await mock.registerReply(prefix, 'prompt', output);
   const model = `${prefix}-model`;
-  // CustomAIModelCreateView wraps data.id in result, and validates with a live completion.
-  // The public-classified mock alias comes from lib/upstream, never a real provider.
-  const custom = await actor.api.post<Envelope<{ data: { id: string } }>>('/model-hub/custom_models/create/', {
-    model_provider: 'openai', model_name: model, input_token_cost: 0, output_token_cost: 0,
-    config_json: { key: 'e2e-mock', api_base: `${mock.baseUrl(prefix, { reply: 'prompt' })}/v1` },
-  });
-  await attachIds(info, 'summary-model', { modelId: custom.result.data.id, model, scenario: prefix });
+  const rowModel = `${prefix}-row-model`;
+  const summaryModel = `${prefix}-summary-model`;
+  // CustomPromptEvaluator reads result/explanation; percentage maps to score and clamps to [0, 1].
+  // Register named assistant content BEFORE custom model validation makes its live completion.
+  for (const [reply, modelName, body] of [
+    ['prompt', model, output],
+    ['row', rowModel, JSON.stringify({ result: 'Pass', explanation: `${prefix}-row-pass` })],
+    ['summary', summaryModel, JSON.stringify({ result: 0.75, explanation: reason })],
+  ]) {
+    await mock.registerReply(prefix, reply, body);
+    // Same scoped OpenAI-compatible route as pairwise-judge-fixture; never a real provider.
+    const custom = await actor.api.post<Envelope<{ data: { id: string } }>>('/model-hub/custom_models/create/', {
+      model_provider: 'openai', model_name: modelName, input_token_cost: 0, output_token_cost: 0,
+      config_json: { key: 'e2e-mock', api_base: `${mock.baseUrl(prefix, { reply })}/v1` },
+    });
+    await attachIds(info, `summary-${reply}-model`, { modelId: custom.result.data.id, model: modelName, scenario: prefix });
+  }
   const rowEval = await actor.api.post<Envelope<{ id: string }>>(TEMPLATES, {
-    name: `${prefix}-row`, eval_type: 'code', code_language: 'python', output_type: 'pass_fail',
-    code: 'def evaluate(output):\n    return bool(output)',
+    name: `${prefix}-row`, eval_type: 'llm', model: rowModel, output_type: 'pass_fail',
+    instructions: `${prefix}-row-check: assess {{output}}.`, pass_threshold: 0.5,
+    check_internet: false, error_localizer_enabled: false,
   });
   const prompt = await actor.api.post<Envelope<{ id: string }>>(PROMPTS, {
     name: `${prefix}-prompt`, is_draft: false, variable_names: {}, prompt_config: [{
@@ -80,7 +91,7 @@ export async function seedSummaryExperiment(actor: TestActor, probe: StateProbe,
     name: experimentName, dataset_id: datasetId, experiment_type: 'llm',
     prompt_config: [{ name: `${prefix}-run`, prompt_id: prompt.result.id, prompt_version: versions[0].id,
       model, model_params: { temperature: 0, max_tokens: 64 } }],
-    user_eval_metrics: [{ template_id: rowEval.result.id, name: `${prefix}-row-check`,
+    user_eval_metrics: [{ template_id: rowEval.result.id, name: `${prefix}-row-check`, model: rowModel,
       config: { mapping: { output: markerColumn.id } } }],
   });
   const experiments = await probe.pg<{ id: string; snapshot_dataset_id: string }>(
@@ -92,36 +103,28 @@ export async function seedSummaryExperiment(actor: TestActor, probe: StateProbe,
   const experimentId = experiments[0].id;
   await attachIds(info, 'summary-experiment', { experimentId, snapshotDatasetId: experiments[0].snapshot_dataset_id });
 
-  // native_run_binding.persist_snapshot_identity stores input.values keyed by SOURCE column UUID.
-  // experiment_summary._population supplies those exact inputs plus terminal outputs to evaluate(rows).
-  // custom_code_eval accepts {score, reason}; FunctionEvaluator metadata None is normalized to {}.
-  // The expected 0.75 is deliberately NOT interpolated into this code: it must calculate the mean.
-  const code = `def evaluate(rows):
-    if len(rows) != 2:
-        raise ValueError("Expected both sealed rows")
-    markers = sorted([row["input"]["values"][${JSON.stringify(markerColumn.id)}] for row in rows])
-    if markers != ${JSON.stringify([...markers].sort())}:
-        raise ValueError("Wrong input population")
-    for row in rows:
-        if row["status"] != "completed" or row["output"] != ${JSON.stringify(output)}:
-            raise ValueError("Expected completed prompt outputs")
-    weights = [float(row["input"]["values"][${JSON.stringify(weightColumn.id)}]) for row in rows]
-    return {"score": sum(weights) / len(rows), "reason": ${JSON.stringify(reason)}}
-`;
+  // The exact sealed inputs/outputs are checked in the spec. This named reply proves LLM parsing
+  // and persistence, not arithmetic in a Python evaluator unavailable on the walk stack.
+  const instructions = `Score the complete sealed run {{rows}} by the mean of input weights in column ${weightColumn.id}.`;
   // The UI picker uses ordinary versioned eval-templates, NOT eval-summary-templates CRUD.
   const template = await actor.api.post<Envelope<{ id: string }>>(TEMPLATES, {
-    name: templateName, eval_type: 'code', code_language: 'python', code,
-    output_type: 'percentage', is_draft: false,
+    name: templateName, eval_type: 'llm', model: summaryModel, instructions,
+    output_type: 'percentage', is_draft: false, pass_threshold: 0.5,
+    check_internet: false, error_localizer_enabled: false, template_format: 'mustache',
   });
   const templateId = template.result.id;
-  const evalVersions = await probe.pg<{ id: string; version_number: number; code: string }>(
-    `SELECT id, version_number, config_snapshot->>'code' AS code FROM model_hub_eval_template_version
+  const evalVersions = await probe.pg<{ id: string; version_number: number; model: string;
+    config_snapshot: SummaryTemplateConfig }>(
+    `SELECT id, version_number, model, config_snapshot FROM model_hub_eval_template_version
      WHERE eval_template_id=$1 AND NOT deleted ORDER BY version_number`, [templateId]);
-  expect(evalVersions.map(v => ({ version_number: v.version_number, code: v.code })))
-    .toEqual([{ version_number: 1, code }]);
+  expect(evalVersions.map(v => ({ version_number: v.version_number, model: v.model,
+    eval_type_id: v.config_snapshot.eval_type_id, output: v.config_snapshot.output,
+    required_keys: v.config_snapshot.required_keys, rule_prompt: v.config_snapshot.rule_prompt })))
+    .toEqual([{ version_number: 1, model: summaryModel, eval_type_id: 'CustomPromptEvaluator',
+      output: 'score', required_keys: ['rows'], rule_prompt: instructions }]);
   const versionId = evalVersions[0].id;
   await attachIds(info, 'summary-evaluator-template', { templateId, versionId, templateName, summaryName });
-  return { datasetId, experimentId, templateId, versionId, templateName, summaryName, output, reason,
+  return { datasetId, experimentId, templateId, versionId, templateName, summaryName, output, reason, summaryModel, instructions,
     markers, markerColumnId: markerColumn.id, weightColumnId: weightColumn.id,
     rowIds: rows.map(r => r.id), promptVersionId: versions[0].id };
 }
@@ -153,7 +156,8 @@ export const scoreProjection = (score: SummaryScore): SummaryScore => ({ ...scor
 
 export const storedBindings = (probe: StateProbe, experimentId: string) => probe.pg<SummaryBinding & {
   experiment_id: string; definition: { mapping: Record<string, string>; organization_id: string; workspace_id: string;
-    pin: { template_id: string; evaluator_version_id: string }; template: { config: { code: string } } };
+    pin: { template_id: string; evaluator_version_id: string };
+    template: { eval_type: string; model: string; config: SummaryTemplateConfig } };
 }>(`SELECT b.id, b.experiment_id, b.name, b.version_id, b.definition,
     v.eval_template_id AS template_id, v.version_number, b.definition->'mapping' AS mapping,
     to_char(b.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at

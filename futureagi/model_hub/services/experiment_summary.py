@@ -1,5 +1,6 @@
 """Whole-run evaluation through the existing isolated, metered eval runner."""
 
+import json
 import math
 import uuid
 from copy import deepcopy
@@ -258,6 +259,16 @@ def _population(run):
     return rows
 
 
+def _metadata_object(metadata):
+    """LLM evaluators serialize their metadata to JSON text; decode only that."""
+    if isinstance(metadata, str) and metadata:
+        try:
+            return json.loads(metadata)
+        except ValueError:
+            return metadata
+    return metadata or {}
+
+
 def _evaluate(result, rows):
     from model_hub.services.external_run_evaluations import (
         STORED_EVALUATION,
@@ -267,7 +278,7 @@ def _evaluate(result, rows):
     class SummaryRunner(StoredEvaluationRunner):
         def _format_response(self, *args, **kwargs):
             response = super()._format_response(*args, **kwargs)
-            self.summary_metadata = response.get("metadata") or {}
+            self.summary_metadata = _metadata_object(response.get("metadata"))
             return response
 
     run = result.run

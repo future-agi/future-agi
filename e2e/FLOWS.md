@@ -3318,9 +3318,9 @@
 
 **User steps:**
 
-1. API seed two marked dataset rows with weights 1 and 0.5, a scoped mock prompt, a saved prompt version, a row evaluator and an experiment
+1. API seed two marked dataset rows with weights 1 and 0.5, a scoped mock prompt, a saved prompt version, an LLM row evaluator and an experiment
 2. wait for the canonical run to seal with both planned rows completed and exact prompt outputs
-3. open Summary and add a named evaluator by searching the saved Python template, pinning v1 and mapping rows to input.rows
+3. open Summary and add a named evaluator by searching the saved LLM template, pinning v1 and mapping rows to input.rows
 4. save the binding and click Evaluate in its run score row
 5. read the exact score 0.75 and minted reason, reload Summary and read both again
 6. read back the exact binding and score through the same APIs and compare their identities and timestamps with PostgreSQL
@@ -3329,7 +3329,7 @@
 
 - Storage lane, ASYNC_JOB 60s for native run sealing: one scoped completed run has completed_at and exactly both planned items with the seeded inputs and exact mock outputs
 - Storage lane, within save UI_READY 60s after the binding response: the binding pins the selected template and version, rows mapping and actor organization/workspace
-- Storage lane, EVAL_RESULT 90s for summary execution: exactly one completed result has score 0.75, the minted reason, metadata {}, attempt 1 and no error code
+- Storage lane, EVAL_RESULT 90s for summary execution: exactly one completed result has score 0.75, the minted reason, metadata.usage 7 prompt / 7 completion / 14 total tokens, attempt 1 and no error code
 - API lane, ASYNC_JOB 60s readback allowance after reload: summary evaluator and score lists equal the PostgreSQL projections including pinned IDs and microsecond timestamps
 
 ### EXP-E2E-012 — copy a CI comment step and report a custom uploaded run against its baseline

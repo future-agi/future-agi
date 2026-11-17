@@ -17,7 +17,7 @@ const CLEANUP = 10_000;
 const bindingsPath = (experimentId: string) => `/model-hub/experiments/v2/${experimentId}/summary-evaluators/`;
 const scoresPath = (experimentId: string, runId: string) =>
   `/model-hub/experiments/v2/${experimentId}/runs/${runId}/summary-scores/`;
-// Assertion only: seed code computes the mean from stored weights 1 and 0.5, never this constant.
+// CustomPromptEvaluator parses the registered numeric result directly; percentage is a unit score.
 const EXPECTED_SCORE = 0.75;
 // SummaryEvaluators.jsx submit; experiment_summary._population passes the complete run population.
 const MAPPING = { rows: 'input.rows' };
@@ -35,9 +35,9 @@ test('EXP-E2E-011: create a summary evaluator and see its sealed run result', {
     id: 'EXP-E2E-011', area: 'experiments',
     userGoal: 'Create a version-pinned experiment summary evaluator, run it on a sealed dataset run, and see the saved aggregate result',
     steps: [
-      'API seed two marked dataset rows with weights 1 and 0.5, a scoped mock prompt, a saved prompt version, a row evaluator and an experiment',
+      'API seed two marked dataset rows with weights 1 and 0.5, a scoped mock prompt, a saved prompt version, an LLM row evaluator and an experiment',
       'wait for the canonical run to seal with both planned rows completed and exact prompt outputs',
-      'open Summary and add a named evaluator by searching the saved Python template, pinning v1 and mapping rows to input.rows',
+      'open Summary and add a named evaluator by searching the saved LLM template, pinning v1 and mapping rows to input.rows',
       'save the binding and click Evaluate in its run score row',
       'read the exact score 0.75 and minted reason, reload Summary and read both again',
       'read back the exact binding and score through the same APIs and compare their identities and timestamps with PostgreSQL',
@@ -45,7 +45,7 @@ test('EXP-E2E-011: create a summary evaluator and see its sealed run result', {
     backendChecks: [
       'Storage lane, ASYNC_JOB 60s for native run sealing: one scoped completed run has completed_at and exactly both planned items with the seeded inputs and exact mock outputs',
       'Storage lane, within save UI_READY 60s after the binding response: the binding pins the selected template and version, rows mapping and actor organization/workspace',
-      'Storage lane, EVAL_RESULT 90s for summary execution: exactly one completed result has score 0.75, the minted reason, metadata {}, attempt 1 and no error code',
+      'Storage lane, EVAL_RESULT 90s for summary execution: exactly one completed result has score 0.75, the minted reason, metadata.usage 7 prompt / 7 completion / 14 total tokens, attempt 1 and no error code',
       'API lane, ASYNC_JOB 60s readback allowance after reload: summary evaluator and score lists equal the PostgreSQL projections including pinned IDs and microsecond timestamps',
     ],
   }),
@@ -119,7 +119,7 @@ test('EXP-E2E-011: create a summary evaluator and see its sealed run result', {
       await page.getByRole('textbox', { name: 'Summary name', exact: true }).fill(seeded.summaryName);
       await ui(page.getByRole('textbox', { name: 'Summary name', exact: true })).toHaveValue(seeded.summaryName);
     }, { timeout: UI_READY });
-    await test.step('UI: search and select the saved code evaluator', async () => {
+    await test.step('UI: search and select the saved LLM evaluator', async () => {
       await page.getByRole('textbox', { name: 'Search evaluators', exact: true }).fill(seeded.templateName);
       await page.getByRole('combobox', { name: 'Evaluator', exact: true }).click();
       await page.getByRole('option', { name: seeded.templateName, exact: true }).click();
@@ -168,6 +168,11 @@ test('EXP-E2E-011: create a summary evaluator and see its sealed run result', {
         mapping: MAPPING, org: actor.organizationId, workspace: actor.workspaceId,
         template: seeded.templateId, version: seeded.versionId,
       });
+      expect({ eval_type: definition.template.eval_type, model: definition.template.model,
+        eval_type_id: definition.template.config.eval_type_id, output: definition.template.config.output,
+        required_keys: definition.template.config.required_keys, rule_prompt: definition.template.config.rule_prompt })
+        .toEqual({ eval_type: 'llm', model: seeded.summaryModel, eval_type_id: 'CustomPromptEvaluator',
+          output: 'score', required_keys: ['rows'], rule_prompt: seeded.instructions });
       expect(bindingProjection(body.result)).toEqual(projection);
       await ui(table.getByRole('columnheader')).toHaveText(['Evaluator', `Run ${run.id}`]);
       await ui(row).toHaveCount(1);
@@ -190,13 +195,14 @@ test('EXP-E2E-011: create a summary evaluator and see its sealed run result', {
     }, { timeout: UI_READY });
 
     const storedScore = await test.step('Storage: await one exact completed summary result', async () => {
+      // LLM metadata includes a variable response_time; only the mock usage is deterministic.
       try {
         await expect.poll(async () => (await storedScores(probe, run.id)).map(score => ({ status: score.status,
-          score: score.score, reason: score.reason, metadata: score.metadata, error: score.error_code,
+          score: score.score, reason: score.reason, usage: score.metadata.usage, error: score.error_code,
           attempt: score.attempt, sealed: score.completed_at !== null })),
         { ...POLL.EVAL_RESULT, message: 'one completed whole-run summary, with no failed or repeated attempt' })
           .toEqual([{ status: 'completed', score: EXPECTED_SCORE, reason: seeded.reason,
-            metadata: {}, error: '', attempt: 1, sealed: true }]);
+            usage: { prompt_tokens: 7, completion_tokens: 7, total_tokens: 14 }, error: '', attempt: 1, sealed: true }]);
       } catch (error) {
         // Value-free diagnosis for the report: lifecycle fields only, never scores, reasons or metadata.
         const rows = (await storedScores(probe, run.id)).map(score => ({ status: score.status,
@@ -216,12 +222,16 @@ test('EXP-E2E-011: create a summary evaluator and see its sealed run result', {
     }, { timeout: POLL.EVAL_RESULT.timeout });
 
     await test.step('UI: show the exact aggregate and explanation', async () => {
-      // No score hook exists. Exact cell text proves no error/retry/metadata content replaced the result.
-      await ui(row.getByRole('cell')).toHaveText([`${seeded.summaryName} · v1`, `${EXPECTED_SCORE}${seeded.reason}`]);
+      // No score hook exists. Exact cell text: score, reason, then the Metadata disclosure the cell
+      // renders for non-empty metadata (SummaryEvaluators.jsx), taken from the stored row so
+      // nondeterministic fields such as response_time match exactly; no error or retry text.
+      await ui(row.getByRole('cell')).toHaveText([`${seeded.summaryName} · v1`,
+        `${EXPECTED_SCORE}${seeded.reason}Metadata${JSON.stringify(storedScore.metadata, null, 2)}`]);
     }, { timeout: UI_READY });
     await test.step('UI: reload and retain the exact saved result', async () => {
       await page.reload({ waitUntil: 'domcontentloaded', timeout: UI_READY });
-      await ui(row.getByRole('cell')).toHaveText([`${seeded.summaryName} · v1`, `${EXPECTED_SCORE}${seeded.reason}`]);
+      await ui(row.getByRole('cell')).toHaveText([`${seeded.summaryName} · v1`,
+        `${EXPECTED_SCORE}${seeded.reason}Metadata${JSON.stringify(storedScore.metadata, null, 2)}`]);
     }, { timeout: UI_READY });
 
     await test.step('API: binding and score readback agree exactly with PostgreSQL', async () => {

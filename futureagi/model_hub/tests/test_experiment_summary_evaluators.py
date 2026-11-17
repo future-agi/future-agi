@@ -296,6 +296,141 @@ def test_real_runner_formats_aggregate_and_reuses_result(summary_fixture, monkey
     assert result.attempt == 1
 
 
+def test_llm_runner_json_text_metadata_is_stored_as_an_object(
+    summary_fixture, monkeypatch
+):
+    import json
+    from types import SimpleNamespace
+
+    from evaluations.engine import instance
+    from model_hub.models.choices import ModelChoices
+    from model_hub.services.external_run_evaluations import StoredEvaluationRunner
+    from model_hub.views import eval_runner
+
+    experiment, run, template, _, _, _ = summary_fixture
+    fields = ["rows", "outputs"]
+    template.eval_type = "llm"
+    template.model = ModelChoices.TURING_LARGE.value
+    template.config = {
+        "eval_type_id": "CustomPromptEvaluator",
+        "output": "score",
+        "required_keys": fields,
+        "rule_prompt": "Compare {{ rows }} with {{ outputs }}.",
+    }
+    template.save(update_fields=["eval_type", "model", "config"])
+    version = EvalTemplateVersion.objects.create_version(
+        eval_template=template,
+        config_snapshot=template.config,
+        model=template.model,
+        organization=experiment.dataset.organization,
+        workspace=experiment.dataset.workspace,
+    )
+    binding = service.create_binding(
+        experiment=experiment,
+        template=template,
+        version=version,
+        name="Aggregate prompt text metadata",
+        mapping={key: f"input.{key}" for key in fields},
+    )
+    # CustomPromptEvaluator serializes its usage metadata with json.dumps.
+    usage = {
+        "usage": {"completion_tokens": 7, "prompt_tokens": 7, "total_tokens": 14},
+        "response_time": 12,
+    }
+    invoke = Mock(
+        return_value=SimpleNamespace(
+            eval_results=[
+                {
+                    "metrics": [{"id": "accuracy", "value": 0.75}],
+                    "reason": "Three of four correct",
+                    "metadata": json.dumps(usage),
+                }
+            ]
+        )
+    )
+    evaluator = SimpleNamespace(run=invoke, cost={}, token_usage={})
+    monkeypatch.setattr(
+        instance, "create_eval_instance", Mock(return_value=(evaluator, None))
+    )
+    monkeypatch.setattr(eval_runner, "log_and_deduct_cost_for_api_request", None)
+    monkeypatch.setattr(StoredEvaluationRunner, "_emit_cell_usage", Mock())
+
+    result = service.request_summary(run=run, binding=binding)
+    assert service.process_summary_result(result.id) == {
+        "id": str(result.id),
+        "status": "completed",
+    }
+    result.refresh_from_db()
+    assert result.error_code == ""
+    assert result.score == 0.75
+    assert result.reason == "Three of four correct"
+    assert result.metadata == usage
+
+
+@pytest.mark.parametrize("text", ["not json", "[1, 2]"])
+def test_llm_runner_metadata_text_that_is_not_an_object_stays_invalid(
+    summary_fixture, monkeypatch, text
+):
+    from types import SimpleNamespace
+
+    from evaluations.engine import instance
+    from model_hub.models.choices import ModelChoices
+    from model_hub.services.external_run_evaluations import StoredEvaluationRunner
+    from model_hub.views import eval_runner
+
+    experiment, run, template, _, _, _ = summary_fixture
+    fields = ["rows"]
+    template.eval_type = "llm"
+    template.model = ModelChoices.TURING_LARGE.value
+    template.config = {
+        "eval_type_id": "CustomPromptEvaluator",
+        "output": "score",
+        "required_keys": fields,
+        "rule_prompt": "Judge {{ rows }}.",
+    }
+    template.save(update_fields=["eval_type", "model", "config"])
+    version = EvalTemplateVersion.objects.create_version(
+        eval_template=template,
+        config_snapshot=template.config,
+        model=template.model,
+        organization=experiment.dataset.organization,
+        workspace=experiment.dataset.workspace,
+    )
+    binding = service.create_binding(
+        experiment=experiment,
+        template=template,
+        version=version,
+        name=f"Aggregate prompt bad metadata {len(text)}",
+        mapping={"rows": "input.rows"},
+    )
+    invoke = Mock(
+        return_value=SimpleNamespace(
+            eval_results=[
+                {
+                    "metrics": [{"id": "accuracy", "value": 0.5}],
+                    "reason": "Half",
+                    "metadata": text,
+                }
+            ]
+        )
+    )
+    evaluator = SimpleNamespace(run=invoke, cost={}, token_usage={})
+    monkeypatch.setattr(
+        instance, "create_eval_instance", Mock(return_value=(evaluator, None))
+    )
+    monkeypatch.setattr(eval_runner, "log_and_deduct_cost_for_api_request", None)
+    monkeypatch.setattr(StoredEvaluationRunner, "_emit_cell_usage", Mock())
+
+    result = service.request_summary(run=run, binding=binding)
+    assert service.process_summary_result(result.id) == {
+        "id": str(result.id),
+        "status": "failed",
+    }
+    result.refresh_from_db()
+    assert result.error_code == "invalid_output"
+    assert result.score is None
+
+
 def test_failure_is_sanitized_and_retry_is_explicit(summary_fixture, monkeypatch):
     _, run, _, _, binding, _ = summary_fixture
     evaluate = Mock(side_effect=RuntimeError("private provider diagnostic"))
