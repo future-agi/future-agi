@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 import pytest
+from django.core.cache import cache
 
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
@@ -49,6 +50,26 @@ def set_workspace_context_fixture(request):
         clear_workspace_context()
     else:
         yield
+
+
+@pytest.fixture
+def readiness_on(settings):
+    """Versioning and certifying on, with a clean cache: what run readiness reads. Opted in per module."""
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example"
+    cache.clear()
+
+
+@pytest.fixture
+def storage(monkeypatch):
+    """Object storage held in memory; a module that defines its own keeps it."""
+    from simulate.tests.test_harness_versioning_backfill import _RealisticStorage
+    from tfc.utils import storage_client
+
+    fake = _RealisticStorage()
+    monkeypatch.setattr(storage_client, "_client", fake)
+    return fake
 
 
 @pytest.fixture

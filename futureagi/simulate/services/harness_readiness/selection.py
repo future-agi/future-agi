@@ -32,8 +32,10 @@ from simulate.services.harness_readiness.catalogue import (
     RowView,
     Status,
     VersionRef,
+    WorkerBoundaryView,
 )
 from simulate.services.harness_readiness.evidence import (
+    Evidence,
     certified,
     pair_bundle,
     read_evidence,
@@ -44,7 +46,21 @@ from simulate.services.harness_readiness.report import (
     readiness_report,
 )
 from simulate.services.harness_readiness.rules import answer
-from simulate.services.harness_scenario_needs import TOOL_ROWS, CaseNeeds, case_needs
+from simulate.services.harness_readiness.workers import (
+    NO_HOLD,
+    CaseHold,
+    blocked_count,
+    bypassed_workers,
+    case_hold,
+    case_holds,
+)
+from simulate.services.harness_scenario_needs import (
+    ACTING,
+    TOOL_ROWS,
+    CaseNeeds,
+    case_needs,
+)
+from simulate.services.harness_starting_records import scenario_token
 from simulate.services.harness_versioning import validation
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -55,7 +71,17 @@ PAGE_SIZE = 50
 DROPPED_REASON = "dropped when the pair was certified"
 # Held-back key for a selected case certifying the pair dropped.
 DROPPED_ROW = "scenario_dropped"
+# A case whose actors act in the world or whose faults are set on a tool the world's door does not stand in front of.
+NO_DOOR_ROW = "no_world_door"
+NO_DOOR_REASON = (
+    "Actors cannot act and faults cannot be set here: this agent's tools run inside it. Serve the tools from a "
+    "tools service to test this."
+)
 UNGRADABLE_REASON = "grades no sub-goal of this environment version"
+# Untested key for a case whose reliance on worker limits ALK sealed no answer for.
+WORKER_LIMITS_UNKNOWN = "worker_limits_not_known"
+# Held-back key for a case ALK holds on worker limits without naming a worker.
+WORKER_LIMITS_HELD = "worker_limits"
 _HOLDING = frozenset({"blocked", "unavailable", "stale", "untested"})
 _EVIDENCE_ROWS = frozenset(one.id for one in CATALOGUE if one.area == "evidence")
 _MEASURED = tuple(one.id for one in CATALOGUE if one.measured)
@@ -74,7 +100,9 @@ class DroppedCase(TypedDict):
 
 class NotGradable(TypedDict):
     key: str
-    reason: Literal["check_unreadable", "no_checks", "evidence_not_supported"]
+    reason: Literal[
+        "check_unreadable", "no_checks", "evidence_not_supported", "judge_unavailable"
+    ]
 
 
 class Grading(TypedDict):
@@ -107,6 +135,18 @@ class Scope(TypedDict):
     changed: Changes
 
 
+class HeldBy(TypedDict):
+    """A blocked row or declared worker holding selected cases back, named for the run dialog."""
+
+    id: str
+    name: str
+    area: str | None
+    count: int
+    reason: str | None
+    # What the run dialog shows for it, e.g. "Refund worker's limits are not held".
+    text: str
+
+
 class SelectionView(Scope):
     requested: int
     eligible: int
@@ -114,6 +154,9 @@ class SelectionView(Scope):
     stale: int
     untested: int
     lists: dict[Bucket, CaseList]
+    held_by: list[HeldBy]
+    # The first area, in report order, holding selected cases back; null when none is blocked.
+    blocking_area: str | None
     dropped: list[DroppedCase]
     grading: Grading
     requirements_recorded: bool
@@ -137,7 +180,9 @@ class SelectionReport(TypedDict):
     answer: AnswerView
     areas: list[AreaView]
     rows: list[SelectionRowView]
+    workers: list[WorkerBoundaryView]
     counts: dict[Status, int]
+    blockers: int
     catalog_version: str
     rules_version: str
     computed_at: str
@@ -169,6 +214,8 @@ class Placed:
     held_by: frozenset[str]
     needed: frozenset[str]
     gradable: NotGradable | None
+    # ALK's sealed hold for the case's worker limits.
+    hold: CaseHold
 
 
 @dataclass(frozen=True)
@@ -190,8 +237,18 @@ def selection_report(
         HostedHarnessError: 400 ``scenario_selection_empty``,
             ``scenario_selection_duplicate`` or ``scenario_selection_unknown``.
     """
-    report = readiness_report(pairing)
-    placement = _place_all(pairing, report["rows"], keys=keys, trials=trials)
+    bundle = pair_bundle(pairing)
+    evidence = read_evidence(pairing, bundle)
+    report = readiness_report(pairing, bundle=bundle, evidence=evidence)
+    placement = _place_all(
+        pairing,
+        report["rows"],
+        keys=keys,
+        trials=trials,
+        bundle=bundle,
+        evidence=evidence,
+        workers=report["workers"],
+    )
     placed = placement.placed
     requested = len(placed)
     by_bucket: dict[Bucket, list[str]] = {bucket: [] for bucket in BUCKETS}
@@ -208,9 +265,15 @@ def selection_report(
                 "affected": {"count": len(held), "of": requested, **_capped(held)},
             }
         )
+    held_by = _held_by(rows, report["workers"], placed)
     return {
         **report,
-        "answer": _selected_answer(report["answer"], rows, placed),
+        "answer": _selected_answer(
+            report["answer"],
+            rows,
+            placed,
+            blocked_workers=blocked_count(report["workers"]),
+        ),
         "rows": rows,
         "selection": {
             **_scope(pairing, placement, keys),
@@ -220,6 +283,16 @@ def selection_report(
             "stale": len(by_bucket["stale"]),
             "untested": len(by_bucket["untested"]),
             "lists": {bucket: _capped(by_bucket[bucket]) for bucket in BUCKETS},
+            "held_by": held_by,
+            # The area the dialog names: the first row holding a selected case, never a worker.
+            "blocking_area": next(
+                (
+                    one["area"]
+                    for one in held_by
+                    if one["area"] != "workers" and one["count"] > 0
+                ),
+                None,
+            ),
             "dropped": placement.dropped,
             "grading": {
                 "gradable": requested - len(not_gradable),
@@ -231,8 +304,80 @@ def selection_report(
     }
 
 
+def _worker_reasons(
+    placed: list[Placed], workers: list[WorkerBoundaryView]
+) -> dict[str, str]:
+    """Why each `worker:<id>` holding a selected case back holds it: the worker's row reason for a bypass, else ALK's
+    sealed cause for the first case it holds."""
+    bypassed = {
+        f"worker:{one}": reason for one, reason in bypassed_workers(workers).items()
+    }
+    reasons: dict[str, str] = {}
+    for one in placed:
+        if one.bucket != "blocked":
+            continue
+        sealed = _worker_keys(one.hold) if one.hold.held else []
+        for key in one.by:
+            if key in sealed and one.hold.reason:
+                reasons.setdefault(key, one.hold.reason)
+            elif key in bypassed:
+                reasons.setdefault(key, bypassed[key])
+    return reasons
+
+
+def _worker_keys(hold: CaseHold) -> list[str]:
+    """The `worker:<id>` keys a held case is held by: the workers ALK sealed as unheld for it; `worker_limits` with
+    its sealed cause when it named none, or sealed before it named them."""
+    return [f"worker:{one}" for one in hold.unheld or ()] or [WORKER_LIMITS_HELD]
+
+
+def _held_by(
+    rows: list[SelectionRowView],
+    workers: list[WorkerBoundaryView],
+    placed: list[Placed],
+) -> list[HeldBy]:
+    """Each blocked row, then each worker, that holds selected cases back, with how many."""
+    by_worker = Counter(
+        key
+        for one in placed
+        if one.bucket == "blocked"
+        for key in one.by
+        if key.startswith("worker:") or key == WORKER_LIMITS_HELD
+    )
+    reasons = _worker_reasons(placed, workers)
+    names = {f"worker:{one['worker_id']}": one["name"] for one in workers}
+    held: list[HeldBy] = [
+        {
+            "id": row["id"],
+            "name": row["label"],
+            "area": row["area"],
+            "count": row["affected"]["count"],
+            "reason": row["reason"],
+            "text": row["reason"] or row["label"],
+        }
+        for row in rows
+        if row["status"] == "blocked" and row["affected"]["count"] > 0
+    ]
+    held += [
+        {
+            "id": key,
+            "name": names.get(key, key.removeprefix("worker:")),
+            "area": "workers",
+            "count": count,
+            "reason": reasons.get(key),
+            "text": f"{names.get(key, 'A worker')}'s limits are not held",
+        }
+        for key, count in sorted(by_worker.items())
+    ]
+    return held
+
+
 def _selected_answer(
-    found: AnswerView, rows: list[SelectionRowView], placed: list[Placed]
+    found: AnswerView,
+    rows: list[SelectionRowView],
+    placed: list[Placed],
+    *,
+    blocked_workers: int,
 ) -> AnswerView:
     """The answer for the selected cases: a world tool the agent version lacks can only
     be missed by the cases that use it, so when no selected case does, it does not
@@ -257,6 +402,7 @@ def _selected_answer(
         validating=False,
         failed=False,
         named=False,
+        blocked_workers=blocked_workers,
     )
 
 
@@ -298,7 +444,8 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
     """
     bundle = pair_bundle(pairing)
     revision = evidence_revision(pairing, bundle)
-    if read_evidence(pairing, bundle).unreadable:
+    evidence = read_evidence(pairing, bundle)
+    if evidence.unreadable:
         raise HostedHarnessError(
             "readiness_unavailable",
             "Couldn't read this pairing's readiness, so no run was created."
@@ -306,8 +453,16 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
             status_code=503,
             retryable=True,
         )
-    report = readiness_report(pairing, bundle=bundle)
-    placement = _place_all(pairing, report["rows"], keys=keys, trials=trials)
+    report = readiness_report(pairing, bundle=bundle, evidence=evidence)
+    placement = _place_all(
+        pairing,
+        report["rows"],
+        keys=keys,
+        trials=trials,
+        bundle=bundle,
+        evidence=evidence,
+        workers=report["workers"],
+    )
     dropped = [
         one["key"] for one in placement.dropped if one["code"] == "scenario_dropped"
     ]
@@ -319,6 +474,10 @@ def select_for_run(pairing: Pairing, *, keys: list[str], trials: int) -> RunPlan
         for row in report["rows"]
         if row["id"] in by
     }
+    if NO_DOOR_ROW in by:
+        reasons[NO_DOOR_ROW] = NO_DOOR_REASON
+    # A worker is not a row: a case it holds back reads ALK's sealed cause, or its bypass.
+    reasons.update(_worker_reasons(placed, report["workers"]))
     if dropped:
         by[DROPPED_ROW] = len(dropped)
         reasons[DROPPED_ROW] = DROPPED_REASON
@@ -352,8 +511,18 @@ def case_page(
     Raises:
         HostedHarnessError: as ``selection_report``.
     """
-    report = readiness_report(pairing)
-    placed = _place_all(pairing, report["rows"], keys=keys, trials=trials).placed
+    bundle = pair_bundle(pairing)
+    evidence = read_evidence(pairing, bundle)
+    report = readiness_report(pairing, bundle=bundle, evidence=evidence)
+    placed = _place_all(
+        pairing,
+        report["rows"],
+        keys=keys,
+        trials=trials,
+        bundle=bundle,
+        evidence=evidence,
+        workers=report["workers"],
+    ).placed
     matching = [
         one
         for one in placed
@@ -451,21 +620,25 @@ def _capped(keys: list[str]) -> CaseList:
 
 
 def _place_all(
-    pairing: Pairing, rows: list[RowView], *, keys: list[str] | None, trials: int
+    pairing: Pairing,
+    rows: list[RowView],
+    *,
+    keys: list[str] | None,
+    trials: int,
+    bundle: HarnessAssembledBundle | None,
+    evidence: Evidence,
+    workers: list[WorkerBoundaryView],
 ) -> _Placement:
-    from simulate.services.hosted_harness_gateway import _scenario_token
-
     cases = case_needs(
         environment_version=pairing.environment_version,
         suite_version=pairing.suite_version,
     )
     selected = _selected(cases, keys)
-    bundle = pair_bundle(pairing)
     dropped_tokens = _dropped_tokens(bundle)
     kept: list[CaseNeeds] = []
     dropped: list[DroppedCase] = []
     for one in selected:
-        if _scenario_token(one.key) in dropped_tokens:
+        if scenario_token(one.key) in dropped_tokens:
             dropped.append(
                 {"key": one.key, "code": "scenario_dropped", "reason": DROPPED_REASON}
             )
@@ -488,18 +661,27 @@ def _place_all(
         bundle is not None and validation.live_validation(bundle.id) is not None
     )
     pair_failed = validation.failed_check(bundle)
+    # A certificate made before the check recorded it, or one that did not run it, reports nothing.
+    judge_failed = evidence.checks.get("judge_reachable") == "failed"
     by_id = {row["id"]: row for row in rows}
     voice = _voice(pairing)
+    reach = _door_reach(pairing)
     many = len(kept) > 1 or trials > 1
+    holds = case_holds(pairing, evidence)
+    bypassed = frozenset(bypassed_workers(workers))
     placed = [
         _place(
             case,
             by_id,
-            proved=ready or _scenario_token(case.key) in proved,
+            proved=ready or scenario_token(case.key) in proved,
             voice=voice,
             many=many,
             pair_validating=pair_validating,
             pair_failed=pair_failed,
+            no_door=_needs_a_missing_door(case, reach),
+            judge_failed=judge_failed,
+            hold=case_hold(holds, case.key),
+            bypassed=bypassed,
         )
         for case in kept
     ]
@@ -540,10 +722,8 @@ def _selected(cases: list[CaseNeeds], keys: list[str] | None) -> list[CaseNeeds]
 
 
 def _dropped_tokens(bundle: HarnessAssembledBundle | None) -> frozenset[str]:
-    from simulate.services.hosted_harness_gateway import _scenario_token
-
     return frozenset(
-        _scenario_token(key)
+        scenario_token(key)
         for warning in (bundle.warnings if bundle is not None else None) or []
         if isinstance(warning, Mapping) and warning.get("code") == "scenario_dropped"
         for key in warning.get("keys") or []
@@ -552,8 +732,6 @@ def _dropped_tokens(bundle: HarnessAssembledBundle | None) -> frozenset[str]:
 
 def _proved_tokens(pairing: Pairing) -> frozenset[str]:
     """Scenarios with a holding proof for this suite and environment version."""
-    from simulate.services.hosted_harness_gateway import _scenario_token
-
     proofs = (
         HarnessSuiteValidation.no_workspace_objects.filter(
             suite_version=pairing.suite_version,
@@ -563,10 +741,57 @@ def _proved_tokens(pairing: Pairing) -> frozenset[str]:
         .first()
     )
     return frozenset(
-        _scenario_token(key)
+        scenario_token(key)
         for key, proof in (proofs or {}).items()
         if isinstance(proof, Mapping) and proof.get("holds")
     )
+
+
+def _door_reach(pairing: Pairing) -> dict[str, bool]:
+    """Whether the world's door stands in front of each contract tool, by tool name and by the world action a fault
+    names: a tools-service tool is behind the tool proxy, a Python agent's module-level callable or method behind
+    the door in its own process; anything else runs where no door stands. Empty when the contract names no
+    entrypoints (nothing to tell, nothing held back). A tool the build found out of the door's reach says so
+    (`door_unreached`). The same rule as the actors' `harness_actors.door_reach`."""
+    contract = (pairing.environment_version.documents or {}).get("contract")
+    contract = contract if isinstance(contract, Mapping) else {}
+    raw_runtime = contract.get("runtime")
+    runtime: Mapping = raw_runtime if isinstance(raw_runtime, Mapping) else {}
+    python = str(runtime.get("language") or "python").strip().lower() in (
+        "",
+        "python",
+        "py",
+    )
+    reach: dict[str, bool] = {}
+    for entry in contract.get("tool_entrypoints") or []:
+        if not isinstance(entry, Mapping) or not entry.get("tool"):
+            continue
+        mode = str(entry.get("mode") or "")
+        route = str(entry.get("endpoint") or "").strip("/")
+        reachable = bool(
+            (mode == "service" and route)
+            or (
+                python
+                and mode in ("import", "construct")
+                and entry.get("module")
+                and entry.get("callable")
+                and not entry.get("door_unreached")
+            )
+        )
+        reach[str(entry["tool"])] = reachable
+        if route:
+            reach[route.replace("/", ".")] = reachable
+    return reach
+
+
+def _needs_a_missing_door(case: CaseNeeds, reach: Mapping[str, bool]) -> bool:
+    """Whether the case needs the world's door where it does not stand: a fault on a tool the door cannot hold, or an
+    acting actor on an agent none of whose tools the door can reach."""
+    if not reach or not case.door:
+        return False
+    if ACTING in case.door and not any(reach.values()):
+        return True
+    return any(reach.get(action) is False for action in case.door if action != ACTING)
 
 
 def _voice(pairing: Pairing) -> bool:
@@ -605,6 +830,10 @@ def _place(
     many: bool,
     pair_validating: bool,
     pair_failed: bool,
+    no_door: bool = False,
+    judge_failed: bool = False,
+    hold: CaseHold = NO_HOLD,
+    bypassed: frozenset[str] = frozenset(),
 ) -> Placed:
     needed = set(case.rows)
     if voice:
@@ -631,12 +860,22 @@ def _place(
     blocked = [one for one, status in statuses.items() if status == "blocked"]
     if pair_failed:
         blocked.append("pair_failed")
+    if no_door:
+        blocked.append(NO_DOOR_ROW)
+    if hold.held:
+        # ALK's run would hold it as not graded: the worker limits it relies on are not held.
+        blocked.extend(_worker_keys(hold))
+    elif hold.relies:
+        # It relies on the limits of a worker a recent run saw bypass its channel.
+        blocked.extend(f"worker:{one}" for one in hold.workers if one in bypassed)
     stale = [one for one, status in statuses.items() if status == "stale"]
     if not proved:
         stale.append("not_proved_here")
     untested = [one for one, status in statuses.items() if status == "untested"]
     if case.unknown:
         untested.append("unknown_need")
+    if hold.held is None:
+        untested.append(WORKER_LIMITS_UNKNOWN)
     order: tuple[tuple[Bucket, list[str]], ...] = (
         (("untested", ["pair_validating"]),)
         if pair_validating
@@ -651,15 +890,21 @@ def _place(
         by=by,
         held_by=held,
         needed=frozenset(needed),
-        gradable=_grading(case, statuses),
+        gradable=_grading(case, statuses, judge_failed=judge_failed),
+        hold=hold,
     )
 
 
-def _grading(case: CaseNeeds, statuses: Mapping[str, Status]) -> NotGradable | None:
-    """Why the case cannot be graded: a check that cannot be read, or a needed
-    evidence row neither Supported nor Partial."""
+def _grading(
+    case: CaseNeeds, statuses: Mapping[str, Status], *, judge_failed: bool = False
+) -> NotGradable | None:
+    """Why the case cannot be graded: a check that cannot be read, a judged sub-goal
+    the judge could not be reached for in the check, or a needed evidence row neither
+    Supported nor Partial."""
     if case.grading_gap is not None:
         return {"key": case.key, "reason": case.grading_gap}
+    if case.judged and judge_failed:
+        return {"key": case.key, "reason": "judge_unavailable"}
     if any(
         status not in GATE_OPEN
         for one, status in statuses.items()

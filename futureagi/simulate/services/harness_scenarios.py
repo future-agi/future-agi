@@ -6,7 +6,7 @@ import copy
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import count
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from django.contrib.postgres.expressions import ArraySubquery
@@ -27,6 +27,10 @@ from django.utils import timezone
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.test_execution import CallExecution
 from simulate.types import ScenarioCallActor
+
+if TYPE_CHECKING:
+    from simulate.services.harness_actor_rules import ActorRecord
+    from simulate.services.scenario_faults import FaultTarget
 
 # Filter panel properties; a dotted `value` reads into that JSON column.
 FIELDS: tuple[dict[str, Any], ...] = (
@@ -641,6 +645,9 @@ def scenario_fields(doc: dict[str, Any], key: str) -> dict[str, Any]:
         "coverage": doc.get("coverage") or None,
         "sub_goals": doc.get("sub_goals") or None,
         "actors": call_actor_entries(doc.get("actors")),
+        "faults": doc.get("faults")
+        if isinstance(doc.get("faults"), list) and doc.get("faults")
+        else None,
         # Older suites carry keywords on the persona.
         "keywords": (
             doc.get("keywords")
@@ -1263,9 +1270,23 @@ def level_labels_for(
     return labels
 
 
-def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:
-    """One list row. Safe on a scenario indexed before any call was made."""
+def scenario_row(
+    row: HostedHarnessScenario,
+    *,
+    targets: list[FaultTarget] | None,
+    fault_targets: list[FaultTarget],
+    actor_cast: list[ActorRecord],
+) -> dict[str, Any]:
+    """One list row. Safe on a scenario indexed before any call was made. Its actors are resolved against the
+    environment's cast, its faults against ``fault_targets`` as the harness applies them, and a scenario that cannot
+    work on this agent as set says why (``targets`` is ``door_targets``)."""
+    # Imported here: harness_tool_reach loads hosted_harness, whose import chain reaches back to this module.
+    from simulate.services.harness_actor_labels import resolved_scenario_actors
+    from simulate.services.harness_tool_reach import door_problem
+    from simulate.services.scenario_faults import resolved_faults
+
     persona = row.persona or {}
+    actors = call_actor_entries(row.actors) or []
     return {
         "id": str(row.id),
         "scenario_id": str(row.scenario_id) if row.scenario_id else None,
@@ -1279,7 +1300,14 @@ def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:
         "persona": persona,
         "coverage": row.coverage or {},
         "sub_goals": row.sub_goals or [],
-        "actors": row.actors or [],
+        "actors": [
+            {**entry, **resolved}
+            for entry, resolved in zip(
+                actors, resolved_scenario_actors(actors, actor_cast), strict=True
+            )
+        ],
+        "faults": resolved_faults(row.faults, fault_targets),
+        "door_problem": door_problem(faults=row.faults, actors=actors, targets=targets),
         "keywords": row.keywords or [],
         "background_noise": row.background_noise,
         "max_turns": row.max_turns,

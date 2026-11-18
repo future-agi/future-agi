@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import { screen, fireEvent } from "@testing-library/react";
 import { render } from "src/utils/test-utils";
 import { scenarioFromApi } from "src/api/simulate-environments/scenarios";
-import { withCast } from "../../actors/actorUtils";
 import ScenarioDrawer from "../ScenarioDrawer";
 
 // A row exactly as the scenarios list API sends it.
@@ -25,6 +24,18 @@ const API_ROW = {
     personality: "Cautious and skeptical",
   },
   sub_goals: ["acknowledges_concern", "offers_alternative"],
+};
+
+const UNAVAILABLE = {
+  action: "refund",
+  tool: "refund",
+  mode: "unavailable",
+  mode_label: "Unavailable",
+  line: "refund: Unavailable on call 1",
+  on_call: 1,
+  delay_seconds: null,
+  status: null,
+  message: "",
 };
 
 const open = (apiRow = API_ROW, props = {}) =>
@@ -104,7 +115,9 @@ describe("ScenarioDrawer", () => {
     expect(screen.queryByText("Persona")).toBeNull();
     expect(screen.queryByText("Situation")).toBeNull();
     expect(screen.queryByText("Sub-goals")).toBeNull();
-    expect(screen.queryByText("Scenario")).toBeNull();
+    // The test conditions always read, even when the scenario sets none.
+    expect(screen.getByText("Hidden · test conditions")).toBeInTheDocument();
+    expect(screen.getByText("Tools behave normally")).toBeInTheDocument();
   });
 
   it("hands off to the editor from Edit, and hides Edit when locked", () => {
@@ -119,25 +132,23 @@ describe("ScenarioDrawer", () => {
 });
 
 describe("ScenarioDrawer actors", () => {
-  it("says who else is in the scenario, when they enter and what they do", () => {
-    const env = {
-      callActors: [
-        { id: "friend", name: "Rowan", role: "a friend with the caller" },
+  it("says who else is in the scenario, when they enter and what they do, as the row resolves them", () => {
+    open({
+      ...API_ROW,
+      actors: [
+        {
+          id: "friend",
+          name: "Rowan",
+          role: "a friend with the caller",
+          channel: "audio_mix",
+          side: "caller",
+          effective_trigger: { kind: "mid_journey", turn: 2 },
+          when_label: "After the agent's turn 2",
+          timeout_label: null,
+          instruction: "You want a second item.",
+        },
       ],
-    };
-    open(
-      {
-        ...API_ROW,
-        actors: [
-          {
-            id: "friend",
-            instruction: "You want a second item.",
-            trigger: { kind: "mid_journey", turn: 2 },
-          },
-        ],
-      },
-      { env },
-    );
+    });
     expect(screen.getByText("Actors")).toBeInTheDocument();
     expect(screen.getByText("Rowan")).toBeInTheDocument();
     expect(
@@ -146,42 +157,187 @@ describe("ScenarioDrawer actors", () => {
     expect(screen.getByText("You want a second item.")).toBeInTheDocument();
   });
 
-  it("names an actor who never speaks, with its own activation and fallback", () => {
-    const cast = {
+  it("names an actor who never speaks, with when it comes in and its wait in the server's words", () => {
+    open({
+      ...API_ROW,
       actors: [
-        { id: "friend", name: "Rowan", channel: "chat" },
         {
           id: "approver",
           name: "Avery Stone",
           role: "approves refunds",
-          activation: {
-            trigger: { kind: "contacted" },
-            timeout_seconds: 60,
-            fallback: "decline",
-          },
+          channel: null,
+          side: "world",
+          effective_trigger: { kind: "contacted" },
+          when_label: "When the agent contacts them",
+          timeout_label: "Waits 60 s, then it declines",
+          instruction: "",
         },
       ],
-    };
-    open(
-      { ...API_ROW, actors: [{ id: "approver" }] },
-      { env: withCast({ id: "env-1" }, cast) },
-    );
+    });
     expect(screen.getByText("Avery Stone")).toBeInTheDocument();
     expect(screen.queryByText("approver")).not.toBeInTheDocument();
     expect(
       screen.getByText(/approves refunds · When the agent contacts them/),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Present from the start/)).not.toBeInTheDocument();
-    expect(screen.getByText("Waits 60 s, then it declines")).toBeInTheDocument();
-  });
-
-  it("keeps the environment's own actors when there is no cast", () => {
-    const env = { callActors: [{ id: "friend", name: "Rowan" }] };
-    expect(withCast(env, undefined)).toBe(env);
+    expect(
+      screen.getByText("Waits 60 s, then it declines"),
+    ).toBeInTheDocument();
   });
 
   it("has no actors row for a scenario that includes none", () => {
     open();
     expect(screen.queryByText("Actors")).not.toBeInTheDocument();
+  });
+
+  it("lists the actions an actor takes in the scenario, each with when the server says the world takes it", () => {
+    open({
+      ...API_ROW,
+      actors: [
+        {
+          id: "approver",
+          name: "Avery Stone",
+          role: "",
+          when_label: "From the start",
+          timeout_label: null,
+          actions: [
+            { action: "approvals.put", when_label: "At the start" },
+            {
+              action: "tickets.change",
+              trigger: { kind: "on_tool", tool: "refund" },
+              when_label: "When the agent calls refund",
+            },
+          ],
+        },
+      ],
+    });
+    expect(
+      screen.getByText("Takes approvals.put · At the start"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Takes tickets.change · When the agent calls refund"),
+    ).toBeInTheDocument();
+  });
+
+  it("lists a scenario's test conditions under Hidden, each as the server resolved it", () => {
+    open({
+      ...API_ROW,
+      faults: [
+        {
+          action: "orders.refund",
+          tool: "orders.refund",
+          mode: "timeout_after_commit",
+          mode_label: "Runs, then the answer is lost",
+          line: "orders.refund: Runs, then the answer is lost on call 1 after 5 s",
+          on_call: 1,
+          delay_seconds: 5,
+          status: null,
+          message: "",
+        },
+        {
+          action: "inventory.reserve",
+          tool: "inventory.reserve",
+          mode: "unavailable",
+          mode_label: "Unavailable",
+          line: "inventory.reserve: Unavailable",
+          on_call: null,
+          delay_seconds: null,
+          status: null,
+          message: "",
+        },
+      ],
+    });
+    expect(screen.getByText("Hidden · test conditions")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "orders.refund: Runs, then the answer is lost on call 1 after 5 s",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("inventory.reserve: Unavailable"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Tools behave normally")).toBeNull();
+  });
+
+  it("names a test condition by the tool the server resolved it to, with its route under it", () => {
+    open({
+      ...API_ROW,
+      faults: [
+        {
+          action: "orders.update_status",
+          tool: "update_order_status",
+          mode: "error",
+          mode_label: "Answers with an error",
+          line: "update_order_status: Answers with an error on call 1 (503: The order status service is down)",
+          on_call: 1,
+          delay_seconds: null,
+          status: 503,
+          message: "The order status service is down",
+        },
+      ],
+    });
+    expect(
+      screen.getByText(
+        "update_order_status: Answers with an error on call 1 (503: The order status service is down)",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("orders.update_status")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["fault_unreachable", "Hidden · test conditions"],
+    ["actor_no_door", "Actors"],
+  ])(
+    "says why the scenario cannot work as set, in the server's words, where its %s problem is",
+    (code, rowLabel) => {
+      const message = `The server says: ${code}`;
+      open({
+        ...API_ROW,
+        actors: [
+          {
+            id: "approver",
+            name: "Avery Stone",
+            role: "",
+            when_label: "When the agent contacts them",
+            timeout_label: null,
+          },
+        ],
+        faults: [UNAVAILABLE],
+        door_problem: { code, message },
+      });
+      const line = screen.getByText(message);
+      expect(line.closest(".sr")).toHaveTextContent(rowLabel);
+    },
+  );
+
+  it("says nothing about a door when the server finds no problem", () => {
+    open({
+      ...API_ROW,
+      faults: [UNAVAILABLE],
+      door_problem: null,
+    });
+    expect(screen.queryByText(/cannot/)).toBeNull();
+  });
+
+  it("shows a test condition naming no tool by the server's line, never as null, with no route under it", () => {
+    open({
+      ...API_ROW,
+      faults: [
+        {
+          action: "refunds.void",
+          tool: null,
+          mode: "unavailable",
+          mode_label: "Unavailable",
+          line: "refunds.void: Unavailable on call 1",
+          on_call: 1,
+          delay_seconds: null,
+          status: null,
+          message: "",
+        },
+      ],
+    });
+    expect(
+      screen.getByText("refunds.void: Unavailable on call 1"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/null/)).toBeNull();
   });
 });

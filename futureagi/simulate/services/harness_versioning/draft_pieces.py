@@ -125,7 +125,11 @@ def refuse_scenario_keys(
         _refuse_taken_keys(locked, checked)
 
 
-def prepare_tree(environment: HostedHarnessJob, files: Mapping[str, bytes]):
+def prepare_tree(
+    environment: HostedHarnessJob, files: Mapping[str, bytes], *, built: bool = False
+):
+    """Both pieces of an edited tree, prepared as a draft stores them. ``built``: the tree's sealed bundle was resealed
+    from this very tree by the chat, so the draft runs the contract it sealed."""
     split = archives.split_authoring(files)
     if "contract.json" not in split.environment or not any(
         path.startswith(archives.SUITE_ROOTS) for path in split.suite
@@ -137,7 +141,13 @@ def prepare_tree(environment: HostedHarnessJob, files: Mapping[str, bytes]):
         )
     pair_body = archives.pack_archive(archives.compose(split.environment, split.suite))
     prepared = prepare_pieces(
-        environment, split, outputs=_stage_outputs(pair_body), authoring_revision=""
+        environment,
+        split,
+        outputs=_stage_outputs(pair_body),
+        authoring_revision="",
+        built=built,
+        # A chat's save reseals its tree; it is no full build.
+        full_build=False,
     )
     # A draft stands for no authoring revision until it is saved.
     prepared.environment_documents["authoring_revisions"] = []

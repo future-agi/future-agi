@@ -83,14 +83,8 @@ def verdict(
 
 
 def trial_passed(sub_goals: Any, harness_status: Any) -> bool | None:
-    """Whether a trial passed: every sub-goal held. ``None`` when nothing decided it.
-
-    A sub-goal nothing decided (``held`` null) leaves the whole trial undecided,
-    even beside a failed one: counting those as failed while dropping the ones
-    beside held checks would only ever drop would-be passes. A not applicable or
-    inconclusive sub-goal is neither, so it is left out, and a trial with only
-    those is undecided. A receipt without sub-goals falls back to its own status.
-    """
+    """Whether a trial passed: every sub-goal held; None when one was undecided, even beside a failure. Not
+    applicable and inconclusive sub-goals are left out (only those: undecided); no sub-goals reads the status."""
     checks = [one for one in sub_goals or [] if isinstance(one, Mapping)]
     if checks:
         results = [sub_goal_result(dict(one)) for one in checks]

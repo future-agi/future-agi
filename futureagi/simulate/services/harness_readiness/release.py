@@ -12,6 +12,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal, TypedDict
 
+from django.core.cache import cache
+
 from simulate.models import HarnessAssembledBundle, HarnessEnvironmentVersion
 
 Result = Literal["passed", "failed", "pending"]
@@ -25,6 +27,8 @@ RELEASE_CHECKS = (
 # Recorded on the version by the release step; any other key is ignored.
 _RECORDED = frozenset(RELEASE_CHECKS[2:])
 HISTORY_PAGE = 50
+# How long the harness version an organization's runs use now is remembered.
+_HARNESS_VERSION_TTL_SECONDS = 600
 
 
 class ReleaseChecks(TypedDict):
@@ -127,3 +131,65 @@ def certified_pairings(environment: Any, *, cursor: int | None) -> HistoryPage:
         "items": items,
         "next": str(start + HISTORY_PAGE) if len(rows) > HISTORY_PAGE else None,
     }
+
+
+def certificate_harness_version(certificate: Any) -> str | None:
+    """The harness version a certificate records it was made with; ``None`` for one
+    made before certificates recorded it."""
+    runtime = certificate.get("runtime") if isinstance(certificate, Mapping) else None
+    found = runtime.get("harness_version") if isinstance(runtime, Mapping) else None
+    return str(found) if found else None
+
+
+def current_harness_version(organization_id: Any) -> str | None:
+    """The harness version the organization's runs use now: the one its newest
+    certificate was made with, from any finished check or build. ``None`` until a
+    certificate records one. Remembered for ten minutes."""
+    key = f"harness-current-version:{organization_id}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached or None
+    found = (
+        HarnessAssembledBundle._base_manager.filter(
+            organization_id=organization_id,
+            state=HarnessAssembledBundle.State.READY,
+            certificate__runtime__harness_version__isnull=False,
+        )
+        .order_by("-updated_at", "-id")
+        .values_list("certificate__runtime__harness_version", flat=True)
+        .first()
+    )
+    current = str(found) if found else None
+    # An empty string remembers that none was found.
+    cache.set(key, current or "", timeout=_HARNESS_VERSION_TTL_SECONDS)
+    return current
+
+
+def harness_outdated(certificate: Any, organization_id: Any) -> tuple[str, str] | None:
+    """The harness version ``certificate`` was made with and the one runs use now,
+    when they differ. Unknown on either side is not a change."""
+    was = certificate_harness_version(certificate)
+    now = current_harness_version(organization_id)
+    if was is None or now is None or was == now:
+        return None
+    return was, now
+
+
+def frameworks(certificate: Any) -> dict[str, str]:
+    """The agent framework distributions a certificate records, with their versions."""
+    runtime = certificate.get("runtime") if isinstance(certificate, Mapping) else None
+    found = runtime.get("frameworks") if isinstance(runtime, Mapping) else None
+    if not isinstance(found, Mapping):
+        return {}
+    return {str(name): str(version) for name, version in found.items() if version}
+
+
+def framework_change(
+    was: Mapping[str, str], now: Mapping[str, str]
+) -> tuple[str, str, str] | None:
+    """The first framework (by name) both certificates record at another version:
+    its name, the version checked and the one now used."""
+    for name in sorted(set(was) & set(now)):
+        if was[name] != now[name]:
+            return name, was[name], now[name]
+    return None

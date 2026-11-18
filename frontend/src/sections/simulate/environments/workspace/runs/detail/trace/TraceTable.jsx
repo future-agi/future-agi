@@ -33,6 +33,7 @@ import {
   CLOSED_GROUP_VIEW,
   neutralCheckboxSx,
   pinnedLeftSx,
+  subGoalLabel,
 } from "./traceTable.constants";
 import {
   SubTasksCell,
@@ -115,7 +116,6 @@ const clampSx = {
   wordBreak: "break-word",
 };
 
-// What a check was decided from, in plain words: "from the world and the transcript".
 const EVIDENCE_WORDS = {
   world_state: "the world",
   tool_calls: "the agent's calls",
@@ -124,21 +124,6 @@ const EVIDENCE_WORDS = {
 };
 const evidenceLabel = (evidence) =>
   `from ${evidence.map((one) => EVIDENCE_WORDS[one] || one).join(", ")}`;
-
-// A call with no pass or fail says what it has instead: "2 not applicable, 1 inconclusive".
-const unscoredSummary = (t) => {
-  if (t.status !== "no_score") return "";
-  const count = (result) =>
-    (t.subGoalResults || []).filter((goal) => goal.result === result).length;
-  return [
-    [count("not_applicable"), STATUS_META.not_applicable.label.toLowerCase()],
-    [count("inconclusive"), STATUS_META.inconclusive.label.toLowerCase()],
-    [count("unmeasured"), STATUS_META.unmeasured.label.toLowerCase()],
-  ]
-    .filter(([n]) => n)
-    .map(([n, label]) => `${n} ${label}`)
-    .join(", ");
-};
 
 // A persona is worth showing when any field is filled, not only the name: the
 // API sends name: null when the persona has no name key.
@@ -354,8 +339,7 @@ export default function TraceTable({
                   </>
                 )}
               </Stack>
-              {/* On its own line, so a long reason never squeezes the status. */}
-              {(t.outcomeReason || unscoredSummary(t)) && (
+              {t.outcomeReason && (
                 <Typography
                   sx={{
                     typography: "s3",
@@ -363,7 +347,7 @@ export default function TraceTable({
                     wordBreak: "break-word",
                   }}
                 >
-                  {t.outcomeReason || unscoredSummary(t)}
+                  {t.outcomeReason}
                 </Typography>
               )}
               {t.subGoalResults?.length > 0 && (
@@ -393,7 +377,7 @@ export default function TraceTable({
                         <Typography
                           sx={{ typography: "s3", color: "text.secondary" }}
                         >
-                          {goal.name}
+                          {subGoalLabel(goal)}
                         </Typography>
                         {goal.evidence?.length > 0 && (
                           <Typography
@@ -402,7 +386,13 @@ export default function TraceTable({
                             {evidenceLabel(goal.evidence)}
                           </Typography>
                         )}
-                        {goal.passed == null ? (
+                        {goal.result === "unmeasured" && goal.reason ? (
+                          <Typography
+                            sx={{ typography: "s3", color: verdict.color }}
+                          >
+                            {goal.reason}
+                          </Typography>
+                        ) : goal.passed == null ? (
                           <CustomTooltip
                             show={!!goal.reason}
                             size="small"
@@ -501,7 +491,7 @@ export default function TraceTable({
             onClick={() => onOpen(t)}
           >
             <SubTasksCell
-              subTasks={(t.subGoalResults || []).map((goal) => goal.name)}
+              subTasks={(t.subGoalResults || []).map(subGoalLabel)}
             />
           </TableCell>
         )}

@@ -33,6 +33,10 @@ const toWorldTool = (tool) =>
         desc: tool?.description || tool?.name || "",
         argTypes: tool?.arg_types || undefined,
         requires: tool?.requires || undefined,
+        argUnits: tool?.arg_units || undefined,
+        returns: tool?.returns || undefined,
+        refuses: tool?.refuses || undefined,
+        effects: tool?.effects || undefined,
       };
 
 // world.stores[] → the seed.tables[] shape the SeededDataCard / schema surfaces
@@ -68,6 +72,8 @@ const toScenarioRow = (row) => ({
     kind: sg?.kind,
   })),
   callActors: Array.isArray(row?.actors) ? row.actors : [],
+  // {code, message} when the scenario cannot work as set, else null.
+  doorProblem: row?.door_problem,
 });
 
 // evaluations.selected[] → the applied-eval rows useAppliedEvals/EvalRow read.
@@ -138,7 +144,6 @@ export function harnessDetailToEnvironment(detail) {
     // them over the fixture derivations (fixture fallback stays for nulls).
     amendments: contract?.amendments || null,
     subGoals: contract?.sub_goals || null,
-    // Who might be around the agent's users, each with how many scenarios include them.
     callActors: contract?.call_actors || null,
     endConditions: contract?.end_conditions || null,
     useCases: contract?.real_use_cases || null,
@@ -150,10 +155,19 @@ export function harnessDetailToEnvironment(detail) {
     // and how it is run (`settings.agent.mode`), for the Overview's facts.
     source: settings.source ?? null,
     agentMode: settings.agent?.mode ?? null,
-    // Real per-table field types and per-tool callables, when ALK read them
-    // from source. Empty for provider agents, which have neither.
+    // Real per-table field types, when ALK read them from source. Empty for
+    // provider agents, which have none.
     dataSchema: contract?.data_schema || null,
-    toolEntrypoints: contract?.tool_entrypoints || null,
+    toolStatus: contract?.tool_status,
+    // An open draft's contract, which runs do not use until it is saved.
+    contractFromDraft: Boolean(contract?.from_draft),
+    faultTargets: contract?.fault_targets,
+    worldTables: world?.tables,
+    worldTotalRows: world?.total_rows,
+    // `edit`, `list` or null (tab hidden).
+    actorsTab: detail.actors_tab,
+    // The workers the app's source declares; a run shows which took part.
+    workers: contract?.workers || null,
     systemPromptExcerpt: contract?.system_prompt_excerpt || null,
     counts: {
       flows: overview.flows_count ?? null,

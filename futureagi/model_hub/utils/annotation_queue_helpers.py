@@ -14,6 +14,7 @@ from model_hub.models.choices import (
     AutomationRuleTriggerFrequency,
     QueueItemSourceType,
 )
+from simulate.selectors.call_transcripts import with_speakers
 from simulate.serializers import CallTranscriptSerializer
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 
@@ -105,11 +106,11 @@ def _call_transcript_turns(call: Any) -> list[dict[str, Any]]:
         rows = getattr(call, "_displayable_transcripts", None)
         if rows is None:
             rows = list(
-                call.transcripts.filter(
-                    speaker_role__in=get_displayable_transcript_roles()
-                )
-                .select_related("actor_turn")
-                .order_by("start_time_ms")
+                with_speakers(
+                    call.transcripts.filter(
+                        speaker_role__in=get_displayable_transcript_roles()
+                    )
+                ).order_by("start_time_ms")
             )
         return list(CallTranscriptSerializer(rows, many=True).data)
     except (ObjectDoesNotExist, AttributeError, DatabaseError) as exc:

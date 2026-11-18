@@ -8,7 +8,7 @@ checks are read with Python's ``ast``. Never estimated from text.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import structlog
@@ -24,7 +24,7 @@ from simulate.services.hosted_harness import grades_nothing
 
 logger = structlog.get_logger(__name__)
 
-NEEDS_VERSION = "2"
+NEEDS_VERSION = "3"
 TOOL_ROWS = ("tool_discovery", "tool_routing")
 # ALK's default when a scenario does not say.
 _DEFAULT_MAX_TURNS = 10
@@ -44,7 +44,7 @@ class CaseNeeds:
     catalogue, a check that cannot be read, no stored document, or a connect-only
     scenario whose checks name no tool or name one in a way that cannot be read.
     ``ungradable`` marks a scenario the run route refuses: it grades no sub-goal of
-    the environment version.
+    the environment version. ``judged`` marks one a model grades in part.
     """
 
     key: str
@@ -57,6 +57,37 @@ class CaseNeeds:
     recorded: bool
     grading_gap: GradingGap | None
     ungradable: bool = False
+    # What the case needs the world's door for: each world action a fault is set on, and `ACTING` when an actor acts
+    # in the world (scheduled actions, or brought in by one of the agent's calls).
+    door: frozenset[str] = frozenset()
+    judged: bool = False
+
+
+# A case's actor acts in the world: it needs the world's door in front of the agent's tools.
+ACTING = "*acting_actor*"
+
+
+def _triggered_on_tool(actor: Mapping[str, Any]) -> bool:
+    trigger = actor.get("trigger")
+    return isinstance(trigger, Mapping) and trigger.get("kind") == "on_tool"
+
+
+def door_needs(document: Mapping[str, Any] | None) -> frozenset[str]:
+    """The world actions a scenario's faults are set on, and `ACTING` when one of its actors acts in the world."""
+    if not isinstance(document, Mapping):
+        return frozenset()
+    needs = {
+        str(fault["action"])
+        for fault in document.get("faults") or []
+        if isinstance(fault, Mapping) and fault.get("action")
+    }
+    if any(
+        isinstance(actor, Mapping)
+        and (actor.get("actions") or _triggered_on_tool(actor))
+        for actor in document.get("actors") or []
+    ):
+        needs.add(ACTING)
+    return frozenset(needs)
 
 
 def affected_by_tool(case: CaseNeeds, tool: str) -> bool:
@@ -203,6 +234,7 @@ def _needs(
     elif not readings:
         gap = "no_checks"
     return CaseNeeds(
+        door=door_needs(document),
         key=key,
         number=number,
         name=str(document.get("name") or shown.get("name") or key),
@@ -213,6 +245,7 @@ def _needs(
         recorded=True,
         grading_gap=gap,
         ungradable=ungradable,
+        judged=any(one.judged for one in readings),
     )
 
 
@@ -264,17 +297,19 @@ def _checks(
 ) -> tuple[list[CheckReading], bool]:
     """Each named sub-goal's reading, and whether any could not be read.
 
-    A judged sub-goal reads no world and names no tool.
+    A judged sub-goal reads no world and names no tool; one with criteria for the
+    judge, beside a check or alone, is marked judged.
     """
     readings: list[CheckReading] = []
     unreadable = False
     for name in names:
         goal = catalogue.get(name)
         reading = read_check(str(goal.get("check") or "")) if goal else None
+        judged = goal is not None and bool(str(goal.get("judged") or "").strip())
         if reading is not None:
-            readings.append(reading)
-        elif goal is not None and str(goal.get("judged") or "").strip():
-            readings.append(CheckReading(world=False, tools=frozenset()))
+            readings.append(replace(reading, judged=judged))
+        elif judged:
+            readings.append(CheckReading(world=False, tools=frozenset(), judged=True))
         else:
             unreadable = True
     return readings, unreadable

@@ -211,19 +211,30 @@ class TestLiteLLMImageModelManager:
         )
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_get_provider_for_dalle(self, mock_custom_model):
-        """Test getting provider for DALL-E model."""
+    def test_get_provider_for_dalle_rejects_deprecated_model(self, mock_custom_model):
+        """DALL-E without a custom override is unavailable in the current catalog."""
         from agentic_eval.core_evals.run_prompt.litellm_models import (
             LiteLLMModelManager,
         )
 
+        class _DoesNotExist(Exception):
+            """Stands in for CustomAIModel.DoesNotExist."""
+
+        class _MultipleObjectsReturned(Exception):
+            """Stands in for CustomAIModel.MultipleObjectsReturned."""
+
+        # Exception attributes on a MagicMock cannot be used in an except clause.
         mock_custom_model.objects.filter.return_value.values.return_value = []
+        mock_custom_model.DoesNotExist = _DoesNotExist
+        mock_custom_model.MultipleObjectsReturned = _MultipleObjectsReturned
+        mock_custom_model.objects.get.side_effect = _DoesNotExist
 
-        # Note: The DALL-E model names have size/quality prefixes
         manager = LiteLLMModelManager(model_name="standard/1024-x-1024/dall-e-3")
-        provider = manager.get_provider("standard/1024-x-1024/dall-e-3")
 
-        assert provider == "openai"
+        with pytest.raises(
+            ValueError, match="not available in the current model catalog"
+        ):
+            manager.get_provider("standard/1024-x-1024/dall-e-3")
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
     def test_get_provider_for_gpt_image(self, mock_custom_model):

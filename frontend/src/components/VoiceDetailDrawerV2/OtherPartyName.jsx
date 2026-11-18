@@ -24,7 +24,6 @@ export default function OtherPartyName({
         maxWidth: "100%",
       }}
     >
-      {/* A role can be a whole sentence; keep it to one line and show it in full on hover. */}
       <CustomTooltip show={cut} size="small" arrow title={label}>
         <Typography
           ref={labelRef}

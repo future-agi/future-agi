@@ -37,6 +37,7 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.chat import ChatRole
 from simulate.semantics import SupportedProviders
+from simulate.services.call_transcripts import SpokenTurn, store_transcript
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.scoring_status import (
     CSAT_STAMP_KEY,
@@ -48,9 +49,13 @@ from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
 )
+from simulate.types import worker_subject_id
 from simulate.utils.ended_reason import to_canonical_ended_reason
 from simulate.utils.eval_summary import INCONCLUSIVE_OUTPUT, NOT_APPLICABLE_OUTPUT
-from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
+from simulate.utils.test_execution_utils import (
+    generate_simulator_agent_prompt,
+    is_fix_check_run,
+)
 from simulate.utils.websocket_notifications import notify_simulation_update
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
@@ -59,6 +64,8 @@ from tracer.models.observability_provider import ProviderChoices
 logger = structlog.get_logger(__name__)
 
 DEFAULT_BATCH_SIZE = 9
+# The origin of a run test's one scenario that holds every persona as a dataset row.
+GROUPED_SCENARIOS_ORIGIN = "alk_sdk_ingestion_grouped"
 _ALK_BATCH_CLAIMED_KEY = "alk_batch_claimed"
 # Bookkeeping keys the backend owns inside ``call_metadata``. A result PATCH
 # merges caller-supplied ``call_metadata`` caller-wins, so the caller must not be
@@ -451,8 +458,7 @@ def append_alk_sim_scenarios(run_test, personas):
         existing = list(run_test.scenarios.filter(deleted=False).order_by("created_at"))
         if (
             len(existing) == 1
-            and (existing[0].metadata or {}).get("origin")
-            == "alk_sdk_ingestion_grouped"
+            and (existing[0].metadata or {}).get("origin") == GROUPED_SCENARIOS_ORIGIN
             and existing[0].dataset_id
         ):
             scenario = existing[0]
@@ -512,7 +518,7 @@ def _create_persona_scenarios(
         dataset=dataset,
         status=StatusType.COMPLETED.value,
         metadata={
-            "origin": "alk_sdk_ingestion_grouped",
+            "origin": GROUPED_SCENARIOS_ORIGIN,
             "persona_count": len(personas),
             **({"persona": only_persona} if only_persona is not None else {}),
         },
@@ -958,7 +964,9 @@ def ingest_alk_sim_result(
         # a switched-on run test must still take the dispatch arm below even
         # with no catalogue eval selected.
         run_test_id = getattr(call_execution.test_execution, "run_test_id", None)
-        if (
+        # A fix's check run starts no grading here: its fix grades the base version's and
+        # the winner's runs once it has a winner, and a fix with none pays for no evals.
+        if is_fix_check_run(call_execution.test_execution_id) or (
             "harness_evaluations" in call_metadata
             and not selected_eval_config_ids
             and not _tool_evaluation_on(run_test_id)
@@ -1508,29 +1516,30 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
                 call_execution=call_execution
             ).exists()
         ):
-            created = CallTranscript.objects.bulk_create(
+            store_transcript(
                 [
-                    CallTranscript.spoken(
-                        call_execution=call_execution,
-                        speaker_role=seg["speaker_role"],
+                    SpokenTurn(
+                        row=CallTranscript(
+                            call_execution=call_execution,
+                            speaker_role=seg["speaker_role"],
+                            content=seg["content"],
+                            start_time_ms=seg.get("start_time_ms") or 0,
+                            end_time_ms=seg.get("end_time_ms") or 0,
+                            confidence_score=(
+                                seg["confidence_score"]
+                                if seg.get("confidence_score") is not None
+                                else 1.0
+                            ),
+                        ),
                         speaker_name=(
                             seg.get("speaker_name") or ""
                             if seg["speaker_role"] == CallTranscript.SpeakerRole.ACTOR
                             else ""
                         ),
-                        content=seg["content"],
-                        start_time_ms=seg.get("start_time_ms") or 0,
-                        end_time_ms=seg.get("end_time_ms") or 0,
-                        confidence_score=(
-                            seg["confidence_score"]
-                            if seg.get("confidence_score") is not None
-                            else 1.0
-                        ),
                     )
                     for seg in segments
                 ]
             )
-            CallTranscript.create_actor_turns(created)
             call_execution.transcript_available = True
 
         _apply_conversation_metrics(call_execution)
@@ -1606,6 +1615,8 @@ def _store_alk_chat_messages(
             }
             if seg.get("actor"):
                 item["actor"] = seg["actor"]
+                if seg.get("name"):
+                    item["name"] = seg["name"]
             if seg.get("tool_calls"):
                 item["tool_calls"] = seg["tool_calls"]
             if speaker in {"tool_calls", "tool_call_result"}:
@@ -1898,6 +1909,9 @@ def _apply_harness_evaluation_outputs(
 
     outputs = dict(call_execution.eval_outputs or {})
     run_test = call_execution.test_execution.run_test
+    # Nobody reads the localizer on a fix's check run, so it is not paid for there.
+    # Asked once, and only when a localizer would run.
+    check_run: bool | None = None
     for evaluation in evaluations:
         if not isinstance(evaluation, dict):
             continue
@@ -1905,7 +1919,14 @@ def _apply_harness_evaluation_outputs(
         if not name:
             continue
         kind = str(evaluation.get("kind") or "checkpoint").strip()[:50]
-        template = _resolve_harness_eval_template(run_test, evaluation, name)
+        subject = str(evaluation.get("subject") or "")
+        worker = worker_subject_id(subject) or ""
+        # A worker's own check is never the task's column: it gets its own id and no error localizer.
+        template = (
+            None
+            if worker
+            else _resolve_harness_eval_template(run_test, evaluation, name)
+        )
         config = None
         if template is not None:
             config = _get_or_create_harness_eval_config(run_test, template, name)
@@ -1914,7 +1935,9 @@ def _apply_harness_evaluation_outputs(
             output_id = str(
                 uuid.uuid5(
                     _HARNESS_EVAL_NAMESPACE,
-                    f"{run_test.id}:{kind}:{name}",
+                    f"{run_test.id}:{kind}:{subject}:{name}"
+                    if worker
+                    else f"{run_test.id}:{kind}:{name}",
                 )
             )
 
@@ -1941,6 +1964,8 @@ def _apply_harness_evaluation_outputs(
             "output_type": output_type,
             **({"result": evaluation["result"]} if evaluation.get("result") else {}),
             "reason": str(evaluation.get("reason") or "")[:10000],
+            # A worker's own check names its worker by subject; the reader's label is the client's.
+            **({"subject": subject} if worker else {}),
             "status": "completed",
             "source": "harness",
             "kind": kind,
@@ -1952,7 +1977,13 @@ def _apply_harness_evaluation_outputs(
         # SimulateEvalConfig.error_localizer does not dispatch one. The task's
         # deterministic (call, config) source ID keeps result retries idempotent.
         if config is not None and config.error_localizer:
-            transcript = _render_harness_transcript(transcript_segments or [])
+            if check_run is None:
+                check_run = is_fix_check_run(call_execution.test_execution_id)
+            transcript = (
+                ""
+                if check_run
+                else _render_harness_transcript(transcript_segments or [])
+            )
             if transcript:
                 from model_hub.tasks.user_evaluation import (
                     trigger_error_localization_for_simulate,

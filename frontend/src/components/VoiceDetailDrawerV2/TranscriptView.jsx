@@ -27,7 +27,6 @@ import {
   enrichTurns,
   formatClock,
   isOtherRole,
-  otherParties,
   otherPartyLabel,
 } from "./transcriptUtils";
 import {
@@ -582,6 +581,8 @@ const FILTERS = [
 const TranscriptView = ({
   transcript,
   customerName,
+  participants = [],
+  hasCustomer = true,
   onAnnotate,
   embedded = false,
   // Header-row customization hooks used by the chat drawer to repurpose
@@ -628,13 +629,12 @@ const TranscriptView = ({
   );
 
   const totals = useMemo(() => computeTotals(turns), [turns]);
-  const others = useMemo(() => otherParties(turns), [turns]);
-  // A call with no one else on it keeps the original three filters.
-  const filters = others.length
+  const filters = participants.length
     ? [...FILTERS, { id: "others", label: DEFAULT_ROLE_LABELS.others }]
     : FILTERS;
-  // The view stays mounted across calls, and the next call may have no others.
-  const activeFilter = filter === "others" && !others.length ? "all" : filter;
+  // The view stays mounted across calls; the next call may have no others.
+  const activeFilter =
+    filter === "others" && !participants.length ? "all" : filter;
 
   const filteredTurns = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -846,7 +846,11 @@ const TranscriptView = ({
           Chat drawer hides the timeline strip (no audio-backed speaker
           timeline) and uses the talk-ratio row as a compact legend. */}
       <Stack gap={0.75} sx={{ flexShrink: 0 }}>
-        <CallParticipants others={others} customerName={customerName} />
+        <CallParticipants
+          participants={participants}
+          customerName={customerName}
+          withCustomer={hasCustomer}
+        />
         <TalkRatioBar
           totals={totals}
           colors={colors}
@@ -924,7 +928,6 @@ const TranscriptView = ({
           )}
         </Box>
 
-        {/* The search gives way when the row is tight, so no filter gets clipped. */}
         <Box
           sx={{
             display: "inline-flex",
@@ -1072,6 +1075,9 @@ const TranscriptView = ({
 
 TranscriptView.propTypes = {
   customerName: PropTypes.string,
+  // Who took part in the call, as the server says; none for a call with no actors.
+  participants: PropTypes.arrayOf(PropTypes.object),
+  hasCustomer: PropTypes.bool,
   transcript: PropTypes.array,
   onAnnotate: PropTypes.func,
   hideTimelineStrip: PropTypes.bool,

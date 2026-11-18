@@ -1,10 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "src/utils/test-utils";
+import { render, screen, waitFor, within } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 // Each hook is stubbed; tests set what the server answered.
-const state = { versions: undefined, plans: {}, members: {}, drafts: null };
+const state = {
+  versions: undefined,
+  versionsError: undefined,
+  plans: {},
+  members: {},
+  drafts: null,
+};
+const PLAN_OK = {
+  warnings: [],
+  blocked_tools: [],
+  runnable: true,
+  held_back: 0,
+};
 const planCalls = [];
+const refetchPlan = vi.fn();
 vi.mock("src/api/simulate-environments/versions", async () => {
   const actual = await vi.importActual(
     "src/api/simulate-environments/versions",
@@ -16,17 +29,23 @@ vi.mock("src/api/simulate-environments/versions", async () => {
         enabled && state.versions
           ? actual.toVersions(state.versions)
           : undefined,
-      isLoading: enabled && !state.versions,
-      isError: false,
+      isLoading: enabled && !state.versions && !state.versionsError,
+      isError: Boolean(state.versionsError),
+      error: state.versionsError,
     })),
     // A plan is its data, `{ loading: true }` or `{ error }`.
-    useRunPlan: vi.fn((envId, picks, { enabled } = {}) => {
-      planCalls.push({ picks, enabled });
-      const plan = state.plans[JSON.stringify(picks)] || { warnings: [] };
+    useRunPlan: vi.fn((envId, picks, { enabled, scenarioKeys } = {}) => {
+      planCalls.push({ picks, enabled, scenarioKeys });
+      const plan = { ...PLAN_OK, ...state.plans[JSON.stringify(picks)] };
       if (!enabled) return { isLoading: false, isError: false };
       if (plan.loading) return { isLoading: true, isError: false };
       if (plan.error) {
-        return { isLoading: false, isError: true, error: plan.error };
+        return {
+          isLoading: false,
+          isError: true,
+          error: plan.error,
+          refetch: refetchPlan,
+        };
       }
       return { data: plan, isLoading: false, isError: false };
     }),
@@ -111,6 +130,87 @@ describe("RunDialog", () => {
     state.members = { s3: members("k1", "k2", "k3"), s2: members("k1", "k9") };
     planCalls.length = 0;
     state.drafts = null;
+    state.versionsError = undefined;
+  });
+
+  it("asks the plan about the scenarios this run takes", () => {
+    renderDialog();
+    expect(planCalls.at(-1)).toMatchObject({
+      enabled: true,
+      scenarioKeys: ["k1", "k2"],
+    });
+  });
+
+  it("says in one line that a runnable plan's blocked tool has its calls blocked, with its scenarios under Details", async () => {
+    const user = userEvent.setup();
+    state.plans["{}"] = {
+      blocked_tools: [
+        {
+          tool: "issue_refund",
+          scenarios: [{ key: "k1", name: "Refund a late ride" }],
+        },
+      ],
+      held_back: 0,
+    };
+    renderDialog();
+
+    const line = screen.getByTestId("run-blocked-tool");
+    expect(line).toHaveTextContent(
+      "issue_refund reaches production, so this test blocks its calls",
+    );
+    expect(line).not.toHaveTextContent("held back");
+    expect(
+      within(line).getByText(/Scenarios that use it: Refund a late ride\./),
+    ).not.toBeVisible();
+    await user.click(within(line).getByRole("button", { name: "Details" }));
+    expect(
+      within(line).getByText(
+        "Blocked: issue_refund reaches production, so this test blocks its calls. Serve it from the agent's tools service or remove it. Scenarios that use it: Refund a late ride.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByTestId("run-blocked")).toBeNull();
+    expect(runButton()).toBeEnabled();
+  });
+
+  it("does not start a run the plan says cannot run, and says which tools block it", () => {
+    state.plans["{}"] = {
+      blocked_tools: [
+        { tool: "issue_refund", scenarios: [{ key: "k1", name: "Refund" }] },
+      ],
+      held_back: 1,
+      runnable: false,
+      blocked_code: "production_only",
+    };
+    renderDialog({ scenarioIds: ["k1"] });
+
+    expect(screen.getByTestId("run-blocked")).toHaveTextContent(
+      "Every selected scenario needs issue_refund, which this test blocks. Serve it from the agent's tools service or remove it, then run again.",
+    );
+    expect(runButton()).toBeDisabled();
+  });
+
+  it("asks the plan for the blocked tools even with versioning off, and shows them", () => {
+    state.versions = undefined;
+    state.versionsError = {
+      statusCode: 404,
+      error: "versioning_disabled",
+      message: "versioning is off",
+    };
+    state.plans["{}"] = {
+      blocked_tools: [{ tool: "issue_refund", scenarios: [] }],
+      held_back: 0,
+    };
+    renderDialog({ env: { ...ENV, versioning: { enabled: false } } });
+
+    expect(planCalls.at(-1).enabled).toBe(true);
+    expect(screen.getByTestId("run-blocked-tool")).toHaveTextContent(
+      "issue_refund reaches production, so this test blocks its calls",
+    );
+  });
+
+  it("shows no blocked line when the plan blocks nothing", () => {
+    renderDialog();
+    expect(screen.queryByTestId("run-blocked-tool")).toBeNull();
   });
 
   it("pre-selects the defaults and offers only active versions", async () => {
@@ -161,11 +261,12 @@ describe("RunDialog", () => {
       { agent: "a3" },
       ["k1", "k2"],
       resolved({ agent: "a3" }),
+      null,
     );
 
     await pickOption(user, "Agent version", "v4 (default)");
     await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(onSubmit).toHaveBeenLastCalledWith({}, ["k1", "k2"], DEFAULTS);
+    expect(onSubmit).toHaveBeenLastCalledWith({}, ["k1", "k2"], DEFAULTS, null);
   });
 
   it("pre-selects a re-run's agent version", () => {
@@ -180,10 +281,10 @@ describe("RunDialog", () => {
   it("sends nothing when the defaults are kept", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderDialog();
-    expect(planCalls.at(-1)).toEqual({ picks: {}, enabled: true });
+    expect(planCalls.at(-1)).toMatchObject({ picks: {}, enabled: true });
 
     await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2"], DEFAULTS);
+    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2"], DEFAULTS, null);
   });
 
   it("sends only the versions the user changed", async () => {
@@ -197,6 +298,7 @@ describe("RunDialog", () => {
       { environment: "e1" },
       ["k1", "k2"],
       resolved({ environment: "e1" }),
+      null,
     );
 
     await pickOption(user, "Scenario version", "v2");
@@ -206,6 +308,7 @@ describe("RunDialog", () => {
       { suite: "s2" },
       ["k1"],
       resolved({ suite: "s2" }),
+      null,
     );
   });
 
@@ -241,6 +344,7 @@ describe("RunDialog", () => {
       { environment: "e1" },
       ["k1", "k2"],
       resolved({ environment: "e1" }),
+      null,
     );
   });
 
@@ -250,7 +354,9 @@ describe("RunDialog", () => {
     const region = screen.getByTestId("run-plan");
     expect(region).toHaveAttribute("aria-live", "polite");
     expect(
-      within(region).getByText("Checking these versions…"),
+      within(region).getByText(
+        "Checking these versions and what the run would block…",
+      ),
     ).toBeInTheDocument();
     expect(runButton()).toBeDisabled();
   });
@@ -269,9 +375,7 @@ describe("RunDialog", () => {
     expect(screen.getByTestId("run-error")).toHaveTextContent(
       "These versions haven't been run together yet",
     );
-    expect(
-      screen.queryByText("Couldn't check these versions for warnings."),
-    ).toBeNull();
+    expect(screen.queryByTestId("run-plan-failed")).toBeNull();
     expect(runButton()).toBeDisabled();
 
     // Back at the defaults the plan resolves again.
@@ -313,7 +417,7 @@ describe("RunDialog", () => {
     expect(runButton()).toBeDisabled();
   });
 
-  it("leaves a plan that failed on the server to a note and lets the run start", async () => {
+  it("leaves a plan that failed on the server to a note with Try again and lets the run start", async () => {
     const user = userEvent.setup();
     state.plans[JSON.stringify({ environment: "e1" })] = {
       error: { statusCode: 503, message: "busy" },
@@ -321,10 +425,12 @@ describe("RunDialog", () => {
     const { onSubmit } = renderDialog();
 
     await pickOption(user, "Environment version", "v1");
-    expect(
-      screen.getByText("Couldn't check these versions for warnings."),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("run-plan-failed")).toHaveTextContent(
+      "Couldn't check these versions and what the run would block. The run can still start; a blocked one is refused.",
+    );
     expect(screen.queryByTestId("run-error")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(refetchPlan).toHaveBeenCalled();
     await user.click(runButton());
     expect(onSubmit).toHaveBeenCalled();
   });
@@ -343,6 +449,7 @@ describe("RunDialog", () => {
       { environment: "e1" },
       ["k1", "k2"],
       resolved({ environment: "e1" }),
+      null,
     );
     expect(screen.queryByTestId("rerun-fallback")).toBeNull();
   });
@@ -415,7 +522,7 @@ describe("RunDialog", () => {
     );
     await user.click(runButton());
     const kept = { environment: "e1", suite: "s2" };
-    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept));
+    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept), null);
   });
 
   it("keeps a pre-change run's other versions when its agent can't be picked", async () => {
@@ -434,7 +541,7 @@ describe("RunDialog", () => {
     );
     await user.click(runButton());
     const kept = { environment: "e1", suite: "s2" };
-    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept));
+    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept), null);
   });
 
   it("drops only the agent when the server refuses a re-run's agent pick", async () => {
@@ -462,7 +569,7 @@ describe("RunDialog", () => {
     expect(screen.queryByTestId("run-error")).toBeNull();
     await user.click(runButton());
     const kept = { environment: "e1", suite: "s2" };
-    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept));
+    expect(onSubmit).toHaveBeenCalledWith(kept, ["k1"], resolved(kept), null);
   });
 
   it("falls back to every default when the kept versions are refused too", async () => {
@@ -481,7 +588,7 @@ describe("RunDialog", () => {
     );
     expect(screen.queryByTestId("run-error")).toBeNull();
     await user.click(runButton());
-    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2"], DEFAULTS);
+    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2"], DEFAULTS, null);
   });
 
   it("falls back to the defaults when a re-run's versions are refused", async () => {
@@ -499,7 +606,7 @@ describe("RunDialog", () => {
     expect(screen.getByTestId("rerun-fallback")).toBeInTheDocument();
     expect(screen.queryByTestId("run-error")).toBeNull();
     await user.click(runButton());
-    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2"], DEFAULTS);
+    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2"], DEFAULTS, null);
 
     // Picking again drops the note.
     await pickOption(user, "Environment version", "v1");
@@ -515,13 +622,11 @@ describe("RunDialog", () => {
       ),
     };
     renderDialog();
-    expect(planCalls.at(-1)).toEqual({ picks: {}, enabled: true });
+    expect(planCalls.at(-1)).toMatchObject({ picks: {}, enabled: true });
     expect(screen.getByTestId("run-error")).toHaveTextContent(
       "These versions haven't been run together yet",
     );
-    expect(
-      screen.queryByText("Couldn't check these versions for warnings."),
-    ).toBeNull();
+    expect(screen.queryByTestId("run-plan-failed")).toBeNull();
     expect(runButton()).toBeDisabled();
   });
 
@@ -551,6 +656,11 @@ describe("RunDialog", () => {
     );
   });
 
+  it("asks the plan about a whole-suite run without listing its scenarios", () => {
+    renderDialog({ scenarioIds: undefined });
+    expect(planCalls.at(-1).scenarioKeys).toBeNull();
+  });
+
   it("runs all of another suite's scenarios when that suite is picked", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderDialog({ scenarioIds: undefined });
@@ -563,6 +673,7 @@ describe("RunDialog", () => {
       { suite: "s2" },
       ["k1", "k9"],
       resolved({ suite: "s2" }),
+      null,
     );
   });
 
@@ -575,7 +686,7 @@ describe("RunDialog", () => {
     // The default suite runs the server's current list, so no count is promised.
     expect(screen.getByText("Runs all scenarios in v3.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(onSubmit).toHaveBeenCalledWith({}, undefined, DEFAULTS);
+    expect(onSubmit).toHaveBeenCalledWith({}, undefined, DEFAULTS, null);
   });
 
   it("runs the default suite's own scenarios with versioning on, even before the drafts are known", async () => {
@@ -583,7 +694,12 @@ describe("RunDialog", () => {
     const { onSubmit } = renderDialog({ scenarioIds: undefined });
     expect(screen.getByText("Runs all 3 scenarios in v3.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Run" }));
-    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2", "k3"], DEFAULTS);
+    expect(onSubmit).toHaveBeenCalledWith(
+      {},
+      ["k1", "k2", "k3"],
+      DEFAULTS,
+      null,
+    );
   });
 
   it("says unsaved changes aren't part of the run", () => {
@@ -774,5 +890,91 @@ describe("RunDialog", () => {
   it("leaves other failures to the snackbar", () => {
     renderDialog({ error: { statusCode: 500, message: "boom" } });
     expect(screen.queryByTestId("run-error")).toBeNull();
+  });
+
+  it("folds the seed to one line, New seed until one is typed, and opens it with Edit", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    expect(screen.getByTestId("run-seed-line")).toHaveTextContent("New seed");
+    expect(screen.getByTestId("run-seed")).not.toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByTestId("run-seed")).toBeVisible();
+    await user.type(screen.getByTestId("run-seed"), "42");
+    expect(screen.getByTestId("run-seed-line")).toHaveTextContent("42");
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+  });
+
+  it("sends the seed as typed, with no check of its own", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderDialog();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    expect(
+      screen.getByText(
+        "The same seed draws the same personas and variations again",
+      ),
+    ).toBeInTheDocument();
+    await user.type(screen.getByTestId("run-seed"), " 9223372036854775808 ");
+    await user.click(runButton());
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      {},
+      ["k1", "k2"],
+      DEFAULTS,
+      "9223372036854775808",
+    );
+  });
+
+  it("shows the server's refusal of a seed under the seed, and lets the run go again once the seed changes", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const refused = {
+      statusCode: 400,
+      code: "invalid_seed",
+      attr: "seed",
+      message: "seed: A seed is a whole number from 0 to 2^63 - 1.",
+      details: { seed: ["A seed is a whole number from 0 to 2^63 - 1."] },
+    };
+    render(
+      <RunDialog
+        open
+        env={ENV}
+        scenarioIds={["k1", "k2"]}
+        trials={1}
+        initialSeed="-4"
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+        error={refused}
+      />,
+    );
+    const seed = screen.getByTestId("run-seed");
+    expect(seed).toBeVisible();
+    expect(seed).toHaveAccessibleDescription(
+      "A seed is a whole number from 0 to 2^63 - 1.",
+    );
+    // Said once, under the seed, never as the dialog's own error.
+    expect(screen.queryByText(/^seed: /)).toBeNull();
+    expect(runButton()).toBeDisabled();
+    await user.clear(seed);
+    await user.type(seed, "42");
+    expect(seed).not.toHaveAccessibleDescription(/2\^63/);
+    await waitFor(() => expect(runButton()).toBeEnabled());
+    await user.click(runButton());
+    expect(onSubmit).toHaveBeenLastCalledWith({}, ["k1", "k2"], DEFAULTS, "42");
+  });
+
+  it("starts a re-run from its run's seed, exactly, past what a JavaScript number holds", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderDialog({ initialSeed: "7902065059689103066" });
+    expect(screen.getByTestId("run-seed-line")).toHaveTextContent(
+      "7902065059689103066",
+    );
+    expect(screen.getByTestId("run-seed")).toHaveValue("7902065059689103066");
+    await user.click(runButton());
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      {},
+      ["k1", "k2"],
+      DEFAULTS,
+      "7902065059689103066",
+    );
   });
 });

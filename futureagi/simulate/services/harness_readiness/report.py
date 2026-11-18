@@ -33,18 +33,27 @@ from simulate.services.harness_readiness.catalogue import (
     RowView,
     Status,
     VersionRef,
+    WorkerBoundaryView,
 )
 from simulate.services.harness_readiness.evidence import (
+    Evidence,
     agent_tools,
     certified,
     pair_bundle,
     read_evidence,
+    recent_runs,
 )
+from simulate.services.harness_readiness.release import current_harness_version
 from simulate.services.harness_readiness.rules import (
     answer,
     failed_actions,
     rows,
     worst,
+)
+from simulate.services.harness_readiness.workers import (
+    blocked_count,
+    recent_calls,
+    worker_boundaries,
 )
 from simulate.services.harness_versioning import validation
 from simulate.services.harness_versioning.read import (
@@ -72,7 +81,11 @@ class ReadinessReport(TypedDict):
     answer: AnswerView
     areas: list[AreaView]
     rows: list[RowView]
+    # One row per declared worker: which of its tools the world holds it to. Never Supported.
+    workers: list[WorkerBoundaryView]
     counts: dict[Status, int]
+    # Blocked rows plus blocked workers: what the run plan's header counts as blockers.
+    blockers: int
     catalog_version: str
     rules_version: str
     computed_at: str
@@ -228,15 +241,21 @@ def recheck(pairing: Pairing) -> validation.ValidationView:
     Raises:
         UsageLimitExceeded: the organization cannot spend on a build sandbox, which a
             validation runs in; a pairing already certified starts none unless its
-            agent version's tools are still to be read.
+            agent version's tools are still to be read or an earlier harness made
+            its certificate.
     """
     from simulate.services.harness_usage import require_harness_authoring
 
     agent = pairing.agent_version
-    if not certified(pair_bundle(pairing)) or (
-        agent is not None
-        and validation.needs_reading(
-            pairing.environment, agent, pairing.environment_version, pairing.runtime
+    bundle = pair_bundle(pairing)
+    if (
+        not certified(bundle)
+        or validation.recertifies(bundle)
+        or (
+            agent is not None
+            and validation.needs_reading(
+                pairing.environment, agent, pairing.environment_version, pairing.runtime
+            )
         )
     ):
         require_harness_authoring(str(pairing.environment.organization_id))
@@ -263,20 +282,24 @@ def recheck(pairing: Pairing) -> validation.ValidationView:
 
 
 def readiness_report(
-    pairing: Pairing, *, bundle: HarnessAssembledBundle | None = None
+    pairing: Pairing,
+    *,
+    bundle: HarnessAssembledBundle | None = None,
+    evidence: Evidence | None = None,
 ) -> ReadinessReport:
     """The pairing's readiness, computed now from its evidence. Writes nothing but an
     older row's certification files, kept once read.
 
     ``bundle`` is the pairing's bundle when the caller holds it already (a run's own);
-    otherwise it is looked up as a run of the pairing would.
+    otherwise it is looked up as a run of the pairing would. ``evidence`` is the
+    pairing's evidence when the caller has read it already, so it is read once.
     """
     bundle = bundle or pair_bundle(pairing)
     key = _report_key(pairing, bundle)
     cached: ReadinessReport | None = cache.get(key)
     if cached is not None:
         return cached
-    report = _computed_report(pairing, bundle)
+    report = _computed_report(pairing, bundle, evidence)
     # An unreadable archive is tried again on the next read, not remembered.
     if not report["pairing"]["evidence_unreadable"]:
         cache.set(key, report, timeout=REPORT_TTL_SECONDS)
@@ -337,6 +360,8 @@ def _report_key(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> str:
         check,
         newest,
         setup,
+        # A newer harness makes every certificate made before it Stale.
+        current_harness_version(pairing.environment.organization_id),
     )
     return (
         "harness-readiness-report:" + hashlib.sha256(repr(parts).encode()).hexdigest()
@@ -344,11 +369,15 @@ def _report_key(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> str:
 
 
 def _computed_report(
-    pairing: Pairing, bundle: HarnessAssembledBundle | None
+    pairing: Pairing,
+    bundle: HarnessAssembledBundle | None,
+    evidence: Evidence | None = None,
 ) -> ReadinessReport:
-    evidence = read_evidence(pairing, bundle)
+    if evidence is None:
+        evidence = read_evidence(pairing, bundle)
     tools = agent_tools(pairing)
-    found = rows(pairing, evidence, bundle, agent_tools=tools)
+    runs = recent_runs(pairing)
+    found = rows(pairing, evidence, bundle, agent_tools=tools, runs=runs)
     view = _validation(pairing, bundle)
     refs = version_refs(
         pairing.agent_version, pairing.environment_version, pairing.suite_version
@@ -366,6 +395,8 @@ def _computed_report(
     counts: dict[Status, int] = dict.fromkeys(WORST_FIRST, 0)
     for row in found:
         counts[row["status"]] += 1
+    workers = worker_boundaries(pairing, evidence, recent_calls(runs))
+    blocked_workers = blocked_count(workers)
     return {
         "pairing": {
             "agent_version": cast("VersionRef | None", refs["agent"]),
@@ -381,14 +412,30 @@ def _computed_report(
             validating=view["state"] == "validating",
             failed=view["state"] == "failed",
             named=bool(failed_actions(bundle)),
+            blocked_workers=blocked_workers,
         ),
         "areas": areas,
         "rows": found,
+        "workers": workers,
         "counts": counts,
+        "blockers": counts["blocked"] + blocked_workers,
         "catalog_version": CATALOG_VERSION,
         "rules_version": RULES_VERSION,
         "computed_at": timezone.now().isoformat(),
     }
+
+
+def snapshot_as_read(snapshot: Any) -> Any:
+    """A run's kept report as the report reads now: one kept before workers were read has none, and counts only
+    its blocked rows as blockers."""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    filled = dict(snapshot)
+    if "workers" not in filled:
+        filled["workers"] = []
+    if "blockers" not in filled:
+        filled["blockers"] = (filled.get("counts") or {}).get("blocked", 0)
+    return filled
 
 
 def store_run_snapshot(

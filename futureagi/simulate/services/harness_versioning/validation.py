@@ -33,7 +33,9 @@ from simulate.models import (
 )
 from simulate.services.harness_versioning import assembly
 from simulate.services.hosted_harness import (
+    CHECK_TIMED_OUT_CANCEL_REASON,
     RUN_DROPPED_METADATA,
+    SUPERSEDED_MOVE_CANCEL_REASON,
     HostedHarnessError,
     ResolvedPins,
     create_hosted_job,
@@ -52,7 +54,7 @@ Caller = Literal["activation", "hand", "no_change", "land"]
 # sandbox is ours, not the agent's: the check reads as unavailable and runs go ahead;
 # the next check starts a fresh job.
 CHECK_DEADLINE = timedelta(minutes=45)
-CHECK_TIMED_OUT = "validation_timed_out"
+CHECK_TIMED_OUT = CHECK_TIMED_OUT_CANCEL_REASON
 # The endings that are a check's verdict on the pairing; any other one is retried.
 CHECK_FAILURES = frozenset({"authoring_runtime_validation_failed"})
 # A check that ended on our side, not the agent's: runs are not held for it.
@@ -435,6 +437,10 @@ def start_validation(
         certified = (
             bundle.state == HarnessAssembledBundle.State.READY and bundle.object_key
         )
+        if certified and purpose == "recheck" and recertifies(bundle):
+            # Made by an earlier harness than runs use now: certify it again.
+            assembly.reset_outdated(bundle)
+            certified = False
         if certified and read and live_validation(bundle.id) is None:
             job = _create_job(
                 locked,
@@ -501,6 +507,18 @@ def start_validation(
     return Validation("validating", bundle, purpose, job)
 
 
+def recertifies(bundle: HarnessAssembledBundle | None) -> bool:
+    """Whether a Re-check certifies ``bundle`` again: its certificate was made by an
+    earlier harness version than the organization's runs use now."""
+    from simulate.services.harness_readiness.release import harness_outdated
+
+    return (
+        bundle is not None
+        and bundle.state == HarnessAssembledBundle.State.READY
+        and harness_outdated(bundle.certificate, bundle.organization_id) is not None
+    )
+
+
 def _carry_move(job: HostedHarnessJob, move: AgentMove) -> bool:
     """Give a running validation ``move``; ``False`` when it settled meanwhile."""
     locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(id=job.id)
@@ -540,7 +558,7 @@ def drop_waiting_moves(locked: HostedHarnessJob, agent_version_id: Any) -> None:
             # Nobody else waits on a move's check: stop its sandbox rather than run it out.
             from simulate.services.hosted_harness import request_cancellation
 
-            request_cancellation(job, "superseded_move")
+            request_cancellation(job, SUPERSEDED_MOVE_CANCEL_REASON)
         logger.info(
             "harness_pair_validation_move_dropped",
             environment_id=str(locked.id),

@@ -14,7 +14,7 @@ const VISUALLY_HIDDEN = {
   whiteSpace: "nowrap",
 };
 
-// Sized to a row with no Wants line (ActorRow), so a short cast doesn't jump much when it arrives.
+// Sized to an ActorRow with no Wants line so a short cast doesn't jump on load.
 function RowSkeleton({ locked }) {
   return (
     <Stack
@@ -107,7 +107,6 @@ GroupSkeleton.propTypes = {
   children: PropTypes.node,
 };
 
-/** The tab while its cast loads: the words are known, so only the rows are placeholders. */
 export default function ActorsSkeleton({ locked = false }) {
   return (
     <Box aria-busy="true" sx={{ p: 2 }}>

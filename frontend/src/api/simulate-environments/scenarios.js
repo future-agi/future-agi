@@ -111,6 +111,9 @@ export const scenarioFromApi = (row = {}) => {
     branchCategory: row.branch,
     subTasks: Array.isArray(row.sub_goals) ? row.sub_goals : [],
     callActors: Array.isArray(row.actors) ? row.actors : [],
+    // {code, message} when the scenario cannot work as set, else null.
+    doorProblem: row.door_problem,
+    faults: Array.isArray(row.faults) ? row.faults : [],
     persona: persona
       ? {
           name: persona.name,

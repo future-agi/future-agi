@@ -12,29 +12,26 @@ import {
 import SectionCard from "../../components/SectionCard";
 import { refusalText } from "../evals/refusalText";
 import { ACTORS_COPY } from "./actors.constants";
+import { words } from "./actorUtils";
 
 const L = ACTORS_COPY.limits;
-const NUMBERS = [
-  "max_active",
-  "caller_takes_back_after_turns",
-  "actor_seconds_per_call",
-  "max_messages",
-  "live_turns_per_actor",
-  "live_turns_per_trial",
-];
 
-// What the form shows for a limit: its number, "" for the channel's default, "none" for no limit.
+// "" is the channel's default, "none" is no limit.
 const shown = (limits, key) => {
-  if (!(key in (limits || {}))) return "";
+  if (!(key in limits)) return "";
   return limits[key] === null ? L.none : String(limits[key]);
 };
 
-/**
- * The environment's actor limits and the model actors are played on, edited in its draft. Every limit is a setting:
- * empty is the channel's default, "none" is no limit; a scenario can set its own.
- */
+// Non-numbers go as typed so the server's refusal names what is wrong.
+const asLimit = (typed) => {
+  if (typed.toLowerCase() === L.none) return null;
+  const number = Number(typed);
+  return Number.isFinite(number) ? number : typed;
+};
+
 export default function ActorLimits({
   limits,
+  fields: limitFields,
   models,
   locked,
   busy,
@@ -42,52 +39,49 @@ export default function ActorLimits({
   onSave,
 }) {
   const [fields, setFields] = useState({});
+  const numbers = limitFields.filter((one) => one.kind !== "model");
+  const hasModel = limitFields.some((one) => one.kind === "model");
   const value = (key) =>
     key in fields
       ? fields[key]
       : key === "model"
-        ? limits?.model || ""
+        ? limits.model ?? ""
         : shown(limits, key);
   const put = (key) => (event) =>
     setFields((current) => ({ ...current, [key]: event.target.value }));
   const parsed = {};
-  const problems = [];
-  for (const key of NUMBERS) {
+  for (const { key } of numbers) {
     const typed = String(value(key)).trim();
-    if (typed === "") continue;
-    if (typed.toLowerCase() === L.none) parsed[key] = null;
-    else if (
-      Number(typed) > 0 &&
-      (key === "actor_seconds_per_call" || Number.isInteger(Number(typed)))
-    )
-      parsed[key] = Number(typed);
-    else problems.push(L.labels[key]);
+    if (typed !== "") parsed[key] = asLimit(typed);
   }
   if (value("model")) parsed.model = value("model");
   const changed = Object.keys(fields).length > 0;
+  const problems = error?.error === "limits_invalid" ? error.problems : [];
+  const problemOf = (key) =>
+    problems
+      .filter((one) => one.field === key)
+      .map((one) => one.message)
+      .join(" ");
+  const keys = new Set(limitFields.map((one) => one.key));
+  const unplaced = problems.filter((one) => !keys.has(one.field));
   return (
     <SectionCard title={L.title} subtitle={L.subtitle}>
       <Stack spacing={1.5} sx={{ maxWidth: 520, px: 1.5, py: 1.25 }}>
-        {NUMBERS.map((key) => (
+        {numbers.map(({ key, kind, default_label: defaultLabel }) => (
           <TextField
             key={key}
             size="small"
-            label={L.labels[key]}
+            label={L.labels[key] || words(key)}
             value={value(key)}
             onChange={put(key)}
             disabled={locked}
-            placeholder={L.defaults[key]}
-            error={problems.includes(L.labels[key])}
-            helperText={
-              problems.includes(L.labels[key])
-                ? key === "actor_seconds_per_call"
-                  ? L.badNumber
-                  : L.badWholeNumber
-                : undefined
-            }
+            placeholder={defaultLabel || undefined}
+            error={Boolean(problemOf(key))}
+            helperText={problemOf(key) || undefined}
+            inputProps={{ inputMode: kind === "whole" ? "numeric" : "decimal" }}
           />
         ))}
-        {models?.length > 0 && (
+        {hasModel && models.length > 0 && (
           <TextField
             select
             size="small"
@@ -96,7 +90,8 @@ export default function ActorLimits({
             onChange={put("model")}
             disabled={locked}
             SelectProps={{ displayEmpty: true }}
-            helperText={L.modelHelp}
+            error={Boolean(problemOf("model"))}
+            helperText={problemOf("model") || L.modelHelp}
           >
             <MenuItem value="">{L.callerModel}</MenuItem>
             {models.map((one) => (
@@ -106,14 +101,19 @@ export default function ActorLimits({
             ))}
           </TextField>
         )}
-        {error && (
+        {error && problems.length === 0 && (
           <Alert severity="error">{refusalText(error, L.saveFailed)}</Alert>
+        )}
+        {unplaced.length > 0 && (
+          <Alert severity="error">
+            {unplaced.map((one) => one.message).join(" ")}
+          </Alert>
         )}
         <Box>
           <Button
             size="small"
             variant="outlined"
-            disabled={locked || busy || !changed || problems.length > 0}
+            disabled={locked || busy || !changed}
             onClick={() => onSave(parsed, () => setFields({}))}
           >
             {L.save}
@@ -128,7 +128,15 @@ export default function ActorLimits({
 }
 
 ActorLimits.propTypes = {
-  limits: PropTypes.object,
+  // Null is no limit; a missing one takes the channel's default.
+  limits: PropTypes.object.isRequired,
+  fields: PropTypes.arrayOf(
+    PropTypes.shape({
+      key: PropTypes.string.isRequired,
+      kind: PropTypes.oneOf(["whole", "seconds", "model"]).isRequired,
+      default_label: PropTypes.string,
+    }),
+  ).isRequired,
   models: PropTypes.arrayOf(PropTypes.string),
   locked: PropTypes.bool,
   busy: PropTypes.bool,

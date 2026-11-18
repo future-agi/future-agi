@@ -1059,6 +1059,10 @@ class TestWarnings:
             "versions": {"agent": None, "environment": None, "suite": None},
             "warnings": [],
             "bundle_cached": None,
+            "blocked_tools": [],
+            "runnable": True,
+            "blocked_code": None,
+            "held_back": 0,
         }
 
 
@@ -1095,6 +1099,10 @@ class TestRunPlan:
                 }
             ],
             "bundle_cached": True,
+            "blocked_tools": [],
+            "runnable": True,
+            "blocked_code": None,
+            "held_back": 0,
         }
 
     def test_a_pick_writes_nothing(
@@ -1136,16 +1144,29 @@ class TestRunPlan:
         assert not_pickable.status_code == 422
         assert not_pickable.json()["error"] == "version_not_pickable"
 
-    def test_versioning_off_is_not_found(
+    def test_versioning_off_answers_the_verdict_and_refuses_a_pick(
         self, auth_client, user, workspace, storage, settings
     ):
         environment = _environment(user, workspace, "pk-plan-off", storage)
         settings.HARNESS_VERSIONING_ENABLED = False
 
         response = self._plan(auth_client, environment)
+        picked = self._plan(
+            auth_client, environment, suite_version_id=str(environment.suite_version_id)
+        )
 
-        assert response.status_code == 404
-        assert response.json()["error"] == "versioning_disabled"
+        assert response.status_code == 200, response.content
+        assert response.json() == {
+            "versions": {"agent": None, "environment": None, "suite": None},
+            "warnings": [],
+            "bundle_cached": None,
+            "blocked_tools": [],
+            "runnable": True,
+            "blocked_code": None,
+            "held_back": 0,
+        }
+        assert picked.status_code == 404
+        assert picked.json()["error"] == "versioning_disabled"
 
     def test_another_workspace_is_not_found(
         self, auth_client, user, workspace, storage
@@ -1304,3 +1325,344 @@ class TestRunLabels:
             assert payload["agent_version"] == "v1"
         assert old_header["pinned_agent_version"] is None
         assert old_header["agent_differs"] is False
+
+
+class TestSeed:
+    def test_a_given_seed_is_stored_on_the_run_and_shown_with_it(
+        self, auth_client, user, workspace, storage
+    ):
+        from simulate.models import HostedHarnessJob
+
+        environment = _environment(user, workspace, "pk-seed", storage)
+
+        seeded = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": 4242},
+            key="seed-a",
+        )
+        plain = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1},
+            key="seed-b",
+        )
+        refused = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": -1},
+            key="seed-c",
+        )
+
+        assert seeded.status_code == 202, seeded.content
+        run = HostedHarnessJob.no_workspace_objects.get(id=seeded.json()["job_id"])
+        assert run.seed == 4242
+        again = HostedHarnessJob.no_workspace_objects.get(id=plain.json()["job_id"])
+        assert again.seed == environment.seed
+        assert refused.status_code == 400
+        from simulate.models import TestExecution
+        from simulate.views.run_results_v3 import _execution_payload
+
+        execution = TestExecution.objects.get(id=seeded.json()["test_execution_id"])
+        assert _execution_payload(execution, {})["seed"] == "4242"
+
+    def test_a_rerun_from_the_shown_seed_draws_the_runs_own_seed_exactly(
+        self, auth_client, user, workspace, storage
+    ):
+        """The journey: run without a seed, read the seed the run shows, re-run with it. A drawn seed is up to
+        2^63 - 1, past what a JSON number keeps, so it travels as decimal text both ways and is never rounded."""
+        from simulate.models import HostedHarnessJob, TestExecution
+        from simulate.models.hosted_harness import MAX_SEED
+        from simulate.views.run_results_v3 import _execution_payload
+
+        environment = _environment(user, workspace, "pk-seed-rerun", storage)
+        environment.seed = 7902065059689103066
+        environment.payload = {**environment.payload, "seed": environment.seed}
+        environment.save(update_fields=["seed", "payload"])
+
+        first = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1},
+            key="seed-r1",
+        )
+        assert first.status_code == 202, first.content
+        shown = _execution_payload(
+            TestExecution.objects.get(id=first.json()["test_execution_id"]), {}
+        )["seed"]
+        assert shown == "7902065059689103066"
+
+        rerun = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": shown},
+            key="seed-r2",
+        )
+        too_big = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": str(MAX_SEED + 1)},
+            key="seed-r3",
+        )
+
+        assert rerun.status_code == 202, rerun.content
+        assert (
+            HostedHarnessJob.no_workspace_objects.get(id=rerun.json()["job_id"]).seed
+            == 7902065059689103066
+        )
+        assert too_big.status_code == 400
+
+    def test_a_seed_is_taken_as_whole_decimal_text_and_anything_else_is_refused(
+        self, auth_client, user, workspace, storage
+    ):
+        from simulate.models import HostedHarnessJob
+
+        environment = _environment(user, workspace, "pk-seed-text", storage)
+
+        as_text = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": "42"},
+            key="seed-t",
+        )
+        refused = [
+            _post_run(
+                auth_client,
+                environment,
+                {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": seed},
+                key=f"seed-t{index}",
+            ).status_code
+            for index, seed in enumerate(
+                ["4.2", "1e3", "-1", "", "\u00b2", True, "9" * 5000]
+            )
+        ]
+
+        assert as_text.status_code == 202, as_text.content
+        assert (
+            HostedHarnessJob.no_workspace_objects.get(id=as_text.json()["job_id"]).seed
+            == 42
+        )
+        assert refused == [400] * 7
+
+    def test_a_request_key_reused_with_another_seed_is_refused(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, "pk-seed-key", storage)
+        body = {"scenario_ids": [_key(NAMES[0])], "trials": 1, "seed": 7}
+
+        first = _post_run(auth_client, environment, body, key="seed-k")
+        again = _post_run(auth_client, environment, body, key="seed-k")
+        other = _post_run(auth_client, environment, {**body, "seed": 8}, key="seed-k")
+
+        assert first.status_code == 202, first.content
+        assert again.json()["job_id"] == first.json()["job_id"]
+        assert (other.status_code, other.json()["error"]) == (
+            409,
+            "idempotency_conflict",
+        )
+
+
+class TestProductionOnly:
+    """A tool reaching a system the environment has no copy of is blocked in a controlled test: a run whose every
+    selected scenario needs it is refused, naming the tool and the fix; one where only some do starts."""
+
+    def _blocked(self, user, workspace, storage, key):
+        environment = _environment(user, workspace, key, storage)
+        s1 = _suite(environment, 1)
+        _ready(
+            environment,
+            environment.agent_version_id,
+            environment.environment_version,
+            s1,
+        )
+        version = environment.environment_version
+        version.documents = {
+            **(version.documents or {}),
+            "contract": {
+                "dependencies": [
+                    {
+                        "name": "payments",
+                        "kind": "service",
+                        "engine": "http",
+                        "reached": {"dsn_env": "PAYMENTS_API_URL"},
+                        "used_by": ["issue_refund"],
+                    }
+                ],
+            },
+        }
+        HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+            documents=version.documents
+        )
+        # Scenarios are the suite version's.
+        HarnessSuiteVersion._base_manager.filter(id=s1.id).update(
+            documents={
+                **(s1.documents or {}),
+                "scenarios": [
+                    {"name": NAMES[0], "solution": [{"tool": "issue_refund"}]},
+                    {"name": NAMES[1], "solution": [{"tool": "lookup_ride"}]},
+                ],
+            }
+        )
+        s1.refresh_from_db()
+        return environment, s1
+
+    def test_a_run_every_scenario_of_which_needs_it_is_refused_naming_the_tool(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-prod-all")
+
+        response = _post_run(
+            auth_client,
+            environment,
+            {
+                "scenario_ids": [_key(NAMES[0])],
+                "trials": 1,
+                "suite_version_id": str(s1.id),
+            },
+        )
+
+        assert response.status_code == 409, response.content
+        body = response.json()
+        assert body["error"] == "production_only"
+        assert "issue_refund" in body["message"]
+        assert "serve it from the agent's tools service or remove it" in body["message"]
+        assert not HostedHarnessJob.no_workspace_objects.filter(
+            environment=environment
+        ).exists()
+
+    def test_a_run_where_only_some_scenarios_need_it_starts(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-prod-some")
+
+        response = _post_run(
+            auth_client,
+            environment,
+            {
+                "scenario_ids": [_key(NAMES[0]), ONLY_IN_S1],
+                "trials": 1,
+                "suite_version_id": str(s1.id),
+            },
+        )
+
+        assert response.status_code == 202, response.content
+
+    def test_the_plan_lists_the_blocked_tool_and_the_scenarios_that_need_it(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-prod-plan")
+
+        response = auth_client.get(
+            f"{BASE}/{environment.id}/run-plan/", {"suite_version_id": str(s1.id)}
+        )
+
+        assert response.status_code == 200, response.content
+        assert response.json()["blocked_tools"] == [
+            {
+                "tool": "issue_refund",
+                "scenarios": [{"key": _key(NAMES[0]), "name": NAMES[0]}],
+            }
+        ]
+
+
+class TestRunPlanVerdict:
+    """The plan says, for the scenarios a run would select, which blocked tools they meet, whether the run would start
+    and, when it would not, how many are held back: the same rule the run itself applies."""
+
+    _blocked = TestProductionOnly._blocked
+
+    def _verdict(self, auth_client, environment, s1, **params):
+        response = auth_client.get(
+            f"{BASE}/{environment.id}/run-plan/",
+            {"suite_version_id": str(s1.id), **params},
+        )
+        assert response.status_code == 200, response.content
+        body = response.json()
+        return (
+            body["blocked_tools"],
+            body["runnable"],
+            body["blocked_code"],
+            body["held_back"],
+        )
+
+    def test_a_selection_every_scenario_of_which_needs_a_blocked_tool_is_not_runnable(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-all")
+
+        assert self._verdict(
+            auth_client, environment, s1, scenario_keys=_key(NAMES[0])
+        ) == (
+            [
+                {
+                    "tool": "issue_refund",
+                    "scenarios": [{"key": _key(NAMES[0]), "name": NAMES[0]}],
+                }
+            ],
+            False,
+            "production_only",
+            1,
+        )
+
+    def test_a_mixed_selection_runs_every_scenario_and_holds_none_back(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-mix")
+
+        tools, runnable, code, held = self._verdict(
+            auth_client,
+            environment,
+            s1,
+            scenario_keys=f"{_key(NAMES[0])},{_key(NAMES[1])}",
+        )
+
+        assert (runnable, code, held) == (True, None, 0)
+        assert tools[0]["scenarios"] == [{"key": _key(NAMES[0]), "name": NAMES[0]}]
+
+    def test_a_selection_that_needs_no_blocked_tool_names_none(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-none")
+
+        assert self._verdict(
+            auth_client, environment, s1, scenario_keys=_key(NAMES[1])
+        ) == ([{"tool": "issue_refund", "scenarios": []}], True, None, 0)
+
+    def test_the_verdict_matches_the_run(self, auth_client, user, workspace, storage):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-run")
+        keys = [_key(NAMES[0])]
+
+        _, runnable, _, _ = self._verdict(
+            auth_client, environment, s1, scenario_keys=",".join(keys)
+        )
+        run = _post_run(
+            auth_client,
+            environment,
+            {"scenario_ids": keys, "trials": 1, "suite_version_id": str(s1.id)},
+        )
+
+        assert runnable is False
+        assert run.status_code == 409
+
+    def test_an_absent_selection_reads_every_scenario(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-every")
+
+        tools, runnable, code, held = self._verdict(auth_client, environment, s1)
+
+        # One of the two needs the tool, so the whole suite still runs.
+        assert (runnable, code, held) == (True, None, 0)
+        assert tools[0]["scenarios"] == [{"key": _key(NAMES[0]), "name": NAMES[0]}]
+
+    def test_too_many_scenarios_are_refused(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, s1 = self._blocked(user, workspace, storage, "pk-verdict-many")
+
+        response = auth_client.get(
+            f"{BASE}/{environment.id}/run-plan/",
+            {"scenario_keys": ",".join(f"k{n}" for n in range(1001))},
+        )
+
+        assert response.status_code == 400

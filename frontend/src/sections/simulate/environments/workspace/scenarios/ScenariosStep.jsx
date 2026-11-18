@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Box, Typography, Button } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Typography,
+  Button,
+  ClickAwayListener,
+} from "@mui/material";
 import { useSnackbar } from "notistack";
+import { useSearchParams } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
@@ -10,15 +17,17 @@ import {
   runnableScenarioKey,
 } from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
-import { useActors } from "src/api/simulate-environments/versions";
 import EmptyState from "../../components/EmptyState";
-import { withCast } from "../actors/actorUtils";
 import ScenarioToolbar from "./ScenarioToolbar";
 import SelectionBar from "./SelectionBar";
 import CoverageMatrix from "./CoverageMatrix";
 import AddScenariosDrawer from "./AddScenariosDrawer";
 import ScenarioEditor from "./ScenarioEditor";
 import ScenarioDrawer from "./ScenarioDrawer";
+import EvidenceReviewDrawer from "../../evidence/EvidenceReviewDrawer";
+import ImportEvidenceButton from "../../evidence/ImportEvidenceButton";
+import DraftImports from "../../evidence/DraftImports";
+import { IMPORT_PARAM } from "../../evidence/evidence.constants";
 import PropTypes from "prop-types";
 import {
   publishScenarioSelection,
@@ -111,17 +120,26 @@ export default function ScenariosStep({
   patch,
   locked = false,
   onStartRun,
+  runDialogOpen = false,
   canRun = false,
   runBlockedReason,
 }) {
+  // An evidence import opened from Observe, or a transcript added here, lands
+  // as `?import=`.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const importId = searchParams.get(IMPORT_PARAM);
+  const closeImport = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete(IMPORT_PARAM);
+    setSearchParams(next, { replace: true });
+  };
+  const openImport = (id) => {
+    const next = new URLSearchParams(searchParams);
+    next.set(IMPORT_PARAM, id);
+    setSearchParams(next);
+  };
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
-  // With versioning, names come from the draft's cast, as the Actors tab shows them: a draft rename or a draft-only
-  // actor reads the same here before Save.
-  const { data: cast } = useActors(env?.id, {
-    enabled: Boolean(env?.versioning?.enabled),
-  });
-  const envWithCast = useMemo(() => withCast(env, cast), [cast, env]);
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -279,12 +297,8 @@ export default function ScenariosStep({
     }
   };
 
-  // Hiding groups is a page-local visual toggle.
-  const hiddenCount = pageData.pageGroups.filter((g) =>
-    hiddenGroupIds.includes(g.id),
-  ).length;
-
-  const filtered = query.length > 0 || filterCount > 0 || hiddenCount > 0;
+  const hiddenCount = hiddenGroupIds.length;
+  const hasSearchOrFilters = query.length > 0 || filterCount > 0;
   const clearFilters = () => {
     setQuery("");
     setFilters({});
@@ -378,7 +392,13 @@ export default function ScenariosStep({
 
   // Escape clears the selection, unless it is closing something on top
   // (drawer, editor, confirm) or the user is typing in a field.
-  const overlayOpen = !!openRow || !!editing || !!pendingDelete || adding;
+  const overlayOpen =
+    runDialogOpen ||
+    !!openRow ||
+    !!editing ||
+    !!pendingDelete ||
+    adding ||
+    !!importId;
   const clearSelection = sel.clear;
   const hasSelection = sel.count > 0;
   useEffect(() => {
@@ -398,6 +418,18 @@ export default function ScenariosStep({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [hasSelection, overlayOpen, clearSelection]);
+
+  const handleClickAway = (event) => {
+    if (!hasSelection || overlayOpen) return;
+    // The chat uses the checked rows. Cancel can unmount the run dialog before
+    // this document listener fires, but the click's original path still includes it.
+    const keepSelection = event
+      .composedPath()
+      .some((node) =>
+        node.matches?.("[data-builder-chat], [data-scenario-run-dialog]"),
+      );
+    if (!keepSelection) clearSelection();
+  };
 
   // The scenario names a bulk delete targets. Names — not ids — because the
   // amend route resolves drops by name.
@@ -451,16 +483,19 @@ export default function ScenariosStep({
   // Edits route through the amend route as set_field / set_persona ops (the
   // editor emits only the changed writable fields). A refused receipt surfaces
   // its `why`; a success invalidates the list + coverage so the row updates.
-  const saveScenario = ({ changes, rework }) => {
-    if (!changes?.length) return;
-    amend.mutate(
-      { rework, changes },
-      {
-        onSuccess: (data) => surfaceReceipts(data, "Saved"),
-        onError: () =>
-          enqueueSnackbar("Couldn't save. Try again", { variant: "error" }),
-      },
-    );
+  // Resolves to { refused, failed } so the editor can stay open on a refusal.
+  const saveScenario = async ({ changes, rework }) => {
+    try {
+      const data = await amend.mutateAsync({ rework, changes });
+      surfaceReceipts(data, "Saved");
+      const refused = (data?.receipts || []).filter(
+        (one) => one.outcome === "refused",
+      );
+      return { refused, failed: false };
+    } catch {
+      enqueueSnackbar("Couldn't save. Try again", { variant: "error" });
+      return { refused: [], failed: true };
+    }
   };
 
   return (
@@ -479,21 +514,9 @@ export default function ScenariosStep({
       ) : !hasScenarios ? (
         <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
       ) : (
-        <>
-          {loadFailed && (
-            <Alert
-              severity="error"
-              sx={{ mb: 2, flexShrink: 0 }}
-              action={
-                <Button color="inherit" size="small" onClick={retryLoad}>
-                  Retry
-                </Button>
-              }
-            >
-              Couldn&apos;t refresh the scenarios. Showing the last loaded list.
-            </Alert>
-          )}
+        <ClickAwayListener onClickAway={handleClickAway}>
           <Box
+            role="presentation"
             sx={{
               flex: 1,
               minHeight: 320,
@@ -502,6 +525,20 @@ export default function ScenariosStep({
               flexDirection: "column",
             }}
           >
+            {loadFailed && (
+              <Alert
+                severity="error"
+                sx={{ mb: 2, flexShrink: 0 }}
+                action={
+                  <Button color="inherit" size="small" onClick={retryLoad}>
+                    Retry
+                  </Button>
+                }
+              >
+                Couldn&apos;t refresh the scenarios. Showing the last loaded
+                list.
+              </Alert>
+            )}
             {/* The bulk-action bar covers the toolbar's row while a selection is
                 active. Both sit in one grid cell, the toolbar staying mounted
                 underneath, so the row keeps the toolbar's height (no shift when
@@ -536,6 +573,12 @@ export default function ScenariosStep({
                         search={debouncedQuery}
                         filters={filters}
                       />
+                      {!locked && env?.id && (
+                        <ImportEvidenceButton
+                          envId={env.id}
+                          onImported={openImport}
+                        />
+                      )}
                       <AddButton
                         onClick={() => setAdding(true)}
                         contained
@@ -595,10 +638,13 @@ export default function ScenariosStep({
                 overflow: "hidden",
               }}
             >
+              {!locked && env?.id ? (
+                <DraftImports envId={env.id} onResume={openImport} />
+              ) : null}
               <PagedScenarioViews
                 pageData={pageData}
                 selection={sel}
-                env={envWithCast}
+                env={env}
                 view={view}
                 hiddenGroupIds={hiddenGroupIds}
                 onHideGroup={toggleGroupHidden}
@@ -613,25 +659,30 @@ export default function ScenariosStep({
                 locked={locked}
                 rowHeight={rowHeight}
                 readout={
-                  filtered
+                  hasSearchOrFilters || hiddenCount > 0
                     ? {
                         shown: pageData.total,
                         total: suiteTotal,
                         hiddenCount,
-                        onlyGroupsHidden:
-                          hiddenCount > 0 &&
-                          query.length === 0 &&
-                          filterCount === 0,
-                        onClear: clearFilters,
+                        onShowAll: () => setHiddenGroupIds([]),
+                        onClear: hasSearchOrFilters ? clearFilters : undefined,
                       }
                     : undefined
                 }
               />
             </Box>
           </Box>
-        </>
+        </ClickAwayListener>
       )}
 
+      {importId && env?.id ? (
+        <EvidenceReviewDrawer
+          envId={env.id}
+          importId={importId}
+          open
+          onClose={closeImport}
+        />
+      ) : null}
       <AddScenariosDrawer
         open={adding}
         onClose={() => setAdding(false)}
@@ -641,7 +692,6 @@ export default function ScenariosStep({
       />
       <ScenarioDrawer
         row={openRow}
-        env={envWithCast}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => {
           setOpenRow(null);
@@ -657,6 +707,7 @@ export default function ScenariosStep({
         scenarioEditing={pageData.scenarioEditing}
         noiseOptions={noiseOptions}
         levelLabels={pageData.levelLabels}
+        env={env}
       />
       <ConfirmDialog
         open={!!pendingDelete}
@@ -691,6 +742,7 @@ ScenariosStep.propTypes = {
   locked: PropTypes.bool,
   // Starts a run scoped to the selected scenarios × trials — (ids, trials).
   onStartRun: PropTypes.func,
+  runDialogOpen: PropTypes.bool,
   // Whether the env is runnable; gates the selection bar's Run button.
   canRun: PropTypes.bool,
   // Why it can't run yet; Run shows disabled with this instead of hiding.

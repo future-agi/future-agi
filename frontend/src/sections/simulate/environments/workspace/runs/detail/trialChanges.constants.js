@@ -1,5 +1,5 @@
 export const TRIAL_CHANGES_COPY = {
-  tab: "World changes",
+  tab: "World state",
   heading: "What changed in the world",
   noticesHeading: "Worth knowing about this trial",
   about:
@@ -16,71 +16,75 @@ export const TRIAL_CHANGES_COPY = {
       .filter(Boolean)
       .join(" · "),
   committed: (actions) => `Committed: ${actions.join(", ")}`,
-  // A read changed nothing in the world: said apart, never as a committed change.
   read: (actions) => `Read, changing nothing: ${actions.join(", ")}`,
-  // A commit the scenario's timeout hid: the world made it, the one who acted was told it timed out.
   answerLost: (actions) =>
     `Committed but answered with a timeout: ${actions.join(", ")}`,
-  // Doing nothing can be the right result, so it is said, never left blank.
+  committedTwice: (action) => `Committed twice: ${action}`,
+  blocked: (one) =>
+    `Blocked: ${one.host}${one.method ? ` (${one.method})` : ""} ×${one.count}`,
   noChange: "No change: it committed nothing",
+  // A worker the world told apart from the rest of the agent.
+  worker: (name) => `Participant · ${name}`,
+  refusedHeading: "Refused attempts",
+  refused: (one) => [one.action, one.reason].filter(Boolean).join(": "),
   decisionsHeading: "What the actors chose",
-  plays: {
-    mocked: "As scheduled",
-    live: "Decided",
-    history: "Before the run",
-    waiting: "Waiting for a response",
-    timeout: "Timed out",
-    problem: "Could not take part",
-    not_triggered: "Never came in",
-  },
-  // What the world waits for and, once the wait runs out, the configured outcome; nothing is said in the actor's name.
-  waited: (one, name) => {
-    const then =
-      one.fallback === "silent"
-        ? "then nothing happens"
-        : one.fallback === "decline"
-          ? "then the request is declined"
-          : `then ${name(one.fallback)} answers instead`;
-    return `up to ${one.timeout_seconds ?? 0} s, ${then}`;
-  },
-  outcomes: {
-    timed_out: "No answer: nothing happened",
-    declined: "No answer: the request was declined",
-    fallback_action: "No answer: their fallback action was taken for them",
-    // The fallback was tried for them and the world did not commit it.
-    fallbackNotCommitted: (outcome) =>
-      `No answer: their fallback action was tried for them and ${outcome}`,
-    unresolved_at_end: "Still waited on when the trial ended",
-    answered_by: (who) => `No answer: ${who} answered instead`,
-  },
-  // What the world made of an actor's action, so a refused one reads apart from a committed one.
-  actionOutcomes: {
-    committed: "committed",
-    refused: "refused by the world",
-    faulted: "faulted",
-    duplicate: "already done, not repeated",
-  },
-  // A problem of the scenario, never the agent's.
-  problems: {
-    no_world_door:
-      "Could not act: this agent's tools run where no actor can act",
-    not_listed: "Not an actor in this environment",
-  },
   preRunHeading: "Before the run",
   preRunAbout:
     "What the actors wrote in the world before the agent started: the trial's starting point, never graded.",
+  verdicts: { approved: "Approved", refused: "Refused" },
+  committedAfterRefusal: (name) =>
+    `The agent committed the change after ${name} refused it`,
   approvalsHeading: "Approvals",
-  approval: (one, name) =>
-    `${one.request?.action || "A request"}, then ${name(one.decision?.by)}: ${one.decision?.action || "?"}`,
+  // Any part can be missing from an older log.
+  approval: ({ request, decision }) =>
+    `${request.action || "A request"}, then ${decision.name ? `${decision.name}: ` : ""}${decision.action || "no decision"}`,
   actedBefore: "the agent committed a write before the decision",
   waitedFor: "the agent waited for the decision",
+  wroteAfterRefusal: "the agent committed the change anyway",
+  afterDecision: (writes) =>
+    `then the agent wrote: ${writes.map((one) => `${one.action} (${one.outcome})`).join(", ")}`,
   usageHeading: "Actors' model use",
-  // One line for a set of model calls: how many, their tokens and what they cost.
   usage: (calls, tokens, cost) =>
     `${calls} model call${calls === 1 ? "" : "s"}, ${tokens} tokens, $${cost.toFixed(4)}`,
   usageBy: (who, model, line) =>
     `${who}${model ? ` on ${model}` : ""}: ${line}`,
   usageTotal: (line) => `In all: ${line}, counted in the simulator's usage`,
+  // Records two or more participants named; the key states what the calls named, never a database identity.
+  sharedHeading: "Records touched by more than one participant",
+  sharedRecord: (one) => `${one.argument} ${one.value}`,
+  sharedAction: (action, who) =>
+    `${who} · ${action.tool} · ${action.outcome}${action.write === true ? " (write)" : ""}`,
+  committedWrites: (n) =>
+    `Committed writes: ${n} (tools with recorded effects)`,
+  sharedTruncated:
+    "More records not shown: this trial's record reached its size limit",
+  // Each record's served `truncation`; a cut list of records ("records") is said once, for the trial.
+  sharedRecordCut: {
+    actions:
+      "More calls on this record not shown: its record reached its size limit",
+    unknown:
+      "More records or calls may not be shown: this trial's record reached its size limit",
+  },
   nothing: "Did nothing",
   empty: "Nothing changed in the world in this trial.",
+  notRecorded: "World state was not recorded for this trial.",
+  collecting:
+    "This trial is still running: its World state shows here once it ends.",
+  loadFailed:
+    "This call's World state could not be loaded. Try again in a moment.",
+  unreadable:
+    "What changed in the world could not be read for this trial. Checks that needed it read Unmeasured.",
+  endStateLead: "The world as this trial ended is kept:",
+  endState: "download its records and action log",
+  recordsHeading: "Records before and after",
+  recordsEmpty: "No record changed in this trial.",
+  recordKinds: { added: "Added", changed: "Changed", removed: "Removed" },
+  recordChanged: (fields) => `Changed: ${fields.join(", ")}`,
+  before: "Before",
+  after: "After",
+  notCompared: (table, why) => `Not compared: ${table} (${why})`,
+  truncated: (n) => `And ${n} more changes.`,
 };
+
+// A call's outcome while it is still under way (the server's `queued` and `in_progress`): its World state is not in yet.
+export const TRIAL_UNDER_WAY = new Set(["queued", "in_progress"]);

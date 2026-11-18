@@ -10,6 +10,10 @@ export const EDITOR_COPY = {
   subtitle:
     "Editable fields are saved to the suite; others are read-only because they're proved, not described.",
   cancel: "Cancel",
+  discardTitle: "Discard changes?",
+  discardBody:
+    "Your edits to this scenario won't be saved if you open the builder chat now.",
+  discard: "Discard",
   save: "Save scenario",
   scenarioSection: "Scenario",
   personaSection: "Persona",

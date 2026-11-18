@@ -7,6 +7,7 @@ import json
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 
+from simulate.services import harness_actor_rules, harness_actors
 from simulate.services.harness_versioning import drafts
 from simulate.tests.test_harness_actors import BASE, MANAGER, _add, _built
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
@@ -103,6 +104,8 @@ def test_an_uploaded_document_is_offered_to_actors_and_kept_in_the_draft(
     )
     assert upload.status_code == 200, upload.content
     assert "knowledge/pricing policy.md" in upload.json()["knowledge_sources"]["files"]
+    # The response says where the file was stored, so the page never guesses it.
+    assert upload.json()["uploaded_path"] == "knowledge/pricing policy.md"
     files = drafts.edit_sides(environment)["environment"]
     assert files["knowledge/pricing policy.md"].startswith(b"Discounts above 15%")
 
@@ -127,10 +130,12 @@ def test_an_upload_of_the_wrong_kind_format_or_size_is_refused(
         {"file": SimpleUploadedFile(name, content), "kind": kind},
         format="multipart",
     )
-    assert upload.status_code == 400 and upload.json()["error"] in (
-        "upload_invalid",
-        "upload_kind_unknown",
-    )
+    assert upload.status_code == 400
+    # A kind the request does not offer is refused by the request's own validation, naming the field.
+    if kind == "knowledge":
+        assert upload.json()["error"] == "upload_invalid"
+    else:
+        assert "kind" in str(upload.json())
 
 
 def test_a_scenario_naming_an_actor_the_list_no_longer_has_never_blocks_an_edit_to_another(
@@ -162,13 +167,12 @@ def test_a_scenario_naming_an_actor_the_list_no_longer_has_never_blocks_an_edit_
 def test_the_actor_models_offered_and_accepted_are_the_ones_the_environment_was_sealed_with(
     user, workspace, storage, auth_client
 ):
-    from simulate.services import harness_actors
     from simulate.services.harness_versioning.versions import record_authoring
     from simulate.tests import test_harness_versioning_record as record_tests
     from simulate.tests.test_harness_actors import CRM_CONTRACT
     from simulate.tests.test_harness_versioning_record import _authoring
 
-    rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
+    rules = json.loads(harness_actor_rules._RULES_BEFORE_DECLARED.read_text())
     rules["actor_models"] = ["gemini-4.0-flash"]
     environment = record_tests._environment(user, workspace, "actor-models-sealed")
     record_authoring(
@@ -192,7 +196,7 @@ def test_the_actor_models_offered_and_accepted_are_the_ones_the_environment_was_
     earlier = _built(user, workspace, "actor-models-earlier")
     assert auth_client.get(f"{BASE}/{earlier.id}/actors/").json()[
         "actor_models"
-    ] == list(harness_actors.ACTOR_MODELS)
+    ] == list(harness_actor_rules.ACTOR_MODELS)
 
 
 def _upload(auth_client, environment, name, content, **extra):
@@ -223,7 +227,7 @@ def test_an_uploaded_file_lands_in_its_kind_s_folder_whatever_path_its_name_carr
     assert added == ["knowledge/b.md", "knowledge/scenario.json"]
     assert all(files[path] == before[path] for path in before)
     # The service strips a path itself, whatever the transport did to the name first.
-    from simulate.services.harness_actors import upload_environment_file
+    from simulate.services.harness_actor_uploads import upload_environment_file
 
     upload_environment_file(
         environment,
@@ -247,7 +251,7 @@ def test_a_file_only_the_evaluator_reads_is_never_uploaded_for_an_actor(
     )
 
 
-def test_an_upload_at_a_stale_revision_is_refused_and_a_same_named_one_replaces_the_file(
+def test_an_upload_at_a_stale_revision_is_refused_and_a_same_named_one_never_replaces_the_file(
     user, workspace, storage, auth_client
 ):
     environment = _built(user, workspace, "actor-upload-revision")
@@ -264,11 +268,10 @@ def test_an_upload_at_a_stale_revision_is_refused_and_a_same_named_one_replaces_
     again = _upload(
         auth_client, environment, "policy.md", b"second", expected_revision=1
     )
-    assert again.status_code == 200
-    assert again.json()["knowledge_sources"]["files"].count("knowledge/policy.md") == 1
+    assert (again.status_code, again.json()["error"]) == (409, "upload_exists")
+    assert again.json()["readers"] == []
     assert (
-        drafts.edit_sides(environment)["environment"]["knowledge/policy.md"]
-        == b"second"
+        drafts.edit_sides(environment)["environment"]["knowledge/policy.md"] == b"first"
     )
 
 
@@ -388,7 +391,6 @@ def _scenario_names_manager(environment, user):
 
 
 def _remove_manager(environment, user):
-    from simulate.services import harness_actors
 
     return harness_actors.write_actor_edit(
         environment,

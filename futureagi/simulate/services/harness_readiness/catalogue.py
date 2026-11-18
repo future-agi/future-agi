@@ -14,7 +14,7 @@ from simulate.models import (
 )
 
 CATALOG_VERSION = "1"
-RULES_VERSION = "8"
+RULES_VERSION = "11"
 
 Status = Literal["supported", "partial", "blocked", "unavailable", "untested", "stale"]
 EvidenceSource = Literal["pair_certificate", "build_certificate", "none"]
@@ -132,6 +132,38 @@ class Fix(TypedDict):
     would: str
     # None when checking this pairing again cannot change the row.
     recheck: FixRecheck | None
+
+
+class WorkerToolView(TypedDict):
+    # The contract tool name.
+    tool: str
+    # The sealed world action; None when the tool has no route.
+    action: str | None
+    boundary: Literal["allowed", "blocked", "not_enforced"]
+
+
+class WorkerBypass(TypedDict):
+    run_id: str
+    call_execution_id: str
+
+
+class WorkerBoundaryView(TypedDict):
+    """One declared worker's limits as this pairing holds them. Never "supported": the limit is cooperative."""
+
+    worker_id: str
+    name: str
+    binding: Literal["separate", "shared"]
+    status: Status
+    # The status word the row shows, e.g. "Held at the world (cooperative)".
+    status_label: str
+    reason_code: str
+    reason: str
+    tools: list[WorkerToolView]
+    # Newest first, at most five; `bypassed_count` counts them all.
+    bypassed: list[WorkerBypass]
+    bypassed_count: int
+    fix: Fix | None
+    checked_at: str | None
 
 
 class RowView(TypedDict):

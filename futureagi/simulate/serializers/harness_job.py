@@ -7,7 +7,7 @@ from typing import Any
 from django.conf import settings
 from rest_framework import serializers
 
-from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB, MAX_SEED
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
@@ -75,6 +75,23 @@ def _check_credential_values(values: Mapping[str, Any]) -> list[str]:
     if not_text:
         problems.append(f"values must be strings: {', '.join(not_text)}")
     return problems
+
+
+# An agent's own chat reply deadline in the harness job's agent config, as `voice_call_timeout_seconds` is for voice.
+CHAT_CALL_TIMEOUT_KEY = "chat_call_timeout_seconds"
+# The harness never waits past a build's own budget.
+MAX_CHAT_CALL_TIMEOUT_SECONDS = 3300
+
+
+def _chat_call_timeout(raw: object) -> bool:
+    """Whether a chat reply deadline is a number of seconds, or a number written as text, the harness can use."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return False
+    try:
+        seconds = float(raw)
+    except ValueError:
+        return False
+    return 0 < seconds <= MAX_CHAT_CALL_TIMEOUT_SECONDS
 
 
 class RunVersionLabelSerializer(serializers.Serializer):
@@ -210,6 +227,14 @@ class HarnessAgentSerializer(serializers.Serializer):
         for name in ("inbound", "target_speaks_first"):
             if name in value and not isinstance(value[name], bool):
                 raise serializers.ValidationError(f"{name} must be a boolean")
+        # How long one chat reply may take; absent, the harness keeps its 300 s default. Capped at the build's budget.
+        if CHAT_CALL_TIMEOUT_KEY in value and not _chat_call_timeout(
+            value[CHAT_CALL_TIMEOUT_KEY]
+        ):
+            raise serializers.ValidationError(
+                f"{CHAT_CALL_TIMEOUT_KEY} must be a number of seconds above 0 and at most "
+                f"{MAX_CHAT_CALL_TIMEOUT_SECONDS}"
+            )
         secret_names = ("token", "secret", "password", "api_key", "private_key")
         invalid = []
         for key, item in value.items():
@@ -782,6 +807,35 @@ class HarnessJobActionSerializer(serializers.Serializer):
     )
 
 
+_SEED_DIGITS = len(str(MAX_SEED))
+
+
+class RunSeedField(serializers.Field[int, Any, str, Any]):
+    """A run seed, published as decimal text: seeds go up to 2^63 - 1, past what a JSON number keeps exactly."""
+
+    default_error_messages = {
+        "invalid_seed": "A seed is a whole number from 0 to 2^63 - 1."
+    }
+
+    def to_internal_value(self, data: Any) -> int:
+        text = (
+            str(data).strip()
+            if isinstance(data, (str, int)) and not isinstance(data, bool)
+            else ""
+        )
+        digits = text.isascii() and text.isdigit() and len(text) <= _SEED_DIGITS
+        if not digits or int(text) > MAX_SEED:
+            self.fail("invalid_seed")
+        return int(text)
+
+    def to_representation(self, value: int) -> str:
+        return str(value)
+
+    class Meta:
+        # Only its type: the server refuses any other text with its own message, so no client gate holds a seed back.
+        swagger_schema_fields = {"type": "string", "minLength": 1}
+
+
 class HarnessRunCreateSerializer(serializers.Serializer):
     scenario_ids = serializers.ListField(
         child=serializers.CharField(max_length=255),
@@ -789,6 +843,16 @@ class HarnessRunCreateSerializer(serializers.Serializer):
         max_length=1000,
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
+    # The run's seed: the same seed draws the same personas and variations again. Absent or null keeps the
+    # environment's own.
+    seed = RunSeedField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "The same seed draws the same personas and variations again; absent keeps the environment's. A whole"
+            " number from 0 to 2^63 - 1, as decimal text."
+        ),
+    )
     # Absent or null runs the environment's default for that piece.
     agent_version_id = serializers.UUIDField(required=False, allow_null=True)
     environment_version_id = serializers.UUIDField(required=False, allow_null=True)
@@ -1078,6 +1142,66 @@ class HarnessScenarioChangeSerializer(serializers.Serializer):
 class HarnessScenarioAmendSerializer(serializers.Serializer):
     changes = HarnessScenarioChangeSerializer(many=True, allow_empty=False)
     rework = serializers.BooleanField(required=False, default=True)
+
+
+SCENARIO_AMEND_CODES = (
+    "applied",
+    "fault_invalid",
+    "needs_rework",
+    "not_editable",
+    "scenario_unknown",
+    "unknown_change",
+    "edit_invalid",
+    "not_saved",
+)
+
+
+class HarnessFaultProblemSerializer(serializers.Serializer):
+    """Why the test world cannot apply one test condition."""
+
+    index = serializers.IntegerField(
+        allow_null=True,
+        help_text="Its place in the scenario's list; null when the list itself is unreadable.",
+    )
+    field = serializers.CharField(
+        allow_null=True,
+        help_text="The test-condition field it is shown under; null when it is no one field's.",
+    )
+    message = serializers.CharField()
+
+
+class HarnessScenarioAmendReceiptSerializer(serializers.Serializer):
+    """What became of one change to one scenario."""
+
+    scenario = serializers.CharField(allow_blank=True)
+    outcome = serializers.ChoiceField(choices=("applied", "queued", "refused"))
+    why = serializers.CharField()
+    code = serializers.ChoiceField(
+        choices=SCENARIO_AMEND_CODES,
+        help_text="applied (also when queued); fault_invalid: the test world cannot apply the test condition; "
+        "needs_rework: the change needs a re-proof; not_editable; scenario_unknown; unknown_change; edit_invalid: "
+        "the edited scenario fails its checks; not_saved: the edit could not be written, nothing changed.",
+    )
+    field = serializers.CharField(
+        allow_null=True,
+        help_text="The scenario field the receipt is about: `faults` for a test condition, `persona`, or the set "
+        "field; null for a whole-scenario change.",
+    )
+    problems = HarnessFaultProblemSerializer(
+        many=True,
+        help_text="For fault_invalid: every test condition the world cannot apply, each by its place in the list; "
+        "empty on any other receipt.",
+    )
+
+
+class HarnessScenarioAmendDraftSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    revision = serializers.IntegerField()
+
+
+class HarnessScenarioAmendResponseSerializer(serializers.Serializer):
+    receipts = HarnessScenarioAmendReceiptSerializer(many=True)
+    draft = HarnessScenarioAmendDraftSerializer(required=False, allow_null=True)
 
 
 class HarnessStageOutputSerializer(serializers.Serializer):

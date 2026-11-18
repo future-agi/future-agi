@@ -69,9 +69,7 @@ def build_diagnosis(
         if call.id in infra:
             continue
         receipt = (call.call_metadata or {}).get("hosted_harness_receipt") or {}
-        # Same reading as the harness ingestion: `judged` is only the kind (a judge
-        # or a code checkpoint), and a sub-goal nothing decided, not applicable or
-        # inconclusive was not tested.
+        # As ingestion reads it: `judged` is only the kind; undecided, not applicable or inconclusive was not tested.
         verdicts[call.id] = [
             (str(goal["name"]), SUB_GOAL_PASSED[result])
             for goal in receipt.get("sub_goals") or []

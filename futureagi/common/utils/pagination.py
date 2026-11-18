@@ -10,20 +10,20 @@ def paginate_queryset(queryset: QuerySet, request: Request) -> tuple[list, dict]
     """
     Paginate a queryset using ``page_number`` and ``page_size`` query params.
 
-    Uses Django's ``Paginator.get_page()`` which clamps out-of-range page
-    numbers: values above ``total_pages`` return the last page, values
-    below 1 (or non-numeric) return the first page.
+    Django's ``Paginator.get_page()`` returns the first page for non-numeric
+    page numbers and the last page for out-of-range numbers, including zero
+    and negative numbers. Missing page numbers default to the first page.
 
-    ``page_size`` is silently clamped to ``MAX_PAGE_SIZE`` so a client cannot
-    force an unbounded response.
-
-    Args:
-        queryset: The Django QuerySet to paginate.
-        request: DRF request whose ``query_params`` supply ``page_number``
-            (default 1) and ``page_size`` (default 10, max 100).
+    Missing, non-numeric, or non-positive page sizes use ``DEFAULT_PAGE_SIZE``.
+    Larger requests are capped at ``MAX_PAGE_SIZE``.
     """
-    page_number = int(request.query_params.get("page_number", 1))
-    page_size = int(request.query_params.get("page_size", DEFAULT_PAGE_SIZE))
+    page_number = request.query_params.get("page_number", 1)
+    try:
+        page_size = int(request.query_params.get("page_size", DEFAULT_PAGE_SIZE))
+    except (TypeError, ValueError):
+        page_size = DEFAULT_PAGE_SIZE
+    if page_size < 1:
+        page_size = DEFAULT_PAGE_SIZE
     page_size = min(page_size, MAX_PAGE_SIZE)
 
     paginator = Paginator(queryset, page_size)

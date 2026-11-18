@@ -16,6 +16,7 @@ import ScenariosStep from "../ScenariosStep";
 import {
   TEST_ENV,
   SERVER_ROWS,
+  makeServerRows,
   envStateFor,
   renderWithClient,
   openDisplay,
@@ -78,6 +79,16 @@ const renderStep = (rows = SERVER_ROWS) => {
   return { patch };
 };
 
+const pickUseCaseFilter = (useCase) => {
+  fireEvent.mouseDown(screen.getAllByRole("combobox")[0]);
+  fireEvent.click(screen.getByRole("option", { name: "Use case" }));
+  fireEvent.click(screen.getByText("Select values..."));
+  const searchValues = screen.getByPlaceholderText("Search values...");
+  fireEvent.change(searchValues, { target: { value: useCase.slice(0, 24) } });
+  fireEvent.click(screen.getAllByText(useCase).at(-1));
+  fireEvent.keyDown(searchValues, { key: "Escape" });
+};
+
 beforeEach(() => {
   mockSnack.calls = [];
   resetScenarioFixture();
@@ -90,41 +101,28 @@ beforeEach(() => {
 });
 
 describe("ScenariosStep actor names", () => {
-  const SAVED = { id: "friend", name: "Saved name", channel: "audio_mix" };
-  const renderWithFriend = (env) => {
+  it("names each actor as the scenario row resolves it, and never asks for the cast", async () => {
+    const get = vi.spyOn(axios, "get");
     const rows = [
-      { ...SERVER_ROWS[0], actors: [{ id: "friend", trigger: {} }] },
+      {
+        ...SERVER_ROWS[0],
+        actors: [
+          { id: "friend", name: "Draft name", when_label: "From the start" },
+          { id: "boss", name: "Pat", when_label: "When contacted" },
+        ],
+      },
     ];
     listScenarios.mockImplementation((jobId, params) =>
       queryScenarioFixture(params, rows),
     );
     renderWithClient(
       <ScenariosStep
-        env={{ ...TEST_ENV, callActors: [SAVED], ...env }}
+        env={{ ...TEST_ENV, versioning: { enabled: true } }}
         envState={envStateFor(rows)}
         patch={vi.fn()}
       />,
     );
-  };
-
-  it("reads them from the draft's cast with versioning on", async () => {
-    const get = vi.spyOn(axios, "get").mockResolvedValue({
-      data: {
-        actors: [
-          { ...SAVED, name: "Draft name" },
-          { id: "boss", name: "Pat" },
-        ],
-      },
-    });
-    renderWithFriend({ versioning: { enabled: true } });
-    expect(await screen.findByText("With Draft name")).toBeInTheDocument();
-    get.mockRestore();
-  });
-
-  it("keeps the saved names and never asks for the cast with versioning off", async () => {
-    const get = vi.spyOn(axios, "get");
-    renderWithFriend();
-    expect(await screen.findByText("With Saved name")).toBeInTheDocument();
+    expect(await screen.findByText("With Draft name, Pat")).toBeInTheDocument();
     expect(get.mock.calls.map(([url]) => url).join()).not.toMatch(/actors/);
     get.mockRestore();
   });
@@ -217,19 +215,8 @@ describe("ScenariosStep", () => {
     // the Basic filter rows are still there.
     expect(screen.queryByPlaceholderText(/Ask AI/i)).not.toBeInTheDocument();
 
-    // The default Basic row lands on the first field (Scenario, a string). Switch
-    // it to the Use case enum, then pick a value. The field select is the first
-    // combobox in the row.
-    const combos = screen.getAllByRole("combobox");
-    fireEvent.mouseDown(combos[0]);
-    fireEvent.click(screen.getByRole("option", { name: "Use case" }));
-
     const UC = SERVER_ROWS.find((r) => r.number === 1).use_case;
-    fireEvent.click(screen.getByText("Select values..."));
-    const searchValues = screen.getByPlaceholderText("Search values...");
-    fireEvent.change(searchValues, { target: { value: UC.slice(0, 24) } });
-    const options = screen.getAllByText(UC);
-    fireEvent.click(options[options.length - 1]);
+    pickUseCaseFilter(UC);
 
     const expected = queryScenarioFixture({ limit: 25, use_case: [UC] }).count;
     expect(
@@ -549,6 +536,58 @@ describe("ScenariosStep — hide group", () => {
     expect(
       screen.getAllByRole("button", { name: "Hide this group" }),
     ).toHaveLength(n);
+  });
+
+  it("counts and restores a hidden group from another page", async () => {
+    // Disjoint groups: the second page has no row from the group hidden on page 1.
+    const rows = makeServerRows(30).map((row) => ({
+      ...row,
+      use_case: row.number <= 25 ? "First group" : "Second group",
+    }));
+    listScenarios.mockImplementation((jobId, params) =>
+      queryScenarioFixture(params, rows),
+    );
+    renderStep(rows);
+    await screen.findByText("First group");
+    fireEvent.click(screen.getByRole("button", { name: "Hide this group" }));
+    expect(screen.queryByText("First group")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Go to page 2"));
+    await screen.findByText("Second group");
+    expect(screen.getByText(/· 1 group hidden/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(screen.queryByText(/group hidden/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Go to page 1"));
+    expect(await screen.findByText("First group")).toBeInTheDocument();
+  });
+
+  it("restores the hidden group without clearing the active use case filter", async () => {
+    renderStep();
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
+    const useCase = SERVER_ROWS[0].use_case;
+    pickUseCaseFilter(useCase);
+    const matching = SERVER_ROWS.filter((row) => row.use_case === useCase);
+    const readout = `${matching.length} of ${SERVER_ROWS.length}`;
+    await screen.findByText(readout);
+    fireEvent.keyDown(screen.getAllByRole("combobox")[0], { key: "Escape" });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Hide this group" }),
+    );
+    expect(screen.getByText(/Every group is hidden/)).toBeInTheDocument();
+    expect(screen.getByText(/· 1 group hidden/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show all" }));
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText(useCase)).toBeInTheDocument();
+    expect(
+      within(table).getAllByRole("button", { name: "Hide this group" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "Filter (1)" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(readout)).toBeInTheDocument();
   });
 
   it("hides a group from the list view", async () => {

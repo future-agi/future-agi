@@ -1021,6 +1021,19 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
     for domain in os.getenv("ALK_HOSTED_BASE_EGRESS_DOMAINS", "").split(",")
     if domain.strip()
 ]
+# Sandbox snapshots whose hook may export a hosted run's spans. Empty means no run exports.
+ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS = [
+    name.strip()
+    for name in os.getenv("ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS", "").split(",")
+    if name.strip()
+]
+# Of those, the snapshots whose hook measures an agent that traces nothing itself
+# (deploy/env-reference.toml says when a snapshot may be listed).
+ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS = [
+    name.strip()
+    for name in os.getenv("ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS", "").split(",")
+    if name.strip()
+]
 # Hosted simulator credentials are platform configuration, not customer job input. Values are
 # resolved only while launching the sandbox and are never persisted on HostedHarnessJob. Model
 # and speech calls go through AgentCC, so no model or speech vendor's credential is listed here.
@@ -1048,6 +1061,9 @@ ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
 # provisioner to drop privileges to the bundle's declared svc-agent/svc-tools/svc-data users
 # (Popen(user=) needs CAP_SETUID); "svc-control" runs every process uniformly instead.
 ALK_HOSTED_SANDBOX_OS_USER = os.getenv("ALK_HOSTED_SANDBOX_OS_USER", "svc-control")
+# After a user stop, how long cancel waits for the guest to seal the call in flight before deleting the sandbox: above
+# the guest's own bound (ALK_CANCEL_SEAL_SECONDS, 15 s) plus the time its runner takes to post the receipt.
+HARNESS_CANCEL_SEAL_SECONDS = float(os.getenv("HARNESS_CANCEL_SEAL_SECONDS") or 45)
 # Optional per-source pre-authored environment bundle store: <dir>/<owner>__<repo>/manifest.json.
 # A stopgap delivery path until in-sandbox bundle authoring lands; empty disables it.
 ALK_HOSTED_BUNDLE_DIR = os.getenv("ALK_HOSTED_BUNDLE_DIR", "")
@@ -1127,9 +1143,13 @@ AGENT_FIX_CHECK_RUN_PARALLELISM = int(os.getenv("AGENT_FIX_CHECK_RUN_PARALLELISM
 AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
     os.getenv("AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS", "600")
 )
-# A check run reserves this much of a fix's budget for each scenario execution.
+# A check run reserves this much of a fix's budget for each scenario execution, for its
+# simulation, and the second for each platform eval a winner's grading may run on it.
 AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = os.getenv(
     "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"
+)
+AGENT_FIX_WORST_CASE_USD_PER_EVAL = os.getenv(
+    "AGENT_FIX_WORST_CASE_USD_PER_EVAL", "0.02"
 )
 # Failing cases a fix needs at launch. A third are held back, and a fix proven only on the
 # cases it was made on can pass by chance, so this leaves the 4 that verifying it takes.

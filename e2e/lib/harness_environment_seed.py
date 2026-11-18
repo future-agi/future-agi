@@ -37,6 +37,30 @@ SUB_GOALS = [
         ),
     },
 ]
+# The same tools as a build that read their fields writes them: inputs with types and units, what each returns, and
+# where each runs (the agent's own tools service, so the world's door stands in front of both).
+DETAILED_TOOLS = [
+    {
+        "name": "lookup_order",
+        "description": "Looks an order up.",
+        "args": ["order_id"],
+        "arg_types": {"order_id": "string"},
+        "returns": {"status": "string", "total": "integer, cents, USD"},
+    },
+    {
+        "name": "issue_refund",
+        "description": "Refunds an order.",
+        "args": ["order_id", "refund_amount"],
+        "arg_types": {"order_id": "string", "refund_amount": "integer"},
+        "arg_units": {"refund_amount": "cents, USD"},
+        "returns": {"refund_id": "string", "amount": "integer, cents, USD"},
+        "effects": "adds a refund row and marks the order refunded",
+    },
+]
+DETAILED_ENTRYPOINTS = [
+    {"tool": "lookup_order", "mode": "service", "service": "tools-api", "endpoint": "orders/lookup", "effect": "read"},
+    {"tool": "issue_refund", "mode": "service", "service": "tools-api", "endpoint": "orders/refund", "effect": "write"},
+]
 # The checks a build's certificate records, all passed.
 PASSED_CHECKS = {
     "static": "passed",
@@ -49,6 +73,153 @@ PASSED_CHECKS = {
     "world_isolation": "passed",
 }
 BUNDLE_DIGEST = "sha256:" + "d" * 64
+# A world actor with no channel: it never speaks, it acts in the world (approves refunds).
+WORLD_ACTOR = {
+    "id": "claims_supervisor",
+    "name": "Dana Brooks",
+    "role": "claims supervisor who approves refunds",
+    "kind": "approver",
+    "permitted_actions": ["approvals.put"],
+}
+# What a finished trial left in World changes: the agent read the order, then committed one refund.
+TRIAL_STATE = {
+    "state_changes": [
+        {
+            "who": "agent",
+            "name": "the agent",
+            "attempted": 2,
+            "committed": 1,
+            "refused": 0,
+            "faulted": 0,
+            "duplicate": 0,
+            "committed_actions": ["issue_refund"],
+            "read": 1,
+            "read_actions": ["lookup_order"],
+            "no_change": False,
+        }
+    ]
+}
+# The same trial when the scenario's test condition took the refund down: the read went through, the refund was faulted
+# and nothing was committed.
+FAULTED_TRIAL_STATE = {
+    "start": {"state": "seeded", "tables": []},
+    "records": {"changes": [], "skipped": [], "truncated": 0},
+    "state_changes": [
+        {
+            "who": "agent",
+            "name": "the agent",
+            "attempted": 2,
+            "committed": 0,
+            "refused": 0,
+            "faulted": 1,
+            "duplicate": 0,
+            "committed_actions": [],
+            "read": 1,
+            "read_actions": ["lookup_order"],
+            "no_change": True,
+        }
+    ],
+}
+# The same trial when the world actor acted during the call: the agent asked for an approval and Dana Brooks put it.
+ACTOR_TRIAL_STATE = {
+    "start": {"state": "seeded", "tables": []},
+    "decisions": [
+        {
+            "play": "live",
+            "actor": WORLD_ACTOR["id"],
+            "action": "approvals.put",
+            "parent": None,
+            "status": 200,
+            "outcome": "committed",
+            "arguments": {"kind": "refund", "status": "approved"},
+        }
+    ],
+    "state_changes": [
+        TRIAL_STATE["state_changes"][0],
+        {
+            "who": WORLD_ACTOR["id"],
+            "name": WORLD_ACTOR["name"],
+            "attempted": 1,
+            "committed": 1,
+            "refused": 0,
+            "faulted": 0,
+            "duplicate": 0,
+            "committed_actions": ["approvals.put"],
+        },
+    ],
+}
+# The same trial when the refund's answer was lost to a timeout and the agent issued it again: the world committed it
+# twice, and the trial fails on it.
+DUPLICATE_TRIAL_STATE = {
+    "start": {"state": "seeded", "tables": []},
+    "duplicates": [
+        {
+            "action": "issue_refund",
+            "name": "issue_refund",
+            "arguments": {"order_id": "A-100", "amount_cents": 2500},
+            "first_action_id": "act-1",
+            "repeat_action_id": "act-2",
+        }
+    ],
+    "state_changes": [
+        {
+            **TRIAL_STATE["state_changes"][0],
+            "attempted": 3,
+            "committed": 2,
+            "duplicate": 1,
+            "committed_actions": ["issue_refund", "issue_refund"],
+        }
+    ],
+}
+# The same trial when the agent asked Dana Brooks to approve the refund, she refused, and the agent issued it anyway.
+REFUSED_TRIAL_STATE = {
+    "start": {"state": "seeded", "tables": []},
+    # As the harness seals an approval: the verdict and the commit after a refusal are said on the approval.
+    "approvals": [
+        {
+            "request": {"action": "approvals.request", "by": "agent"},
+            "decision": {"action": "approvals.put", "by": WORLD_ACTOR["id"], "verdict": "refused"},
+            "before_decision": [],
+            "after_decision": [{"action": "issue_refund", "outcome": "committed"}],
+            "acted_before_decision": False,
+            "verdict": "refused",
+            "committed_after_refusal": True,
+        }
+    ],
+    "decisions": [
+        {
+            "play": "live",
+            "actor": WORLD_ACTOR["id"],
+            "name": WORLD_ACTOR["name"],
+            "action": "approvals.put",
+            "status": 200,
+            "outcome": "committed",
+            "arguments": {"kind": "refund", "status": "refused"},
+            "verdict": "refused",
+        }
+    ],
+    "state_changes": [
+        TRIAL_STATE["state_changes"][0],
+        {
+            "who": WORLD_ACTOR["id"],
+            "name": WORLD_ACTOR["name"],
+            "attempted": 1,
+            "committed": 1,
+            "refused": 0,
+            "faulted": 0,
+            "duplicate": 0,
+            "committed_actions": ["approvals.put"],
+        },
+    ],
+}
+TRIAL_STATES = {
+    True: TRIAL_STATE,
+    "read_write": TRIAL_STATE,
+    "fault": FAULTED_TRIAL_STATE,
+    "actor": ACTOR_TRIAL_STATE,
+    "duplicate": DUPLICATE_TRIAL_STATE,
+    "refused": REFUSED_TRIAL_STATE,
+}
 
 
 def _payload(count):
@@ -107,26 +278,145 @@ def _scenario(key, tools):
     }
 
 
-def _documents(refunds, lookups, suffix):
+def _with_actor(documents):
+    """Each refund includes the world actor, brought in once a refund approval is asked for."""
+    for document in documents:
+        if document["scenario_key"].startswith("refund-"):
+            document["actors"] = [
+                {
+                    "id": WORLD_ACTOR["id"],
+                    "instruction": "Approve the refund when the agent asks.",
+                    "trigger": {"kind": "conditional", "collection": "approvals", "where": {"kind": "refund"}},
+                }
+            ]
+    return documents
+
+
+def _documents(refunds, lookups, suffix, *, refund_worker_budget=False):
     """``refunds`` cases that issue a refund on their only path, then ``lookups`` that
-    only look the order up; numbered in that order."""
+    only look the order up; numbered in that order. ``refund_worker_budget`` gives each
+    refund case a budget for the refund worker, so it relies on that worker."""
+    budget = {"worker_budget_seconds": {"refund": 30}} if refund_worker_budget else {}
     return [
-        _scenario(f"refund-{suffix}-{n:03d}", TOOLS) for n in range(1, refunds + 1)
+        {**_scenario(f"refund-{suffix}-{n:03d}", TOOLS), **budget} for n in range(1, refunds + 1)
     ] + [
         _scenario(f"status-{suffix}-{n:03d}", TOOLS[:1]) for n in range(1, lookups + 1)
     ]
 
 
-def _authoring(documents, *, certified, production_only):
+# Two declared workers wired separately, each reaching the world through its own channel. ``workers`` picks what ALK
+# sealed for them, as it writes it: ``"sealed"`` a tool proxy holding per-worker limits; ``"not_fronted"`` no door,
+# the tool service not behind it, so ALK holds each refund case that relies on the refund worker; ``"old_seal"``
+# nothing, as a bundle sealed before worker limits.
+WORKERS = [
+    {
+        "id": "order_lookup",
+        "name": "Order-lookup worker",
+        "tools": ["lookup_order", "issue_refund"],
+        "allowed_tools": ["lookup_order"],
+        "binding": "separate",
+        "address_env": "ORDER_LOOKUP_API_URL",
+    },
+    {
+        "id": "refund",
+        "name": "Refund worker",
+        "tools": ["issue_refund"],
+        "allowed_tools": ["issue_refund"],
+        "binding": "separate",
+        "address_env": "REFUND_API_URL",
+    },
+]
+DOOR_OUTCOMES = {
+    "sealed": {"present": True, "surface": "tool_proxy", "worker_deadlines": "per_worker"},
+    "not_fronted": {"present": False, "reason": "tool_service_not_fronted"},
+}
+TOOL_PROXY_FILES = {
+    "environment-bundle/generated/tool-proxy/door.json": {"worker_deadlines": "per_worker"},
+    "environment-bundle/generated/tool-proxy/permissions.json": {
+        "worker:order_lookup": {"allow": ["POST orders.lookup"]},
+        "worker:refund": {"allow": ["POST refunds.issue"]},
+    },
+    "environment-bundle/generated/tool-proxy/actions.json": {
+        "POST orders.lookup": "lookup_order",
+        "POST refunds.issue": "issue_refund",
+    },
+}
+
+
+def _door_files(documents, workers):
+    """ALK's door files for ``workers``: the root ``door.json``, ``worker-limits.json`` with each scenario's hold, and
+    for a tool proxy its own files. A refund case with a budget relies on the refund worker."""
+    if workers not in DOOR_OUTCOMES:
+        return {}
+    held = workers == "not_fronted"
+    scenarios = {}
+    for document in documents:
+        relies = "worker_budget_seconds" in document
+        scenarios[document["scenario_key"]] = {
+            "workers": ["refund"] if relies else [],
+            "relies_on_worker_limits": relies,
+            "held": held and relies,
+            "unheld_workers": ["refund"] if held and relies else [],
+            "reason": "worker_limits_not_enforced" if held and relies else None,
+            "cause": "tool_service_not_fronted" if held and relies else None,
+            "limit": "all" if held and relies else None,
+            "deadline": None,
+        }
+    files = {
+        "environment-bundle/door.json": DOOR_OUTCOMES[workers],
+        "environment-bundle/worker-limits.json": {
+            "workers": {one["id"]: {"limited": True} for one in WORKERS},
+            "scenarios": scenarios,
+        },
+    }
+    if workers == "sealed":
+        files.update(TOOL_PROXY_FILES)
+    return files
+
+
+def _actor_rules():
+    from simulate.services.harness_actor_rules import _rules_before_declared
+
+    return {
+        **_rules_before_declared(),
+        "record_changes": {
+            "from": "generic-harness/source-model.json",
+            "tables": "tables",
+            "name": "name",
+            "verbs": ["put", "change"],
+            "never_prefix": "_alk_",
+            "never": ["harness_seed_sentinel"],
+        },
+    }
+
+
+def _authoring(documents, *, certified, production_only, actors=False, tool_detail=False, workers=None):
     # Each tool as ALK writes it: an object named by `name`, so the review lists the contract item by item.
-    contract = {"agent": "support", "tools": [{"name": tool} for tool in TOOLS]}
+    contract = {
+        "agent": "support",
+        "tools": list(DETAILED_TOOLS) if tool_detail else [{"name": tool} for tool in TOOLS],
+    }
+    if tool_detail:
+        contract["tool_entrypoints"] = list(DETAILED_ENTRYPOINTS)
+    if workers:
+        # Reached on the agent's tool service, which the world's door fronts as tools-api.
+        contract["tool_entrypoints"] = [
+            {"tool": "lookup_order", "endpoint": "/orders/lookup", "method": "POST", "mode": "service", "service": "tools-api"},
+            {"tool": "issue_refund", "endpoint": "/refunds/issue", "method": "POST", "mode": "service", "service": "tools-api"},
+        ]
+        contract["workers"] = WORKERS
+    door_files = _door_files(documents, workers)
     if production_only:
-        contract["tool_entrypoints"] = [{"tool": production_only, "mode": "in_process"}]
+        contract["tool_entrypoints"] = [
+            *(one for one in contract.get("tool_entrypoints", []) if one["tool"] != production_only),
+            {"tool": production_only, "mode": "in_process"},
+        ]
         contract["dependencies"] = [
             {
+                # An API someone else runs, by its public host: production-only, so a test never calls it.
                 "name": "payments",
                 "engine": "",
-                "reached": {},
+                "reached": {"host": "api.payments.example.com"},
                 "used_by": [production_only],
             }
         ]
@@ -137,6 +427,12 @@ def _authoring(documents, *, certified, production_only):
         "schema.sql": "create table orders(id int);",
         "handlers/lookup.py": "def handle(db):\n    return {}\n",
     }
+    if actors:
+        files["actors.json"] = {"schema": "futureagi.actors.v1", "actors": [WORLD_ACTOR]}
+        # A release that seals actor rules names the record changes on the world's own collections, so the
+        # actor's approvals.put is an action the world offers.
+        files["actor_rules.json"] = _actor_rules()
+        files["generic-harness/source-model.json"] = {"tables": [{"name": "orders"}, {"name": "approvals"}]}
     for document in documents:
         files[f"scenarios/{document['name']}/scenario.json"] = document
         files[f"scenarios/{document['name']}/ready.py"] = (
@@ -146,7 +442,17 @@ def _authoring(documents, *, certified, production_only):
         files.update(
             {
                 "environment-bundle/manifest.json": {
-                    "files": [{"path": "world.sqlite", "sha256": "a" * 64, "size": 2}],
+                    "files": [
+                        {"path": "world.sqlite", "sha256": "a" * 64, "size": 2},
+                        *(
+                            {
+                                "path": path.removeprefix("environment-bundle/"),
+                                "sha256": "a" * 64,
+                                "size": 2,
+                            }
+                            for path in door_files
+                        ),
+                    ],
                     "digest": BUNDLE_DIGEST,
                     "provenance": {"source_digest": "e" * 64},
                 },
@@ -170,6 +476,7 @@ def _authoring(documents, *, certified, production_only):
                 },
             }
         )
+        files.update(door_files)
     return {
         path: (value if isinstance(value, str) else json.dumps(value)).encode()
         for path, value in files.items()
@@ -186,14 +493,21 @@ def seed_environment(
     certified=True,
     production_only=None,
     failed_check=None,
+    actors=False,
+    trial=False,
+    tool_detail=False,
+    workers=None,
+    refund_worker_budget=False,
 ):
-    """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios."""
+    """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios; ``trial`` picks a
+    ``TRIAL_STATES`` variant for its finished trial."""
     from simulate.models import (
         AgentDefinition,
         AgentVersion,
         HostedHarnessJob,
         RunTest,
     )
+    from simulate.services.harness_scenarios import index_scenarios
     from simulate.services.harness_versioning import archives
     from simulate.services.harness_versioning.backfill import backfill_environment
     from simulate.services.hosted_harness import (
@@ -203,7 +517,11 @@ def seed_environment(
     )
     from simulate.services.hosted_harness_gateway import authoring_content_digest
 
-    documents = _documents(refunds, lookups, suffix)
+    documents = _documents(
+        refunds, lookups, suffix, refund_worker_budget=refund_worker_budget
+    )
+    if actors:
+        documents = _with_actor(documents)
     environment, _ = create_hosted_job(
         organization,
         _payload(len(documents)),
@@ -232,9 +550,17 @@ def seed_environment(
             ],
         },
     )
-    body = archives.pack_archive(
-        _authoring(documents, certified=certified, production_only=production_only)
+    # A build indexes its sealed suite onto the scenario rows: their actors, sub-goals and faults.
+    index_scenarios(environment, documents)
+    authored = _authoring(
+        documents,
+        certified=certified,
+        production_only=production_only,
+        actors=actors,
+        tool_detail=tool_detail,
+        workers=workers,
     )
+    body = archives.pack_archive(authored)
     object_key = archives.pair_key(organization.id, environment.id, body)
     archives.put_archive(object_key, body)
     environment.refresh_from_db()
@@ -248,8 +574,13 @@ def seed_environment(
     environment.name = f"e2e-harness-{suffix}"
     environment.state = HostedHarnessJob.State.COMPLETED
     environment.current_stage = "completed"
+    # The environment's detail reads its contract from the build's stage output, as a finished build leaves it.
+    environment.stage_outputs = [
+        *(one for one in environment.stage_outputs or [] if (one or {}).get("kind") != "contract"),
+        {"kind": "contract", "data": json.loads(authored["contract.json"])},
+    ]
     environment.save(
-        update_fields=["payload", "name", "state", "current_stage", "updated_at"]
+        update_fields=["payload", "name", "state", "current_stage", "stage_outputs", "updated_at"]
     )
 
     definition = AgentDefinition.objects.create(
@@ -284,7 +615,13 @@ def seed_environment(
         raise RuntimeError("backfill cached no certified bundle")
     if failed_check:
         _fail_check(environment, failed_check)
+    trial_ids = (
+        _finished_trial(environment, definition, documents[0], TRIAL_STATES[trial])
+        if trial
+        else {}
+    )
     return {
+        **trial_ids,
         "environmentId": str(environment.id),
         "agentVersionId": str(environment.agent_version_id),
         "environmentVersionId": str(environment.environment_version_id),
@@ -292,6 +629,45 @@ def seed_environment(
         "scenarioKeys": [document["scenario_key"] for document in documents],
         "refundKeys": [d["scenario_key"] for d in documents[:refunds]],
         "lookupKeys": [d["scenario_key"] for d in documents[refunds:]],
+    }
+
+
+def _finished_trial(environment, definition, document, trial_state):
+    """One finished run of the Environment with one completed trial of its first scenario, its World changes as the
+    harness seals them (ingestion keeps them under ``harness_trial_state``)."""
+    from simulate.models import Scenarios
+    from simulate.models.test_execution import CallExecution, TestExecution
+    from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
+
+    # Every call belongs to a scenario (the column is required).
+    scenario = Scenarios.objects.create(
+        name=document["name"],
+        source="test",
+        organization=environment.organization,
+        workspace=environment.workspace,
+    )
+    execution = TestExecution.objects.create(
+        run_test_id=environment.run_test_id,
+        status=TestExecution.ExecutionStatus.COMPLETED,
+        total_scenarios=1,
+        total_calls=1,
+        agent_definition=definition,
+    )
+    call = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        call_metadata={
+            "harness_scenario_key": document["scenario_key"],
+            "harness_trial_index": 0,
+            TRIAL_STATE_KEY: trial_state,
+        },
+    )
+    return {
+        "runTestId": str(environment.run_test_id),
+        "testExecutionId": str(execution.id),
+        "callExecutionId": str(call.id),
     }
 
 
