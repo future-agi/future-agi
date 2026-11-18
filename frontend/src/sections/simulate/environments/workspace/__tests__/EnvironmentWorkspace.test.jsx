@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { flushSync } from "react-dom";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  queryScenarioFixture,
+  SAMPLE_ROWS,
+} from "src/api/simulate-environments/_fixtures/scenariosFixtures";
 import userEvent from "@testing-library/user-event";
 import { clearScenarioSelection } from "../../buildEnvironment/console/scenarioSelectionBus";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
@@ -634,7 +639,9 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(
       screen.getByText("Ask, correct, or steer what it builds"),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Working…")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("builder-console-stop-orbit"),
+    ).not.toBeInTheDocument();
 
     axios.post.mockReturnValue(new Promise(() => {}));
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
@@ -702,6 +709,66 @@ describe("EnvironmentWorkspace route shell", () => {
     ).toBeInTheDocument();
     // No fixture scenario content leaked in either.
     expect(screen.queryByText(/verify_identity/)).toBeNull();
+  });
+
+  it("keeps checked scenarios available after cancelling the run dialog", async () => {
+    const rows = SAMPLE_ROWS.slice(0, 3);
+    getHarnessJob.mockResolvedValue({
+      ...COMPLETED_JOB,
+      scenarios: rows,
+      versioning: { enabled: true },
+    });
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation(async (url, config) => {
+      if (url.endsWith("/scenarios/")) {
+        return { data: queryScenarioFixture(config.params, rows) };
+      }
+      if (url.endsWith("/versions/")) {
+        return { data: { agent: [], environment: [], suite: [] } };
+      }
+      if (url.endsWith("/run-plan/")) {
+        return {
+          data: {
+            runnable: true,
+            warnings: [],
+            blocked_tools: [],
+            held_back: 0,
+          },
+        };
+      }
+      return base(url, config);
+    });
+    const user = userEvent.setup();
+    renderWorkspace("/dashboard/simulate/environments/job-done?tab=scenarios");
+
+    const table = await screen.findByRole("table");
+    const [, first, second] = within(table).getAllByRole("checkbox");
+    await user.click(first);
+    await user.click(second);
+    const runSelection = () =>
+      screen.getByText("Run simulation (2)", { selector: "button" });
+    await user.click(runSelection());
+
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "Run simulation" }),
+    );
+    expect(await dialog.findByText("Runs 2 selected scenarios.")).toBeVisible();
+    await user.click(dialog.getByRole("button", { name: "Edit" }));
+    // Browsers can commit Cancel's update at the portal (body) before the
+    // same click reaches the document. jsdom otherwise batches past that point.
+    document.body.addEventListener("click", () => flushSync(() => {}), {
+      once: true,
+    });
+    await user.click(dialog.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(first).toBeChecked();
+    expect(second).toBeChecked();
+    expect(runSelection()).toBeEnabled();
+
+    await user.click(screen.getByText("Done Environment", { selector: "p" }));
+    expect(first).not.toBeChecked();
+    expect(second).not.toBeChecked();
   });
 
   it("hosts the build experience in place for a still-building job", async () => {

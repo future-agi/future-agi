@@ -486,9 +486,9 @@ class PersonaDuplicateView(APIView):
     )
     def post(self, request, persona_id):
         """Duplicate a persona by ID"""
-        source_persona = accessible_persona_queryset(request).filter(
-            id=persona_id
-        ).first()
+        source_persona = (
+            accessible_persona_queryset(request).filter(id=persona_id).first()
+        )
         if not source_persona:
             return self._gm.bad_request("Persona not found")
 

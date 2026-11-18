@@ -33,7 +33,15 @@ def test_a_coverage_level_keeps_its_own_label_when_it_shares_a_background_name()
 
 
 def test_voice_only_fields_are_not_offered_for_a_chat_agent():
-    rows = _Rows([{"persona__accent": "Indian", "background_noise": "office", "use_case": "billing"}])
+    rows = _Rows(
+        [
+            {
+                "persona__accent": "Indian",
+                "background_noise": "office",
+                "use_case": "billing",
+            }
+        ]
+    )
 
     spoken = {field["value"] for field in field_catalogue(rows, spoken=True)}
     typed = {field["value"] for field in field_catalogue(rows, spoken=False)}
@@ -50,9 +58,15 @@ def test_a_call_offers_no_turn_budget_and_a_chat_no_voice_fields():
     typed = HostedHarnessProvider._editing_contract(HostedHarnessProvider, spoken=False)
 
     assert "max_turns" not in spoken["editable_fields"]
-    assert "background_noise" in spoken["editable_fields"] and "accent" in spoken["persona_fields"]
+    assert (
+        "background_noise" in spoken["editable_fields"]
+        and "accent" in spoken["persona_fields"]
+    )
     assert "max_turns" in typed["editable_fields"]
-    assert "background_noise" not in typed["editable_fields"] and "accent" not in typed["persona_fields"]
+    assert (
+        "background_noise" not in typed["editable_fields"]
+        and "accent" not in typed["persona_fields"]
+    )
     assert spoken["noise_choices"][0] == "quiet line"
     assert "street" in spoken["noise_choices"]
     assert "present" not in spoken["noise_choices"] and typed["noise_choices"] == []
@@ -122,7 +136,10 @@ def test_a_scenario_sits_under_every_sub_goal_it_carries():
     suite.values_list = lambda *paths, flat=False: suite._rows
 
     assert [(row["group"], row["name"]) for row in rows] == [
-        ("Ungrouped", "c"), ("books", "a"), ("books", "b"), ("greets", "a")
+        ("Ungrouped", "c"),
+        ("books", "a"),
+        ("books", "b"),
+        ("greets", "a"),
     ]
     sections = group_counts(rows, suite, "sub_goal")
     totals = {one["name"]: one["total"] for one in sections}
@@ -146,6 +163,9 @@ def test_every_place_the_catalogue_can_play_can_be_chosen_in_the_editor():
     from simulate.services.harness_scenarios import NOISE_LABELS
 
     catalogue = Path(__file__).resolve().parents[1] / "data" / "background_sounds.json"
-    places = {clip["environment"] for clip in json.loads(catalogue.read_text(encoding="utf-8"))}
+    places = {
+        clip["environment"]
+        for clip in json.loads(catalogue.read_text(encoding="utf-8"))
+    }
 
     assert places <= set(NOISE_LABELS)
