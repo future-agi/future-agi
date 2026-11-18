@@ -65,7 +65,12 @@ SESSION = timezone.now() - timedelta(minutes=1)
 
 def _proof(holds, *, at=None):
     when = at or timezone.now()
-    return {"holds": holds, "proved_at": when.isoformat().replace("+00:00", "Z")}
+    return {
+        "format": 2,
+        "proved": holds,
+        "holds": holds,
+        "proved_at": when.isoformat().replace("+00:00", "Z"),
+    }
 
 
 def _scenario(name, **fields):
@@ -477,7 +482,7 @@ class TestValidation:
         proofs = {
             _key(NAMES[0]): _proof(True),
             _key(NAMES[1]): _proof(True, at=SESSION - timedelta(days=1)),
-            "untimed": {"holds": True},
+            "untimed": {"format": 2, "proved": True, "holds": True},
         }
 
         recorded = record_authoring(
@@ -516,7 +521,10 @@ class TestValidation:
     def test_a_proof_time_without_a_zone_is_read_as_utc(self, user, workspace, storage):
         environment = _environment(user, workspace, "proofs-naive")
         naive = timezone.now().replace(tzinfo=None).isoformat()
-        proofs = {_key(name): {"holds": True, "proved_at": naive} for name in NAMES[:2]}
+        proofs = {
+            _key(name): {"format": 2, "proved": True, "holds": True, "proved_at": naive}
+            for name in NAMES[:2]
+        }
 
         recorded = record_authoring(
             environment,
