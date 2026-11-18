@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import {
@@ -27,6 +27,16 @@ export default function CodeCard({ agentId, versionId, versionLabel }) {
   const selected = params.get("file") || "";
   const diffOn = params.get("diff") === "1";
   const tree = useCodeTree(agentId, versionId);
+  const cardRef = useRef(null);
+  const arrivedWithFile = useRef(Boolean(selected));
+  useEffect(() => {
+    if (!arrivedWithFile.current || !tree.data) return undefined;
+    arrivedWithFile.current = false;
+    const scroll = () => cardRef.current?.scrollIntoView?.({ block: "start" });
+    scroll();
+    const settled = setTimeout(scroll, 600);
+    return () => clearTimeout(settled);
+  }, [tree.data]);
   const changes = useCodeChanges(agentId, versionId);
   const againstId = changes.data?.against || null;
   const showDiff = diffOn && Boolean(againstId);
@@ -94,120 +104,127 @@ export default function CodeCard({ agentId, versionId, versionLabel }) {
   const count = tree.data.files.length;
   const changedCount = Object.keys(changedBy).length;
   return (
-    <Card
-      title={`Files · ${count} file${count === 1 ? "" : "s"} · ${versionLabel}`}
-      action={
-        <Stack direction="row" alignItems="center" spacing={1}>
-          {changes.data?.against && (
-            <Typography
-              sx={{ typography: "s2", color: "text.secondary" }}
-              data-testid="code-changed-count"
-            >
-              {changedCount
-                ? `${changedCount} changed since the previous version`
-                : "No change since the previous version"}
-            </Typography>
-          )}
-          {changes.data?.against && (
-            <Button
-              size="small"
-              variant={diffOn ? "contained" : "outlined"}
-              color={diffOn ? "primary" : "inherit"}
-              onClick={() => set({ diff: diffOn ? "" : "1" })}
-              aria-pressed={diffOn}
-            >
-              Diff vs previous
-            </Button>
-          )}
-        </Stack>
-      }
-    >
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: TEMPLATE,
-          minHeight: MIN_CODE_HEIGHT,
-        }}
+    <Box ref={cardRef} sx={{ scrollMarginTop: 8, minWidth: 0 }}>
+      <Card
+        title={`Files · ${count} file${count === 1 ? "" : "s"} · ${versionLabel}`}
+        action={
+          <Stack direction="row" alignItems="center" spacing={1}>
+            {changes.data?.against && (
+              <Typography
+                sx={{ typography: "s2", color: "text.secondary" }}
+                data-testid="code-changed-count"
+              >
+                {changedCount
+                  ? `${changedCount} changed since the previous version`
+                  : "No change since the previous version"}
+              </Typography>
+            )}
+            {changes.data?.against && (
+              <Button
+                size="small"
+                variant={diffOn ? "contained" : "outlined"}
+                color={diffOn ? "primary" : "inherit"}
+                onClick={() => set({ diff: diffOn ? "" : "1" })}
+                aria-pressed={diffOn}
+              >
+                Diff vs previous
+              </Button>
+            )}
+          </Stack>
+        }
       >
         <Box
           sx={{
-            position: "relative",
-            borderRight: "1px solid",
-            borderColor: "divider",
+            display: "grid",
+            gridTemplateColumns: TEMPLATE,
+            minHeight: MIN_CODE_HEIGHT,
           }}
         >
-          <Box sx={{ position: "absolute", inset: 0, overflowY: "auto", p: 1 }}>
-            <FileTree
-              files={treeFiles}
-              subfolder={tree.data.subfolder}
-              selected={selected}
-              changes={changedBy}
-              onSelect={(path) => set({ file: path })}
-            />
-          </Box>
-        </Box>
-        <Box sx={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
-          {selected && (
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={1}
-              sx={{
-                px: 2,
-                py: 0.75,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-              }}
+          <Box
+            sx={{
+              position: "relative",
+              borderRight: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Box
+              sx={{ position: "absolute", inset: 0, overflowY: "auto", p: 1 }}
             >
-              <Typography
-                noWrap
-                sx={{ typography: "s2", fontFamily: MONO }}
-                data-testid="code-path"
+              <FileTree
+                files={treeFiles}
+                subfolder={tree.data.subfolder}
+                selected={selected}
+                changes={changedBy}
+                onSelect={(path) => set({ file: path })}
+              />
+            </Box>
+          </Box>
+          <Box sx={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+            {selected && (
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={1}
+                sx={{
+                  px: 2,
+                  py: 0.75,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
               >
-                {selected}
-              </Typography>
-              {changedBy[selected] && (
                 <Typography
-                  sx={{ typography: "s2", color: "text.secondary" }}
-                  data-testid="code-changed-chip"
+                  noWrap
+                  sx={{ typography: "s2", fontFamily: MONO }}
+                  data-testid="code-path"
                 >
-                  {`${changedBy[selected]} in ${versionLabel}`}
+                  {selected}
                 </Typography>
-              )}
-            </Stack>
-          )}
-          <Box sx={{ flex: 1 }}>
-            {showDiff && selected ? (
-              <FileDiff
-                agentId={agentId}
-                versionId={versionId}
-                againstId={againstId}
-                path={selected}
-              />
-            ) : selected && file.isError ? (
-              <Typography
-                sx={{ p: 2, typography: "s2", color: "text.secondary" }}
-                data-testid="file-viewer-error"
-              >
-                {`Couldn't load this file: ${errorMessage(file.error) || "the request failed."}`}
-              </Typography>
-            ) : selected && !file.isPending && !file.isLoading && !file.data ? (
-              <Typography
-                sx={{ p: 2, typography: "s2", color: "text.secondary" }}
-                data-testid="file-viewer-missing"
-              >
-                This file is not in this version.
-              </Typography>
-            ) : (
-              <FileViewer
-                file={selected ? file.data : null}
-                loading={!!selected && file.isLoading}
-              />
+                {changedBy[selected] && (
+                  <Typography
+                    sx={{ typography: "s2", color: "text.secondary" }}
+                    data-testid="code-changed-chip"
+                  >
+                    {`${changedBy[selected]} in ${versionLabel}`}
+                  </Typography>
+                )}
+              </Stack>
             )}
+            <Box sx={{ flex: 1 }}>
+              {showDiff && selected ? (
+                <FileDiff
+                  agentId={agentId}
+                  versionId={versionId}
+                  againstId={againstId}
+                  path={selected}
+                />
+              ) : selected && file.isError ? (
+                <Typography
+                  sx={{ p: 2, typography: "s2", color: "text.secondary" }}
+                  data-testid="file-viewer-error"
+                >
+                  {`Couldn't load this file: ${errorMessage(file.error) || "the request failed."}`}
+                </Typography>
+              ) : selected &&
+                !file.isPending &&
+                !file.isLoading &&
+                !file.data ? (
+                <Typography
+                  sx={{ p: 2, typography: "s2", color: "text.secondary" }}
+                  data-testid="file-viewer-missing"
+                >
+                  This file is not in this version.
+                </Typography>
+              ) : (
+                <FileViewer
+                  file={selected ? file.data : null}
+                  loading={!!selected && file.isLoading}
+                />
+              )}
+            </Box>
           </Box>
         </Box>
-      </Box>
-    </Card>
+      </Card>
+    </Box>
   );
 }
 

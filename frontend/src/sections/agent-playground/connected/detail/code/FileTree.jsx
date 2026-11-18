@@ -9,6 +9,7 @@ const STATUS_TONE = {
   added: "success.main",
   modified: "warning.main",
   removed: "error.main",
+  renamed: "info.main",
 };
 
 function Folder({
@@ -18,6 +19,7 @@ function Folder({
   changes,
   onSelect,
   openByDefault,
+  openAll,
   openFolders,
 }) {
   const [open, setOpen] = useState(openByDefault || openFolders.has(node.path));
@@ -73,7 +75,8 @@ function Folder({
               selected={selected}
               changes={changes}
               onSelect={onSelect}
-              openByDefault={false}
+              openByDefault={openAll}
+              openAll={openAll}
               openFolders={openFolders}
             />
           ))}
@@ -150,6 +153,7 @@ Folder.propTypes = {
   changes: PropTypes.object.isRequired,
   onSelect: PropTypes.func.isRequired,
   openByDefault: PropTypes.bool.isRequired,
+  openAll: PropTypes.bool,
   openFolders: PropTypes.instanceOf(Set).isRequired,
 };
 
@@ -160,6 +164,7 @@ export default function FileTree({
   selected,
   changes,
   onSelect,
+  openAll = false,
 }) {
   const tree = useMemo(() => buildTree(files, subfolder), [files, subfolder]);
   const openFolders = useMemo(
@@ -175,6 +180,7 @@ export default function FileTree({
         changes={changes}
         onSelect={onSelect}
         openByDefault
+        openAll={openAll}
         openFolders={openFolders}
       />
     </Box>
@@ -187,4 +193,5 @@ FileTree.propTypes = {
   selected: PropTypes.string,
   changes: PropTypes.object.isRequired,
   onSelect: PropTypes.func.isRequired,
+  openAll: PropTypes.bool,
 };

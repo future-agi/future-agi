@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSnackbar } from "notistack";
@@ -15,6 +15,7 @@ import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import ComingSoonCard from "./ComingSoonCard";
+import CompareCard from "./code/CompareCard";
 import { Card, LineSkeleton, Pill } from "./bits";
 import { agentDetailPath } from "./agentDetailTabs";
 import { MONO } from "./format";
@@ -131,6 +132,46 @@ export default function AgentVersionsTab() {
     versions.length,
   ]);
   const total = agent?.versionCount;
+  const compareRef = useRef(null);
+  const [pair, setPair] = useState(null);
+  const codeVersions = useMemo(
+    () =>
+      versions
+        .filter((v) => ["github", "archive"].includes(v.source?.kind))
+        .sort((a, b) => b.number - a.number),
+    [versions],
+  );
+  const isCode = agent?.agentKind === "source" || codeVersions.length > 0;
+  const olderThan = (v) => codeVersions.find((one) => one.number < v.number);
+  const defaultPair = useMemo(() => {
+    const chosen =
+      codeVersions.find((v) => v.id === versionId) ?? codeVersions[0];
+    if (!chosen) return null;
+    const older = codeVersions.find((v) => v.number < chosen.number);
+    if (older) return { head: chosen.id, base: older.id };
+    const newer = [...codeVersions]
+      .reverse()
+      .find((v) => v.number > chosen.number);
+    return newer ? { head: newer.id, base: chosen.id } : null;
+  }, [codeVersions, versionId]);
+  const shownPair = pair ?? defaultPair;
+  const compareWithPrevious = (v) => {
+    const base = olderThan(v);
+    if (!base) return;
+    setPair({ head: v.id, base: base.id });
+    compareRef.current?.scrollIntoView?.({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
+  const viewFile = (id, path) => {
+    const params = new URLSearchParams(search);
+    if (id === agent?.activeVersionId) params.delete("v");
+    else params.set("v", id);
+    params.set("file", path);
+    params.delete("diff");
+    navigate(`${agentDetailPath(agentId, "definition")}?${params.toString()}`);
+  };
 
   // The Definition tab for a version: `?v=` as the picker writes it, so the
   // version in production keeps a clean URL.
@@ -372,6 +413,11 @@ export default function AgentVersionsTab() {
                     <Button {...actionProps(() => viewDefinition(v))}>
                       View definition
                     </Button>
+                    {isCode && olderThan(v) && (
+                      <Button {...actionProps(() => compareWithPrevious(v))}>
+                        Compare
+                      </Button>
+                    )}
                     {canEdit && agent && !agent.managedBy && canPromote(v) && (
                       <Button {...actionProps(() => setToActivate(v))}>
                         Set as production
@@ -395,10 +441,31 @@ export default function AgentVersionsTab() {
           {isFetchingNextPage && skeletons(2)}
         </Box>
       </Card>
-      <ComingSoonCard
-        title="Compare"
-        description="Compare any two versions to see exactly what changed."
-      />
+      {isCode && shownPair ? (
+        <Box ref={compareRef} sx={{ minWidth: 0, scrollMarginTop: 8 }}>
+          <CompareCard
+            agentId={agentId}
+            versions={codeVersions}
+            headId={shownPair.head}
+            baseId={shownPair.base}
+            onChange={(head, base) => setPair({ head, base })}
+            onViewFile={viewFile}
+          />
+        </Box>
+      ) : isCode ? (
+        <Card title="Compare">
+          <Typography
+            sx={{ px: 1.5, py: 1.5, typography: "s1", color: "text.secondary" }}
+          >
+            Make a second version of this agent to compare its code.
+          </Typography>
+        </Card>
+      ) : (
+        <ComingSoonCard
+          title="Compare"
+          description="Compare any two versions to see exactly what changed."
+        />
+      )}
       <ConfirmDialog
         open={!!toActivate}
         onClose={() => (activate.isPending ? null : setToActivate(null))}
