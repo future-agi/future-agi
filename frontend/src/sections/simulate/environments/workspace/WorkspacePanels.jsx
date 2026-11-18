@@ -56,6 +56,7 @@ export default function WorkspacePanels({
   runDialogOpen = false,
   canRun = false,
   runBlockedReason,
+  onReviewChanges,
 }) {
   const navigate = useNavigate();
   const {
@@ -134,6 +135,7 @@ export default function WorkspacePanels({
             patch={patch}
             locked={locked}
             graphData={graphData}
+            onReviewChanges={onReviewChanges}
           />
         );
       case "contract":
@@ -305,4 +307,6 @@ WorkspacePanels.propTypes = {
   canRun: PropTypes.bool,
   // Why Run is unavailable, for the Scenarios selection bar's disabled Run.
   runBlockedReason: PropTypes.string,
+  // Opens Review changes.
+  onReviewChanges: PropTypes.func,
 };

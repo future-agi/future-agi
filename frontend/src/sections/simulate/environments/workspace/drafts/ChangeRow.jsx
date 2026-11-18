@@ -212,6 +212,8 @@ export default function ChangeRow({
             restoreReason={
               heldFromRestore ? COPY.restoreBlocked(heldFromRestore.by) : null
             }
+            // Added from a file's proposals, so it arrives accepted: Undo.
+            undoText={link.kind === "file" ? COPY.undo : COPY.change}
             onDecide={onDecide}
           />
         )}

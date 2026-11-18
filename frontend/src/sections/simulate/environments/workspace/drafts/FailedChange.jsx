@@ -10,7 +10,8 @@ const FIX_MAX_WIDTH = 200;
 
 /** A change that couldn't apply: why, what it holds up, and how to fix it. */
 export default function FailedChange({ failed, canEdit, onFix, onDismiss }) {
-  const fixText = failed.source_id ? COPY.fixIn(failed.source_id) : COPY.fix;
+  let fixText = failed.source_id ? COPY.fixIn(failed.source_id) : COPY.fix;
+  if (failed.fix) fixText = COPY.fixes[failed.fix];
   return (
     <Stack
       direction="row"
@@ -140,6 +141,8 @@ FailedChange.propTypes = {
     detail: PropTypes.string,
     reason: PropTypes.string,
     source_id: PropTypes.string,
+    source_name: PropTypes.string,
+    fix: PropTypes.oneOf(["supply", "attach"]),
     scenarios: PropTypes.arrayOf(PropTypes.string),
   }).isRequired,
   canEdit: PropTypes.bool,

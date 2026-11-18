@@ -38,6 +38,10 @@ const UsedSchema = z.discriminatedUnion("kind", [
     version: z.string().optional(),
     digest: z.string().optional(),
     locator: z.string().optional(),
+    // Proposed: the file's name and the spot as people read it ("p.2"), so a
+    // row can say where it came from without looking the file up.
+    name: z.string().optional(),
+    place: z.string().optional(),
   }),
 ]);
 
@@ -111,6 +115,9 @@ const FailedChangeSchema = z.object({
   source_id: z.string().nullable(),
   scenarios: z.array(z.string()),
   dismissed: z.boolean().optional(),
+  // Proposed: the file's name, and what fixes it.
+  source_name: z.string().optional(),
+  fix: z.enum(["supply", "attach"]).optional(),
 });
 
 export const DraftReviewSchema = z

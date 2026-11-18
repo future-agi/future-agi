@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { addSampleEdits } from "./draftReview";
 import {
   KNOWLEDGE_BASES,
   draftOfSources,
@@ -185,14 +186,132 @@ export const usePrepareKbSource = (envId) =>
       }));
   });
 
-// The hook point for Review changes: accepted proposals become accepted
-// changes there, blocked ones land in Couldn't apply. Not connected yet; the
-// accept response's `ui` keeps both lists meanwhile.
+// Personal-data choices as a change summary words them.
+const PERSONAL_CHOICES = {
+  keep: "keep",
+  replace: "replace with synthetic values",
+  none: "no personal data present",
+  custom: "custom, per column",
+};
+
+// Where a change came from: the file, and the cited spot when there is one.
+const readFrom = (sourceId, name, cite) => {
+  const prefix = `${name} · `;
+  const place = cite?.ref?.startsWith(prefix)
+    ? cite.ref.slice(prefix.length)
+    : null;
+  return {
+    origin: "manual",
+    agent: { kind: "user", user_id: "sample-user" },
+    at: new Date().toISOString(),
+    draft_revision: 1,
+    used: [
+      {
+        kind: "source",
+        source_id: sourceId,
+        name,
+        ...(place && { place }),
+        ...(cite?.at && { locator: cite.at }),
+      },
+    ],
+  };
+};
+
+// Added from Review proposed changes, so it arrives accepted.
+const fileChange = ({ kind, key, piece = "environment", summary, from }) => ({
+  id: `${kind}:${key}`,
+  piece,
+  kind,
+  key,
+  document: "sources.json",
+  action: "added",
+  fields: [],
+  patch: [{ op: "add", path: "", value: summary }],
+  base_digest: null,
+  draft_digest: null,
+  summary,
+  decision: "accepted",
+  affects: "all",
+  sources: [from],
+  depends_on: [],
+  graded: false,
+  revalidate: [],
+});
+
+/**
+ * Accepted proposals become accepted changes in Review changes, one per item;
+ * blocked ones land in Couldn't apply. The same ids replace, so adding a
+ * file's proposals again doesn't double them.
+ */
 export const appendAcceptedEdits = (
-  _queryClient,
-  _envId,
-  { accepted: _accepted, failed: _failed },
-) => {};
+  queryClient,
+  envId,
+  { accepted = [], failed = [] },
+) => {
+  const names = new Map(
+    summaryOf(queryClient, envId).sources.map((source) => [
+      source.source_id,
+      source.name,
+    ]),
+  );
+  const nameOf = (id) => names.get(id) || id;
+  addSampleEdits(queryClient, envId, {
+    changes: accepted.map((item) => {
+      const sourceId = item.cite?.sourceId || item.pick?.sourceId;
+      const rule = ["rule", "conflict"].includes(item.kind)
+        ? item.edited || item.pick?.rule || item.rule
+        : null;
+      return fileChange({
+        kind: "source",
+        key: item.id,
+        piece: item.kind === "scenario" ? "suite" : "environment",
+        summary: rule ? `Rule: ${rule}` : item.title,
+        from: readFrom(sourceId, nameOf(sourceId), item.cite),
+      });
+    }),
+    failed: failed.map((item) => {
+      const sourceId =
+        item.sourceId ||
+        item.cite?.sourceId ||
+        item.options?.[0]?.sourceId ||
+        null;
+      return {
+        id: `failed:${item.id}`,
+        detail: item.title,
+        reason: item.detail || "It couldn't be applied.",
+        source_id: sourceId,
+        scenarios: item.affects || [],
+        ...(sourceId && {
+          source_name: nameOf(sourceId),
+          fix: item.kind === "missing" ? "supply" : "attach",
+        }),
+      };
+    }),
+  });
+};
+
+/**
+ * A file's personal-data choice as one accepted change in Review changes,
+ * however often it changes: a later choice replaces the row. Does nothing
+ * until the file is added.
+ */
+export const upsertPersonalDataEdit = (queryClient, envId, source) => {
+  const choice = source?.ui?.personal_choice;
+  if (!choice || ["reading", "not_saved"].includes(source.status)) return;
+  addSampleEdits(queryClient, envId, {
+    changes: [
+      fileChange({
+        kind: "file",
+        key: `personal-${source.source_id}`,
+        summary: `${source.name}: personal data, ${PERSONAL_CHOICES[choice] || choice}`,
+        from: readFrom(source.source_id, source.name),
+      }),
+    ],
+  });
+};
+
+const idsOf = (importRef) =>
+  new Set(importRef.slice(IMPORT_PREFIX.length).split(","));
 
 const savedStatusOf = (source) => {
   const read = settle(source);
@@ -215,7 +334,7 @@ export const useAcceptSource = (envId) => {
       expected_draft: draft,
       ui,
     }) => {
-      const ids = new Set(importRef.slice(IMPORT_PREFIX.length).split(","));
+      const ids = idsOf(importRef);
       const sources = summaryOf(queryClient, envId).sources.map((source) =>
         ids.has(source.source_id) ? savedStatusOf(source) : source,
       );
@@ -228,7 +347,7 @@ export const useAcceptSource = (envId) => {
         ui: { accepted: ui?.accepted || [], failed: ui?.failed || [] },
       });
     },
-    onSuccess: (result) => {
+    onSuccess: (result, { import_ref: importRef }) => {
       queryClient.setQueryData(sourceSummaryKey(envId), (summary) => ({
         ...(summary || sampleSourceSummary()),
         draft: true,
@@ -240,6 +359,12 @@ export const useAcceptSource = (envId) => {
         capabilities ? { ...capabilities, draft: result.draft } : capabilities,
       );
       appendAcceptedEdits(queryClient, envId, result.ui);
+      const ids = idsOf(importRef);
+      result.sources
+        .filter((source) => ids.has(source.source_id))
+        .forEach((source) =>
+          upsertPersonalDataEdit(queryClient, envId, source),
+        );
     },
   });
 };

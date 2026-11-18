@@ -693,6 +693,7 @@ export default function EnvironmentWorkspace() {
                   backedScenarioCount,
                 ),
               )}
+              onReviewChanges={() => setReviewOpen(true)}
             />
           )}
         </ChatSplitPane>

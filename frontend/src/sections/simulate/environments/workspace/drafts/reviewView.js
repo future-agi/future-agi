@@ -162,8 +162,8 @@ export const sourceLine = (source = {}) => {
   if (used) {
     return {
       kind: "file",
-      file: used.source_id,
-      where: used.locator || null,
+      file: used.name || used.source_id,
+      where: used.place || used.locator || null,
       at,
     };
   }
@@ -174,8 +174,15 @@ export const sourceLine = (source = {}) => {
 /** Where a change came from, to go to. */
 export const sourceLink = (source = {}) => {
   const used = fileOf(source);
-  if (used) return { kind: "file", file: used.source_id };
-  return { kind: source.origin === "chat" ? "chat" : "tab" };
+  if (!used) return { kind: source.origin === "chat" ? "chat" : "tab" };
+  // The sample puts a file name in source_id; a named file has a real id to open.
+  if (!used.name) return { kind: "file", file: used.source_id };
+  return {
+    kind: "file",
+    file: used.name,
+    sourceId: used.source_id,
+    at: used.locator || null,
+  };
 };
 
 const nextVersion = (version) => {
