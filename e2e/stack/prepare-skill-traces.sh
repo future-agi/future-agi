@@ -2,7 +2,6 @@
 # Cloud-only. Prepare the standalone components BEFORE bin/e2e up; never source a developer .env.
 # E2E_STACK=standalone bin/e2e build standalone
 # Set CTXHUB_APP_COMMIT to the tested product revision for `packages`.
-# After bin/e2e up reports healthy, run `schema` BEFORE emitting any requests.
 # `interpreters` prints the two interpreter exports for Playwright's Python flows.
 set -euo pipefail
 [[ $(uname -s) == Linux && ${E2E_STACK:-} == standalone ]] || { echo 'Requires a Linux standalone E2E lane' >&2; exit 2; }
@@ -36,11 +35,5 @@ case ${1:-} in
     done
     bin/e2e compose build native-runtime skills-ts-runtime
     ;;
-  schema)
-    # Standalone's fresh-only native bootstrap uses an explicit inventory, not
-    # the normal CH25 migration runner. Never claim existing spans were backfilled.
-    bin/e2e compose exec -T clickhouse sh -ec 'exec clickhouse-client --password "$CLICKHOUSE_PASSWORD" --multiquery' \
-      < futureagi/tracer/services/clickhouse/v2/schema/028_skill_attribution.sql
-    ;;
-  *) echo 'Usage: prepare-skill-traces.sh packages <artifacts> | interpreters <artifacts> <new-dir> | schema' >&2; exit 2 ;;
+  *) echo 'Usage: prepare-skill-traces.sh packages <artifacts> | interpreters <artifacts> <new-dir>' >&2; exit 2 ;;
 esac

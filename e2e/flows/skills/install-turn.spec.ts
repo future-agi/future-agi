@@ -11,8 +11,7 @@ import { SkillsFixtures, answerRule, toolRule } from '../../lib/skills-fixtures'
 // Opt-in: the operator provisions an empty, unprivileged Linux account and the exact wheel venv.
 // Run from e2e/: SKILL_INSTALL_USER=harnessguest SKILL_INSTALL_PYTHON=/tmp/harness-python/bin/python
 //   yarn playwright test flows/skills/install-turn.spec.ts --workers=1
-// Build the SPA with VITE_SKILL_TRACES=on. Fresh standalone databases at this revision
-// also need the one-shot bootstrap command: ch25_apply_schema --files 028_skill_attribution.sql.
+// Build the SPA with VITE_SKILL_TRACES=on. Standalone startup owns its schema.
 // No browser traces or videos: the install page legitimately displays a one-time secret.
 test.skip(!process.env.SKILL_INSTALL_USER || process.platform !== 'linux', 'Requires the standalone Linux harness');
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
