@@ -341,6 +341,16 @@ describe("FilterValueLabel", () => {
     });
     expect(fetchNextPage).toHaveBeenCalledTimes(12);
 
+    // The new selection reads on its very first render, with the shared
+    // query state unchanged.
+    rerender(
+      <FilterValueLabel
+        filter={{ ...baseFilter, value: ["other-id"] }}
+        source="traces"
+      />,
+    );
+    expect(fetchNextPage).toHaveBeenCalledTimes(13);
+
     cycleReads({
       rerender,
       fetchNextPage,
