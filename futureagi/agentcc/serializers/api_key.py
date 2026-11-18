@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from agentcc.models import AgentccAPIKey
 from agentcc.validators import validate_safe_agentcc_name
+from tfc.utils.api_serializers import StrictInputSerializer
 
 
 class AgentccAPIKeySerializer(serializers.ModelSerializer):
@@ -38,7 +39,7 @@ class AgentccAPIKeySerializer(serializers.ModelSerializer):
         ]
 
 
-class AgentccAPIKeyUpdateSerializer(serializers.Serializer):
+class AgentccAPIKeyUpdateSerializer(StrictInputSerializer):
     name = serializers.CharField(max_length=255, required=False)
     owner = serializers.CharField(max_length=255, required=False, allow_blank=True)
     allowed_models = serializers.ListField(

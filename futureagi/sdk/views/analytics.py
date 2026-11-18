@@ -1,6 +1,7 @@
 import structlog
 from django.db import connection
 from rest_framework.parsers import JSONParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
@@ -16,8 +17,16 @@ from sdk.serializers.analytics import (
     SimulationQuerySerializer,
     SimulationRunsQuerySerializer,
 )
+from sdk.serializers.contracts import (
+    SDKErrorResponseSerializer,
+    SDKSimulationAnalyticsResponseSerializer,
+    SDKSimulationMetricsResponseSerializer,
+    SDKSimulationRunsResponseSerializer,
+)
+from sdk.utils.api_errors import sdk_validation_error_response
 from simulate.models import CallExecution, TestExecution
 from simulate.models.run_test import RunTest
+from simulate.selectors.runs import user_executions
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,
@@ -25,6 +34,7 @@ from simulate.utils.eval_summary import (
     _get_eval_configs_with_template,
 )
 from simulate.utils.sql_query import get_kpi_eval_metrics_query, get_kpi_metrics_query
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -71,9 +81,22 @@ class SimulationMetricsView(APIView):
 
     _gm = GeneralMethods()
     authentication_classes = [APIKeyAuthentication]
+    permission_classes = [IsAuthenticated]
     parser_classes = (JSONParser,)
     renderer_classes = (JSONRenderer,)
 
+    @validated_request(
+        query_serializer=SimulationQuerySerializer,
+        responses={
+            200: SDKSimulationMetricsResponseSerializer,
+            400: SDKErrorResponseSerializer,
+            404: SDKErrorResponseSerializer,
+            500: SDKErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+        validation_error_response=sdk_validation_error_response,
+        framework_query_params=("page", "limit"),
+    )
     def get(self, request, *args, **kwargs):
         try:
             organization = getattr(request, "organization", None) or getattr(
@@ -84,11 +107,7 @@ class SimulationMetricsView(APIView):
                     get_error_message("USER_ORGANIZATION_CONNECTION_ERROR")
                 )
 
-            serializer = SimulationQuerySerializer(data=request.query_params)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            data = serializer.validated_data
+            data = request.validated_query_data
             run_test_name = data.get("run_test_name")
             execution_id = data.get("execution_id")
             call_execution_id = data.get("call_execution_id")
@@ -145,7 +164,8 @@ class SimulationMetricsView(APIView):
             return self._gm.not_found(get_error_message("ANALYTICS_RUN_TEST_NOT_FOUND"))
 
         executions = (
-            TestExecution.objects.filter(run_test__in=run_tests)
+            user_executions()
+            .filter(run_test__in=run_tests)
             .select_related("run_test")
             .order_by("-created_at")
         )
@@ -185,7 +205,7 @@ class SimulationMetricsView(APIView):
         if not row:
             return {}
 
-        m = dict(zip(columns, row))
+        m = dict(zip(columns, row, strict=False))
 
         latency_percentiles = _compute_latency_percentiles_sql(execution_id)
 
@@ -245,9 +265,22 @@ class SimulationRunsView(APIView):
 
     _gm = GeneralMethods()
     authentication_classes = [APIKeyAuthentication]
+    permission_classes = [IsAuthenticated]
     parser_classes = (JSONParser,)
     renderer_classes = (JSONRenderer,)
 
+    @validated_request(
+        query_serializer=SimulationRunsQuerySerializer,
+        responses={
+            200: SDKSimulationRunsResponseSerializer,
+            400: SDKErrorResponseSerializer,
+            404: SDKErrorResponseSerializer,
+            500: SDKErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+        validation_error_response=sdk_validation_error_response,
+        framework_query_params=("page", "limit"),
+    )
     def get(self, request, *args, **kwargs):
         try:
             organization = getattr(request, "organization", None) or getattr(
@@ -258,11 +291,7 @@ class SimulationRunsView(APIView):
                     get_error_message("USER_ORGANIZATION_CONNECTION_ERROR")
                 )
 
-            serializer = SimulationRunsQuerySerializer(data=request.query_params)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            data = serializer.validated_data
+            data = request.validated_query_data
             run_test_name = data.get("run_test_name")
             execution_id = data.get("execution_id")
             call_execution_id = data.get("call_execution_id")
@@ -375,7 +404,8 @@ class SimulationRunsView(APIView):
             return self._gm.not_found(get_error_message("ANALYTICS_RUN_TEST_NOT_FOUND"))
 
         executions = (
-            TestExecution.objects.filter(run_test__in=run_tests)
+            user_executions()
+            .filter(run_test__in=run_tests)
             .select_related("run_test")
             .order_by("-created_at")
         )
@@ -434,9 +464,21 @@ class SimulationAnalyticsView(APIView):
 
     _gm = GeneralMethods()
     authentication_classes = [APIKeyAuthentication]
+    permission_classes = [IsAuthenticated]
     parser_classes = (JSONParser,)
     renderer_classes = (JSONRenderer,)
 
+    @validated_request(
+        query_serializer=SimulationAnalyticsQuerySerializer,
+        responses={
+            200: SDKSimulationAnalyticsResponseSerializer,
+            400: SDKErrorResponseSerializer,
+            404: SDKErrorResponseSerializer,
+            500: SDKErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+        validation_error_response=sdk_validation_error_response,
+    )
     def get(self, request, *args, **kwargs):
         try:
             organization = getattr(request, "organization", None) or getattr(
@@ -447,11 +489,7 @@ class SimulationAnalyticsView(APIView):
                     get_error_message("USER_ORGANIZATION_CONNECTION_ERROR")
                 )
 
-            serializer = SimulationAnalyticsQuerySerializer(data=request.query_params)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            data = serializer.validated_data
+            data = request.validated_query_data
             run_test_name = data.get("run_test_name")
             execution_id = data.get("execution_id")
             eval_names = data.get("eval_name")
@@ -496,7 +534,8 @@ class SimulationAnalyticsView(APIView):
             return self._gm.not_found(get_error_message("ANALYTICS_RUN_TEST_NOT_FOUND"))
 
         latest_execution = (
-            TestExecution.objects.filter(run_test__in=run_tests, status="completed")
+            user_executions()
+            .filter(run_test__in=run_tests, status="completed")
             .select_related("run_test")
             .order_by("-completed_at")
             .first()
@@ -548,7 +587,7 @@ class SimulationAnalyticsView(APIView):
 
         system_summary = {}
         if row:
-            m = dict(zip(columns, row))
+            m = dict(zip(columns, row, strict=False))
             system_summary = {
                 "total_calls": int(m.get("total_calls") or 0),
                 "completed_calls": int(m.get("completed_calls") or 0),
@@ -577,9 +616,52 @@ class SimulationAnalyticsView(APIView):
         return self._gm.success_response(output)
 
     def _build_eval_averages(self, eval_rows):
+        metric_keys = {}
+        for metric_id, name, output_type, avg_value, choice_value, _ in eval_rows:
+            normalized_name = name.lower().replace(" ", "_")
+            if output_type in ("Pass/Fail", "score") or (
+                output_type == "choices" and avg_value is not None
+            ):
+                role, key = "avg", f"avg_{normalized_name}"
+            elif output_type == "choices" and choice_value is not None:
+                role, key = "choices", normalized_name
+            else:
+                continue
+            metric_keys[(metric_id, name, output_type, role)] = key
+
+        reserved_keys = set(metric_keys.values())
+        if len(reserved_keys) < len(metric_keys):
+            used_keys: set[str] = set()
+            resolved_keys: dict[tuple[str, tuple[str, str]], str] = {}
+            # The plain key goes to scores, then numeric choices, then
+            # distributions; the metric tuple (ID first) breaks ties, so the
+            # choice does not depend on SQL row order. Any other metric on an
+            # occupied key gets __<id>, plus underscores if that is taken too.
+            for metric, key in sorted(
+                metric_keys.items(),
+                key=lambda item: (
+                    item[0][3] != "avg",
+                    item[0][2] == "choices",
+                    item[0],
+                ),
+            ):
+                owner = (metric[0], metric[3])
+                original_key = key
+                if (original_key, owner) in resolved_keys:
+                    key = resolved_keys[(original_key, owner)]
+                elif key in used_keys:
+                    alias = f"{key}__{metric[0]}"
+                    while alias in reserved_keys:
+                        alias += "_"
+                    key = alias
+                    reserved_keys.add(key)
+                resolved_keys[(original_key, owner)] = key
+                metric_keys[metric] = key
+                used_keys.add(key)
+
         eval_averages = {}
         for (
-            metric_id,
+            _metric_id,
             metric_name,
             output_type,
             avg_value,
@@ -587,14 +669,16 @@ class SimulationAnalyticsView(APIView):
             choice_count,
         ) in eval_rows:
             if output_type in ("Pass/Fail", "score"):
-                field_name = f"avg_{metric_name.lower().replace(' ', '_')}"
+                field_name = metric_keys[(_metric_id, metric_name, output_type, "avg")]
                 eval_averages[field_name] = float(avg_value) if avg_value else 0
             elif output_type == "choices" and choice_value is not None:
-                base_name = metric_name.lower().replace(" ", "_")
+                base_name = metric_keys[
+                    (_metric_id, metric_name, output_type, "choices")
+                ]
                 if base_name not in eval_averages:
                     eval_averages[base_name] = {}
                 eval_averages[base_name][choice_value.lower()] = choice_count
             elif output_type == "choices" and avg_value is not None:
-                field_name = f"avg_{metric_name.lower().replace(' ', '_')}"
+                field_name = metric_keys[(_metric_id, metric_name, output_type, "avg")]
                 eval_averages[field_name] = float(avg_value)
         return eval_averages

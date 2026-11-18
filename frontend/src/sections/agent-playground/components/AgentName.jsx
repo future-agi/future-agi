@@ -5,9 +5,11 @@ import EditableText from "src/components/editable-text/EditableText";
 import PropTypes from "prop-types";
 import { useUpdateGraph } from "../../../api/agent-playground/agent-playground";
 import { useAgentPlaygroundStoreShallow } from "../store";
+import useCanEditAgent from "../hooks/useCanEditAgent";
 
 export default function AgentName({ currentAgent }) {
   const queryClient = useQueryClient();
+  const { canEditAgent } = useCanEditAgent();
   const { control, reset, handleSubmit } = useForm({
     defaultValues: {
       name: currentAgent?.name,
@@ -89,6 +91,7 @@ export default function AgentName({ currentAgent }) {
       }}
       onSubmit={handleSubmit(onSubmit)}
       reset={reset}
+      readOnly={!canEditAgent}
     />
   );
 }

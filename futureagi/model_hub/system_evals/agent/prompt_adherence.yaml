@@ -15,8 +15,8 @@ criteria: "You are evaluating how closely the output follows the instructions gi
   \ but misses key requirements or violates constraints. Score 1.0 if it fully satisfies every instruction, constraint, and\
   \ scope requirement.\n\n## Inputs\n\n<input>{{input}}</input>\n\n<output>{{output}}</output>"
 eval_tags:
-- NLP Metrics
-- Output Validation
+- Instruction Following
+offered_in_environments: true
 visible_ui: false
 permissions:
   allow_edit: false

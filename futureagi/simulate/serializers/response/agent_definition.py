@@ -1,8 +1,15 @@
 from django.conf import settings
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
+from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentDefinition, AgentVersion
-from simulate.models.agent_definition import AgentTypeChoices
+from simulate.serializers.harness_environment import (
+    HarnessRunSummarySerializer,
+    RunEnvironmentRefSerializer,
+)
+
+MASKED_CREDENTIAL_VALUE = "********"
 
 
 class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
@@ -17,6 +24,7 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
     livekit_agent_name = serializers.SerializerMethodField()
     livekit_config_json = serializers.SerializerMethodField()
     livekit_max_concurrency = serializers.SerializerMethodField()
+    api_key = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentDefinition
@@ -26,6 +34,7 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
             "agent_type",
             "contact_number",
             "inbound",
+            "target_speaks_first",
             "description",
             "assistant_id",
             "provider",
@@ -52,11 +61,42 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     @staticmethod
-    def _get_livekit_creds(obj):
-        try:
-            creds = obj.credentials
-        except AgentDefinition.credentials.RelatedObjectDoesNotExist:
+    def _get_latest_creds(obj):
+        """Get ProviderCredentials from the active or latest version."""
+        prefetched_versions = getattr(obj, "_prefetched_versions", None)
+        if prefetched_versions is None:
+            active_version = obj.active_version
+            latest_version = obj.latest_version
+        else:
+            active_version = next(
+                (
+                    version
+                    for version in prefetched_versions
+                    if version.status == AgentVersion.StatusChoices.ACTIVE
+                ),
+                None,
+            )
+            latest_version = prefetched_versions[0] if prefetched_versions else None
+        version = active_version or latest_version
+        if not version:
             return None
+        try:
+            return version.credentials
+        except AgentVersion.credentials.RelatedObjectDoesNotExist:
+            pass
+        # Active version may exist without credentials (e.g. legacy data
+        # with multiple active versions). Fall back to latest version.
+        fallback = latest_version
+        if fallback and fallback.pk != version.pk:
+            try:
+                return fallback.credentials
+            except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                pass
+        return None
+
+    @staticmethod
+    def _get_livekit_creds(obj):
+        creds = AgentDefinitionResponseSerializer._get_latest_creds(obj)
         if not creds or creds.provider_type != "livekit":
             return None
         return creds
@@ -67,7 +107,7 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
 
     def get_livekit_api_key(self, obj):
         creds = self._get_livekit_creds(obj)
-        return creds.get_masked_api_key() if creds else ""
+        return self._get_masked_api_key(creds)
 
     def get_livekit_agent_name(self, obj):
         creds = self._get_livekit_creds(obj)
@@ -82,6 +122,23 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
         return (
             creds.max_concurrency if creds else settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
         )
+
+    def get_api_key(self, obj):
+        creds = self._get_latest_creds(obj)
+        if creds and creds.provider_type != "livekit":
+            return self._get_masked_api_key(creds)
+        if creds and creds.provider_type == "livekit":
+            return ""
+        return mask_key(obj.api_key or "")
+
+    @staticmethod
+    def _get_masked_api_key(creds):
+        if not creds or not creds.api_key:
+            return ""
+        try:
+            return creds.get_masked_api_key()
+        except ValueError:
+            return MASKED_CREDENTIAL_VALUE
 
 
 class AgentDefinitionCreateResponseSerializer(serializers.Serializer):
@@ -113,6 +170,15 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
 
     latest_version = serializers.SerializerMethodField()
     latest_version_id = serializers.SerializerMethodField()
+    agent_kind = serializers.CharField(
+        source="_agent_kind", allow_null=True, read_only=True
+    )
+    source = serializers.CharField(source="_source", allow_null=True, read_only=True)
+    version_count = serializers.IntegerField(source="_version_count", read_only=True)
+    environment_count = serializers.IntegerField(
+        source="_environment_count", read_only=True
+    )
+    environments = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentDefinition
@@ -122,6 +188,7 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
             "agent_type",
             "contact_number",
             "inbound",
+            "target_speaks_first",
             "description",
             "assistant_id",
             "provider",
@@ -138,44 +205,65 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
             "latest_version_id",
             "model_details",
             "model",
+            "agent_kind",
+            "source",
+            "version_count",
+            "environment_count",
+            "environments",
         ]
         read_only_fields = fields
+
+    @swagger_serializer_method(
+        serializer_or_field=RunEnvironmentRefSerializer(many=True)
+    )
+    def get_environments(self, obj) -> list[dict[str, str]]:
+        return self.context.get("environments", {}).get(obj.id, [])
 
     def get_latest_version(self, obj):
         """Get the latest version number for the agent."""
         if hasattr(obj, "_latest_version"):
             return obj._latest_version
-        latest_version = (
-            AgentVersion.objects.filter(agent_definition=obj)
-            .order_by("-version_number")
-            .values_list("version_number", flat=True)
-            .first()
-        )
-        return latest_version
+        version = obj.latest_version
+        return version.version_number if version else None
 
     def get_latest_version_id(self, obj):
         """Get the latest version id for the agent."""
         if hasattr(obj, "_latest_version_id"):
             return obj._latest_version_id
-        latest_version = (
-            AgentVersion.objects.filter(agent_definition=obj)
-            .order_by("-version_number")
-            .values_list("id", flat=True)
-            .first()
-        )
-        return latest_version
+        version = obj.latest_version
+        return version.id if version else None
 
 
-class AgentDefinitionDetailResponseSerializer(serializers.Serializer):
+class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer):
     """
     Response serializer for GET /agent-definitions/{id}/.
     Shape: {**agent_data, "versions": [...], "active_version": {...}, "version_count": N}
     """
 
-    # Agent fields are spread at top level via to_representation
     versions = serializers.ListField(read_only=True)
     active_version = serializers.DictField(read_only=True, allow_null=True)
     version_count = serializers.IntegerField(read_only=True)
+    agent_kind = serializers.CharField(read_only=True, allow_null=True)
+    source = serializers.CharField(read_only=True, allow_null=True)
+    environment_count = serializers.IntegerField(read_only=True)
+    observability_enabled = serializers.BooleanField(read_only=True)
+
+    class Meta(AgentDefinitionResponseSerializer.Meta):
+        fields = [
+            *AgentDefinitionResponseSerializer.Meta.fields,
+            "versions",
+            "active_version",
+            "version_count",
+            "agent_kind",
+            "source",
+            "environment_count",
+            "observability_enabled",
+        ]
+        read_only_fields = fields
+
+
+class AgentRunsResponseSerializer(serializers.Serializer):
+    results = HarnessRunSummarySerializer(many=True, read_only=True)
 
 
 class AgentDefinitionBulkDeleteResponseSerializer(serializers.Serializer):
@@ -202,12 +290,11 @@ class FetchAssistantResponseSerializer(serializers.Serializer):
     """
     Response serializer for POST fetch_assistant_from_provider.
     Inner shape (wrapped by _gm.success_response):
-    {name, assistant_id, api_key, prompt, provider, commit_message}
+    {name, assistant_id, prompt, provider, commit_message}
     """
 
     name = serializers.CharField(read_only=True, allow_null=True)
     assistant_id = serializers.CharField(read_only=True)
-    api_key = serializers.CharField(read_only=True)
     prompt = serializers.CharField(read_only=True, allow_null=True)
     provider = serializers.CharField(read_only=True)
     commit_message = serializers.CharField(read_only=True, allow_null=True)

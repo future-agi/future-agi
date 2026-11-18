@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, {
   useCallback,
   useMemo,
@@ -261,9 +262,6 @@ const DevelopData = React.forwardRef(
         ) {
           element.style.color = "var(--primary-main)";
         }
-        if (element.textContent.trim() === "Delete Column") {
-          element.style.color = "#fa0c0c";
-        }
         element.style.fontWeight = 400;
         element.style.fontSize = "12px";
       });
@@ -348,6 +346,10 @@ const DevelopData = React.forwardRef(
     const validatedFilters = useMemo(() => {
       return filters.filter(validateFilter).map(transformFilter);
     }, [filters]);
+    const encodedFilters = useMemo(
+      () => JSON.stringify(validatedFilters),
+      [validatedFilters],
+    );
 
     // Polling to check if data is added every 5 seconds when no data exists
     useEffect(() => {
@@ -361,7 +363,7 @@ const DevelopData = React.forwardRef(
               {
                 params: {
                   current_page_index: 0,
-                  filters: validatedFilters,
+                  filters: encodedFilters,
                 },
               },
             );
@@ -383,7 +385,7 @@ const DevelopData = React.forwardRef(
           clearInterval(pollingInterval);
         }
       };
-    }, [isData, dataset, validatedFilters]);
+    }, [isData, dataset, encodedFilters]);
 
     const getMainMenuItems = (params) => {
       const allMenuItems = setMenuIcons(params, currentDataset?.name); // Pass dataset name
@@ -539,7 +541,7 @@ const DevelopData = React.forwardRef(
                 }}
               >
                 <Iconify
-                  icon="material-symbols:schedule-outline"
+                  icon="solar:clock-circle-linear"
                   sx={{
                     display: "flex",
                     gap: 0.5,
@@ -562,7 +564,7 @@ const DevelopData = React.forwardRef(
                 />
                 {Math.round(eachCol?.metadata?.averageTokens)}
                 <Iconify
-                  icon="material-symbols:attach-money"
+                  icon="solar:dollar-minimalistic-linear"
                   sx={{
                     display: "flex",
                     alignItems: "center",
@@ -671,7 +673,7 @@ const DevelopData = React.forwardRef(
             {
               params: {
                 current_page_index: p,
-                filters: validatedFilters,
+                filters: encodedFilters,
               },
             },
           );
@@ -716,14 +718,14 @@ const DevelopData = React.forwardRef(
 
         // Use unique row ID instead of rowIndex
         prev.forEach((row) => {
-          const id = row.data?.rowId;
+          const id = row.data?.row_id ?? row.data?.rowId;
           if (id !== undefined) {
             mergedMap.set(id, row);
           }
         });
 
         newRows.forEach((row) => {
-          const id = row.data?.rowId;
+          const id = row.data?.row_id ?? row.data?.rowId;
           if (id !== undefined) {
             mergedMap.set(id, row);
           }
@@ -741,6 +743,11 @@ const DevelopData = React.forwardRef(
           setSelectedAll(false);
 
           const pageNumber = Math.floor(request.startRow / 10);
+          const sortParams =
+            request?.sortModel?.map(({ colId, sort }) => ({
+              column_id: colId,
+              type: sort === "asc" ? "ascending" : "descending",
+            })) || [];
 
           try {
             const { data } = await axios.get(
@@ -748,16 +755,13 @@ const DevelopData = React.forwardRef(
               {
                 params: {
                   current_page_index: pageNumber,
-                  filters: validatedFilters,
-                  sort: request?.sortModel?.map(({ colId, sort }) => ({
-                    columnId: colId,
-                    type: sort === "asc" ? "ascending" : "descending",
-                  })),
+                  filters: encodedFilters,
+                  sort: JSON.stringify(sortParams),
                   ...(searchQuery && {
-                    search: {
+                    search: JSON.stringify({
                       key: searchQuery,
                       type: ["text", "image", "audio"],
-                    },
+                    }),
                   }),
                 },
               },
@@ -792,7 +796,7 @@ const DevelopData = React.forwardRef(
           }
         },
       }),
-      [dataset, validatedFilters, searchQuery],
+      [dataset, encodedFilters, searchQuery],
     );
 
     const { data: columnConfigData } = useQuery({
@@ -834,7 +838,7 @@ const DevelopData = React.forwardRef(
         return;
       }
       const columnId = params?.column?.colId;
-      const rowId = params?.data?.rowId;
+      const rowId = params?.data?.row_id ?? params?.data?.rowId;
       const newValue = params?.newValue;
       const dataType = params?.column?.colDef?.dataType;
 
@@ -851,9 +855,9 @@ const DevelopData = React.forwardRef(
             rowNode.setDataValue(columnId, tempUrl);
 
             const formData = new FormData();
-            formData.append("columnId", columnId);
-            formData.append("rowId", rowId);
-            formData.append("newValue", newValue);
+            formData.append("column_id", columnId);
+            formData.append("row_id", rowId);
+            formData.append("new_value", newValue);
 
             updateCellValue(formData);
           } else if (
@@ -863,18 +867,18 @@ const DevelopData = React.forwardRef(
             rowNode.setDataValue(columnId, newValue);
 
             updateCellValue({
-              columnId,
-              rowId,
-              newValue,
+              column_id: columnId,
+              row_id: rowId,
+              new_value: newValue,
             });
           } else if (dataType == "datetime") {
             const date = new Date(newValue);
             rowNode.setDataValue(columnId, date);
             const formattedDate = format(date, "yyyy-MM-dd HH:mm:ss");
             updateCellValue({
-              columnId,
-              rowId,
-              newValue: formattedDate,
+              column_id: columnId,
+              row_id: rowId,
+              new_value: formattedDate,
             });
           } else {
             const formattedValue =
@@ -883,9 +887,9 @@ const DevelopData = React.forwardRef(
                 : newValue?.toString() ?? "";
             rowNode.setDataValue(columnId, formattedValue);
             updateCellValue({
-              columnId,
-              rowId,
-              newValue: formattedValue,
+              column_id: columnId,
+              row_id: rowId,
+              new_value: formattedValue,
             });
           }
         } catch (e) {
@@ -1213,7 +1217,7 @@ const DevelopData = React.forwardRef(
                   suppressRowTransform={true}
                   suppressAnimationFrame={true}
                   getRowId={({ data }) => {
-                    return data.rowId;
+                    return data.row_id ?? data.rowId;
                   }}
                   onCellClicked={(params) => {
                     setActiveRow(null);

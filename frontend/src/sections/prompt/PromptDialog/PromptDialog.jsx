@@ -42,7 +42,7 @@ const PromptDialog = (props) => {
           {title}
         </DialogTitle>
         <IconButton onClick={handleClose}>
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       <DialogContent sx={{ color: `${grey[600]},`, mb: "20px", p: "0 24px" }}>

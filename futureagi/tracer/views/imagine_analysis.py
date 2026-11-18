@@ -6,15 +6,25 @@ GET  /tracer/imagine-analysis/  — poll for results
 """
 
 import structlog
-from rest_framework import serializers, status
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.general_methods import GeneralMethods
 from tracer.models.imagine_analysis import ImagineAnalysis
 from tracer.models.saved_view import SavedView
 
 logger = structlog.get_logger(__name__)
+
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    403: ApiErrorResponseSerializer,
+    404: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+}
 
 
 class WidgetAnalysisSerializer(serializers.Serializer):
@@ -29,28 +39,59 @@ class TriggerAnalysisSerializer(serializers.Serializer):
     widgets = WidgetAnalysisSerializer(many=True)
 
 
+class ImagineAnalysisQuerySerializer(serializers.Serializer):
+    saved_view_id = serializers.UUIDField()
+    trace_id = serializers.CharField(max_length=255)
+
+
+class ImagineAnalysisItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    widget_id = serializers.CharField(max_length=100)
+    status = serializers.ChoiceField(choices=ImagineAnalysis.STATUS_CHOICES)
+    content = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    error = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+
+class ImagineAnalysisResultSerializer(serializers.Serializer):
+    analyses = ImagineAnalysisItemSerializer(many=True)
+
+
+class ImagineAnalysisResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = ImagineAnalysisResultSerializer()
+
+
 class ImagineAnalysisView(APIView):
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    def _get_scoped_saved_view(self, request, saved_view_id, project_id=None):
+        queryset = SavedView.objects.select_related("project").filter(
+            id=saved_view_id,
+            project__deleted=False,
+        )
+        if project_id:
+            queryset = queryset.filter(project_id=project_id)
+        return queryset.get()
+
+    @validated_request(
+        request_serializer=TriggerAnalysisSerializer,
+        responses={200: ImagineAnalysisResponseSerializer, **ERROR_RESPONSES},
+    )
     def post(self, request):
         """Trigger analysis for widgets. Creates DB records + starts Temporal workflows."""
-        serializer = TriggerAnalysisSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        data = serializer.validated_data
+        data = request.validated_data
         org = getattr(request, "organization", None) or request.user.organization
 
         # Validate saved view exists
         try:
-            saved_view = SavedView.objects.get(
-                id=data["saved_view_id"],
+            saved_view = self._get_scoped_saved_view(
+                request,
+                data["saved_view_id"],
                 project_id=data["project_id"],
             )
         except SavedView.DoesNotExist:
-            return Response(
-                {"status": False, "error": "Saved view not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return self._gm.not_found("Saved view not found")
 
         results = []
         for widget in data["widgets"]:
@@ -141,24 +182,26 @@ class ImagineAnalysisView(APIView):
 
         return Response({"status": True, "result": {"analyses": results}})
 
+    @validated_request(
+        query_serializer=ImagineAnalysisQuerySerializer,
+        responses={200: ImagineAnalysisResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request):
         """Poll for analysis results."""
-        saved_view_id = request.query_params.get(
-            "saved_view_id"
-        ) or request.query_params.get("savedViewId")
-        trace_id = request.query_params.get("trace_id") or request.query_params.get(
-            "traceId"
-        )
+        saved_view_id = request.validated_query_data["saved_view_id"]
+        trace_id = request.validated_query_data["trace_id"]
+        org = getattr(request, "organization", None) or request.user.organization
 
-        if not saved_view_id or not trace_id:
-            return Response(
-                {"status": False, "error": "saved_view_id and trace_id required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        try:
+            saved_view = self._get_scoped_saved_view(request, saved_view_id)
+        except SavedView.DoesNotExist:
+            return self._gm.not_found("Saved view not found")
 
-        analyses = ImagineAnalysis.objects.filter(
-            saved_view_id=saved_view_id,
+        analyses = ImagineAnalysis.no_workspace_objects.filter(
+            saved_view=saved_view,
             trace_id=trace_id,
+            project=saved_view.project,
+            organization=org,
             deleted=False,
         ).values("id", "widget_id", "status", "content", "error")
 

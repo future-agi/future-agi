@@ -25,7 +25,7 @@ from tfc.temporal.drop_in.runner import _start_activity_async
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _patched_client():
@@ -42,10 +42,10 @@ def _start(**kwargs):
     kwargs that reached client.start_workflow.
     """
     client = _patched_client()
-    with patch(
-        "tfc.temporal.common.client.get_client", AsyncMock(return_value=client)
-    ), patch("tfc.temporal.drop_in.workflow.TaskRunnerWorkflow", MagicMock()), patch(
-        "tfc.temporal.drop_in.workflow.TaskRunnerInput", MagicMock()
+    with (
+        patch("tfc.temporal.common.client.get_client", AsyncMock(return_value=client)),
+        patch("tfc.temporal.drop_in.workflow.TaskRunnerWorkflow", MagicMock()),
+        patch("tfc.temporal.drop_in.workflow.TaskRunnerInput", MagicMock()),
     ):
         _run(
             _start_activity_async(
@@ -130,12 +130,14 @@ def test_apply_async_forwards_task_id_and_policy():
             args=("proj-1",),
             task_id="eval-cluster-proj-1",
             id_conflict_policy=sentinel,
+            dispatch_timeout_seconds=2.0,
         )
 
     assert mock_start.call_count == 1
     _, kw = mock_start.call_args
     assert kw["task_id"] == "eval-cluster-proj-1"
     assert kw["id_conflict_policy"] is sentinel
+    assert kw["dispatch_timeout_seconds"] == 2.0
 
 
 if __name__ == "__main__":

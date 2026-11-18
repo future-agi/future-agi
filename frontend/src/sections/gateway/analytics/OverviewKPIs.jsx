@@ -1,8 +1,7 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Box, Card, Grid, Typography, Skeleton, Stack } from "@mui/material";
-import Iconify from "src/components/iconify";
-import { useTheme } from "@mui/material/styles";
+import { Skeleton } from "@mui/material";
+import MetricStrip from "src/components/metric-strip";
 import { useAnalyticsOverview } from "./hooks/useAnalyticsOverview";
 
 // ---------------------------------------------------------------------------
@@ -48,31 +47,31 @@ function formatLatency(value) {
 
 const KPI_CARDS = [
   {
-    key: "totalRequests",
+    key: "total_requests",
     label: "Total Requests",
     formatter: formatNumber,
     invertTrend: false,
   },
   {
-    key: "totalCost",
+    key: "total_cost",
     label: "Total Cost",
     formatter: formatCurrency,
     invertTrend: true, // cost going up is "bad"
   },
   {
-    key: "avgLatencyMs",
+    key: "avg_latency_ms",
     label: "Avg Latency",
     formatter: formatLatency,
     invertTrend: true, // latency going up is "bad"
   },
   {
-    key: "errorRate",
+    key: "error_rate",
     label: "Error Rate",
     formatter: formatPercent,
     invertTrend: true, // errors going up is "bad"
   },
   {
-    key: "cacheHitRate",
+    key: "cache_hit_rate",
     label: "Cache Hit Rate",
     formatter: formatPercent,
     invertTrend: false,
@@ -80,94 +79,20 @@ const KPI_CARDS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Trend indicator
+// Trend -> metric strip change/trend (colour only on the change)
 // ---------------------------------------------------------------------------
 
-function TrendIndicator({ trend, invert }) {
-  const theme = useTheme();
-
-  if (trend == null || trend === 0) {
-    return (
-      <Stack direction="row" alignItems="center" spacing={0.5}>
-        <Iconify
-          icon="mdi:trending-neutral"
-          width={16}
-          sx={{ color: theme.palette.text.secondary }}
-        />
-        <Typography variant="caption" color="text.secondary">
-          0%
-        </Typography>
-      </Stack>
-    );
+function toChange(trend, invert) {
+  const n = Number(trend);
+  if (trend == null || !Number.isFinite(n) || n === 0) {
+    return { change: "0%", trend: "flat" };
   }
-
-  const isPositiveDirection = trend > 0;
-  // When inverted (cost, latency, errors), positive trend is bad
-  const isGood = invert ? !isPositiveDirection : isPositiveDirection;
-  const color = isGood ? theme.palette.success.main : theme.palette.error.main;
-
-  const trendIcon = isPositiveDirection
-    ? "mdi:trending-up"
-    : "mdi:trending-down";
-
-  return (
-    <Stack direction="row" alignItems="center" spacing={0.5}>
-      <Iconify icon={trendIcon} width={16} sx={{ color }} />
-      <Typography variant="caption" sx={{ color, fontWeight: 600 }}>
-        {isPositiveDirection ? "+" : ""}
-        {Number(trend).toFixed(1)}%
-      </Typography>
-    </Stack>
-  );
+  const good = invert ? n < 0 : n > 0;
+  return {
+    change: `${n > 0 ? "+" : ""}${n.toFixed(1)}%`,
+    trend: good ? "better" : "worse",
+  };
 }
-
-TrendIndicator.propTypes = {
-  trend: PropTypes.number,
-  invert: PropTypes.bool,
-};
-
-// ---------------------------------------------------------------------------
-// Single KPI card
-// ---------------------------------------------------------------------------
-
-function KPICard({ label, value, trend, formatter, invertTrend, isLoading }) {
-  if (isLoading) {
-    return (
-      <Card sx={{ p: 3 }}>
-        <Skeleton variant="text" width="60%" height={20} />
-        <Skeleton variant="text" width="40%" height={36} sx={{ mt: 1 }} />
-        <Skeleton variant="text" width="30%" height={16} sx={{ mt: 0.5 }} />
-      </Card>
-    );
-  }
-
-  return (
-    <Card sx={{ p: 3 }}>
-      <Typography
-        variant="body2"
-        color="text.secondary"
-        sx={{ fontWeight: 500, mb: 1 }}
-      >
-        {label}
-      </Typography>
-      <Typography variant="h4" sx={{ fontWeight: 700 }}>
-        {formatter(value)}
-      </Typography>
-      <Box mt={0.5}>
-        <TrendIndicator trend={trend} invert={invertTrend} />
-      </Box>
-    </Card>
-  );
-}
-
-KPICard.propTypes = {
-  label: PropTypes.string.isRequired,
-  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-  trend: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
-  formatter: PropTypes.func.isRequired,
-  invertTrend: PropTypes.bool,
-  isLoading: PropTypes.bool,
-};
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -176,22 +101,18 @@ KPICard.propTypes = {
 const OverviewKPIs = ({ start, end, gatewayId }) => {
   const { data, isLoading } = useAnalyticsOverview({ start, end, gatewayId });
 
-  return (
-    <Grid container spacing={2}>
-      {KPI_CARDS.map((kpi) => (
-        <Grid item xs={12} sm={6} md key={kpi.key}>
-          <KPICard
-            label={kpi.label}
-            value={data?.[kpi.key]?.value}
-            trend={data?.[kpi.key]?.trend}
-            formatter={kpi.formatter}
-            invertTrend={kpi.invertTrend}
-            isLoading={isLoading}
-          />
-        </Grid>
-      ))}
-    </Grid>
-  );
+  const items = KPI_CARDS.map((kpi) => ({
+    key: kpi.key,
+    label: kpi.label,
+    value: isLoading ? (
+      <Skeleton variant="text" width={64} />
+    ) : (
+      kpi.formatter(data?.[kpi.key]?.value)
+    ),
+    ...(!isLoading && toChange(data?.[kpi.key]?.trend, kpi.invertTrend)),
+  }));
+
+  return <MetricStrip items={items} />;
 };
 
 OverviewKPIs.propTypes = {

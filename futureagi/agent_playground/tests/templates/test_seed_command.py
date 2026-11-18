@@ -1,4 +1,4 @@
-"""Tests for the seed_node_templates management command."""
+"""Tests for the seed_node_templates management command and post_migrate signal."""
 
 import io
 
@@ -88,3 +88,33 @@ class TestSeedNodeTemplatesCommand:
         """--template with unknown name prints error and creates nothing."""
         call_command("seed_node_templates", template="nonexistent")
         assert NodeTemplate.no_workspace_objects.count() == 0
+
+
+@pytest.mark.unit
+class TestPostMigrateSignalSeed:
+    """Tests for the post_migrate auto-seed in AgentPlaygroundConfig."""
+
+    def test_post_migrate_creates_missing_templates(self, db):
+        from agent_playground.apps import _seed_after_migrate
+
+        _seed_after_migrate(sender=None)
+        assert NodeTemplate.no_workspace_objects.filter(name="llm_prompt").exists()
+
+    def test_post_migrate_is_idempotent(self, db):
+        from agent_playground.apps import _seed_after_migrate
+
+        _seed_after_migrate(sender=None)
+        _seed_after_migrate(sender=None)
+        assert NodeTemplate.no_workspace_objects.filter(name="llm_prompt").count() == 1
+
+    def test_post_migrate_updates_safe_fields(self, db):
+        from agent_playground.apps import _seed_after_migrate
+
+        _seed_after_migrate(sender=None)
+        template = NodeTemplate.no_workspace_objects.get(name="llm_prompt")
+        template.display_name = "Stale Name"
+        template.save()
+
+        _seed_after_migrate(sender=None)
+        template.refresh_from_db()
+        assert template.display_name == "LLM Prompt"

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildCompositeChildConfigs,
+  buildCompositeChildRunConfig,
   buildCompositeRuntimeConfig,
 } from "../../Helpers/compositeRuntimeConfig";
+import { normalizeEvalPickerEval } from "src/sections/common/EvalPicker/evalPickerValue";
 
 describe("buildCompositeRuntimeConfig", () => {
   it("returns an empty object when no config or params are provided", () => {
@@ -80,5 +82,105 @@ describe("buildCompositeChildConfigs", () => {
         params: { min_words: 3 },
       },
     });
+  });
+});
+
+describe("buildCompositeChildRunConfig", () => {
+  it("returns an empty object when nothing is provided", () => {
+    expect(buildCompositeChildRunConfig()).toEqual({});
+    expect(buildCompositeChildRunConfig({})).toEqual({});
+  });
+
+  it("reads the snake_case config-screen payload", () => {
+    expect(
+      buildCompositeChildRunConfig({
+        model: "gpt-4o",
+        pass_threshold: 0.8,
+        check_internet: true,
+        agent_mode: "single",
+        knowledge_bases: ["kb-1"],
+        data_injection: { dataset: true },
+        output_type: "pass_fail",
+      }),
+    ).toEqual({
+      model: "gpt-4o",
+      pass_threshold: 0.8,
+      check_internet: true,
+      agent_mode: "single",
+      knowledge_bases: ["kb-1"],
+      data_injection: { dataset: true },
+    });
+  });
+
+  it("reads the camelized skipConfig payload the same way", () => {
+    const snakeCase = {
+      model: "gpt-4o",
+      pass_threshold: 0.8,
+      check_internet: true,
+      agent_mode: "single",
+      knowledge_bases: ["kb-1"],
+      data_injection: { dataset: true },
+    };
+
+    expect(
+      buildCompositeChildRunConfig(normalizeEvalPickerEval(snakeCase)),
+    ).toEqual(buildCompositeChildRunConfig(snakeCase));
+  });
+
+  it("falls back to config.run_config in either case", () => {
+    expect(
+      buildCompositeChildRunConfig({
+        config: { run_config: { model: "gpt-4o", pass_threshold: 0.7 } },
+      }),
+    ).toEqual({ model: "gpt-4o", pass_threshold: 0.7 });
+
+    expect(
+      buildCompositeChildRunConfig({
+        config: { runConfig: { model: "gpt-4o", passThreshold: 0.7 } },
+      }),
+    ).toEqual({ model: "gpt-4o", pass_threshold: 0.7 });
+  });
+
+  it("prefers the top-level value over the nested one", () => {
+    expect(
+      buildCompositeChildRunConfig({
+        model: "gpt-4o",
+        config: { run_config: { model: "turing_large" } },
+      }),
+    ).toEqual({ model: "gpt-4o" });
+  });
+
+  it("keeps explicit false and zero so they can override template defaults", () => {
+    expect(
+      buildCompositeChildRunConfig({
+        check_internet: false,
+        pass_threshold: 0,
+      }),
+    ).toEqual({ check_internet: false, pass_threshold: 0 });
+  });
+
+  it("drops empty collections rather than clearing template values", () => {
+    expect(
+      buildCompositeChildRunConfig({
+        tools: [],
+        knowledge_bases: [],
+        data_injection: {},
+        model: "gpt-4o",
+      }),
+    ).toEqual({ model: "gpt-4o" });
+  });
+
+  it("only persists an explicit error localizer opt-in", () => {
+    expect(
+      buildCompositeChildRunConfig({ error_localizer_enabled: false }),
+    ).toEqual({});
+    expect(
+      buildCompositeChildRunConfig({ error_localizer_enabled: true }),
+    ).toEqual({ error_localizer_enabled: true });
+    expect(
+      buildCompositeChildRunConfig(
+        normalizeEvalPickerEval({ error_localizer_enabled: true }),
+      ),
+    ).toEqual({ error_localizer_enabled: true });
   });
 });

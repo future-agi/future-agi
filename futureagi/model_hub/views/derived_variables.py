@@ -3,12 +3,21 @@ API endpoints for managing derived variables from JSON/structured outputs.
 """
 
 import structlog
-from rest_framework import status
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 
 from model_hub.models.run_prompt import PromptVersion
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    DerivedVariableDetailResponseSerializer,
+    DerivedVariableExtractRequestSerializer,
+    DerivedVariablePreviewRequestSerializer,
+    PromptDerivedVariablesResponseSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DatasetDerivedVariablesResponseSerializer,
+)
 from model_hub.services.derived_variable_service import (
     extract_derived_variables_from_output,
     get_all_derived_variables,
@@ -16,6 +25,11 @@ from model_hub.services.derived_variable_service import (
     get_derived_variable_schema,
     update_prompt_version_derived_variables,
 )
+from model_hub.utils.workspace_scope import (
+    request_organization,
+    request_workspace_filter,
+)
+from tfc.utils.api_contracts import validated_api_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -23,6 +37,22 @@ logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
 
 
+def _prompt_version_queryset(request, prompt_id):
+    return PromptVersion.no_workspace_objects.filter(
+        request_workspace_filter(request, field_name="original_template__workspace"),
+        original_template_id=prompt_id,
+        original_template__organization=request_organization(request),
+        original_template__deleted=False,
+    )
+
+
+@swagger_auto_schema(
+    method="get",
+    responses={
+        200: PromptDerivedVariablesResponseSerializer,
+        **MODEL_HUB_ERROR_RESPONSES,
+    },
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_prompt_derived_variables(request, prompt_id):
@@ -54,22 +84,14 @@ def get_prompt_derived_variables(request, prompt_id):
         column_name = request.query_params.get("column_name")
 
         # Get the prompt version
-        filters = {
-            "original_template_id": prompt_id,
-            "original_template__organization": getattr(request, "organization", None)
-            or request.user.organization,
-            "deleted": False,
-        }
-
+        queryset = _prompt_version_queryset(request, prompt_id)
         if version:
-            filters["template_version"] = version
+            queryset = queryset.filter(template_version=version)
 
-        prompt_version = (
-            PromptVersion.objects.filter(**filters).order_by("-created_at").first()
-        )
+        prompt_version = queryset.order_by("-created_at").first()
 
         if not prompt_version:
-            return _gm.not_found_response("Prompt version not found")
+            return _gm.not_found("Prompt version not found")
 
         # Get derived variables
         all_derived = get_all_derived_variables(prompt_version)
@@ -93,6 +115,13 @@ def get_prompt_derived_variables(request, prompt_id):
         )
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={
+        200: DerivedVariableDetailResponseSerializer,
+        **MODEL_HUB_ERROR_RESPONSES,
+    },
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_derived_variable_schema_view(request, prompt_id, column_name):
@@ -124,22 +153,14 @@ def get_derived_variable_schema_view(request, prompt_id, column_name):
     try:
         version = request.query_params.get("version")
 
-        filters = {
-            "original_template_id": prompt_id,
-            "original_template__organization": getattr(request, "organization", None)
-            or request.user.organization,
-            "deleted": False,
-        }
-
+        queryset = _prompt_version_queryset(request, prompt_id)
         if version:
-            filters["template_version"] = version
+            queryset = queryset.filter(template_version=version)
 
-        prompt_version = (
-            PromptVersion.objects.filter(**filters).order_by("-created_at").first()
-        )
+        prompt_version = queryset.order_by("-created_at").first()
 
         if not prompt_version:
-            return _gm.not_found_response("Prompt version not found")
+            return _gm.not_found("Prompt version not found")
 
         schema = get_derived_variable_schema(prompt_version, column_name)
 
@@ -152,8 +173,27 @@ def get_derived_variable_schema_view(request, prompt_id, column_name):
         )
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=DerivedVariableExtractRequestSerializer,
+    responses={
+        200: DerivedVariableDetailResponseSerializer,
+        **MODEL_HUB_ERROR_RESPONSES,
+    },
+    runtime_request_validation=True,
+    runtime_response_validation=True,
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@validated_api_request(
+    request_serializer=DerivedVariableExtractRequestSerializer,
+    responses={
+        200: DerivedVariableDetailResponseSerializer,
+        **MODEL_HUB_ERROR_RESPONSES,
+    },
+    reject_unknown_fields=True,
+    document=False,
+)
 def extract_derived_variables(request, prompt_id):
     """
     Manually trigger extraction of derived variables from outputs.
@@ -177,24 +217,24 @@ def extract_derived_variables(request, prompt_id):
         }
     """
     try:
-        version = request.data.get("version")
-        column_name = request.data.get("column_name", "output")
-        output_index = request.data.get("output_index", 0)
-        response_format_type = request.data.get("response_format_type")
+        version = request.validated_data.get("version")
+        column_name = request.validated_data.get("column_name", "output")
+        output_index = request.validated_data.get("output_index", 0)
+        response_format_type = request.validated_data.get("response_format_type")
 
         if not version:
             return _gm.bad_request("Version is required")
 
-        prompt_version = PromptVersion.objects.filter(
-            original_template_id=prompt_id,
-            original_template__organization=getattr(request, "organization", None)
-            or request.user.organization,
-            template_version=version,
-            deleted=False,
-        ).first()
+        prompt_version = (
+            _prompt_version_queryset(request, prompt_id)
+            .filter(
+                template_version=version,
+            )
+            .first()
+        )
 
         if not prompt_version:
-            return _gm.not_found_response("Prompt version not found")
+            return _gm.not_found("Prompt version not found")
 
         # Extract and update derived variables
         result = update_prompt_version_derived_variables(
@@ -214,8 +254,27 @@ def extract_derived_variables(request, prompt_id):
         return _gm.internal_server_error_response("Failed to extract derived variables")
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=DerivedVariablePreviewRequestSerializer,
+    responses={
+        200: DerivedVariableDetailResponseSerializer,
+        **MODEL_HUB_ERROR_RESPONSES,
+    },
+    runtime_request_validation=True,
+    runtime_response_validation=True,
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@validated_api_request(
+    request_serializer=DerivedVariablePreviewRequestSerializer,
+    responses={
+        200: DerivedVariableDetailResponseSerializer,
+        **MODEL_HUB_ERROR_RESPONSES,
+    },
+    reject_unknown_fields=True,
+    document=False,
+)
 def preview_derived_variables(request):
     """
     Preview derived variables from JSON content without saving.
@@ -236,8 +295,8 @@ def preview_derived_variables(request):
         }
     """
     try:
-        content = request.data.get("content")
-        column_name = request.data.get("column_name", "output")
+        content = request.validated_data.get("content")
+        column_name = request.validated_data.get("column_name", "output")
 
         if not content:
             return _gm.bad_request("Content is required")
@@ -252,6 +311,13 @@ def preview_derived_variables(request):
         return _gm.internal_server_error_response("Failed to preview derived variables")
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={
+        200: DatasetDerivedVariablesResponseSerializer,
+        **MODEL_HUB_ERROR_RESPONSES,
+    },
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_dataset_derived_variables_view(request, dataset_id):

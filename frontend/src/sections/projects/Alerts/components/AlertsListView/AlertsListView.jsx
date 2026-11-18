@@ -1,3 +1,4 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { Box, Typography } from "@mui/material";
 import React, {
   lazy,
@@ -10,7 +11,6 @@ import React, {
 import Actions from "./Actions";
 import { StatusCell, TrendChartCell } from "./AlertCells";
 import FilterChipsRenderer from "../../../../common/EvalsTasks/Renderers/FilterChipsRenderer";
-import AlertFilters from "../AlertFilters";
 import { formatDistanceToNow } from "date-fns";
 import SvgColor from "src/components/svg-color";
 import axios, { endpoints } from "src/utils/axios";
@@ -18,31 +18,23 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAlertStore } from "../../store/useAlertStore";
 import { useAlertFilterShallow } from "../../store/useAlertFilterStore";
+import {
+  ALERT_LIST_MULTI_VALUE_FIELDS,
+  buildFilterParams,
+} from "../../store/alertFilterState";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { formatNumberWithCommas } from "../../../UsersView/common";
 import _ from "lodash";
+import {
+  getAlertFilterValue,
+  isAlertMuted,
+  normalizeAlertListRow,
+} from "../../common";
 
 const AlertsSheetView = lazy(
   () => import("../AlertsSheetView/AlertsSheetView"),
 );
-
-// Build the filter value getter for the "Filters" column
-function getFilterValue(data) {
-  const filters = [];
-  const observationTypes = data?.filters?.observationType ?? [];
-  if (observationTypes?.length > 0) {
-    filters.push(`Span Type is ${_.toUpper(data?.filters?.observationType)}`);
-  }
-  const spanAttributes = data?.filters?.spanAttributesFilters ?? [];
-  if (spanAttributes.length > 0) {
-    const customAttributeString = `Custom attribute is ${spanAttributes
-      .map((f) => `(${f.columnId})`)
-      .join(",")}`;
-    filters.push(customAttributeString);
-  }
-  return filters;
-}
 
 export default function AlertsListView() {
   const queryClient = useQueryClient();
@@ -52,7 +44,6 @@ export default function AlertsListView() {
     mainPage,
     searchQuery,
     setHasData,
-    handleCancelSelection,
     selectedRows,
     setSelectedRows,
     setTotalRows,
@@ -63,11 +54,7 @@ export default function AlertsListView() {
   } = useAlertStore();
 
   const debouncedSearchTerm = useDebounce(searchQuery, 300);
-  const {
-    activeFilters,
-    hasValidFilters,
-    showFilterSection: showFilter,
-  } = useAlertFilterShallow();
+  const { activeFilters } = useAlertFilterShallow();
 
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -93,19 +80,23 @@ export default function AlertsListView() {
     return vis;
   }, [storeColumns]);
 
-  const extractedFilterObject = useMemo(() => {
-    if (!hasValidFilters) return null;
-    const filterObj = activeFilters.reduce((acc, filter) => {
-      const { filterType, filterValue } = filter;
-      if (Array.isArray(filterValue) && filterValue.length > 0) {
-        acc[filterType] = filterValue;
-      } else if (typeof filterValue === "string" && filterValue.trim() !== "") {
-        acc[filterType] = filterValue;
-      }
-      return acc;
-    }, {});
-    return Object.keys(filterObj).length > 0 ? filterObj : null;
-  }, [activeFilters, hasValidFilters]);
+  const extractedFilterObject = useMemo(
+    () => buildFilterParams(activeFilters, ALERT_LIST_MULTI_VALUE_FIELDS),
+    [activeFilters],
+  );
+
+  // Narrowing the result set can leave the current page out of range, and the
+  // API does not clamp — it returns an empty table with a total that says
+  // otherwise. Adjusted during render rather than in an effect: an effect runs
+  // after commit, so the query would fire once for the stale page before the
+  // reset landed. Keyed on the serialized filters because the panel re-emits
+  // an equal-but-new object when it opens, which must not move the user.
+  const resultSetKey = `${JSON.stringify(extractedFilterObject)}|${debouncedSearchTerm}`;
+  const [prevResultSetKey, setPrevResultSetKey] = useState(resultSetKey);
+  if (resultSetKey !== prevResultSetKey) {
+    setPrevResultSetKey(resultSetKey);
+    setPage(0);
+  }
 
   // Register refresh function in the store
   const refreshFn = useCallback(() => {
@@ -157,7 +148,10 @@ export default function AlertsListView() {
     refetchInterval: 10000,
   });
 
-  const items = useMemo(() => data?.table ?? [], [data]);
+  const items = useMemo(
+    () => (data?.table ?? []).map(normalizeAlertListRow),
+    [data],
+  );
   const total = data?.metadata?.total_rows ?? 0;
 
   // Sync store state on data change
@@ -218,10 +212,16 @@ export default function AlertsListView() {
         meta: { flex: 2 },
         minSize: 200,
         cell: ({ getValue, row }) => {
-          const isMuted = row.original.is_mute;
+          const isMuted = isAlertMuted(row.original);
           return (
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-              <Typography variant="body2" noWrap sx={{ fontWeight: 500 }}>
+              <Typography
+                variant="body2"
+                noWrap
+                sx={{ fontWeight: 500 }}
+                data-alert-row-name={row.original?.name}
+                data-alert-row-id={row.original?.id}
+              >
                 {getValue()}
               </Typography>
               {isMuted && (
@@ -231,7 +231,7 @@ export default function AlertsListView() {
                     height: 14,
                     width: 14,
                     flexShrink: 0,
-                    bgcolor: "red.500",
+                    bgcolor: "status.danger.solid",
                   }}
                 />
               )}
@@ -254,7 +254,7 @@ export default function AlertsListView() {
         meta: { flex: 1 },
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {getValue() || "-"}
           </Typography>
         ),
@@ -269,19 +269,19 @@ export default function AlertsListView() {
           const val = getValue();
           if (!val || val === "-")
             return (
-              <Typography variant="body2" sx={{ fontSize: 13 }}>
+              <Typography variant="body2" sx={{ fontSize: 12 }}>
                 -
               </Typography>
             );
           try {
             return (
-              <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
                 {formatDistanceToNow(new Date(val), { addSuffix: true })}
               </Typography>
             );
           } catch {
             return (
-              <Typography variant="body2" sx={{ fontSize: 13 }}>
+              <Typography variant="body2" sx={{ fontSize: 12 }}>
                 -
               </Typography>
             );
@@ -295,7 +295,7 @@ export default function AlertsListView() {
         size: 120,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {formatNumberWithCommas(getValue())}
           </Typography>
         ),
@@ -311,7 +311,7 @@ export default function AlertsListView() {
           if (!val) return null;
           try {
             return (
-              <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
                 {formatDistanceToNow(new Date(val), { addSuffix: true })}
               </Typography>
             );
@@ -342,7 +342,7 @@ export default function AlertsListView() {
         meta: { flex: 1 },
         enableSorting: false,
         cell: ({ row }) => {
-          const filterValues = getFilterValue(row.original);
+          const filterValues = getAlertFilterValue(row.original);
           return <FilterChipsRenderer value={filterValues} />;
         },
       },
@@ -375,7 +375,6 @@ export default function AlertsListView() {
         }}
       >
         <Actions />
-        {showFilter && <AlertFilters />}
 
         <DataTable
           columns={columns}
@@ -388,7 +387,7 @@ export default function AlertsListView() {
           onRowClick={handleRowClick}
           getRowId={(row) => row.id}
           enableSelection
-          rowHeight={44}
+          rowHeight={ROW_HEIGHT.default}
           emptyMessage="No alerts found"
         />
 

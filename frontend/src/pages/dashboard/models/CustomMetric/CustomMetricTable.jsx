@@ -11,6 +11,12 @@ const getEvaluationType = (evalRagContext, evalPromptTemplate) => {
   return "EVALUATE_CHAT";
 };
 
+const toFormDatasets = (datasets = []) =>
+  datasets.map((dataset) => ({
+    environment: dataset.environment,
+    modelVersion: dataset.modelVersion ?? dataset.model_version,
+  }));
+
 const columns = ({ setUpdateMetricData }) => {
   return [
     { field: "name", headerName: "Metric Name", flex: 1 },
@@ -37,17 +43,12 @@ const columns = ({ setUpdateMetricData }) => {
       sortable: false,
       renderCell: ({ row }) => (
         <Button
-          variant="contained"
+          className="row-hover-action"
+          variant="outlined"
           color="primary"
           size="small"
           fullWidth
-          startIcon={
-            <Iconify
-              icon="solar:pen-bold"
-              sx={{ color: "common.white" }}
-              width={16}
-            />
-          }
+          startIcon={<Iconify icon="solar:pen-bold" width={16} />}
           onClick={(e) => {
             e.stopPropagation();
             // trackEvent(Events.customMetricEditStart);
@@ -56,7 +57,7 @@ const columns = ({ setUpdateMetricData }) => {
               name: row.name,
               prompt: row.text_prompt,
               metricType: row.metric_type === "StepwiseModelInference" ? 2 : 1,
-              datasets: row.raw_datasets,
+              datasets: toFormDatasets(row.raw_datasets),
               evaluationType: getEvaluationType(
                 row.eval_rag_context,
                 row.eval_prompt_template,

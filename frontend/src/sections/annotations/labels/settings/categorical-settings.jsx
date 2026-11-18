@@ -45,7 +45,7 @@ export default function CategoricalSettings({ control }) {
           />
           {fields.length > 1 && (
             <IconButton size="small" onClick={() => remove(index)}>
-              <Iconify icon="mingcute:close-line" width={18} />
+              <Iconify icon="solar:close-linear" width={20} />
             </IconButton>
           )}
         </Stack>
@@ -56,7 +56,7 @@ export default function CategoricalSettings({ control }) {
           size="small"
           variant="outlined"
           color="primary"
-          startIcon={<Iconify icon="mingcute:add-line" />}
+          startIcon={<Iconify icon="solar:add-linear" />}
           onClick={() => append({ label: "" })}
         >
           Add Option

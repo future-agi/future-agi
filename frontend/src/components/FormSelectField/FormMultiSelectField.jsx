@@ -29,20 +29,23 @@ function getStyles(label, personName, theme) {
   };
 }
 
-const FormMultiSelectField = ({
-  control,
-  options,
-  fieldName,
-  isSearchable,
-  valueSelector,
-  helperText,
-  fullWidth,
-  createLabel,
-  dropDownMaxHeight,
-  onScrollEnd,
-  loadingMoreOptions,
-  ...rest
-}) => {
+const FormMultiSelectField = (
+  {
+    control,
+    options,
+    fieldName,
+    isSearchable,
+    valueSelector,
+    helperText,
+    fullWidth,
+    createLabel,
+    dropDownMaxHeight,
+    onScrollEnd,
+    loadingMoreOptions,
+    ...rest
+  },
+  forwardedRef,
+) => {
   const [searchQuery, setSearchQuery] = useState("");
   const theme = useTheme();
   const anchorRef = useRef(null);
@@ -84,7 +87,12 @@ const FormMultiSelectField = ({
         const data = Array.isArray(value) ? value : [];
 
         return (
-          <FormControl error={isError} fullWidth={fullWidth} size={rest?.size}>
+          <FormControl
+            ref={forwardedRef}
+            error={isError}
+            fullWidth={fullWidth}
+            size={rest?.size}
+          >
             <DropdownWithSearch
               label={rest.label}
               options={options?.map((opt) => ({
@@ -126,10 +134,7 @@ const FormMultiSelectField = ({
                           sx={{
                             fontSize: "12px",
                             fontWeight: theme.typography.fontWeightRegular,
-                            color:
-                              theme.palette.mode === "light"
-                                ? theme.palette.text.primary
-                                : theme.palette.common.white,
+                            color: "text.secondary",
                           }}
                         >
                           {selectedOption.label}
@@ -148,12 +153,12 @@ const FormMultiSelectField = ({
                   }}
                   onScroll={handleScroll}
                 >
-                  <SearchFieldBox sx={{}}>
+                  <SearchFieldBox>
                     <IconButton
                       size="small"
                       sx={{ color: theme.palette.divider }}
                     >
-                      <Iconify icon="eva:search-fill" />
+                      <Iconify icon="solar:magnifier-linear" />
                     </IconButton>
                     <Input
                       placeholder="Search"
@@ -193,9 +198,6 @@ const FormMultiSelectField = ({
                             width: 24,
                             height: 24,
                             mr: "8px",
-                            backgroundColor: img
-                              ? "background.neutral"
-                              : undefined,
                           }}
                         />
                         {label}
@@ -224,11 +226,11 @@ const style = {
     objectFit: "cover",
     fontSize: "12px",
     backgroundColor: "background.neutral",
-    color: "pink.500",
+    color: "text.secondary",
   },
 };
 
-FormMultiSelectField.propTypes = {
+const formMultiSelectFieldPropTypes = {
   control: PropTypes.any,
   options: PropTypes.arrayOf(
     PropTypes.shape({
@@ -250,6 +252,10 @@ FormMultiSelectField.propTypes = {
   onChange: PropTypes.func,
 };
 
+FormMultiSelectField.propTypes = formMultiSelectFieldPropTypes;
+
 // @ts-ignore
+FormMultiSelectField.propTypes = formMultiSelectFieldPropTypes;
 export const EnhancedFormMultiSelectField =
   React.forwardRef(FormMultiSelectField);
+EnhancedFormMultiSelectField.propTypes = formMultiSelectFieldPropTypes;

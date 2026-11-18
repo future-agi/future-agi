@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/auth"
 	"github.com/futureagi/agentcc-gateway/internal/config"
@@ -593,5 +594,89 @@ func TestCreateAndAuthenticate(t *testing.T) {
 	wrongKey := ks.Authenticate("sk-agentcc-wrong")
 	if wrongKey != nil {
 		t.Error("expected wrong key to return nil")
+	}
+}
+
+// --- ImportKeys Tests ---
+
+func TestImportKeys_RestoresKeysByHash(t *testing.T) {
+	h := newTestHandlersWithKeys("admin-secret", []config.AuthKeyConfig{
+		{Name: "config-key", Key: "sk-agentcc-config"},
+	})
+
+	body := `{"keys":[
+		{"id":"key_7","name":"restored","key_hash":"` + auth.HashKey("sk-agentcc-restored") + `","key_prefix":"sk-agentcc-r...","metadata":{"org_id":"org-1"},"expires_at":"2099-01-02T03:04:05.123456+00:00"},
+		{"id":"key_8","name":"already-here","key_hash":"` + auth.HashKey("sk-agentcc-config") + `"}
+	]}`
+	req := httptest.NewRequest(http.MethodPost, "/-/keys/sync", strings.NewReader(body))
+	setAdminAuth(req, "admin-secret")
+	rec := httptest.NewRecorder()
+
+	h.ImportKeys(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]int
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["received"] != 2 || resp["loaded"] != 1 {
+		t.Errorf("response = %v, want received=2 loaded=1", resp)
+	}
+
+	k := h.keyStore.Authenticate("sk-agentcc-restored")
+	if k == nil || k.ID != "key_7" || k.Metadata["org_id"] != "org-1" || k.KeyPrefix != "sk-agentcc-r..." {
+		t.Fatalf("restored key = %+v, want key_7 for org-1", k)
+	}
+	if want := time.Date(2099, 1, 2, 3, 4, 5, 123456000, time.UTC); k.ExpiresAt == nil || !k.ExpiresAt.Equal(want) {
+		t.Errorf("ExpiresAt = %v, want %v", k.ExpiresAt, want)
+	}
+	if k := h.keyStore.Get("key_1"); k == nil || k.Name != "config-key" {
+		t.Errorf("config key changed: %+v", k)
+	}
+}
+
+func TestImportKeys_RejectsMalformedKeys(t *testing.T) {
+	for name, body := range map[string]string{
+		"missing id":   `{"keys":[{"name":"x","key_hash":"` + auth.HashKey("x") + `"}]}`,
+		"raw key":      `{"keys":[{"id":"key_x","key_hash":"sk-agentcc-not-a-hash"}]}`,
+		"invalid json": `{"keys":`,
+		// The contract has no such field: the raw key never travels.
+		"unknown field":  `{"keys":[{"id":"key_x","key_hash":"` + auth.HashKey("x") + `","key":"sk-agentcc-x"}]}`,
+		"bad expires_at": `{"keys":[{"id":"key_x","key_hash":"` + auth.HashKey("x") + `","expires_at":"next week"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newTestHandlers("admin-secret")
+			req := httptest.NewRequest(http.MethodPost, "/-/keys/sync", strings.NewReader(body))
+			setAdminAuth(req, "admin-secret")
+			rec := httptest.NewRecorder()
+
+			h.ImportKeys(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", rec.Code)
+			}
+			if h.keyStore.Count() != 0 {
+				t.Errorf("Count() = %d, want nothing loaded", h.keyStore.Count())
+			}
+		})
+	}
+}
+
+func TestImportKeys_RequiresAdmin(t *testing.T) {
+	h := newTestHandlers("admin-secret")
+	body := `{"keys":[{"id":"key_7","key_hash":"` + auth.HashKey("sk-agentcc-x") + `"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/-/keys/sync", strings.NewReader(body))
+	setAdminAuth(req, "wrong")
+	rec := httptest.NewRecorder()
+
+	h.ImportKeys(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+	if h.keyStore.Count() != 0 {
+		t.Error("key loaded without the admin token")
 	}
 }

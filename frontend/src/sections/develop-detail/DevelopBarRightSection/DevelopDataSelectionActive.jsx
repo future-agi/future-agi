@@ -1,10 +1,8 @@
-import { Box, Button, Divider, Typography } from "@mui/material";
+import SelectionBar from "src/components/selection-bar";
 import React, { useMemo, useRef, useState } from "react";
-import { styled } from "@mui/system";
 import axios, { endpoints } from "src/utils/axios";
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "src/components/snackbar";
 import CustomDialog from "../Common/CustomDialog/CustomDialog";
 import DataMenuList from "../DataTab/DataMenuList/DataMenuList";
@@ -15,34 +13,14 @@ import "./developData.css";
 import { useParams } from "react-router";
 import SnackbarWithAction from "../Common/SnackbarWithAction";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
-import SvgColor from "src/components/svg-color";
 import { useDevelopDetailContext } from "../Context/DevelopDetailContext";
 import { useDevelopSelectedRowsStoreShallow } from "../states";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
-
-const StyledBox = styled(Box)(({ theme }) => ({
-  gap: "12px",
-  display: "flex",
-  alignItems: "center",
-  paddingX: "16px",
-  borderRadius: theme.shape.borderRadius,
-}));
-
-const StyledTypography = styled(Typography)(({ theme }) => ({
-  color: theme.palette.primary.main,
-  fontWeight: theme.typography["fontWeightMedium"], // "500",
-  ...theme.typography["s1"],
-}));
-
-const StyledButton = styled(Button)(({ theme }) => ({
-  color: theme.palette.text.primary,
-  fontWeight: theme.typography["fontWeightRegular"], // "500",
-  ...theme.typography["s1"],
-  "&:hover": {
-    backgroundColor: theme.palette.action.hover,
-  },
-}));
+import { getCreatedRowsDatasetId } from "./createDatasetRowsResponse";
+import CreateEnvironmentTestDialog from "src/sections/simulate/environments/evidence/CreateEnvironmentTestDialog";
+import { EVIDENCE_COPY } from "src/sections/simulate/environments/evidence/evidence.constants";
+import { MAX_EVIDENCE_SOURCES } from "src/api/simulate-environments/evidenceImports";
 
 const DevelopDataSelectionActive = () => {
   const { dataset } = useParams();
@@ -51,6 +29,7 @@ const DevelopDataSelectionActive = () => {
   const [isDuplicate, setIsDuplicate] = useState(false);
   const [isDelete, setIsDelete] = useState(false);
   const [isRunEval, setIsRunEval] = useState(false);
+  const [isEvidence, setIsEvidence] = useState(false);
   const [noOfCopies, setNoOfCopies] = useState(0);
   const [anchorEl, setAnchorEl] = React.useState(null);
   const [anchorElSubmenu, setAnchorElSubmenu] = React.useState(null);
@@ -130,21 +109,24 @@ const DevelopDataSelectionActive = () => {
 
   const { mutate: onCreateDatasetRows, isPending: isCreateDatasetLoading } =
     useMutation({
-      mutationFn: () => {
+      mutationFn: (newDatasetName) => {
         const selectedIds = toggledNodes;
+        const resolvedName = newDatasetName || name;
         trackEvent(Events.addRowToNewDatasetSuccessful, {
           [PropertyName.rowToNewDataset]: {
             row_id: selectedIds[0],
-            name: name,
+            name: resolvedName,
           },
         });
         return axios.post(endpoints.develop.createDatasetRows(dataset), {
           row_ids: selectedIds,
           selected_all_rows: selectAll,
-          name: name,
+          name: resolvedName,
         });
       },
       onSuccess: ({ data }) => {
+        const createdDatasetId = getCreatedRowsDatasetId(data);
+
         handleClose();
         setTimeout(unCheckedHandler, 100);
         refreshGrid();
@@ -153,9 +135,7 @@ const DevelopDataSelectionActive = () => {
             message="Datapoint added to the created dataset"
             buttonText="View Dataset"
             onClick={() =>
-              navigate(
-                `/dashboard/develop/${data?.result?.newDatasetId}?tab=data`,
-              )
+              navigate(`/dashboard/develop/${createdDatasetId}?tab=data`)
             }
           />,
           {
@@ -215,17 +195,22 @@ const DevelopDataSelectionActive = () => {
     },
   });
 
-  const { mutate: onMergeRows } = useMutation({
-    mutationFn: () => {
+  const { mutate: onMergeRows, isPending: isMergeRowsLoading } = useMutation({
+    mutationFn: (selectedTargetDatasetId) => {
       const selectedIds = toggledNodes;
+      const resolvedTargetDatasetId =
+        selectedTargetDatasetId || targetDatasetId;
 
       return axios.post(endpoints.develop.mergeDatasetRows(dataset), {
-        target_dataset_id: targetDatasetId,
+        target_dataset_id: resolvedTargetDatasetId,
         row_ids: selectedIds,
         selected_all_rows: selectAll,
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, selectedTargetDatasetId) => {
+      const resolvedTargetDatasetId =
+        selectedTargetDatasetId || targetDatasetId;
+
       handleClose();
       setTimeout(unCheckedHandler, 100);
       refreshGrid();
@@ -234,7 +219,7 @@ const DevelopDataSelectionActive = () => {
           message="Datapoint added to the chosen dataset"
           buttonText="View Dataset"
           onClick={() =>
-            navigate(`/dashboard/develop/${targetDatasetId}?tab=data`)
+            navigate(`/dashboard/develop/${resolvedTargetDatasetId}?tab=data`)
           }
         />,
         {
@@ -258,92 +243,72 @@ const DevelopDataSelectionActive = () => {
     }
   }, [toggledNodes, selectAll, gridApi]);
 
+  // An import names its rows one by one: no select-all, and at most the
+  // backend's limit.
+  let evidenceBlocked = null;
+  if (selectAll) evidenceBlocked = EVIDENCE_COPY.actionAll;
+  else if (toggledNodes.length > MAX_EVIDENCE_SOURCES)
+    evidenceBlocked = EVIDENCE_COPY.actionTooMany;
+
   return (
-    <StyledBox>
-      <Box sx={{ display: "flex", alignItems: "center" }}>
-        <StyledTypography>{selectedCount} Selected</StyledTypography>
-      </Box>
-
-      <Divider orientation="vertical" flexItem />
-      <StyledButton
-        variant="text"
-        size="small"
-        disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
-        startIcon={
-          <SvgColor
-            src={`/assets/icons/action_buttons/ic_run_prompt.svg`}
-            sx={{ width: "18px", height: "18px", color: "text.secondary" }}
-          />
-        }
-        onClick={() => {
-          trackEvent(Events.rowEvaluationsClicked);
-          setIsRunEval(!isRunEval);
-        }}
-      >
-        Run
-      </StyledButton>
-
-      <StyledButton
-        variant="text"
-        size="small"
-        disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
-        startIcon={
-          <Iconify icon="gg:duplicate" sx={{ color: "text.secondary" }} />
-        }
-        onClick={() => {
-          trackEvent(Events.duplicateRowClicked);
-          setIsDuplicate(!isDuplicate);
-        }}
-      >
-        Duplicate
-      </StyledButton>
-
-      <Box>
-        <DataMenuList
-          handleClose={handleClose}
-          setAnchorEl={setAnchorEl}
-          anchorEl={anchorEl}
-          setAnchorElSubmenu={setAnchorElSubmenu}
-          anchorElSubmenu={anchorElSubmenu}
-          setName={setName}
-          loading={isCreateDatasetLoading}
-          onCreateDatasetRows={onCreateDatasetRows}
-          onMergeRows={onMergeRows}
-          setTargetDatasetId={setTargetDatasetId}
-        />
-      </Box>
-      <StyledButton
-        variant="text"
-        size="small"
-        disabled={!RolePermission.DATASETS[PERMISSIONS.DELETE][role]}
-        startIcon={
-          <SvgColor
-            src={`/assets/icons/components/ic_delete.svg`}
-            sx={{ width: "20px", height: "20px", color: "text.secondary" }}
-          />
-        }
-        onClick={() => {
-          trackEvent(Events.deleteRowClicked);
-          setIsDelete(!isDelete);
-        }}
-      >
-        Delete
-      </StyledButton>
-      <Divider orientation="vertical" flexItem />
-
-      <StyledButton
-        variant="text"
-        size="small"
-        onClick={() => unCheckedHandler()}
-        sx={{
-          padding: 0,
-          minWidth: 0,
-          marginRight: 2,
-          color: "text.primary",
-        }}
-      >
-        Cancel
-      </StyledButton>
+    <>
+      <SelectionBar
+        count={selectedCount}
+        onCancel={() => unCheckedHandler()}
+        actions={[
+          {
+            label: "Run",
+            icon: "solar:play-linear",
+            disabled: !RolePermission.DATASETS[PERMISSIONS.UPDATE][role],
+            onClick: () => {
+              trackEvent(Events.rowEvaluationsClicked);
+              setIsRunEval(!isRunEval);
+            },
+          },
+          {
+            label: "Duplicate",
+            icon: "solar:copy-linear",
+            disabled: !RolePermission.DATASETS[PERMISSIONS.UPDATE][role],
+            onClick: () => {
+              trackEvent(Events.duplicateRowClicked);
+              setIsDuplicate(!isDuplicate);
+            },
+          },
+          {
+            label: "Add to dataset",
+            node: (
+              <DataMenuList
+                handleClose={handleClose}
+                setAnchorEl={setAnchorEl}
+                anchorEl={anchorEl}
+                setAnchorElSubmenu={setAnchorElSubmenu}
+                anchorElSubmenu={anchorElSubmenu}
+                setName={setName}
+                loading={isCreateDatasetLoading || isMergeRowsLoading}
+                onCreateDatasetRows={onCreateDatasetRows}
+                onMergeRows={onMergeRows}
+                setTargetDatasetId={setTargetDatasetId}
+              />
+            ),
+          },
+          {
+            label: EVIDENCE_COPY.action,
+            icon: "solar:test-tube-linear",
+            disabled: Boolean(evidenceBlocked),
+            tooltip: evidenceBlocked ?? undefined,
+            onClick: () => setIsEvidence(true),
+          },
+          {
+            label: "Delete",
+            icon: "solar:trash-bin-trash-linear",
+            disabled: !RolePermission.DATASETS[PERMISSIONS.DELETE][role],
+            onClick: () => {
+              trackEvent(Events.deleteRowClicked);
+              setIsDelete(!isDelete);
+            },
+          },
+        ]}
+      />
 
       {isRunEval && (
         <CustomDialog
@@ -377,6 +342,16 @@ const DevelopDataSelectionActive = () => {
         </CustomDialog>
       )}
 
+      {isEvidence ? (
+        <CreateEnvironmentTestDialog
+          open
+          onClose={() => setIsEvidence(false)}
+          datasetId={dataset}
+          sourceKind="dataset"
+          ids={toggledNodes}
+        />
+      ) : null}
+
       {isDelete && (
         <CustomDialog
           title={`Delete Row${selectedCount > 1 ? `s` : ""}`}
@@ -391,7 +366,7 @@ const DevelopDataSelectionActive = () => {
           <DeleteRowAction selectedCount={selectedCount} />
         </CustomDialog>
       )}
-    </StyledBox>
+    </>
   );
 };
 

@@ -207,28 +207,17 @@ XAI_MODELS = [
     "xai/grok-2-vision-1212",
 ]
 
-# Perplexity Models
+# Perplexity Models (current generation Sonar API + Agent API)
+# See https://docs.perplexity.ai/getting-started/models
 PERPLEXITY_MODELS = [
-    "perplexity/llama-3.1-70b-instruct",
-    "perplexity/llama-3.1-8b-instruct",
-    "perplexity/llama-3.1-sonar-huge-128k-online",
-    "perplexity/llama-3.1-sonar-large-128k-online",
-    "perplexity/llama-3.1-sonar-large-128k-chat",
-    "perplexity/llama-3.1-sonar-small-128k-chat",
-    "perplexity/llama-3.1-sonar-small-128k-online",
-    "perplexity/sonar-small-chat",
-    "perplexity/sonar-small-online",
-    "perplexity/sonar-medium-chat",
-    "perplexity/sonar-medium-online",
-    "perplexity/codellama-34b-instruct",
-    "perplexity/codellama-70b-instruct",
-    "perplexity/pplx-7b-chat",
-    "perplexity/pplx-70b-chat",
-    "perplexity/pplx-7b-online",
-    "perplexity/pplx-70b-online",
-    "perplexity/llama-2-70b-chat",
-    "perplexity/mistral-7b-instruct",
-    "perplexity/mixtral-8x7b-instruct",
+    # Sonar API (chat completions with built-in web search)
+    "perplexity/sonar",
+    "perplexity/sonar-pro",
+    "perplexity/sonar-reasoning",
+    "perplexity/sonar-reasoning-pro",
+    "perplexity/sonar-deep-research",
+    # Agent API (third-party LLM orchestration; default model gpt-5.1)
+    "perplexity/gpt-5.1",
 ]
 
 # OpenRouter Models
@@ -300,56 +289,100 @@ PRESENCE_PENALTY_VALUES = [0.0, 0.5, 1.0, 1.5, 2.0]
 # Test Helper Functions
 # =============================================================================
 
+
 def get_simple_messages():
     """Get simple test messages."""
     return [
-        {"role": "system", "content": "You are a helpful assistant. Keep responses brief."},
-        {"role": "user", "content": "Say 'Hello' and nothing else."}
+        {
+            "role": "system",
+            "content": "You are a helpful assistant. Keep responses brief.",
+        },
+        {"role": "user", "content": "Say 'Hello' and nothing else."},
     ]
 
 
 def get_json_messages():
     """Get messages for JSON response testing."""
     return [
-        {"role": "system", "content": "You are a helpful assistant that outputs valid JSON only."},
-        {"role": "user", "content": "Return a JSON object with a single key 'status' and value 'ok'."}
+        {
+            "role": "system",
+            "content": "You are a helpful assistant that outputs valid JSON only.",
+        },
+        {
+            "role": "user",
+            "content": "Return a JSON object with a single key 'status' and value 'ok'.",
+        },
     ]
 
 
 # Reasoning models that require special parameter handling
 REASONING_MODELS = [
     # o1 series
-    "o1", "o1-2024-12-17", "o1-mini", "o1-mini-2024-09-12",
-    "o1-preview", "o1-preview-2024-09-12",
-    "o1-pro", "o1-pro-2025-03-19",
+    "o1",
+    "o1-2024-12-17",
+    "o1-mini",
+    "o1-mini-2024-09-12",
+    "o1-preview",
+    "o1-preview-2024-09-12",
+    "o1-pro",
+    "o1-pro-2025-03-19",
     # o3 series
-    "o3", "o3-2025-04-16", "o3-mini", "o3-mini-2025-01-31",
-    "o3-pro", "o3-pro-2025-06-10",
+    "o3",
+    "o3-2025-04-16",
+    "o3-mini",
+    "o3-mini-2025-01-31",
+    "o3-pro",
+    "o3-pro-2025-06-10",
     # o4 series
-    "o4-mini", "o4-mini-2025-04-16",
+    "o4-mini",
+    "o4-mini-2025-04-16",
     # GPT-5 series
-    "gpt-5", "gpt-5-2025-08-07", "gpt-5-mini", "gpt-5-mini-2025-08-07",
-    "gpt-5-nano", "gpt-5-nano-2025-08-07", "gpt-5-chat-latest",
-    "gpt-5-pro", "gpt-5-pro-2025-10-06", "gpt-5-codex",
+    "gpt-5",
+    "gpt-5-2025-08-07",
+    "gpt-5-mini",
+    "gpt-5-mini-2025-08-07",
+    "gpt-5-nano",
+    "gpt-5-nano-2025-08-07",
+    "gpt-5-chat-latest",
+    "gpt-5-pro",
+    "gpt-5-pro-2025-10-06",
+    "gpt-5-codex",
     # GPT-5.1 series
-    "gpt-5.1", "gpt-5.1-2025-11-13", "gpt-5.1-chat-latest",
-    "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1-codex-max",
+    "gpt-5.1",
+    "gpt-5.1-2025-11-13",
+    "gpt-5.1-chat-latest",
+    "gpt-5.1-codex",
+    "gpt-5.1-codex-mini",
+    "gpt-5.1-codex-max",
     # GPT-5.2 series
-    "gpt-5.2", "gpt-5.2-2025-12-11", "gpt-5.2-chat-latest",
-    "gpt-5.2-pro", "gpt-5.2-pro-2025-12-11",
+    "gpt-5.2",
+    "gpt-5.2-2025-12-11",
+    "gpt-5.2-chat-latest",
+    "gpt-5.2-pro",
+    "gpt-5.2-pro-2025-12-11",
 ]
 
 
 def is_reasoning_model(model_name):
     """Check if a model is a reasoning model that needs special handling."""
     # Strip provider prefix if present
-    base_model = model_name.split('/')[-1] if '/' in model_name else model_name
+    base_model = model_name.split("/")[-1] if "/" in model_name else model_name
     return base_model in REASONING_MODELS
 
 
-def run_model_test(model_name, api_key, organization_id, temperature=0.7, max_tokens=100,
-                   top_p=1.0, frequency_penalty=0.0, presence_penalty=0.0,
-                   response_format=None, tools=None, tool_choice=None):
+def run_model_test(
+    model_name,
+    api_key,
+    organization_id,
+    temperature=0.7,
+    max_tokens=100,
+    top_p=1.0,
+    frequency_penalty=0.0,
+    presence_penalty=0.0,
+    response_format=None,
+    tools=None,
+    tool_choice=None,
+):
     """
     Run a single model test with given parameters.
 
@@ -403,6 +436,7 @@ def run_model_test(model_name, api_key, organization_id, temperature=0.7, max_to
 # =============================================================================
 # OpenAI Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -527,7 +561,9 @@ class TestOpenAILiveAllModels:
     # Standard Chat Models - JSON Response Format
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"])
+    @pytest.mark.parametrize(
+        "model", ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
+    )
     def test_openai_json_response_format(self, model):
         """Test JSON response format for OpenAI models."""
         content, response = run_model_test(
@@ -558,18 +594,18 @@ class TestOpenAILiveAllModels:
                         "properties": {
                             "location": {
                                 "type": "string",
-                                "description": "The city name"
+                                "description": "The city name",
                             }
                         },
-                        "required": ["location"]
-                    }
-                }
+                        "required": ["location"],
+                    },
+                },
             }
         ]
 
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "What's the weather like in San Francisco?"}
+            {"role": "user", "content": "What's the weather like in San Francisco?"},
         ]
 
         litellm.drop_params = True
@@ -590,7 +626,9 @@ class TestOpenAILiveAllModels:
     # Reasoning Models - Basic Tests
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", OPENAI_REASONING_MODELS[:4])  # Test first 4 reasoning models
+    @pytest.mark.parametrize(
+        "model", OPENAI_REASONING_MODELS[:4]
+    )  # Test first 4 reasoning models
     def test_openai_reasoning_model_basic(self, model):
         """Test basic chat for OpenAI reasoning models."""
         # Reasoning models need different handling - no temperature/top_p
@@ -610,13 +648,16 @@ class TestOpenAILiveAllModels:
     # Combined Parameter Tests (Selected Combinations)
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("temp,max_tok,top_p", [
-        (0.0, 100, 1.0),
-        (0.5, 250, 0.9),
-        (0.7, 500, 0.95),
-        (1.0, 1000, 0.7),
-        (1.5, 2000, 0.5),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p",
+        [
+            (0.0, 100, 1.0),
+            (0.5, 250, 0.9),
+            (0.7, 500, 0.95),
+            (1.0, 1000, 0.7),
+            (1.5, 2000, 0.5),
+        ],
+    )
     def test_openai_combined_parameters(self, temp, max_tok, top_p):
         """Test combined parameter variations for OpenAI models."""
         content, response = run_model_test(
@@ -633,6 +674,7 @@ class TestOpenAILiveAllModels:
 # =============================================================================
 # Anthropic Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -722,12 +764,15 @@ class TestAnthropicLiveAllModels:
     # Combined Parameter Tests
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("temp,max_tok,top_p", [
-        (0.0, 100, 1.0),
-        (0.5, 250, 0.9),
-        (0.7, 500, 0.95),
-        (1.0, 1000, 0.7),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p",
+        [
+            (0.0, 100, 1.0),
+            (0.5, 250, 0.9),
+            (0.7, 500, 0.95),
+            (1.0, 1000, 0.7),
+        ],
+    )
     def test_anthropic_combined_parameters(self, temp, max_tok, top_p):
         """Test combined parameter variations for Anthropic models."""
         content, response = run_model_test(
@@ -744,6 +789,7 @@ class TestAnthropicLiveAllModels:
 # =============================================================================
 # Groq Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -831,12 +877,15 @@ class TestGroqLiveAllModels:
     # Combined Parameter Tests
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("temp,max_tok,top_p", [
-        (0.0, 100, 1.0),
-        (0.5, 250, 0.9),
-        (0.7, 500, 0.95),
-        (1.0, 1000, 0.7),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p",
+        [
+            (0.0, 100, 1.0),
+            (0.5, 250, 0.9),
+            (0.7, 500, 0.95),
+            (1.0, 1000, 0.7),
+        ],
+    )
     def test_groq_combined_parameters(self, temp, max_tok, top_p):
         """Test combined parameter variations for Groq models."""
         content, response = run_model_test(
@@ -853,6 +902,7 @@ class TestGroqLiveAllModels:
 # =============================================================================
 # xAI Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -976,13 +1026,16 @@ class TestXAILiveAllModels:
     # Combined Parameter Tests
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("temp,max_tok,top_p,freq,pres", [
-        (0.0, 100, 1.0, 0.0, 0.0),
-        (0.5, 250, 0.9, 0.5, 0.5),
-        (0.7, 500, 0.95, 1.0, 1.0),
-        (1.0, 1000, 0.7, 0.0, 0.5),
-        (1.5, 2000, 0.5, 0.5, 0.0),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p,freq,pres",
+        [
+            (0.0, 100, 1.0, 0.0, 0.0),
+            (0.5, 250, 0.9, 0.5, 0.5),
+            (0.7, 500, 0.95, 1.0, 1.0),
+            (1.0, 1000, 0.7, 0.0, 0.5),
+            (1.5, 2000, 0.5, 0.5, 0.0),
+        ],
+    )
     def test_xai_combined_parameters(self, temp, max_tok, top_p, freq, pres):
         """Test combined parameter variations for xAI models."""
         content, response = run_model_test(
@@ -1001,6 +1054,7 @@ class TestXAILiveAllModels:
 # =============================================================================
 # Perplexity Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -1036,7 +1090,7 @@ class TestPerplexityLiveAllModels:
     # Temperature Variations
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", ["perplexity/sonar-small-chat"])
+    @pytest.mark.parametrize("model", ["perplexity/sonar-pro"])
     @pytest.mark.parametrize("temperature", TEMPERATURE_VALUES)
     def test_perplexity_temperature_variations(self, model, temperature):
         """Test various temperature settings for Perplexity models."""
@@ -1053,7 +1107,7 @@ class TestPerplexityLiveAllModels:
     # Max Tokens Variations
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", ["perplexity/sonar-small-chat"])
+    @pytest.mark.parametrize("model", ["perplexity/sonar-pro"])
     @pytest.mark.parametrize("max_tokens", MAX_TOKENS_VALUES)
     def test_perplexity_max_tokens_variations(self, model, max_tokens):
         """Test various max_tokens settings for Perplexity models."""
@@ -1070,7 +1124,7 @@ class TestPerplexityLiveAllModels:
     # Top P Variations
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", ["perplexity/sonar-small-chat"])
+    @pytest.mark.parametrize("model", ["perplexity/sonar-pro"])
     @pytest.mark.parametrize("top_p", TOP_P_VALUES)
     def test_perplexity_top_p_variations(self, model, top_p):
         """Test various top_p settings for Perplexity models."""
@@ -1088,16 +1142,19 @@ class TestPerplexityLiveAllModels:
     # Combined Parameter Tests
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("temp,max_tok,top_p", [
-        (0.0, 100, 1.0),
-        (0.5, 250, 0.9),
-        (0.7, 500, 0.95),
-        (1.0, 1000, 0.7),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p",
+        [
+            (0.0, 100, 1.0),
+            (0.5, 250, 0.9),
+            (0.7, 500, 0.95),
+            (1.0, 1000, 0.7),
+        ],
+    )
     def test_perplexity_combined_parameters(self, temp, max_tok, top_p):
         """Test combined parameter variations for Perplexity models."""
         content, response = run_model_test(
-            model_name="perplexity/sonar-small-chat",
+            model_name="perplexity/sonar-pro",
             api_key=self.api_key,
             organization_id=self.organization_id,
             temperature=temp,
@@ -1110,6 +1167,7 @@ class TestPerplexityLiveAllModels:
 # =============================================================================
 # OpenRouter Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -1145,7 +1203,9 @@ class TestOpenRouterLiveAllModels:
     # Temperature Variations
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", ["openrouter/meta-llama/llama-3-8b-instruct:free"])
+    @pytest.mark.parametrize(
+        "model", ["openrouter/meta-llama/llama-3-8b-instruct:free"]
+    )
     @pytest.mark.parametrize("temperature", TEMPERATURE_VALUES)
     def test_openrouter_temperature_variations(self, model, temperature):
         """Test various temperature settings for OpenRouter models."""
@@ -1162,7 +1222,9 @@ class TestOpenRouterLiveAllModels:
     # Max Tokens Variations
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", ["openrouter/meta-llama/llama-3-8b-instruct:free"])
+    @pytest.mark.parametrize(
+        "model", ["openrouter/meta-llama/llama-3-8b-instruct:free"]
+    )
     @pytest.mark.parametrize("max_tokens", MAX_TOKENS_VALUES)
     def test_openrouter_max_tokens_variations(self, model, max_tokens):
         """Test various max_tokens settings for OpenRouter models."""
@@ -1179,7 +1241,9 @@ class TestOpenRouterLiveAllModels:
     # Top P Variations
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", ["openrouter/meta-llama/llama-3-8b-instruct:free"])
+    @pytest.mark.parametrize(
+        "model", ["openrouter/meta-llama/llama-3-8b-instruct:free"]
+    )
     @pytest.mark.parametrize("top_p", TOP_P_VALUES)
     def test_openrouter_top_p_variations(self, model, top_p):
         """Test various top_p settings for OpenRouter models."""
@@ -1197,7 +1261,9 @@ class TestOpenRouterLiveAllModels:
     # Frequency Penalty Variations
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", ["openrouter/meta-llama/llama-3-8b-instruct:free"])
+    @pytest.mark.parametrize(
+        "model", ["openrouter/meta-llama/llama-3-8b-instruct:free"]
+    )
     @pytest.mark.parametrize("frequency_penalty", FREQUENCY_PENALTY_VALUES)
     def test_openrouter_frequency_penalty_variations(self, model, frequency_penalty):
         """Test various frequency_penalty settings for OpenRouter models."""
@@ -1215,7 +1281,9 @@ class TestOpenRouterLiveAllModels:
     # Presence Penalty Variations
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", ["openrouter/meta-llama/llama-3-8b-instruct:free"])
+    @pytest.mark.parametrize(
+        "model", ["openrouter/meta-llama/llama-3-8b-instruct:free"]
+    )
     @pytest.mark.parametrize("presence_penalty", PRESENCE_PENALTY_VALUES)
     def test_openrouter_presence_penalty_variations(self, model, presence_penalty):
         """Test various presence_penalty settings for OpenRouter models."""
@@ -1233,13 +1301,16 @@ class TestOpenRouterLiveAllModels:
     # Combined Parameter Tests
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("temp,max_tok,top_p,freq,pres", [
-        (0.0, 100, 1.0, 0.0, 0.0),
-        (0.5, 250, 0.9, 0.5, 0.5),
-        (0.7, 500, 0.95, 1.0, 1.0),
-        (1.0, 1000, 0.7, 0.0, 0.5),
-        (1.5, 2000, 0.5, 0.5, 0.0),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p,freq,pres",
+        [
+            (0.0, 100, 1.0, 0.0, 0.0),
+            (0.5, 250, 0.9, 0.5, 0.5),
+            (0.7, 500, 0.95, 1.0, 1.0),
+            (1.0, 1000, 0.7, 0.0, 0.5),
+            (1.5, 2000, 0.5, 0.5, 0.0),
+        ],
+    )
     def test_openrouter_combined_parameters(self, temp, max_tok, top_p, freq, pres):
         """Test combined parameter variations for OpenRouter models."""
         content, response = run_model_test(
@@ -1258,12 +1329,15 @@ class TestOpenRouterLiveAllModels:
     # Provider-Specific Models via OpenRouter
     # -------------------------------------------------------------------------
 
-    @pytest.mark.parametrize("model", [
-        "openrouter/openai/gpt-4o",
-        "openrouter/anthropic/claude-3.5-sonnet",
-        "openrouter/google/gemini-pro-1.5",
-        "openrouter/mistralai/mistral-large",
-    ])
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "openrouter/openai/gpt-4o",
+            "openrouter/anthropic/claude-3.5-sonnet",
+            "openrouter/google/gemini-pro-1.5",
+            "openrouter/mistralai/mistral-large",
+        ],
+    )
     def test_openrouter_premium_models(self, model):
         """Test premium models available via OpenRouter."""
         content, response = run_model_test(
@@ -1279,6 +1353,7 @@ class TestOpenRouterLiveAllModels:
 # =============================================================================
 # Cross-Provider Parameter Consistency Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -1354,6 +1429,7 @@ class TestCrossProviderParameterConsistency:
 # Error Handling Tests
 # =============================================================================
 
+
 @pytest.mark.integration
 @pytest.mark.live_llm
 @pytest.mark.external
@@ -1396,13 +1472,20 @@ class TestErrorHandling:
         if not api_keys.get("openai"):
             pytest.skip("OPENAI_API_KEY not configured")
 
-        with patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel") as mock_custom_model, \
-             patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey") as mock_api_key:
-
+        with (
+            patch(
+                "agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel"
+            ) as mock_custom_model,
+            patch(
+                "agentic_eval.core_evals.run_prompt.litellm_models.ApiKey"
+            ) as mock_api_key,
+        ):
             mock_custom_model.objects.filter.return_value.values.return_value = []
             mock_custom_model.objects.get.side_effect = mock_custom_model.DoesNotExist
             mock_custom_model.DoesNotExist = Exception
-            mock_api_key.objects.get.return_value = create_mock_api_key_entry(api_keys["openai"])
+            mock_api_key.objects.get.return_value = create_mock_api_key_entry(
+                api_keys["openai"]
+            )
 
             from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -1523,6 +1606,7 @@ def is_deepseek_reasoning_model(model_name):
 # Gemini Live Integration Tests
 # =============================================================================
 
+
 @pytest.mark.integration
 @pytest.mark.live_llm
 @pytest.mark.external
@@ -1590,11 +1674,14 @@ class TestGeminiLiveAllModels:
         )
         assert content is not None
 
-    @pytest.mark.parametrize("temp,max_tok,top_p", [
-        (0.3, 100, 0.9),
-        (0.7, 200, 0.95),
-        (1.0, 150, 1.0),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p",
+        [
+            (0.3, 100, 0.9),
+            (0.7, 200, 0.95),
+            (1.0, 150, 1.0),
+        ],
+    )
     def test_gemini_combined_parameters(self, temp, max_tok, top_p):
         """Test Gemini with combined parameter variations."""
         model = "gemini/gemini-2.0-flash"
@@ -1612,6 +1699,7 @@ class TestGeminiLiveAllModels:
 # =============================================================================
 # Mistral Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -1680,11 +1768,14 @@ class TestMistralLiveAllModels:
         )
         assert content is not None
 
-    @pytest.mark.parametrize("temp,max_tok,top_p", [
-        (0.3, 100, 0.9),
-        (0.7, 200, 0.95),
-        (1.0, 150, 1.0),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p",
+        [
+            (0.3, 100, 0.9),
+            (0.7, 200, 0.95),
+            (1.0, 150, 1.0),
+        ],
+    )
     def test_mistral_combined_parameters(self, temp, max_tok, top_p):
         """Test Mistral with combined parameter variations."""
         model = "mistral/mistral-small-latest"
@@ -1702,6 +1793,7 @@ class TestMistralLiveAllModels:
 # =============================================================================
 # DeepInfra Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -1770,11 +1862,14 @@ class TestDeepInfraLiveAllModels:
         )
         assert content is not None
 
-    @pytest.mark.parametrize("temp,max_tok,top_p", [
-        (0.3, 100, 0.9),
-        (0.7, 200, 0.95),
-        (1.0, 150, 1.0),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p",
+        [
+            (0.3, 100, 0.9),
+            (0.7, 200, 0.95),
+            (1.0, 150, 1.0),
+        ],
+    )
     def test_deepinfra_combined_parameters(self, temp, max_tok, top_p):
         """Test DeepInfra with combined parameter variations."""
         model = "deepinfra/meta-llama/Meta-Llama-3-8B-Instruct"
@@ -1792,6 +1887,7 @@ class TestDeepInfraLiveAllModels:
 # =============================================================================
 # Together AI Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -1846,11 +1942,14 @@ class TestTogetherAILiveAllModels:
         )
         assert content is not None
 
-    @pytest.mark.parametrize("temp,max_tok,top_p", [
-        (0.3, 100, 0.9),
-        (0.7, 200, 0.95),
-        (1.0, 150, 1.0),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p",
+        [
+            (0.3, 100, 0.9),
+            (0.7, 200, 0.95),
+            (1.0, 150, 1.0),
+        ],
+    )
     def test_together_ai_combined_parameters(self, temp, max_tok, top_p):
         """Test Together AI with combined parameter variations."""
         model = "together_ai/mistralai/Mistral-7B-Instruct-v0.1"
@@ -1868,6 +1967,7 @@ class TestTogetherAILiveAllModels:
 # =============================================================================
 # Cohere Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -1922,11 +2022,14 @@ class TestCohereLiveAllModels:
         )
         assert content is not None
 
-    @pytest.mark.parametrize("temp,max_tok", [
-        (0.3, 100),
-        (0.7, 200),
-        (1.0, 150),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok",
+        [
+            (0.3, 100),
+            (0.7, 200),
+            (1.0, 150),
+        ],
+    )
     def test_cohere_combined_parameters(self, temp, max_tok):
         """Test Cohere with combined parameter variations."""
         model = "command"
@@ -1943,6 +2046,7 @@ class TestCohereLiveAllModels:
 # =============================================================================
 # DeepSeek Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -2009,11 +2113,14 @@ class TestDeepSeekLiveAllModels:
         )
         assert content is not None
 
-    @pytest.mark.parametrize("temp,max_tok,top_p", [
-        (0.3, 100, 0.9),
-        (0.7, 200, 0.95),
-        (1.0, 150, 1.0),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p",
+        [
+            (0.3, 100, 0.9),
+            (0.7, 200, 0.95),
+            (1.0, 150, 1.0),
+        ],
+    )
     def test_deepseek_combined_parameters(self, temp, max_tok, top_p):
         """Test DeepSeek with combined parameter variations."""
         content, response = run_model_test(
@@ -2030,6 +2137,7 @@ class TestDeepSeekLiveAllModels:
 # =============================================================================
 # Fireworks AI Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -2084,11 +2192,14 @@ class TestFireworksAILiveAllModels:
         )
         assert content is not None
 
-    @pytest.mark.parametrize("temp,max_tok,top_p", [
-        (0.3, 100, 0.9),
-        (0.7, 200, 0.95),
-        (1.0, 150, 1.0),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p",
+        [
+            (0.3, 100, 0.9),
+            (0.7, 200, 0.95),
+            (1.0, 150, 1.0),
+        ],
+    )
     def test_fireworks_ai_combined_parameters(self, temp, max_tok, top_p):
         """Test Fireworks AI with combined parameter variations."""
         model = "fireworks_ai/accounts/fireworks/models/llama-v3p2-1b-instruct"
@@ -2106,6 +2217,7 @@ class TestFireworksAILiveAllModels:
 # =============================================================================
 # AI21 Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -2160,11 +2272,14 @@ class TestAI21LiveAllModels:
         )
         assert content is not None
 
-    @pytest.mark.parametrize("temp,max_tok,top_p", [
-        (0.3, 100, 0.9),
-        (0.7, 200, 0.95),
-        (1.0, 150, 1.0),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p",
+        [
+            (0.3, 100, 0.9),
+            (0.7, 200, 0.95),
+            (1.0, 150, 1.0),
+        ],
+    )
     def test_ai21_combined_parameters(self, temp, max_tok, top_p):
         """Test AI21 with combined parameter variations."""
         model = "jamba-1.5-mini"
@@ -2182,6 +2297,7 @@ class TestAI21LiveAllModels:
 # =============================================================================
 # Cerebras Live Integration Tests
 # =============================================================================
+
 
 @pytest.mark.integration
 @pytest.mark.live_llm
@@ -2236,11 +2352,14 @@ class TestCerebrasLiveAllModels:
         )
         assert content is not None
 
-    @pytest.mark.parametrize("temp,max_tok,top_p", [
-        (0.3, 100, 0.9),
-        (0.7, 200, 0.95),
-        (1.0, 150, 1.0),
-    ])
+    @pytest.mark.parametrize(
+        "temp,max_tok,top_p",
+        [
+            (0.3, 100, 0.9),
+            (0.7, 200, 0.95),
+            (1.0, 150, 1.0),
+        ],
+    )
     def test_cerebras_combined_parameters(self, temp, max_tok, top_p):
         """Test Cerebras with combined parameter variations."""
         model = "cerebras/llama3.1-8b"

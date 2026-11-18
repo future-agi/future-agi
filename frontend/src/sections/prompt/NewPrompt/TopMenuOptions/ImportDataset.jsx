@@ -15,7 +15,6 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { grey } from "src/theme/palette";
 import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
 import { useSnackbar } from "notistack";
@@ -270,7 +269,8 @@ const ImportDataset = (props) => {
                     startAdornment: (
                       <InputAdornment position="start">
                         <Iconify
-                          icon="eva:search-fill"
+                          icon="solar:magnifier-linear"
+                          width={16}
                           sx={{ color: "text.disabled" }}
                         />
                       </InputAdornment>
@@ -321,7 +321,8 @@ const ImportDataset = (props) => {
               display: "flex",
               flexDirection: "column",
               padding: "18px",
-              border: `1px solid ${grey[200]}`,
+              border: "1px solid",
+              borderColor: "divider",
               borderRadius: "8px",
               overflow: "auto",
               gap: "25px",
@@ -518,7 +519,6 @@ const ImportDataset = (props) => {
                 variant="outlined"
                 sx={{
                   minWidth: "150px",
-                  borderRadius: "10px",
                 }}
                 onClick={() => {
                   setConfirmationDialog(false);
@@ -529,7 +529,6 @@ const ImportDataset = (props) => {
               <Button
                 sx={{
                   minWidth: "150px",
-                  borderRadius: "10px",
                 }}
                 variant="contained"
                 color="primary"

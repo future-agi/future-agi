@@ -33,17 +33,17 @@ const EvalsCardGraphs = ({
     data?.forEach((item) => {
       if (mode === "develop" && !item?.isVisible) return;
       if (
-        item.outputType === "score" ||
-        item.outputType === OutputTypes.NUMERIC
+        item.output_type === "score" ||
+        item.output_type === OutputTypes.NUMERIC
       ) {
-        redarData.push(item.totalAvg);
+        redarData.push(item.total_avg);
         redarLabel.push(item.name);
       }
-      if (item.outputType === "Pass/Fail") {
+      if (item.output_type === "Pass/Fail") {
         redarLabel.push(item.name);
-        redarData.push(item.totalPassRate);
+        redarData.push(item.total_pass_rate);
       }
-      radarOutputType.push(item.outputType);
+      radarOutputType.push(item.output_type);
     });
 
     if (redarLabel.length < 3) {
@@ -63,7 +63,7 @@ const EvalsCardGraphs = ({
         { value: redarData, name: redarLabel, outputType: radarOutputType },
       ],
     };
-  }, [data]);
+  }, [data, mode]);
 
   if (isPending || isLoading) {
     return <EvalsCardLoading />;
@@ -136,21 +136,21 @@ const EvalsCardGraphs = ({
                   >
                     <Box
                       sx={{
-                        backgroundColor: "green.o10",
+                        backgroundColor: "status.success.bg",
                         padding: 1,
-                        color: "green.500",
+                        color: "status.success.fg",
                         display: "flex",
                         justifyContent: "center",
                         alignItems: "center",
                         width: "32px",
                         height: "32px",
-                        borderRadius: "2px",
+                        borderRadius: "4px",
                       }}
                     >
                       <Iconify
                         // @ts-ignore
                         icon="qlementine-icons:success-16"
-                        color="green.500"
+                        color="status.success.fg"
                       />
                     </Box>
                     <Box>
@@ -166,8 +166,8 @@ const EvalsCardGraphs = ({
                         fontWeight={"fontWeightSemiBold"}
                         sx={{
                           color: "text.primary",
-                          fontWeight: 700,
-                          fontSize: "1.125rem",
+                          fontWeight: 600,
+                          fontSize: "1rem",
                         }}
                       >
                         {redarChart?.label?.length > 0 &&
@@ -200,25 +200,25 @@ const EvalsCardGraphs = ({
 
         <Box display={"flex"} gap={2} flexWrap={"wrap"}>
           {data
-            ?.filter((e) => (mode === "develop" ? e?.isVisible : true))
+            ?.filter((e) => (mode === "develop" ? e?.is_visible : true))
             ?.map((item) => {
               const headerData = {
                 name: item.name,
                 average:
-                  item.outputType == "choices"
-                    ? item.totalChoicesAvg
-                    : item.outputType == "Pass/Fail"
-                      ? item.totalPassRate
-                      : item.totalAvg,
+                  item.output_type == "choices"
+                    ? item.total_choices_avg
+                    : item.output_type == "Pass/Fail"
+                      ? item.total_pass_rate
+                      : item.total_avg,
                 isNumericEval:
-                  item.outputType == OutputTypes.NUMERIC
+                  item.output_type == OutputTypes.NUMERIC
                     ? true
-                    : item?.isNumericEval,
-                isNumericEvalPercentage: item?.isNumericEvalPercentage,
+                    : item?.is_numeric_eval,
+                isNumericEvalPercentage: item?.is_numeric_eval_percentage,
               };
-              const applySort = Boolean(item?.isNumericEval);
+              const applySort = Boolean(item?.is_numeric_eval);
               const { graphLabels, graphData } =
-                item.outputType == "Pass/Fail"
+                item.output_type == "Pass/Fail"
                   ? getPassFailChartData(item?.result)
                   : getChartData(item?.result, applySort);
 
@@ -234,7 +234,7 @@ const EvalsCardGraphs = ({
                     bgcolor: "background.paper",
                   }}
                 >
-                  <ShowComponent condition={item.outputType == "choices"}>
+                  <ShowComponent condition={item.output_type == "choices"}>
                     <DonutChart
                       height={300}
                       data={graphData}
@@ -243,7 +243,7 @@ const EvalsCardGraphs = ({
                       datasetIndex={datasetIndex}
                     />
                   </ShowComponent>
-                  <ShowComponent condition={item.outputType == "Pass/Fail"}>
+                  <ShowComponent condition={item.output_type == "Pass/Fail"}>
                     <StackBarChart
                       height={350}
                       data={graphData}
@@ -254,8 +254,8 @@ const EvalsCardGraphs = ({
                   </ShowComponent>
                   <ShowComponent
                     condition={
-                      item.outputType == "score" ||
-                      item.outputType === OutputTypes.NUMERIC
+                      item.output_type == "score" ||
+                      item.output_type === OutputTypes.NUMERIC
                     }
                   >
                     <AreaChartWrapper

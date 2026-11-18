@@ -129,6 +129,7 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
     status,
     optimiserName,
     providerLogo,
+    modelDeprecated,
     parameters,
     startTime,
     configuration,
@@ -231,15 +232,21 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
 
           <Chip
             sx={{
-              backgroundColor: "blue.o10",
-              color: "blue.500",
+              backgroundColor: modelDeprecated ? "warning.lighter" : "status.info.bg",
+              color: modelDeprecated ? "warning.dark" : "status.info.fg",
               ":hover": {
-                backgroundColor: "blue.o10",
+                backgroundColor: modelDeprecated
+                  ? "warning.lighter"
+                  : "status.info.bg",
               },
-              "& .MuiChip-icon": { color: "blue.500" },
+              "& .MuiChip-icon": {
+                color: modelDeprecated ? "warning.dark" : "status.info.fg",
+              },
             }}
             icon={
-              providerLogo ? (
+              modelDeprecated ? (
+                <SvgColor width={16} src="/assets/icons/ic_warning.svg" />
+              ) : providerLogo ? (
                 <Image
                   ratio="1/1"
                   src={providerLogo}
@@ -248,18 +255,22 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
                 />
               ) : undefined
             }
-            label={`Model Used - ${model || "N/A"}`}
+            label={
+              modelDeprecated
+                ? `${model || "Unknown"} (Deprecated)`
+                : `Model Used - ${model || "N/A"}`
+            }
           />
 
           <ShowComponent condition={parameters?.length > 0}>
             <Button
-              sx={{ px: "8px" }}
               variant="outlined"
               size="small"
               startIcon={
                 <SvgColor
+                  width={16}
                   src="/assets/prompt/slider-options.svg"
-                  sx={{ height: "16px", width: "16px", color: "text.primary" }}
+                  sx={{ color: "text.primary" }}
                 />
               }
               onClick={(e) => setAnchorRef(e.currentTarget)}
@@ -272,7 +283,7 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
           <Button
             variant="outlined"
             size="small"
-            sx={{ borderColor: "#9C9C9C" }}
+            sx={{ borderColor: "border.default" }}
             startIcon={<SvgColor src="/assets/icons/ic_stop_v2.svg" />}
             onClick={() => {
               setStopOptimizationId(optimizationId);
@@ -284,17 +295,25 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
         {/* Rerun Optimization Button - shows when completed or failed */}
         <ShowComponent condition={RERUN_ALLOWED_STATUSES.includes(status)}>
           <Box sx={{ display: "flex", gap: 1 }}>
-            <Button
-              variant="outlined"
-              size="small"
-              sx={{ borderColor: "divider" }}
-              startIcon={
-                <SvgColor src="/assets/icons/navbar/ic_optimize.svg" />
-              }
-              onClick={handleRerunOptimization}
+            <CustomTooltip
+              show={Boolean(modelDeprecated)}
+              title="Model is no longer available. Select a new model to rerun."
             >
-              Rerun Optimization
-            </Button>
+              <span>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={modelDeprecated}
+                  sx={{ borderColor: "divider" }}
+                  startIcon={
+                    <SvgColor src="/assets/icons/navbar/ic_optimize.svg" />
+                  }
+                  onClick={handleRerunOptimization}
+                >
+                  Rerun Optimization
+                </Button>
+              </span>
+            </CustomTooltip>
           </Box>
         </ShowComponent>
       </Box>
@@ -328,14 +347,14 @@ const DatasetOptimizationHeaderComponent = ({ optimization, isLoading }) => {
             </Typography>
             <Link
               href={getDocsLinkBasedOnOptimizer(optimiserType)}
-              color="blue.500"
+              color="status.info.fg"
               target="_blank"
               rel="noopener noreferrer"
               fontWeight="fontWeightMedium"
-              fontSize="14px"
+              fontSize="12px"
               sx={{
                 textDecoration: "underline",
-                fontSize: "13px",
+                fontSize: "12px",
                 alignSelf: "center",
                 marginBottom: 1,
               }}

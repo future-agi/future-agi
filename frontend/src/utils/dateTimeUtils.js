@@ -5,6 +5,7 @@ import {
   subDays,
   format,
 } from "date-fns";
+import { toValidDate } from "src/utils/format-time";
 
 export const isDateRangeMoreThan7Days = (dateArray) => {
   const [startDate, endDate] = dateArray;
@@ -97,10 +98,8 @@ export const dateValueFormatter = (params) => {
 };
 
 export const timeAgoFormatter = (value) => {
-  if (!value) return "";
-
-  const date = new Date(value);
-  if (isNaN(date.getTime())) return "";
+  const date = toValidDate(value);
+  if (!date) return "";
 
   const now = new Date();
   const diff = now - date;

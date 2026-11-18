@@ -13,6 +13,7 @@ import { ShowComponent } from "../../../components/show";
 import { getLabel, getStatusColor } from "../../develop-detail/DataTab/common";
 import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
+import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import Iconify from "src/components/iconify";
@@ -40,6 +41,7 @@ const ERROR_LOCALIZER_TASK_STATUS = {
   RUNNING: "running",
   COMPLETED: "completed",
   FAILED: "failed",
+  SKIPPED: "skipped",
 };
 
 const ERROR_LOCALIZER_REFETCH_STATUS = [ERROR_LOCALIZER_TASK_STATUS.RUNNING];
@@ -74,11 +76,11 @@ const EvalDrawerSection = () => {
           },
         },
       ),
-    select: (data) => data?.data?.errorLocalizerTasks || [],
+    select: (data) => data?.data?.error_localizer_tasks || [],
     refetchInterval: ({ state }) => {
-      const errorLocalizerTasks = state?.data?.data?.errorLocalizerTasks;
+      const errorLocalizerTasks = state?.data?.data?.error_localizer_tasks;
       const errorLocalizerTask = errorLocalizerTasks?.find(
-        (task) => task.evalConfigId === evalView?.metricDetail?.id,
+        (task) => task.eval_config_id === evalView?.metricDetail?.id,
       );
       if (ERROR_LOCALIZER_REFETCH_STATUS.includes(errorLocalizerTask?.status)) {
         return ERROR_LOCALIZER_REFETCH_INTERVAL;
@@ -89,15 +91,17 @@ const EvalDrawerSection = () => {
   });
 
   const errorLocalizerTask = errorLocalizerDataList?.find(
-    (task) => task.evalConfigId === evalView?.metricDetail?.id,
+    (task) => task.eval_config_id === evalView?.metricDetail?.id,
   );
   const errorLocalizerTaskStatus = errorLocalizerTask?.status;
-  const errorAnalysis = errorLocalizerTask?.errorAnalysis;
+  const errorAnalysis = errorLocalizerTask?.error_analysis;
   const isErrorLocalizerTaskRunning = ERROR_LOCALIZER_REFETCH_STATUS.includes(
     errorLocalizerTaskStatus,
   );
   const isErrorLocalizerTaskFailed =
     errorLocalizerTaskStatus === ERROR_LOCALIZER_TASK_STATUS.FAILED;
+  const isErrorLocalizerTaskSkipped =
+    errorLocalizerTaskStatus === ERROR_LOCALIZER_TASK_STATUS.SKIPPED;
 
   return (
     <Box
@@ -123,7 +127,7 @@ const EvalDrawerSection = () => {
           {evalView?.metricDetail?.name}
         </Typography>
         <IconButton onClick={() => setEvalView(null)}>
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       <Box
@@ -140,7 +144,7 @@ const EvalDrawerSection = () => {
           </Typography>
           <Box>
             {isError ? (
-              <Box sx={{ color: theme.palette.error.main, fontSize: "14px" }}>
+              <Box sx={{ color: theme.palette.error.main, fontSize: "12px" }}>
                 Error
               </Box>
             ) : (
@@ -171,12 +175,13 @@ const EvalDrawerSection = () => {
                           label={"None"}
                           size="small"
                           sx={{
-                            backgroundColor: theme.palette.red.o10,
-                            color: theme.palette.red[500],
+                            backgroundColor: theme.palette.status.danger.bg,
+                            color: theme.palette.status.danger.fg,
                             marginRight: "10px",
                             transition: "none",
                             "&:hover": {
-                              backgroundColor: theme.palette.red[500], // Lock it to same color
+                              backgroundColor:
+                                theme.palette.status.danger.solid, // Lock it to same color
                               boxShadow: "none",
                             },
                           }}
@@ -254,12 +259,18 @@ const EvalDrawerSection = () => {
               </Typography>
             </WrapperBox>
           </ShowComponent>
+          <ShowComponent condition={isErrorLocalizerTaskSkipped}>
+            <SkippedLocalizationBanner
+              message={errorLocalizerTask?.error_message}
+            />
+          </ShowComponent>
           <ShowComponent
             condition={
               errorAnalysis &&
               errorAnalysis?.input1?.length &&
               !isErrorLocalizerTaskRunning &&
-              !isErrorLocalizerTaskFailed
+              !isErrorLocalizerTaskFailed &&
+              !isErrorLocalizerTaskSkipped
             }
           >
             <Box

@@ -2,6 +2,12 @@
 Management command to backfill existing TraceAnnotation and ItemAnnotation
 records into the unified Score model.
 
+ORDERING DEPENDENCY: this creates trace/span Scores WITHOUT
+``tracer_project_id``, so any rows it writes are invisible to PG annotation-label
+discovery until stamped. If this is ever run after
+``backfill_score_tracer_project``, re-run that command afterwards to stamp the
+new rows.
+
 Usage:
     python manage.py backfill_scores                       # both sources
     python manage.py backfill_scores --source trace        # only TraceAnnotation

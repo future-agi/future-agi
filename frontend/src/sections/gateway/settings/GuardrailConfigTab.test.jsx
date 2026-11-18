@@ -10,6 +10,13 @@ vi.mock("src/utils/logger", () => ({
   },
 }));
 
+// The card is a plain Section panel now; the nearest ancestor holding a button is it.
+const closestWithButton = (el) => {
+  let node = el;
+  while (node && !within(node).queryByRole("button")) node = node.parentElement;
+  return node;
+};
+
 describe("GuardrailConfigTab", () => {
   it("shows keyword input and saves keyword-blocklist words", async () => {
     const onChange = vi.fn();
@@ -19,7 +26,7 @@ describe("GuardrailConfigTab", () => {
     );
 
     const keywordBlocklistLabel = screen.getByText("Keyword Blocklist");
-    const keywordBlocklistCard = keywordBlocklistLabel.closest(".MuiCard-root");
+    const keywordBlocklistCard = closestWithButton(keywordBlocklistLabel);
 
     expect(keywordBlocklistCard).not.toBeNull();
 
@@ -54,5 +61,52 @@ describe("GuardrailConfigTab", () => {
         },
       },
     });
+  });
+
+  it("normalizes existing checks arrays before saving new checks", async () => {
+    const onChange = vi.fn();
+
+    render(
+      <GuardrailConfigTab
+        guardrails={{
+          checks: [
+            {
+              name: "pii-detector",
+              enabled: true,
+              action: "block",
+              config: { entities: ["EMAIL_ADDRESS"] },
+            },
+          ],
+        }}
+        onChange={onChange}
+      />,
+    );
+
+    const keywordBlocklistLabel = screen.getByText("Keyword Blocklist");
+    const keywordBlocklistCard = closestWithButton(keywordBlocklistLabel);
+
+    expect(keywordBlocklistCard).not.toBeNull();
+
+    const editButton = within(keywordBlocklistCard).getByRole("button");
+    fireEvent.click(editButton);
+
+    const blockedKeywordsInput = await screen.findByPlaceholderText(
+      "Enter one keyword or phrase per line",
+    );
+    fireEvent.change(blockedKeywordsInput, {
+      target: { value: "browser_guardrail_keyword" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const saved = onChange.mock.calls.at(-1)[0];
+    expect(saved.checks["0"]).toBeUndefined();
+    expect(saved.checks["pii-detection"]).toMatchObject({
+      name: "pii-detector",
+      _originalName: "pii-detector",
+      enabled: true,
+    });
+    expect(saved.checks["keyword-blocklist"].config.words).toEqual([
+      "browser_guardrail_keyword",
+    ]);
   });
 });

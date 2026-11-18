@@ -59,13 +59,17 @@ const FilterItems = forwardRef(
     );
 
     const id = useMemo(() => (open ? `eval-filter-popper` : undefined), [open]);
-
     const filteredColumnList = useMemo(() => {
       const newData =
-        columnLists?.map((item) => ({
-          ...item,
-          type: columnType[item.originType || item.dataType],
-        })) || [];
+        columnLists?.map((item) => {
+          const originType = item.origin_type;
+          const dataType = item.data_type;
+          return {
+            ...item,
+            type: columnType[originType || dataType],
+          };
+        }) || [];
+
       return newData?.filter((item) => {
         return filterItem.includes(item.type);
       });
@@ -85,24 +89,25 @@ const FilterItems = forwardRef(
     };
 
     const renderIcon = (col) => {
-      if (col.originType === "run_prompt") {
+      const originType = col.origin_type;
+      const dataType = col.data_type;
+      if (originType === "run_prompt") {
         return (
-          <></>
-          // <SvgColor
-          //   src={`/assets/icons/action_buttons/ic_run_prompt.svg`}
-          //   sx={{ width: 20, height: 20, color: "info.main" }}
-          // />
+          <SvgColor
+            src={`/assets/icons/action_buttons/ic_run_prompt.svg`}
+            sx={{ width: 20, height: 20, color: "info.main" }}
+          />
         );
-      } else if (col.originType === "evaluation") {
+      } else if (originType === "evaluation") {
         return (
           <Iconify
-            icon="material-symbols:check-circle-outline"
+            icon="solar:check-circle-linear"
             sx={{ color: "info.success" }}
           />
         );
       } else if (
-        col.originType === "optimisation" ||
-        col.originType === "optimisation_evaluation"
+        originType === "optimisation" ||
+        originType === "optimisation_evaluation"
       ) {
         return (
           <SvgColor
@@ -110,32 +115,32 @@ const FilterItems = forwardRef(
             sx={{ width: 20, height: 20, color: "primary.main" }}
           />
         );
-      } else if (col.originType === "annotation_label") {
-        return <Iconify icon="jam:write" sx={iconStyle} />;
-      } else if (col.dataType === "text") {
-        return <Iconify icon="material-symbols:notes" sx={iconStyle} />;
-      } else if (col.dataType === "array") {
-        return <Iconify icon="material-symbols:data-array" sx={iconStyle} />;
-      } else if (col.dataType === "integer") {
-        return <Iconify icon="material-symbols:tag" sx={iconStyle} />;
-      } else if (col.dataType === "float") {
+      } else if (originType === "annotation_label") {
+        return <Iconify icon="solar:pen-linear" sx={iconStyle} />;
+      } else if (dataType === "text") {
+        return <Iconify icon="solar:notes-linear" sx={iconStyle} />;
+      } else if (dataType === "array") {
+        return <Iconify icon="solar:brackets-linear" sx={iconStyle} />;
+      } else if (dataType === "integer") {
+        return <Iconify icon="solar:hashtag-linear" sx={iconStyle} />;
+      } else if (dataType === "float") {
         return <Iconify icon="tabler:decimal" sx={iconStyle} />;
-      } else if (col.dataType === "boolean") {
+      } else if (dataType === "boolean") {
         return (
           <Iconify icon="material-symbols:toggle-on-outline" sx={iconStyle} />
         );
-      } else if (col.dataType === "datetime") {
-        return <Iconify icon="tabler:calendar" sx={iconStyle} />;
-      } else if (col.dataType === "json") {
-        return <Iconify icon="material-symbols:data-object" sx={iconStyle} />;
-      } else if (col.dataType === "image") {
+      } else if (dataType === "datetime") {
+        return <Iconify icon="solar:calendar-linear" sx={iconStyle} />;
+      } else if (dataType === "json") {
+        return <Iconify icon="solar:braces-linear" sx={iconStyle} />;
+      } else if (dataType === "image") {
         return (
           <SvgColor
             src={`/assets/icons/action_buttons/ic_image.svg`}
             sx={{ width: 20, height: 20, color: "text.secondary" }}
           />
         );
-      } else if (col.dataType === "audio") {
+      } else if (dataType === "audio") {
         return (
           <SvgColor
             src={`/assets/icons/action_buttons/ic_audio.svg`}
@@ -171,8 +176,6 @@ const FilterItems = forwardRef(
           mt: 0.2,
           "& .MuiPaper-root": {
             bgcolor: "background.paper",
-            border: "1px solid",
-            borderColor: "divider",
             p: "12px",
             borderRadius: "4px !important",
             width: "350px",
@@ -192,7 +195,6 @@ const FilterItems = forwardRef(
               {...(allSelected ? { color: "primary" } : {})}
               sx={{
                 borderColor: "divider",
-                borderRadius: "4px",
                 color: allSelected ? "background.paper" : "text.secondary",
               }}
               onClick={() =>
@@ -215,7 +217,6 @@ const FilterItems = forwardRef(
                   {...(active ? { color: "primary" } : {})}
                   sx={{
                     // backgroundColor: active ? "primary.main" : "transparent",
-                    borderRadius: "4px",
                     color: active ? "background.paper" : "text.secondary",
                     borderColor: "divider",
                   }}
@@ -266,7 +267,7 @@ const FilterItems = forwardRef(
                   fontWeight={"fontWeightRegular"}
                   sx={{
                     cursor: "pointer",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                     "&:hover": {
                       backgroundColor: "action.hover",
                       "& div p": { fontWeight: "fontWeightMedium" },

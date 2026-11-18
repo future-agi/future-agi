@@ -22,9 +22,14 @@ import { ConfirmDialog } from "../custom-dialog";
 import { enqueueSnackbar } from "notistack";
 import { GENERATE_PROMPT_BUTTONS } from "src/utils/constants";
 import { usePromptStreamUrl } from "src/sections/workbench/createPrompt/hooks/usePromptStreamUrl";
-import { runPromptOverSocket } from "src/sections/workbench/createPrompt/common";
+import {
+  handleAuthFailClose,
+  handleWsErrorFrame,
+  runPromptOverSocket,
+} from "src/sections/workbench/createPrompt/common";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
 import { useActiveSocket } from "src/hooks/use-active-socket";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const schema = z.object({
   prompt: z.string().min(1, "Prompt is required"),
@@ -74,6 +79,15 @@ export default function GeneratePromptDrawer({
         // one from llm streaming activity completion and one canonical final completion.
         // settled ensures we resolve/reject only once.
         let settled = false;
+        const isSettled = () => settled;
+        const markSettled = () => {
+          settled = true;
+        };
+        const resetGenerationState = () => {
+          setIsGeneratingPrompt(false);
+          setLoadingStage("");
+          setGeneratedPrompt("");
+        };
         const completeGeneration = (message, promptText) => {
           if (settled || !promptText) return;
           settled = true;
@@ -92,6 +106,17 @@ export default function GeneratePromptDrawer({
           },
           onMessage: (data) => {
             const wsData = data;
+            // Surface top-level BE error frames (permission, workspace, etc.)
+            // before the type filter so the spinner doesn't hang on 4003/4004.
+            const handled = handleWsErrorFrame({
+              wsData,
+              isSettled,
+              markSettled,
+              cleanup: resetGenerationState,
+              reject,
+              defaultMessage: "Failed to generate prompt",
+            });
+            if (handled) return;
             if (wsData?.type !== "generate_prompt") return;
             const generatePromptData = wsData;
             const current_activity = generatePromptData?.current_activity;
@@ -137,16 +162,21 @@ export default function GeneratePromptDrawer({
             );
             reject(err);
           },
-          onClose: () => {
-            if (!settled) {
-              settled = true;
-              setIsGeneratingPrompt(false);
-              reject(
-                new Error(
-                  "WebSocket closed before prompt generation completed",
-                ),
-              );
-            }
+          onClose: (event) => {
+            const handled = handleAuthFailClose({
+              event,
+              isSettled,
+              markSettled,
+              cleanup: () => setIsGeneratingPrompt(false),
+              reject,
+            });
+            if (handled) return;
+            if (settled) return;
+            settled = true;
+            setIsGeneratingPrompt(false);
+            reject(
+              new Error("WebSocket closed before prompt generation completed"),
+            );
           },
         });
         activeSocketRef.current = socket;
@@ -166,6 +196,8 @@ export default function GeneratePromptDrawer({
     setGeneratedPrompt("");
     generatePrompt(data?.prompt);
   };
+
+  const covered = useDrawerCovered(open);
 
   const handleClose = (force = false) => {
     const forceOrEvent = typeof force === "boolean" ? force : false;
@@ -197,13 +229,13 @@ export default function GeneratePromptDrawer({
         anchor="right"
         open={open}
         onClose={handleClose}
+        sx={coveredDrawerSx(covered)}
         PaperProps={{
           sx: {
             height: "100vh",
-            width: "590px",
+            width: "640px",
             position: "fixed",
             zIndex: 2,
-            boxShadow: "-10px 0px 100px #00000035",
             backgroundColor: "background.paper",
             overflow: "visible",
           },
@@ -251,7 +283,6 @@ export default function GeneratePromptDrawer({
             <IconButton
               onClick={handleClose}
               sx={{
-                padding: theme.spacing(0.5),
                 margin: 0,
               }}
             >
@@ -293,8 +324,6 @@ export default function GeneratePromptDrawer({
                     flexDirection: "row",
                     gap: theme.spacing(1),
                     backgroundColor: "background.neutral",
-                    borderRadius: theme.spacing(0.25),
-                    padding: theme.spacing(0.5, 1),
                     border: "1px solid",
                     borderColor: "divider",
                     transition: "border-color 200ms ease-in-out",
@@ -349,8 +378,6 @@ export default function GeneratePromptDrawer({
             fullWidth
             onClick={handleClose}
             sx={{
-              borderRadius: theme.spacing(1),
-              minHeight: theme.spacing(38 / 8),
               "&:hover": {
                 borderColor: "transparent !important",
               },
@@ -377,8 +404,6 @@ export default function GeneratePromptDrawer({
             variant="contained"
             color="primary"
             sx={{
-              borderRadius: theme.spacing(1),
-              minHeight: theme.spacing(38 / 8),
               color: "primary.contrastText",
             }}
           >

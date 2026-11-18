@@ -12,7 +12,8 @@ import AddSDKModal from "./AddSDKModal";
 import SyntheticDataDrawer from "../AddRowDrawer/CreateSyntheticData";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import ExistingDatasetModal from "../AddRowDrawer/ExistingDatasetModal";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const options = [
   {
@@ -89,11 +90,17 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
   const [syntheticDataDrawerOpen, setSyntheticDataDrawerOpen] = useState(false);
 
   const navigate = useNavigate();
-  const { isOSS } = useDeploymentMode();
-  const filteredOptions = isOSS
+  // Hide the Synthetic Data tile while capabilities load or when denied
+  // (fail closed) so it never flashes for a deployment/plan without it. The
+  // route is separately guarded by CapabilityGate for deep-links.
+  const { locked: syntheticLocked } = useFeatureLocked(
+    CAPABILITY.SYNTHETIC_DATA,
+  );
+  const filteredOptions = syntheticLocked
     ? options.filter((o) => o.id !== "synthetic-data")
     : options;
 
+  const covered = useDrawerCovered(open);
   return (
     <>
       <AddSDKModal
@@ -136,13 +143,14 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
       <Drawer
         anchor="right"
         open={open}
+        sx={coveredDrawerSx(covered)}
         onClose={onClose}
         PaperProps={{
           sx: {
             height: "100vh",
             position: "fixed",
             zIndex: 9999,
-            borderRadius: "10px",
+            borderRadius: "8px",
             backgroundColor: "background.paper",
           },
         }}
@@ -181,7 +189,7 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
                     <Link
                       href="https://docs.futureagi.com/docs/dataset"
                       underline="always"
-                      color="blue.500"
+                      color="status.info.fg"
                       target="_blank"
                       rel="noopener noreferrer"
                       fontWeight="fontWeightMedium"
@@ -198,7 +206,7 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
                   onClick={onClose}
                   sx={{ position: "absolute", top: "10px", right: "12px" }}
                 >
-                  <Iconify icon="mingcute:close-line" color="text.primary" />
+                  <Iconify icon="solar:close-linear" color="text.primary" />
                 </IconButton>
               </Box>
               <Box

@@ -20,6 +20,7 @@ import React, {
   useState,
 } from "react";
 import Iconify from "src/components/iconify";
+import { useMapToVariable } from "./useMapToVariable";
 import { canonicalEntries, canonicalKeys } from "src/utils/utils";
 
 // Preview mode for the run-simulation creation flow. The simulation
@@ -45,6 +46,11 @@ const VOICE_RUNTIME_LEAVES = [
   "assistant_recording",
   "customer_recording",
   "agent_prompt",
+  // Only the voice pipeline populates these; chat resolves them to "".
+  "summary",
+  "phone_number",
+  "recording_url",
+  "stereo_recording_url",
 ];
 const TEXT_RUNTIME_LEAVES = [
   "transcript",
@@ -53,14 +59,10 @@ const TEXT_RUNTIME_LEAVES = [
   "agent_prompt",
 ];
 const COMMON_RUNTIME_LEAVES = [
-  "summary",
   "ended_reason",
   "duration_seconds",
   "status",
   "overall_score",
-  "phone_number",
-  "recording_url",
-  "stereo_recording_url",
 ];
 
 const PRIORITY_PREFIXES = [
@@ -172,6 +174,13 @@ const CreateSimulationPreviewMode = React.forwardRef(
         ? { ...initialMapping }
         : {},
     );
+
+    // Shared click-to-map behaviour for the Columns/Value table rows.
+    const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
+      variables,
+      mapping,
+      setMapping,
+    });
     const [tableSearch, setTableSearch] = useState("");
     const [expandedCols, setExpandedCols] = useState({});
 
@@ -364,11 +373,17 @@ const CreateSimulationPreviewMode = React.forwardRef(
     const scenarioSummaries = previewData?.scenario_summaries || [];
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         <Alert
           severity="info"
-          icon={<Iconify icon="mdi:information-outline" width={18} />}
-          sx={{ py: 0.5, "& .MuiAlert-message": { fontSize: "12px" } }}
+          icon={<Iconify icon="solar:info-circle-linear" width={20} />}
         >
           Preview — the simulation hasn&apos;t run yet. Runtime fields
           (transcript, recordings, summary, etc.) are shown with a placeholder;
@@ -407,10 +422,7 @@ const CreateSimulationPreviewMode = React.forwardRef(
                     px: 1,
                     py: 0.5,
                     borderRadius: "4px",
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.03)"
-                        : "grey.50",
+                    bgcolor: "background.neutral",
                   }}
                 >
                   <Typography
@@ -421,28 +433,26 @@ const CreateSimulationPreviewMode = React.forwardRef(
                     {s.name || s.id}
                   </Typography>
                   {s.scenario_type && (
-                    <Chip
-                      label={s.scenario_type}
-                      size="small"
-                      sx={{ height: 18, fontSize: "10px" }}
-                    />
+                    <Chip label={s.scenario_type} size="small" />
                   )}
                   {s.persona?.name && (
                     <Chip
-                      icon={<Iconify icon="mdi:account-voice" width={12} />}
+                      icon={
+                        <Iconify icon="solar:user-speak-linear" width={12} />
+                      }
                       label={`Persona: ${s.persona.name}`}
                       size="small"
                       variant="outlined"
-                      sx={{ height: 18, fontSize: "10px" }}
                     />
                   )}
                   {s.prompt_template?.name && (
                     <Chip
-                      icon={<Iconify icon="mdi:file-document" width={12} />}
+                      icon={
+                        <Iconify icon="solar:document-text-linear" width={12} />
+                      }
                       label={`Prompt: ${s.prompt_template.name}`}
                       size="small"
                       variant="outlined"
-                      sx={{ height: 18, fontSize: "10px" }}
                     />
                   )}
                 </Box>
@@ -477,7 +487,7 @@ const CreateSimulationPreviewMode = React.forwardRef(
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon="mdi:magnify"
+                      icon="solar:magnifier-linear"
                       width={14}
                       sx={{ color: "text.disabled" }}
                     />
@@ -493,10 +503,7 @@ const CreateSimulationPreviewMode = React.forwardRef(
               display: "flex",
               px: 1.5,
               py: 0.5,
-              backgroundColor: (theme) =>
-                theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.03)"
-                  : "#fafafa",
+              backgroundColor: "background.neutral",
               borderBottom: "1px solid",
               borderColor: "divider",
             }}
@@ -534,6 +541,7 @@ const CreateSimulationPreviewMode = React.forwardRef(
                       borderColor: "divider",
                       "&:last-child": { borderBottom: "none" },
                       "&:hover": { backgroundColor: "action.hover" },
+                      ...rowHoverSx,
                     }}
                   >
                     <Typography
@@ -586,6 +594,7 @@ const CreateSimulationPreviewMode = React.forwardRef(
                             : String(val)}
                       </Typography>
                     </Box>
+                    {renderRowMapAction(key)}
                   </Box>
                 );
               })}
@@ -622,7 +631,7 @@ const CreateSimulationPreviewMode = React.forwardRef(
                     }}
                   >
                     <Iconify
-                      icon="mdi:code-braces"
+                      icon="solar:code-linear"
                       width={14}
                       sx={{ color: "text.secondary" }}
                     />
@@ -635,7 +644,7 @@ const CreateSimulationPreviewMode = React.forwardRef(
                     </Typography>
                   </Box>
                   <Iconify
-                    icon="mdi:arrow-right"
+                    icon="solar:arrow-right-linear"
                     width={14}
                     sx={{ color: "text.disabled" }}
                   />
@@ -704,6 +713,9 @@ const CreateSimulationPreviewMode = React.forwardRef(
             </Box>
           </Box>
         )}
+
+        {/* Map-from-table menu — shared across mapping surfaces */}
+        {mapMenu}
       </Box>
     );
   },

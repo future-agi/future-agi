@@ -1,36 +1,38 @@
-import React from 'react';
-import { motion } from 'framer-motion';
-import MotionContainer from './motion-container';
+import React from "react";
+import { motion } from "framer-motion";
+import MotionContainer from "./motion-container";
 
 const meta = {
   component: MotionContainer,
-  title: 'Components/MotionContainer',
+  title: "Components/MotionContainer",
   argTypes: {
     animate: {
-      control: 'boolean',
-      description: 'Controls whether the container is in animate state'
+      control: "boolean",
+      description: "Controls whether the container is in animate state",
     },
     action: {
-      control: 'boolean',
-      description: 'Determines the animation behavior'
+      control: "boolean",
+      description: "Determines the animation behavior",
     },
     children: {
-      control: 'text',
-      description: 'Content inside the motion container'
-    }
+      control: "text",
+      description: "Content inside the motion container",
+    },
   },
   decorators: [
     (Story) => (
-      <div style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        height: '300px'
-      }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "300px",
+        }}
+      >
         <Story />
       </div>
-    )
-  ]
+    ),
+  ],
 };
 
 export default meta;
@@ -43,16 +45,16 @@ export const Default = {
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.5 }}
         style={{
-          padding: '20px',
-          background: 'lightblue',
-          width: '200px',
-          height: '100px'
+          padding: "20px",
+          background: "lightblue",
+          width: "200px",
+          height: "100px",
         }}
       >
         Motion Container Content
       </motion.div>
-    )
-  }
+    ),
+  },
 };
 
 export const WithAnimation = {
@@ -64,16 +66,16 @@ export const WithAnimation = {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
         style={{
-          padding: '20px',
-          background: 'lightgreen',
-          width: '200px',
-          height: '100px'
+          padding: "20px",
+          background: "lightgreen",
+          width: "200px",
+          height: "100px",
         }}
       >
         Animated Motion Container
       </motion.div>
-    )
-  }
+    ),
+  },
 };
 
 export const ActionMode = {
@@ -86,14 +88,14 @@ export const ActionMode = {
         animate={{ opacity: 1, rotate: 0 }}
         transition={{ duration: 0.5 }}
         style={{
-          padding: '20px',
-          background: 'lightsalmon',
-          width: '200px',
-          height: '100px'
+          padding: "20px",
+          background: "lightsalmon",
+          width: "200px",
+          height: "100px",
         }}
       >
         Action Mode Motion Container
       </motion.div>
-    )
-  }
+    ),
+  },
 };

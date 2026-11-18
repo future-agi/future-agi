@@ -11,11 +11,12 @@ import SvgColor from "src/components/svg-color";
 import TestAudioPlayer from "./TestAudioPlayer";
 
 const AudioDatapointCard = ({ value, column }) => {
+  const cellValue = value?.cell_value;
   const memoizedAudioData = useMemo(() => {
     try {
-      if (value?.cellValue) {
+      if (cellValue) {
         return {
-          url: value.cellValue,
+          url: cellValue,
           fileName: "",
           fileType: "",
           size: "",
@@ -26,7 +27,7 @@ const AudioDatapointCard = ({ value, column }) => {
       logger.error("Failed to memoize audio data:", error);
       return null;
     }
-  }, [value?.cellValue]);
+  }, [cellValue]);
 
   return (
     <Accordion defaultExpanded disableGutters>
@@ -78,11 +79,11 @@ const AudioDatapointCard = ({ value, column }) => {
               <Typography
                 sx={{
                   typography: "s2_1",
-                  color: "red.500",
+                  color: "status.danger.fg",
                   fontWeight: "fontWeightMedium",
                 }}
               >
-                {value?.valueInfos?.reason ||
+                {value?.value_infos?.reason ||
                   "An unexpected error occurred. Please try again."}
               </Typography>
             ) : (

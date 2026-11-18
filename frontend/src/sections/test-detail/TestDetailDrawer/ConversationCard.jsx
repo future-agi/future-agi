@@ -1,4 +1,4 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo } from "react";
 import { format } from "date-fns";
@@ -10,21 +10,25 @@ import CellMarkdown from "src/sections/common/CellMarkdown";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
 import { allExpanded, defaultStyles } from "react-json-view-lite";
 import { isJsonValue } from "src/utils/utils";
+import {
+  ToolCallCard,
+  ToolResultCard,
+} from "src/components/tool-call/ToolCallCard";
 
 const ColorMap = (role) => {
   switch (role) {
     case "system": {
       return {
-        borderColor: "orange.100",
-        backgroundColor: "orange.o10",
-        headerColor: "orange.500",
-        textColor: "orange.600",
+        borderColor: "status.warning.border",
+        backgroundColor: "status.warning.bg",
+        headerColor: "status.warning.fg",
+        textColor: "status.warning.fg",
       };
     }
     case "user": {
       return {
-        borderColor: "blue.100",
-        backgroundColor: "blue.o10",
+        borderColor: "status.info.border",
+        backgroundColor: "status.info.bg",
       };
     }
     case "assistant": {
@@ -35,8 +39,8 @@ const ColorMap = (role) => {
     }
     default: {
       return {
-        borderColor: "orange.100",
-        backgroundColor: "orange.o10",
+        borderColor: "status.warning.border",
+        backgroundColor: "status.warning.bg",
       };
     }
   }
@@ -52,6 +56,7 @@ const ConversationCard = ({
   callType,
   simulationCallType,
   highlightedContent,
+  rawContent,
 }) => {
   // Check if content is JSON and parse it
   const isJsonContent = useMemo(() => isJsonValue(content), [content]);
@@ -125,7 +130,7 @@ const ConversationCard = ({
             sx={{
               height: 16,
               width: 16,
-              color: "pink.500",
+              color: "status.discovery.fg",
             }}
           />
         </Box>
@@ -138,7 +143,7 @@ const ConversationCard = ({
           border: "1px solid",
           borderColor: ColorMap(role)?.borderColor,
           backgroundColor: ColorMap(role)?.backgroundColor,
-          borderRadius: 0.5,
+          borderRadius: "4px",
           padding: 1,
           flexDirection: "column",
           gap: 1,
@@ -168,6 +173,34 @@ const ConversationCard = ({
           </Typography>
         </Box>
         {renderContent()}
+        <ShowComponent
+          condition={Array.isArray(rawContent) && rawContent.length > 0}
+        >
+          <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+            {rawContent.flatMap((message, index) => {
+              if (message.role === "tool") {
+                return [
+                  <ToolResultCard
+                    key={`result-${index}`}
+                    content={message.content}
+                  />,
+                ];
+              }
+              if (message.tool_calls?.length > 0) {
+                return message.tool_calls.map((toolCall) => (
+                  <ToolCallCard
+                    key={toolCall.id}
+                    toolCall={{
+                      name: toolCall.function.name,
+                      arguments: toolCall.function.arguments,
+                    }}
+                  />
+                ));
+              }
+              return [];
+            })}
+          </Stack>
+        </ShowComponent>
       </Box>
 
       <ShowComponent
@@ -190,7 +223,7 @@ const ConversationCard = ({
             sx={{
               height: 16,
               width: 16,
-              color: "blue.500",
+              color: "status.info.fg",
             }}
           />
         </Box>
@@ -209,6 +242,7 @@ ConversationCard.propTypes = {
   callType: PropTypes.string,
   simulationCallType: PropTypes.string,
   highlightedContent: PropTypes.node,
+  rawContent: PropTypes.arrayOf(PropTypes.object),
 };
 
 export default ConversationCard;

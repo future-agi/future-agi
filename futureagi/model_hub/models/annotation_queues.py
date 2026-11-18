@@ -211,6 +211,22 @@ class AnnotationQueue(BaseModel):
     def __str__(self):
         return f"AnnotationQueue: {self.name}"
 
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        super().save(*args, **kwargs)
+
+        if not is_new or not self.created_by_id:
+            return
+
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue=self,
+            user_id=self.created_by_id,
+            defaults={
+                "role": AnnotatorRole.MANAGER.value,
+                "roles": FULL_ACCESS_QUEUE_ROLES,
+            },
+        )
+
 
 class AnnotationQueueLabel(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -224,7 +240,10 @@ class AnnotationQueueLabel(BaseModel):
         on_delete=models.CASCADE,
         related_name="queue_memberships",
     )
-    required = models.BooleanField(default=True)
+    # Labels are optional to fill unless a queue owner explicitly marks them
+    # required. Marking a label required is a gated feature, so the default
+    # must stay off — otherwise every plainly-added label trips the gate.
+    required = models.BooleanField(default=False)
     order = models.IntegerField(default=0)
 
     class Meta:
@@ -301,9 +320,7 @@ def user_has_annotation_queue_admin_access(queue, user):
         .order_by("-updated_at")
         .first()
     )
-    return bool(
-        membership and membership.level_or_legacy >= Level.WORKSPACE_ADMIN
-    )
+    return bool(membership and membership.level_or_legacy >= Level.WORKSPACE_ADMIN)
 
 
 def annotation_queue_effective_roles(queue, user, membership=None):
@@ -412,6 +429,7 @@ class QueueItem(BaseModel):
         null=True,
         blank=True,
         related_name="queue_items",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     observation_span = models.ForeignKey(
         "tracer.ObservationSpan",
@@ -419,6 +437,7 @@ class QueueItem(BaseModel):
         null=True,
         blank=True,
         related_name="queue_items",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     prototype_run = models.ForeignKey(
         "model_hub.RunPrompter",
@@ -440,6 +459,7 @@ class QueueItem(BaseModel):
         null=True,
         blank=True,
         related_name="queue_items",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
 
     organization = models.ForeignKey(
@@ -454,6 +474,34 @@ class QueueItem(BaseModel):
         null=True,
         blank=True,
     )
+    # Denormalized from the item's source project so the render/list CH reads can
+    # prune by the ``spans`` PK prefix (project_id) instead of scanning the whole
+    # multi-tenant table. Best-effort: a NULL project falls back to an unscoped
+    # read (correct, just slow). Deliberately NOT a source FK and kept out of
+    # SOURCE_TYPE_FK_MAP, so clean()'s mutual-exclusion never touches it.
+    project = models.ForeignKey(
+        "tracer.Project",
+        on_delete=models.SET_NULL,
+        related_name="+",
+        null=True,
+        blank=True,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
+    )
+    # Denormalized render payload for the items grid, captured at add time from
+    # the source object the add path has already resolved (so it costs no extra
+    # read). Rendering a page used to mean one ``spans FINAL`` merge per page —
+    # ~1.5-2.3s on a large voice project — to show a name and two 200-char
+    # previews (TH-7211). Project-scoping alone does not fix it: the ``spans``
+    # PK is (project_id, observation_type, service_name, start_time) and only
+    # the first column is constrained, so every partition still merges.
+    #
+    # A queue item is a snapshot of a TERMINAL source (``add_items`` refuses a
+    # trace whose root span is still running), so this never goes stale in
+    # normal operation. It is a cache, not a source of truth: NULL means "not
+    # captured" and the serializer falls back to the live read, and the
+    # annotate/detail path always reads live so an opened item shows the truth
+    # even if its source was deleted after capture.
+    source_preview = models.JSONField(null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -896,3 +944,38 @@ class AutomationRule(BaseModel):
 
     def __str__(self):
         return f"AutomationRule: {self.name} (queue={self.queue_id})"
+
+
+class AnnotationNotificationState(BaseModel):
+    """Per-user state for the annotation digest emails.
+
+    Tracks two cadences:
+    - **Realtime (every 15min cron):** when ``last_realtime_digest_at`` is
+      older than the 60-minute throttle, eligible to fire if there are new
+      pending items since that timestamp.
+    - **Daily (hourly cron):** when local-time-now matches
+      ``daily_digest_hour_local`` and ``last_daily_digest_at`` is older
+      than ~12h, eligible to fire with a current-state snapshot.
+
+    ``digest_enabled = False`` opts the user out of both tracks
+    (unsubscribe link in the email footer flips this). ``realtime_snoozed_until``
+    pauses just the realtime track for N days when the user clicks Snooze.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="annotation_notification_state",
+    )
+    last_realtime_digest_at = models.DateTimeField(null=True, blank=True)
+    last_daily_digest_at = models.DateTimeField(null=True, blank=True)
+    digest_enabled = models.BooleanField(default=True)
+    realtime_snoozed_until = models.DateTimeField(null=True, blank=True)
+    daily_digest_hour_local = models.IntegerField(
+        default=9,
+        help_text="Hour of day (0-23) to send the daily digest in the user's local TZ.",
+    )
+
+    def __str__(self):
+        return f"AnnotationNotificationState({self.user_id})"

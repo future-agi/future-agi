@@ -6,6 +6,10 @@ from here so that OSS code never needs to import from ee.usage.models.
 
 from django.db import models
 
+# Evals a fix runs on its own check runs. The user did not ask for them one by one, so they
+# neither meet the organization's eval rate limits nor count towards them.
+FIX_CHECK_RUN_EVAL_SOURCE = "fix_check_run"
+
 
 class APICallTypeChoices(models.TextChoices):
     PROMPT_BENCH = "prompt_bench", "Prompt Bench"
@@ -19,6 +23,7 @@ class APICallTypeChoices(models.TextChoices):
     PROTECT_EVALUATOR = "protect_evaluator", "Protect Evaluator"
     PROTECT_FLASH_EVALUATOR = "protect_flash_evaluator", "Protect Flash Evaluator"
     CODE_EVALUATOR = "code_evaluator", "Code Evaluator"
+    JEV_EVALUATOR = "jev_evaluator", "Jev Evaluator"
 
     USER_ADD = "user_add", "User Add"
     OBSERVE_ADD = "observe_add", "Observe Add"

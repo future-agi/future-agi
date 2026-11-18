@@ -1,0 +1,1999 @@
+// This suite reads the widget sources off disk to prove the saved widget and
+// the editor preview resolve their axis through the same helper, so it needs
+// `process`. Everything under src/ otherwise lints as browser code.
+/* eslint-env node */
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, it, expect } from "vitest";
+import {
+  fromAxisConfigPayload,
+  getAggColumnLabel,
+  getExactDashboardResult,
+  getDashboardMetricSeriesState,
+  getPlottedChartSeries,
+  getChartTimeWindow,
+  CHART_DENSE_POINT_BUDGET,
+  countPlottedPoints,
+  getTableBucketPlan,
+  describeTableBuckets,
+  TABLE_BUCKET_LIMIT,
+  isDenseChartSeries,
+  CHART_MARKER_SERIES_LIMIT,
+  getChartMarkerSizes,
+  isAbsentChartPoint,
+  getSeriesExtent,
+  getSeriesScalar,
+  groupPieSeries,
+  isAdditiveAggregation,
+  getYAxisRangeWarning,
+  getAutoYAxisBounds,
+  getFittedYAxisBounds,
+  getVisibleIndices,
+  resolveAxisBounds,
+  resolveWidgetAxisPlan,
+  chartTypeFitsBand,
+  parseBound,
+  makeSeriesKey,
+  resolveSavedSelection,
+  resolveVisibleSeries,
+  seriesHasDataPoints,
+  toAxisConfigPayload,
+} from "../widgetUtils";
+import { ALL_AGGREGATIONS } from "../constants";
+
+describe("axis config contract", () => {
+  const uiConfig = {
+    leftY: { prefixSuffix: "prefix", outOfBounds: "visible", unit: "ms" },
+    rightY: { prefixSuffix: "suffix", outOfBounds: "hidden" },
+    xAxis: { visible: true },
+    seriesAxis: { 0: "right" },
+  };
+
+  it("serializes UI state to the snake_case API contract", () => {
+    expect(toAxisConfigPayload(uiConfig)).toEqual({
+      left_y: {
+        prefix_suffix: "prefix",
+        out_of_bounds: "visible",
+        unit: "ms",
+      },
+      right_y: { prefix_suffix: "suffix", out_of_bounds: "hidden" },
+      x_axis: { visible: true },
+      series_axis: { 0: "right" },
+    });
+  });
+
+  it("restores the snake_case API contract to UI state", () => {
+    expect(fromAxisConfigPayload(toAxisConfigPayload(uiConfig))).toEqual(
+      uiConfig,
+    );
+  });
+
+  it("restores legacy camelCase axis configs during rollout", () => {
+    expect(fromAxisConfigPayload(uiConfig)).toEqual(uiConfig);
+  });
+});
+
+describe("seriesHasDataPoints", () => {
+  it("returns false when series is empty", () => {
+    expect(seriesHasDataPoints([])).toBe(false);
+  });
+
+  it("returns false when every series entry has an empty data array", () => {
+    expect(
+      seriesHasDataPoints([
+        { name: "a", data: [] },
+        { name: "b", data: [] },
+      ]),
+    ).toBe(false);
+  });
+
+  it("returns true when at least one series entry has data points", () => {
+    expect(
+      seriesHasDataPoints([
+        { name: "a", data: [] },
+        { name: "b", data: [{ x: 0, y: 1 }] },
+      ]),
+    ).toBe(true);
+  });
+
+  it("does not crash on a null/undefined series entry", () => {
+    // red if the ?. guard on `s` is reverted: series.some((s) => (s.data || [])...) throws
+    // TypeError: Cannot read properties of undefined (reading 'data')
+    expect(
+      seriesHasDataPoints([
+        null,
+        undefined,
+        { name: "a", data: [{ x: 0, y: 1 }] },
+      ]),
+    ).toBe(true);
+    expect(seriesHasDataPoints([null, undefined])).toBe(false);
+  });
+});
+
+describe("getPlottedChartSeries", () => {
+  const source = () => [
+    {
+      name: "Latency (avg)",
+      data: [
+        { x: 1, y: 12 },
+        { x: 2, y: null },
+        { x: 3, y: 0 },
+        { x: 4, y: 18 },
+      ],
+    },
+  ];
+
+  it("drops undrawable buckets while keeping zeroes", () => {
+    expect(getPlottedChartSeries(source())[0].data).toEqual([
+      { x: 1, y: 12 },
+      { x: 3, y: 0 },
+      { x: 4, y: 18 },
+    ]);
+  });
+
+  it("leaves the response untouched for the table, CSV and metric card", () => {
+    const original = source();
+    getPlottedChartSeries(original);
+    expect(original[0].data).toHaveLength(4);
+    expect(original[0].data[1].y).toBeNull();
+  });
+
+  it("drops them for every chart type, bars included", () => {
+    // A bar for an empty bucket has no height, but Apex still emits a node for
+    // it: a column widget over five minute-granularity days drew 7,201 paths
+    // for 36 observed values (TH-7757).
+    const buckets = [
+      {
+        name: "count",
+        data: Array.from({ length: 7201 }, (_, x) => ({
+          x,
+          y: x % 200 === 0 ? 1 : null,
+        })),
+      },
+    ];
+    expect(getPlottedChartSeries(buckets)[0].data).toHaveLength(37);
+  });
+
+  it("handles empty, malformed and missing input", () => {
+    expect(getPlottedChartSeries()).toEqual([]);
+    expect(getPlottedChartSeries([])).toEqual([]);
+    expect(getPlottedChartSeries(null)).toEqual([]);
+    expect(getPlottedChartSeries([{ name: "no data" }])).toEqual([
+      { name: "no data", data: [] },
+    ]);
+  });
+});
+
+describe("getAggColumnLabel", () => {
+  it("returns 'Average' when metrics list is empty", () => {
+    expect(getAggColumnLabel([], ALL_AGGREGATIONS)).toBe("Average");
+  });
+
+  it("returns 'Average' when a single metric has aggregation 'avg'", () => {
+    const metrics = [{ aggregation: "avg" }];
+    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("Average");
+  });
+
+  it("returns 'Sum' when a single metric has aggregation 'sum'", () => {
+    const metrics = [{ aggregation: "sum" }];
+    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("Sum");
+  });
+
+  it("returns 'Median' when all metrics share the median aggregation", () => {
+    const metrics = [{ aggregation: "median" }, { aggregation: "median" }];
+    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("Median");
+  });
+
+  it("returns the real percentile label (95th Percentile, not 'p95')", () => {
+    // red if source drifts from this mock again: WidgetEditorView renders
+    // "95th Percentile" for p95, not the raw value "p95".
+    const metrics = [{ aggregation: "p95" }];
+    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe(
+      "95th Percentile",
+    );
+  });
+
+  it("returns the real percentile label (25th Percentile)", () => {
+    const metrics = [{ aggregation: "p25" }];
+    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe(
+      "25th Percentile",
+    );
+  });
+
+  it("returns 'Agg.' when multiple metrics have different aggregations", () => {
+    const metrics = [{ aggregation: "sum" }, { aggregation: "count" }];
+    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("Agg.");
+  });
+
+  it("coerces undefined aggregation to 'avg', returning 'Average'", () => {
+    const metrics = [{ aggregation: undefined }];
+    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("Average");
+  });
+
+  it("falls back to 'Average' when aggregation value is not in allAggregations", () => {
+    const metrics = [{ aggregation: "unknown_agg" }];
+    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("Average");
+  });
+
+  it("returns 'Average' when metrics is null or undefined", () => {
+    // red if the ?. guard in getAggColumnLabel is reverted to metrics.length
+    expect(getAggColumnLabel(null, ALL_AGGREGATIONS)).toBe("Average");
+    expect(getAggColumnLabel(undefined, ALL_AGGREGATIONS)).toBe("Average");
+  });
+});
+
+const series = (values) => [
+  { name: "s1", data: values.map((y, i) => ({ x: i, y })) },
+];
+
+const leftAxis = (bounds) => ({ leftY: bounds });
+
+describe("getDashboardMetricSeriesState", () => {
+  const point = { timestamp: "2026-07-09T00:00:00Z", value: 12 };
+  const sampledMetric = {
+    name: "final_status",
+    aggregation: "count_distinct",
+    query_complete: false,
+    query_status: "sampled",
+    query_error_code: "sample_limit",
+    query_sampling_strategy: "bounded_physical_rows_per_time_bucket",
+    query_sampling_interval_seconds: 86400,
+    query_sample_limit: 8192,
+    query_sample_per_bucket: 128,
+    series: [{ name: "total", data: [point] }],
+  };
+  const completeMetric = {
+    name: "latency",
+    aggregation: "avg",
+    query_complete: true,
+    query_status: "complete",
+    query_sampled: false,
+    series: [{ name: "total", data: [point] }],
+  };
+
+  it("fails sampled and degraded metrics closed", () => {
+    const degradedMetric = {
+      name: "latency",
+      aggregation: "avg",
+      query_complete: false,
+      query_status: "degraded",
+      query_error_code: "read_budget_exceeded",
+      series: [{ name: "total", data: [point] }],
+    };
+
+    const state = getDashboardMetricSeriesState([
+      sampledMetric,
+      degradedMetric,
+    ]);
+
+    expect(state.hasSampledMetrics).toBe(true);
+    expect(state.hasDegradedMetrics).toBe(true);
+    expect(state.renderableMetrics).toEqual([]);
+    expect(state.series).toEqual([]);
+  });
+
+  it("fails closed instead of plotting a malformed sample", () => {
+    const state = getDashboardMetricSeriesState([
+      { ...sampledMetric, query_error_code: "query_failed" },
+    ]);
+
+    expect(state.hasSampledMetrics).toBe(false);
+    expect(state.hasDegradedMetrics).toBe(true);
+    expect(state.series).toEqual([]);
+  });
+
+  it("keeps a pending metric non-renderable while an exact snapshot is built", () => {
+    const state = getDashboardMetricSeriesState([
+      {
+        ...completeMetric,
+        query_complete: false,
+        query_status: "pending",
+        query_refreshing: true,
+        series: [],
+      },
+    ]);
+
+    expect(state.hasPendingMetrics).toBe(true);
+    expect(state.renderableMetrics).toEqual([]);
+    expect(state.series).toEqual([]);
+  });
+
+  it.each([
+    ["sampled", sampledMetric, true, false],
+    [
+      "degraded",
+      {
+        ...sampledMetric,
+        query_status: "degraded",
+        query_error_code: "read_budget_exceeded",
+      },
+      false,
+      true,
+    ],
+    [
+      "error",
+      {
+        ...sampledMetric,
+        query_complete: undefined,
+        query_status: undefined,
+        query_error_code: undefined,
+        queryReadState: "error",
+      },
+      false,
+      true,
+    ],
+  ])(
+    "fails the whole widget closed for complete + %s metrics",
+    (_, unavailableMetric, hasSampled, hasDegraded) => {
+      const state = getDashboardMetricSeriesState([
+        completeMetric,
+        unavailableMetric,
+      ]);
+
+      expect(state.hasSampledMetrics).toBe(hasSampled);
+      expect(state.hasDegradedMetrics).toBe(hasDegraded);
+      expect(state.renderableMetrics).toEqual([]);
+      expect(state.series).toEqual([]);
+    },
+  );
+});
+
+describe("getExactDashboardResult", () => {
+  it("accepts an all-exact response and rejects one unavailable sibling", () => {
+    const exactMetric = {
+      name: "latency",
+      aggregation: "avg",
+      query_complete: true,
+      query_status: "complete",
+      query_sampled: false,
+      series: [],
+    };
+    const exactResult = {
+      query_complete: true,
+      query_status: "complete",
+      query_sampled: false,
+      metrics: [exactMetric],
+    };
+
+    expect(getExactDashboardResult({ data: { result: exactResult } })).toBe(
+      exactResult,
+    );
+    expect(
+      getExactDashboardResult({
+        data: {
+          result: {
+            query_complete: true,
+            query_status: "complete",
+            query_sampled: false,
+            metrics: [
+              exactMetric,
+              {
+                ...exactMetric,
+                query_complete: false,
+                query_status: "degraded",
+              },
+            ],
+          },
+        },
+      }),
+    ).toBeNull();
+    expect(
+      getExactDashboardResult({
+        data: { result: { metrics: [exactMetric] } },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("getYAxisRangeWarning", () => {
+  it("returns null when no min/max is configured", () => {
+    expect(getYAxisRangeWarning(series([2, 7]), [0], leftAxis({}))).toBeNull();
+    expect(
+      getYAxisRangeWarning(series([2, 7]), [0], leftAxis({ min: "", max: "" })),
+    ).toBeNull();
+  });
+
+  it("warns when Hidden clips every data point below the configured min", () => {
+    const msg = getYAxisRangeWarning(
+      series([2, 7]),
+      [0],
+      leftAxis({ min: "34", max: "545", outOfBounds: "hidden" }),
+    );
+    expect(msg).toBe(
+      "Data is outside your configured Y-axis range (34–545). Adjust bounds to see your data.",
+    );
+  });
+
+  it("warns when Hidden clips every data point above the configured max", () => {
+    const msg = getYAxisRangeWarning(
+      series([900]),
+      [0],
+      leftAxis({ min: "34", max: "545", outOfBounds: "hidden" }),
+    );
+    expect(msg).toBe(
+      "Data is outside your configured Y-axis range (34–545). Adjust bounds to see your data.",
+    );
+  });
+
+  it("returns null when at least one data point is within bounds", () => {
+    expect(
+      getYAxisRangeWarning(
+        series([2, 400]),
+        [0],
+        leftAxis({ min: "34", max: "545", outOfBounds: "hidden" }),
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null when there are no numeric data points", () => {
+    expect(
+      getYAxisRangeWarning(
+        series([null, null]),
+        [0],
+        leftAxis({ min: "34", max: "545", outOfBounds: "hidden" }),
+      ),
+    ).toBeNull();
+  });
+
+  it("supports a min-only or max-only bound", () => {
+    expect(
+      getYAxisRangeWarning(
+        series([2, 7]),
+        [0],
+        leftAxis({ min: "34", outOfBounds: "hidden" }),
+      ),
+    ).toBe(
+      "Data is outside your configured Y-axis minimum (34). Adjust bounds to see your data.",
+    );
+    expect(
+      getYAxisRangeWarning(
+        series([900]),
+        [0],
+        leftAxis({ max: "545", outOfBounds: "hidden" }),
+      ),
+    ).toBe(
+      "Data is outside your configured Y-axis maximum (545). Adjust bounds to see your data.",
+    );
+  });
+
+  it("returns null for the left side when every series is assigned to the right axis", () => {
+    const axisConfig = {
+      leftY: { min: "34", max: "545", outOfBounds: "hidden" },
+      rightY: { visible: true },
+      seriesAxis: { 0: "right" },
+    };
+    expect(getYAxisRangeWarning(series([2, 7]), [0], axisConfig)).toBeNull();
+  });
+
+  it("treats a non-numeric bound as unset instead of forcing a false-positive warning", () => {
+    expect(
+      getYAxisRangeWarning(
+        series([2, 7]),
+        [0],
+        leftAxis({ min: "not-a-number", outOfBounds: "hidden" }),
+      ),
+    ).toBeNull();
+  });
+
+  // TH-7680 review: the warning used to read the typed bound directly, so
+  // widening it away under "Out of Bounds: Visible" (the left-axis default)
+  // still fired a false-positive "Adjust bounds" message over a fully
+  // visible chart. It must judge from the same resolved axis the chart
+  // itself is drawn against.
+  it("never fires when Visible widens a clipping bound away", () => {
+    const hi = [{ data: pts(7043, 5000, 3000) }];
+    expect(
+      getYAxisRangeWarning(hi, [0], {
+        leftY: { max: "100", outOfBounds: "visible" },
+      }),
+    ).toBeNull();
+  });
+
+  it("fires when Hidden clips every point against the resolved bound", () => {
+    const hi = [{ data: pts(7043, 5000, 3000) }];
+    expect(
+      getYAxisRangeWarning(hi, [0], {
+        leftY: { max: "100", outOfBounds: "hidden" },
+      }),
+    ).toMatch(/maximum \(100\)/);
+  });
+
+  it("treats a non-numeric typed bound as unset even under Hidden", () => {
+    const hi = [{ data: pts(7043, 5000, 3000) }];
+    expect(
+      getYAxisRangeWarning(hi, [0], {
+        leftY: { max: "abc", outOfBounds: "hidden" },
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null with no typed bound at all", () => {
+    const hi = [{ data: pts(7043, 5000, 3000) }];
+    expect(getYAxisRangeWarning(hi, [0], {})).toBeNull();
+  });
+
+  it("returns null for a low-value series with no bound configured", () => {
+    expect(
+      getYAxisRangeWarning([{ data: pts(500) }], [0], {
+        leftY: { max: "100", outOfBounds: "visible" },
+      }),
+    ).toBeNull();
+  });
+
+  it("warns for a low-value series clipped by Hidden", () => {
+    expect(
+      getYAxisRangeWarning([{ data: pts(500) }], [0], {
+        leftY: { max: "100", outOfBounds: "hidden" },
+      }),
+    ).toMatch(/maximum \(100\)/);
+  });
+
+  // A dual-axis chart used to bail out with an early `if (hasRightAxis)
+  // return null`, so a right side clipped down to nothing vanished silently
+  // instead of explaining why. Judging per side from the resolved bounds
+  // catches that case and still stays silent when the side is widened.
+  it("reports a fully-clipped right side on a dual-axis chart instead of silently vanishing", () => {
+    const cfgH = {
+      rightY: { visible: true, max: "10", outOfBounds: "hidden" },
+      seriesAxis: { 1: "right" },
+    };
+    expect(
+      getYAxisRangeWarning(
+        [{ data: pts(219, 7043, 1500) }, { data: pts(41, 45, 51) }],
+        [0, 1],
+        cfgH,
+      ),
+    ).toMatch(/maximum \(10\)/);
+  });
+
+  it("stays silent on a dual-axis chart when the right side is merely widened", () => {
+    const cfgV = {
+      rightY: { visible: true, max: "10", outOfBounds: "visible" },
+      seriesAxis: { 1: "right" },
+    };
+    expect(
+      getYAxisRangeWarning(
+        [{ data: pts(219, 7043, 1500) }, { data: pts(41, 45, 51) }],
+        [0, 1],
+        cfgV,
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("getSeriesScalar", () => {
+  const pts = (...ys) => ys.map((y, i) => ({ x: i, y }));
+
+  it("sums buckets for additive aggregations", () => {
+    expect(getSeriesScalar(pts(10, 20, 30), "sum")).toBe(60);
+    expect(getSeriesScalar(pts(10, 20, 30), "count")).toBe(60);
+  });
+
+  it("does not sum count_distinct, whose buckets overlap", () => {
+    // The same 100 users active on each of three days is 100 distinct users,
+    // not 300. An unweighted mean is the closest answer the per-bucket
+    // response supports.
+    expect(getSeriesScalar(pts(100, 100, 100), "count_distinct")).toBe(100);
+  });
+
+  it("sums the dataset count aggregations too, which are counts like any other", () => {
+    // pass_count/fail_count are selectable for dataset metrics; averaging them
+    // would report a per-bucket figure as if it were the period total.
+    expect(getSeriesScalar(pts(3, 4, 5), "pass_count")).toBe(12);
+    expect(getSeriesScalar(pts(3, 4, 5), "fail_count")).toBe(12);
+  });
+
+  it("keeps rate aggregations non-additive", () => {
+    expect(getSeriesScalar(pts(10, 20), "pass_rate")).toBe(15);
+    expect(getSeriesScalar(pts(10, 20), "fail_rate")).toBe(15);
+    expect(getSeriesScalar(pts(10, 20), "true_rate")).toBe(15);
+  });
+
+  it("takes the maximum bucket for a max aggregation instead of averaging them", () => {
+    // Regression for TH-6530: a "max" metric previously showed the MEAN of the
+    // per-bucket maxima, e.g. 124.28K instead of the true peak of 396,293.
+    expect(getSeriesScalar(pts(2838, 2878, 396293, 95098), "max")).toBe(396293);
+  });
+
+  it("takes the minimum bucket for a min aggregation", () => {
+    expect(getSeriesScalar(pts(9, 4, 7), "min")).toBe(4);
+  });
+
+  it("averages buckets for avg and percentile aggregations", () => {
+    expect(getSeriesScalar(pts(10, 20), "avg")).toBe(15);
+    expect(getSeriesScalar(pts(10, 20), "p95")).toBe(15);
+    expect(getSeriesScalar(pts(10, 20), "median")).toBe(15);
+  });
+
+  it("defaults to averaging when the aggregation is unknown or missing", () => {
+    expect(getSeriesScalar(pts(10, 20))).toBe(15);
+    expect(getSeriesScalar(pts(10, 20), "wat")).toBe(15);
+  });
+
+  it("skips null and non-finite buckets rather than counting them as zero", () => {
+    expect(getSeriesScalar(pts(10, null, 20), "avg")).toBe(15);
+    expect(getSeriesScalar(pts(10, NaN, 20), "sum")).toBe(30);
+  });
+
+  it("returns null when there is no usable data", () => {
+    expect(getSeriesScalar([], "sum")).toBeNull();
+    expect(getSeriesScalar(pts(null, null), "avg")).toBeNull();
+  });
+});
+
+describe("groupPieSeries", () => {
+  const s = (
+    metricIndex,
+    metricName,
+    aggregation,
+    unit,
+    breakdownName,
+    ys,
+  ) => ({
+    name: `${metricName} / ${breakdownName} (${aggregation})`,
+    metricIndex,
+    metricName,
+    aggregation,
+    unit,
+    breakdownName,
+    data: ys.map((y, i) => ({ x: i, y })),
+  });
+
+  it("groups flat series into one entry per metric, valued by that metric's aggregation", () => {
+    const groups = groupPieSeries([
+      s(0, "Tokens", "avg", "tokens", "proj-a", [10, 20]),
+      s(0, "Tokens", "avg", "tokens", "proj-b", [30, 40]),
+      s(1, "Latency", "max", "ms", "proj-a", [100, 200]),
+      s(1, "Latency", "max", "ms", "proj-b", [300, 400]),
+    ]);
+
+    expect(groups).toEqual([
+      {
+        metricIndex: 0,
+        metricName: "Tokens",
+        aggregation: "avg",
+        unit: "tokens",
+        hasValues: true,
+        slices: [
+          { name: "proj-a", value: 15 },
+          { name: "proj-b", value: 35 },
+        ],
+      },
+      {
+        metricIndex: 1,
+        metricName: "Latency",
+        aggregation: "max",
+        unit: "ms",
+        hasValues: true,
+        slices: [
+          { name: "proj-a", value: 200 },
+          { name: "proj-b", value: 400 },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps metrics separate even when they share a name but differ by aggregation", () => {
+    const groups = groupPieSeries([
+      s(0, "Latency", "avg", "ms", "proj-a", [10, 20]),
+      s(1, "Latency", "max", "ms", "proj-a", [10, 20]),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((g) => g.aggregation)).toEqual(["avg", "max"]);
+  });
+
+  it("drops slices with no usable data but keeps the metric", () => {
+    const groups = groupPieSeries([
+      s(0, "Tokens", "avg", "tokens", "proj-a", [10]),
+      s(0, "Tokens", "avg", "tokens", "proj-b", [null]),
+      s(1, "Latency", "avg", "ms", "proj-a", [null, null]),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].slices).toEqual([{ name: "proj-a", value: 10 }]);
+    expect(groups[1]).toMatchObject({ slices: [], hasValues: false });
+  });
+
+  it("drops zero-valued slices, which a ring cannot draw, and the count that implies them", () => {
+    // Real case from TH-6530 testing: projects whose traces record no tokens
+    // return avg 0, producing invisible slices that still inflated the count.
+    const groups = groupPieSeries([
+      s(0, "Tokens", "avg", "tokens", "cookbook", [149.89, 0]),
+      s(0, "Tokens", "avg", "tokens", "voice-sim", [0, 0]),
+      s(0, "Tokens", "avg", "tokens", "local-seed", [0]),
+    ]);
+    expect(groups[0].slices).toEqual([{ name: "cookbook", value: 74.945 }]);
+    expect(groups[0].hasValues).toBe(true);
+  });
+
+  it("keeps a metric whose slices are all zero so its panel can explain itself", () => {
+    // Dropping the metric outright makes it look like adding it silently
+    // failed; the panel stays and reports that every value is zero.
+    const groups = groupPieSeries([
+      s(0, "Tokens", "avg", "tokens", "a", [0]),
+      s(1, "Latency", "avg", "ms", "a", [12]),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toMatchObject({
+      metricName: "Tokens",
+      slices: [],
+      hasValues: true,
+    });
+    expect(groups[1].slices).toEqual([{ name: "a", value: 12 }]);
+  });
+
+  it("marks a metric with no numeric values at all as having none", () => {
+    const groups = groupPieSeries([
+      s(0, "Tokens", "avg", "tokens", "a", [null, null]),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ slices: [], hasValues: false });
+  });
+
+  it("caps each metric at its own top slices by value, so one metric cannot crowd out another", () => {
+    const many = Array.from({ length: 12 }, (_, i) =>
+      s(0, "Tokens", "sum", "tokens", `p${i}`, [i + 1]),
+    );
+    const groups = groupPieSeries([
+      ...many,
+      s(1, "Latency", "sum", "ms", "only", [5]),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].slices).toHaveLength(10);
+    expect(groups[1].slices).toEqual([{ name: "only", value: 5 }]);
+  });
+
+  it("folds everything past the cap into one Other slice, so the ring still adds up", () => {
+    // 1..12 sums to 78. Dropping the tail would leave the ring normalised over
+    // 72 and the centre reporting 72 as the metric's total.
+    const groups = groupPieSeries(
+      Array.from({ length: 12 }, (_, i) =>
+        s(0, "Tokens", "sum", "tokens", `p${i}`, [i + 1]),
+      ),
+    );
+    const [g] = groups;
+    expect(g.slices).toHaveLength(10);
+    expect(g.slices.slice(0, 9).map((x) => x.value)).toEqual([
+      12, 11, 10, 9, 8, 7, 6, 5, 4,
+    ]);
+    // 3 + 2 + 1, named so the fold is visible rather than silent
+    expect(g.slices[9]).toEqual({ name: "Other (3)", value: 6 });
+    expect(g.slices.reduce((a, x) => a + x.value, 0)).toBe(78);
+  });
+
+  it("does not invent an Other slice for a non-additive aggregation", () => {
+    // Summing per-project averages into one "Other" would be a made-up number,
+    // so the tail is dropped instead and the centre stays blank.
+    const groups = groupPieSeries(
+      Array.from({ length: 12 }, (_, i) =>
+        s(0, "Latency", "avg", "ms", `p${i}`, [i + 1]),
+      ),
+    );
+    expect(groups[0].slices).toHaveLength(10);
+    expect(groups[0].slices.some((x) => /^Other/.test(x.name))).toBe(false);
+  });
+
+  it("leaves a metric alone when it is exactly at the cap", () => {
+    const groups = groupPieSeries(
+      Array.from({ length: 10 }, (_, i) =>
+        s(0, "Tokens", "sum", "tokens", `p${i}`, [i + 1]),
+      ),
+    );
+    expect(groups[0].slices).toHaveLength(10);
+    expect(groups[0].slices.some((x) => /^Other/.test(x.name))).toBe(false);
+  });
+
+  it("returns an empty array for no series", () => {
+    expect(groupPieSeries([])).toEqual([]);
+  });
+});
+
+describe("isAdditiveAggregation", () => {
+  it("is true only for aggregations whose slices sum to a real total", () => {
+    expect(isAdditiveAggregation("sum")).toBe(true);
+    expect(isAdditiveAggregation("count")).toBe(true);
+    expect(isAdditiveAggregation("pass_count")).toBe(true);
+    expect(isAdditiveAggregation("fail_count")).toBe(true);
+  });
+
+  it("is false where summing the slices would invent a quantity", () => {
+    // The backend evaluates count_distinct as uniq() per time bucket, so
+    // anyone active in more than one bucket is counted once per bucket.
+    expect(isAdditiveAggregation("count_distinct")).toBe(false);
+    // The sum of three per-project averages is not an average of anything.
+    expect(isAdditiveAggregation("avg")).toBe(false);
+    expect(isAdditiveAggregation("max")).toBe(false);
+    expect(isAdditiveAggregation("min")).toBe(false);
+    expect(isAdditiveAggregation("median")).toBe(false);
+    expect(isAdditiveAggregation("p95")).toBe(false);
+    expect(isAdditiveAggregation("pass_rate")).toBe(false);
+    expect(isAdditiveAggregation("true_rate")).toBe(false);
+    expect(isAdditiveAggregation()).toBe(false);
+  });
+});
+
+describe("makeSeriesKey", () => {
+  it("builds id|aggregation|bucket", () => {
+    expect(makeSeriesKey({ id: "m1", aggregation: "avg" }, "us")).toBe(
+      "m1|avg|us",
+    );
+  });
+
+  it("does not throw on a nullish metric", () => {
+    expect(makeSeriesKey(null, "us")).toBe("||us");
+    expect(makeSeriesKey(undefined, undefined)).toBe("||");
+  });
+});
+
+const seriesWithKeys = (keys) => keys.map((key) => ({ key }));
+
+describe("resolveVisibleSeries", () => {
+  it("returns null unchanged (all visible)", () => {
+    expect(resolveVisibleSeries(null, seriesWithKeys(["a", "b"]))).toBeNull();
+  });
+
+  it("maps saved keys to their current indices", () => {
+    const result = resolveVisibleSeries(
+      ["b", "d"],
+      seriesWithKeys(["a", "b", "c", "d"]),
+    );
+    expect([...result]).toEqual([1, 3]);
+  });
+
+  it("drops saved keys whose series no longer exist", () => {
+    const result = resolveVisibleSeries(
+      ["a", "gone"],
+      seriesWithKeys(["a", "b"]),
+    );
+    expect([...result]).toEqual([0]);
+  });
+
+  it("returns an empty Set when a non-empty selection matches nothing", () => {
+    const result = resolveVisibleSeries(
+      ["old1", "old2"],
+      seriesWithKeys(["new1", "new2"]),
+    );
+    expect(result).toBeInstanceOf(Set);
+    expect(result.size).toBe(0);
+  });
+});
+
+describe("resolveSavedSelection", () => {
+  it("returns undefined when nothing was saved (caller applies default)", () => {
+    expect(
+      resolveSavedSelection(undefined, seriesWithKeys(["a"])),
+    ).toBeUndefined();
+  });
+
+  it("honors an explicit show-all (null)", () => {
+    expect(resolveSavedSelection(null, seriesWithKeys(["a", "b"]))).toBeNull();
+  });
+
+  it("honors an intentional hide-all (empty saved list)", () => {
+    const result = resolveSavedSelection([], seriesWithKeys(["a", "b"]));
+    expect(result).toBeInstanceOf(Set);
+    expect(result.size).toBe(0);
+  });
+
+  it("honors a saved selection that still matches (including partial)", () => {
+    const result = resolveSavedSelection(
+      ["b", "gone"],
+      seriesWithKeys(["a", "b", "c"]),
+    );
+    expect([...result]).toEqual([1]);
+  });
+
+  it("returns undefined for a fully-stale selection (falls through to default)", () => {
+    // Non-empty saved keys, none survive → caller applies its top-10/show-all default.
+    expect(
+      resolveSavedSelection(["old1", "old2"], seriesWithKeys(["new1", "new2"])),
+    ).toBeUndefined();
+  });
+});
+
+const pts = (...ys) => ys.map((y, i) => ({ x: i, y }));
+
+describe("getSeriesExtent", () => {
+  it("measures a single bucket instead of requiring two to have an extent", () => {
+    // currently null — the "<2" rule
+    expect(getSeriesExtent([{ data: pts(500) }])).toEqual({
+      min: 500,
+      max: 500,
+    });
+  });
+
+  it("skips a null gap-bucket instead of letting it coerce to 0", () => {
+    // currently { min: 0, max: 250 } — null coerces to 0
+    expect(getSeriesExtent([{ data: pts(null, 190, null, 250) }])).toEqual({
+      min: 190,
+      max: 250,
+    });
+  });
+
+  it("treats a real zero as a value, not a gap", () => {
+    expect(getSeriesExtent([{ data: pts(0, 200) }])).toEqual({
+      min: 0,
+      max: 200,
+    });
+  });
+
+  it("skips an all-null stacked bucket instead of summing it to 0", () => {
+    // currently min 0
+    expect(
+      getSeriesExtent([{ data: pts(100, null) }, { data: pts(50, null) }], {
+        stacked: true,
+      }),
+    ).toEqual({ min: 150, max: 150 });
+  });
+
+  it("returns null when there is still nothing to measure", () => {
+    expect(getSeriesExtent([{ data: pts(null, null) }])).toBeNull();
+    expect(getSeriesExtent([])).toBeNull();
+  });
+});
+
+describe("getSeriesExtent on a long range", () => {
+  // Spreading ~125k values into Math.min overflows the call stack; 13 series
+  // of 10,081 minute buckets is a realistic week.
+  it("measures 131k points without throwing", () => {
+    const series = Array.from({ length: 13 }, (_, s) => ({
+      data: Array.from({ length: 10081 }, (_, i) => ({
+        x: i,
+        y: (i + s) % 997,
+      })),
+    }));
+    expect(getSeriesExtent(series)).toEqual({ min: 0, max: 996 });
+  });
+});
+
+describe("parseBound", () => {
+  it("treats empty, undefined and non-numeric input as unset", () => {
+    expect(parseBound("")).toBeNull();
+    expect(parseBound(undefined)).toBeNull();
+    expect(parseBound("abc")).toBeNull();
+    expect(parseBound(NaN)).toBeNull();
+  });
+
+  it("returns finite numbers, including zero", () => {
+    expect(parseBound(0)).toBe(0);
+    expect(parseBound("1500")).toBe(1500);
+    expect(parseBound(-4)).toBe(-4);
+  });
+});
+
+describe("getAutoYAxisBounds", () => {
+  const opts = { tickAmount: 5 };
+
+  it("tightens the reported case: peak 7043 gives 7500, not 10000", () => {
+    expect(getAutoYAxisBounds([{ data: pts(219, 7043, 1500) }], opts)).toEqual({
+      min: 0,
+      max: 7500,
+    });
+  });
+
+  it("never places the max below the peak, and fits exactly when it can", () => {
+    expect(getAutoYAxisBounds([{ data: pts(0, 5000) }], opts).max).toBe(5000);
+    expect(getAutoYAxisBounds([{ data: pts(0, 200) }], opts).max).toBe(200);
+  });
+
+  it("scales across magnitudes", () => {
+    expect(getAutoYAxisBounds([{ data: pts(0, 87) }], opts).max).toBe(100);
+    expect(getAutoYAxisBounds([{ data: pts(0, 4.2) }], opts).max).toBe(5);
+  });
+
+  it("handles sub-1 values without floating point drift", () => {
+    const { max } = getAutoYAxisBounds([{ data: pts(0, 0.3) }], opts);
+    expect(max).toBeGreaterThanOrEqual(0.3);
+    expect(max).toBeLessThanOrEqual(0.5);
+  });
+
+  it("sums per bucket for stacked charts", () => {
+    const series = [{ data: pts(0, 4000) }, { data: pts(0, 3000) }];
+    const stacked = getAutoYAxisBounds(series, { ...opts, stacked: true });
+    const plain = getAutoYAxisBounds(series, opts);
+    expect(stacked.max).toBeGreaterThanOrEqual(7000);
+    expect(plain.max).toBeLessThan(stacked.max);
+  });
+
+  it("ignores non-finite values instead of poisoning the peak", () => {
+    expect(
+      getAutoYAxisBounds([{ data: pts(0, null, NaN, 200) }], opts).max,
+    ).toBe(200);
+  });
+
+  it("declines a narrow high band, where zero-anchoring would make it worse", () => {
+    expect(getAutoYAxisBounds([{ data: pts(40e6, 60e6) }], opts)).toBeNull();
+  });
+
+  it("declines cases it cannot scale safely", () => {
+    expect(getAutoYAxisBounds([], opts)).toBeNull();
+    expect(getAutoYAxisBounds([{ data: [] }], opts)).toBeNull();
+    expect(getAutoYAxisBounds([{ data: pts(5) }], opts)).toBeNull();
+    expect(getAutoYAxisBounds([{ data: pts(0, 0, 0) }], opts)).toBeNull();
+    expect(getAutoYAxisBounds([{ data: pts(-5, 100) }], opts)).toBeNull();
+    expect(
+      getAutoYAxisBounds([{ data: pts(0, 100) }], {
+        ...opts,
+        logarithmic: true,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("getVisibleIndices", () => {
+  const series = [{ key: "a" }, { key: "b" }, { key: "c" }];
+
+  it("returns every index when nothing is filtered", () => {
+    expect(getVisibleIndices(series, null)).toEqual([0, 1, 2]);
+  });
+
+  it("returns the original indices of the visible series", () => {
+    expect(getVisibleIndices(series, new Set([0, 2]))).toEqual([0, 2]);
+  });
+
+  // A top-N selection builds the Set in rank order, so spreading it gives
+  // [2, 0] and misaligns with the ascending filter that builds chartSeries.
+  it("is ascending even when the Set was built out of order", () => {
+    const rankOrdered = new Set([2, 0]);
+    expect([...rankOrdered]).toEqual([2, 0]);
+    expect(getVisibleIndices(series, rankOrdered)).toEqual([0, 2]);
+  });
+});
+
+describe("resolveAxisBounds", () => {
+  const pts2 = (...ys) => ys.map((y, i) => ({ x: i, y }));
+  const series = [{ data: pts2(219, 7043, 1500) }];
+
+  it("auto-scales when nothing is typed", () => {
+    expect(resolveAxisBounds(series, {})).toEqual({ min: 0, max: 7500 });
+  });
+
+  it("uses a typed bound that does not clip", () => {
+    expect(resolveAxisBounds(series, { max: "50000" }).max).toBe(50000);
+  });
+
+  it("widens a clipping bound when out of bounds is visible", () => {
+    expect(resolveAxisBounds(series, { max: "5000" }).max).toBe(7500);
+  });
+
+  it("keeps a clipping bound as a hard cap when hidden", () => {
+    expect(
+      resolveAxisBounds(series, { max: "5000", outOfBounds: "hidden" }).max,
+    ).toBe(5000);
+  });
+
+  // The dual-axis case: a small series gets bounds of its own, not the other
+  // axis's, so it is not stretched to fill the plot.
+  // Dual axis passes fit:true, because a side must always get explicit bounds
+  // or ApexCharts scales its series independently.
+  it("scales to only the series it is given", () => {
+    const small = [{ data: pts2(190, 250, 210) }];
+    const { min, max } = resolveAxisBounds(small, {}, { fit: true });
+    expect(max).toBeLessThan(1000);
+    expect(max).toBeGreaterThanOrEqual(250);
+    expect(min).toBeLessThanOrEqual(190);
+  });
+
+  // Single-axis takes the same fitted path. Zero-anchoring still wins where the
+  // data runs to the floor; this is the case it declines, which used to fall to
+  // ApexCharts' coarse ladder and a 190-290 axis for a 190-250 series.
+  it("fits a narrow band on a single axis too", () => {
+    const small = [{ data: pts2(190, 250, 210) }];
+    expect(resolveAxisBounds(small, {}, { fit: true })).toEqual({
+      min: 180,
+      max: 255,
+    });
+  });
+
+  it("is unchanged for data that runs to the floor", () => {
+    expect(resolveAxisBounds(series, {}, { fit: true })).toEqual({
+      min: 0,
+      max: 7500,
+    });
+  });
+
+  it("keeps a typed min that clips nothing, even across a gappy window", () => {
+    // currently dropped: the null-inflated floor of 0 makes 150 look clipping
+    expect(
+      resolveAxisBounds(
+        [{ data: pts2(null, 190, null, 250) }],
+        { min: "150", outOfBounds: "visible" },
+        { fit: true },
+      ).min,
+    ).toBe(150);
+  });
+
+  it("widens a clipping max for a single bucket when out of bounds is visible", () => {
+    // currently max === 100, clipping the one point
+    const one = resolveAxisBounds(
+      [{ data: pts2(500) }],
+      { max: "100", outOfBounds: "visible" },
+      { fit: true },
+    );
+    expect(one.max === undefined || one.max >= 500).toBe(true);
+  });
+
+  // With one end typed, the other is re-derived from it so the ticks keep a
+  // round step instead of 100 / 1580 / 3060 / ...
+  it("keeps a round step when only the min is typed", () => {
+    expect(resolveAxisBounds(series, { min: "100" }, { fit: true })).toEqual({
+      min: 100,
+      max: 7600,
+    });
+  });
+
+  it("keeps a round step when only the max is typed on a fitted band", () => {
+    expect(
+      resolveAxisBounds(
+        [{ data: pts2(190, 250, 210) }],
+        { max: "300" },
+        { fit: true },
+      ),
+    ).toEqual({ min: 175, max: 300 });
+  });
+
+  it("keeps a zero floor when only the max is typed", () => {
+    expect(resolveAxisBounds(series, { max: "8000" }, { fit: true })).toEqual({
+      min: 0,
+      max: 8000,
+    });
+  });
+
+  it("keeps a clipping max for a single bucket as a hard cap when hidden", () => {
+    expect(
+      resolveAxisBounds(
+        [{ data: pts2(500) }],
+        { max: "100", outOfBounds: "hidden" },
+        { fit: true },
+      ).max,
+    ).toBe(100);
+  });
+});
+
+describe("getFittedYAxisBounds", () => {
+  const pts = (...ys) => [{ data: ys.map((y, i) => ({ x: i, y })) }];
+
+  // A single example cannot pin this: the axis max is measured from a floor
+  // that has already been snapped down onto the step grid, so whether the peak
+  // still fits depends on where the span lands on the step ladder. Assert the
+  // invariant over a table of spans instead.
+  it.each([
+    [41, 51],
+    [99.9, 100.9],
+    [190, 250],
+    [179, 479],
+    [0.0001, 0.00013],
+    [1.001, 1.009],
+    [7043, 7100],
+    [1000001, 1000009],
+    [42, 43],
+    [500, 501.5],
+  ])("keeps every point inside the axis for [%s, %s]", (floor, peak) => {
+    const { min, max } = getFittedYAxisBounds(
+      pts(floor, (floor + peak) / 2, peak),
+    );
+    expect(max).toBeGreaterThanOrEqual(peak);
+    expect(min).toBeLessThanOrEqual(floor);
+  });
+
+  it("never clips the peak across every integer band up to 200", () => {
+    const clipped = [];
+    for (let floor = 0; floor <= 200; floor += 1) {
+      for (let peak = floor + 1; peak <= 200; peak += 1) {
+        const bounds = getFittedYAxisBounds(pts(floor, peak));
+        if (!bounds) continue;
+        if (bounds.max < peak || bounds.min > floor)
+          clipped.push([floor, peak]);
+      }
+    }
+    expect(clipped).toEqual([]);
+  });
+
+  it("leaves the round ladder alone where it already fits", () => {
+    expect(getFittedYAxisBounds(pts(190, 210, 250))).toEqual({
+      min: 180,
+      max: 255,
+    });
+  });
+
+  it("fits a band that dips below zero, where zero-anchoring cannot", () => {
+    const { min, max } = getFittedYAxisBounds(pts(-5, 12, 30));
+    expect(min).toBeLessThanOrEqual(-5);
+    expect(max).toBeGreaterThanOrEqual(30);
+  });
+
+  // The carve-outs: no band to fit, so ApexCharts keeps its own scaling.
+  it("returns null on a logarithmic side", () => {
+    expect(
+      getFittedYAxisBounds(pts(41, 45, 51), { logarithmic: true }),
+    ).toBeNull();
+  });
+
+  it("returns null with fewer than two points", () => {
+    expect(getFittedYAxisBounds(pts(42))).toBeNull();
+    expect(getFittedYAxisBounds([])).toBeNull();
+  });
+
+  it("returns null when every point is the same value", () => {
+    expect(getFittedYAxisBounds(pts(7, 7, 7))).toBeNull();
+  });
+});
+
+describe("resolveWidgetAxisPlan", () => {
+  const pts = (...ys) => ys.map((y, i) => ({ x: i, y }));
+  const latency = { name: "Latency (avg)", data: pts(219, 7043, 1500) };
+  const tokens = { name: "Tokens (avg)", data: pts(41, 45, 51) };
+  const dualConfig = {
+    leftY: {},
+    rightY: { visible: true },
+    seriesAxis: { 1: "right" },
+  };
+
+  it("gives each side its own bounds when both are drawn", () => {
+    const plan = resolveWidgetAxisPlan([latency, tokens], [0, 1], dualConfig);
+    expect(plan.hasRightAxis).toBe(true);
+    expect(plan.sideOf(0)).toBe("left");
+    expect(plan.sideOf(1)).toBe("right");
+    expect(plan.bounds.left).toEqual({ min: 0, max: 7500 });
+    expect(plan.bounds.right).toEqual({ min: 40, max: 52.5 });
+  });
+
+  // The whole point of reading the visible series: with the right-hand series
+  // hidden there is no right axis on screen, so the left one must be scaled the
+  // way a widget that never had a right axis would scale it.
+  it("falls back to single-axis scaling when the right series is hidden", () => {
+    const hidden = resolveWidgetAxisPlan([latency], [0], dualConfig);
+    const neverHadOne = resolveWidgetAxisPlan([latency], [0], { leftY: {} });
+
+    expect(hidden.hasRightAxis).toBe(false);
+    expect(hidden.bounds.right).toBeUndefined();
+    expect(hidden.bounds.left).toEqual(neverHadOne.bounds.left);
+  });
+
+  it("reads seriesAxis by the original index, not the filtered one", () => {
+    // Only the second series is visible, and it is the right-assigned one.
+    const plan = resolveWidgetAxisPlan([tokens], [1], dualConfig);
+    expect(plan.hasRightAxis).toBe(true);
+    expect(plan.sideOf(0)).toBe("right");
+  });
+
+  it("stays single-axis when the right axis is switched off", () => {
+    const plan = resolveWidgetAxisPlan([latency, tokens], [0, 1], {
+      leftY: {},
+      rightY: { visible: false },
+      seriesAxis: { 1: "right" },
+    });
+    expect(plan.hasRightAxis).toBe(false);
+    expect(plan.sideOf(1)).toBe("left");
+  });
+
+  it("survives an empty config", () => {
+    const plan = resolveWidgetAxisPlan([latency], [0]);
+    expect(plan.hasRightAxis).toBe(false);
+    expect(plan.bounds.left).toEqual({ min: 0, max: 7500 });
+  });
+
+  // Bars encode value as length from the baseline, so a fitted non-zero floor
+  // lies about the data; lines encode value as position and keep the fitted
+  // band. Both go through the same shared plan so neither renderer can drift.
+  const band = [{ data: pts(190, 210, 250) }];
+
+  it("anchors a column chart at zero instead of fitting the band", () => {
+    expect(
+      resolveWidgetAxisPlan(band, [0], {}, { chartType: "column" }).bounds.left,
+    ).toEqual({ min: 0, max: 250 });
+  });
+
+  it("still fits the band on a line chart", () => {
+    expect(
+      resolveWidgetAxisPlan(band, [0], {}, { chartType: "line" }).bounds.left,
+    ).toEqual({ min: 180, max: 255 });
+  });
+
+  it("anchors a stacked column chart at zero", () => {
+    expect(
+      resolveWidgetAxisPlan(
+        [{ data: pts(100, 110, 120) }, { data: pts(90, 100, 130) }],
+        [0, 1],
+        {},
+        { stacked: true, chartType: "stacked_column" },
+      ).bounds.left,
+    ).toEqual({ min: 0, max: 250 });
+  });
+
+  it("anchors every entry of a dual-axis column chart at zero", () => {
+    const dual = resolveWidgetAxisPlan(
+      [{ data: pts(190, 210, 250) }, { data: pts(41, 45, 51) }],
+      [0, 1],
+      { rightY: { visible: true }, seriesAxis: { 1: "right" } },
+      { chartType: "column" },
+    );
+    expect(dual.bounds.left).toEqual({ min: 0, max: 250 });
+    expect(dual.bounds.right).toEqual({ min: 0, max: 75 });
+  });
+
+  it("still lets a typed bound win over the zero baseline", () => {
+    expect(
+      resolveWidgetAxisPlan(
+        band,
+        [0],
+        { leftY: { min: "100" } },
+        {
+          chartType: "column",
+        },
+      ).bounds.left,
+    ).toEqual({ min: 100, max: 250 });
+  });
+
+  it("anchors a single-point column at zero", () => {
+    expect(
+      resolveWidgetAxisPlan(
+        [{ data: pts(500) }],
+        [0],
+        {},
+        {
+          chartType: "column",
+        },
+      ).bounds.left,
+    ).toEqual({ min: 0, max: 500 });
+  });
+
+  // A dual-axis side must always carry explicit bounds, or ApexCharts scales
+  // each of its series on its own; a negative value cannot be the exception.
+  it("gives a mixed-sign column zero-inclusive bounds on the step grid", () => {
+    expect(
+      resolveWidgetAxisPlan(
+        [{ data: pts(-50, 100, 200) }],
+        [0],
+        {},
+        {
+          chartType: "column",
+        },
+      ).bounds.left,
+    ).toEqual({ min: -50, max: 200 });
+  });
+
+  it("gives an all-negative column bounds that end at zero", () => {
+    expect(
+      resolveWidgetAxisPlan(
+        [{ data: pts(-50, -30, -10) }],
+        [0],
+        {},
+        {
+          chartType: "column",
+        },
+      ).bounds.left,
+    ).toEqual({ min: -50, max: 0 });
+  });
+
+  it("keeps one shared scale on a dual-axis column side with a negative value", () => {
+    const plan = resolveWidgetAxisPlan(
+      [
+        { data: pts(20, 60, 100) },
+        { data: pts(-20, 10, 50) },
+        { data: pts(100, 450, 500) },
+      ],
+      [0, 1, 2],
+      {
+        leftY: {},
+        rightY: { visible: true },
+        seriesAxis: { 1: "right", 2: "right" },
+      },
+      { chartType: "column" },
+    );
+    expect(plan.bounds.right).toEqual({ min: -150, max: 600 });
+  });
+
+  it("anchors a stacked line at zero instead of fitting the stacked band", () => {
+    const layer = (...ys) => ({ data: pts(...ys) });
+    expect(
+      resolveWidgetAxisPlan(
+        [layer(100, 120, 110), layer(105, 100, 118), layer(110, 116, 101)],
+        [0, 1, 2],
+        {},
+        { stacked: true, chartType: "stacked_line" },
+      ).bounds.left,
+    ).toEqual({ min: 0, max: 400 });
+  });
+});
+
+describe("chartTypeFitsBand", () => {
+  it("does not fit the band for bar-shaped chart types, which stay anchored at zero", () => {
+    expect(chartTypeFitsBand("column")).toBe(false);
+    expect(chartTypeFitsBand("stacked_column")).toBe(false);
+    expect(chartTypeFitsBand("bar")).toBe(false);
+    expect(chartTypeFitsBand("stacked_bar")).toBe(false);
+  });
+
+  // A stacked line is an area chart: each layer is filled from zero, so a
+  // fitted floor clips the lower layers off the plot.
+  it("does not fit the band for a stacked line", () => {
+    expect(chartTypeFitsBand("stacked_line")).toBe(false);
+  });
+
+  it("fits the band for an unstacked line", () => {
+    expect(chartTypeFitsBand("line")).toBe(true);
+    expect(chartTypeFitsBand(undefined)).toBe(true);
+  });
+});
+
+// The saved widget and the editor preview render the same widget through two
+// separate files. They used to derive their axis bounds separately, and a fix
+// applied to one silently missed the other. Both now go through
+// resolveWidgetAxisPlan; this fails the moment either grows its own copy.
+describe("the saved widget and the editor preview share one axis plan", () => {
+  // Resolve from the vitest root, which is `frontend/` however it was invoked.
+  const read = (name) => {
+    const rel = join("src", "sections", "dashboards", name);
+    const path = [
+      join(process.cwd(), rel),
+      join(process.cwd(), "frontend", rel),
+    ].find(existsSync);
+    expect(path, `could not locate ${name}`).toBeDefined();
+    return readFileSync(path, "utf8");
+  };
+
+  it.each(["WidgetChart.jsx", "WidgetEditorView.jsx"])(
+    "%s resolves its y-axis through resolveWidgetAxisPlan, not on its own",
+    (file) => {
+      const src = read(file);
+      expect(src).toContain("resolveWidgetAxisPlan(");
+      expect(src).not.toContain("resolveAxisBounds(");
+      // A caller that drops chartType silently loses the zero-baseline fix for
+      // bar-shaped charts, so pin that the call site actually passes it.
+      expect(src).toMatch(/resolveWidgetAxisPlan\([\s\S]{0,200}?chartType/);
+    },
+  );
+});
+
+describe("dense-series budget (TH-7757)", () => {
+  const seriesOf = (...lengths) =>
+    lengths.map((length, index) => ({
+      name: `s${index}`,
+      data: Array.from({ length }, (_, i) => ({ x: i, y: i })),
+    }));
+
+  it("counts points across every series", () => {
+    expect(countPlottedPoints(seriesOf(3, 4))).toBe(7);
+  });
+
+  it("counts nothing for empty, malformed or missing input", () => {
+    expect(countPlottedPoints()).toBe(0);
+    expect(countPlottedPoints([])).toBe(0);
+    expect(countPlottedPoints(null)).toBe(0);
+    expect(countPlottedPoints([{ name: "no data" }, null])).toBe(0);
+  });
+
+  it("calls a series at the budget sparse and one past it dense", () => {
+    expect(isDenseChartSeries(seriesOf(CHART_DENSE_POINT_BUDGET))).toBe(false);
+    expect(isDenseChartSeries(seriesOf(CHART_DENSE_POINT_BUDGET + 1))).toBe(
+      true,
+    );
+  });
+
+  it("spends the budget across series, not per series", () => {
+    const half = Math.ceil(CHART_DENSE_POINT_BUDGET / 2);
+    expect(isDenseChartSeries(seriesOf(half, half + 1))).toBe(true);
+  });
+
+  it("calls an empty chart sparse", () => {
+    expect(isDenseChartSeries([])).toBe(false);
+  });
+
+  it("charges the budget for what is plotted, not what was returned", () => {
+    // A minute-granularity widget: thousands of buckets, a handful of values.
+    const sparse = [
+      {
+        name: "completeness",
+        data: Array.from({ length: 7201 }, (_, i) => ({
+          x: i,
+          y: i % 160 === 0 ? 1 : null,
+        })),
+      },
+    ];
+    expect(isDenseChartSeries(sparse)).toBe(true);
+    expect(isDenseChartSeries(getPlottedChartSeries(sparse))).toBe(false);
+  });
+});
+
+describe("table bucket plan (TH-7757)", () => {
+  const seriesOfValues = (values) => [
+    { name: "a", data: values.map((y, x) => ({ x, y })) },
+  ];
+  const long = (length, valueAt) => [
+    {
+      name: "a",
+      data: Array.from({ length }, (_, x) => ({ x, y: valueAt(x) })),
+    },
+  ];
+
+  it("renders every bucket of a table that already fits, empty ones included", () => {
+    const plan = getTableBucketPlan(seriesOfValues([12, null, 7]));
+    expect(plan.indices).toEqual([0, 1, 2]);
+    expect(plan.omitted).toBe(0);
+  });
+
+  it("drops empty buckets only once the table is too long to read", () => {
+    const plan = getTableBucketPlan(
+      long(12, (x) => (x % 4 === 0 ? 1 : null)),
+      {
+        limit: 5,
+      },
+    );
+    expect(plan.indices).toEqual([0, 4, 8]);
+    expect(plan).toMatchObject({ total: 12, shown: 3, omitted: 9 });
+  });
+
+  it("keeps a bucket that any one series reported", () => {
+    const plan = getTableBucketPlan(
+      [
+        {
+          name: "a",
+          data: Array.from({ length: 8 }, (_, x) => ({ x, y: null })),
+        },
+        {
+          name: "b",
+          data: Array.from({ length: 8 }, (_, x) => ({
+            x,
+            y: x === 5 ? 3 : null,
+          })),
+        },
+      ],
+      { limit: 4 },
+    );
+    expect(plan.indices).toEqual([5]);
+  });
+
+  it("treats zero as a reported value, not an empty bucket", () => {
+    const plan = getTableBucketPlan(
+      long(10, (x) => (x % 5 === 0 ? 0 : null)),
+      {
+        limit: 4,
+      },
+    );
+    expect(plan.indices).toEqual([0, 5]);
+  });
+
+  it("caps a dense series at the limit", () => {
+    const plan = getTableBucketPlan(long(1200, (x) => x));
+    expect(plan.shown).toBe(TABLE_BUCKET_LIMIT);
+    expect(plan.omitted).toBe(1200 - TABLE_BUCKET_LIMIT);
+  });
+
+  it("keeps the most recent buckets, not the oldest (review D5)", () => {
+    // Slicing from the front discarded the newest days: a 721-bucket hourly
+    // table showed Aug 3 to Aug 24 and silently dropped the last nine days.
+    const plan = getTableBucketPlan(long(1200, (x) => x));
+    expect(plan.indices.at(0)).toBe(1200 - TABLE_BUCKET_LIMIT);
+    expect(plan.indices.at(-1)).toBe(1199);
+    expect(plan.truncated).toBe(true);
+  });
+
+  it("does not claim truncation when it only dropped empty buckets", () => {
+    const plan = getTableBucketPlan(
+      long(900, (x) => (x % 100 === 0 ? 1 : null)),
+    );
+    expect(plan.shown).toBe(9);
+    expect(plan.truncated).toBe(false);
+  });
+
+  it("keeps a capped time axis when the whole long range is empty", () => {
+    const plan = getTableBucketPlan(
+      long(10, () => null),
+      { limit: 4 },
+    );
+    expect(plan.indices).toEqual([6, 7, 8, 9]);
+    expect(plan.omitted).toBe(6);
+  });
+
+  it("reports nothing for empty, malformed or missing input", () => {
+    for (const input of [undefined, [], null, [null], [{ name: "x" }]]) {
+      expect(getTableBucketPlan(input)).toMatchObject({
+        indices: [],
+        total: 0,
+        omitted: 0,
+      });
+    }
+  });
+
+  it("sizes a minute-granularity widget down to its observed buckets", () => {
+    const plan = getTableBucketPlan(
+      long(7201, (x) => (x % 160 === 0 ? 1 : null)),
+    );
+    expect(plan.total).toBe(7201);
+    expect(plan.shown).toBe(46);
+  });
+});
+
+describe("chart time window (TH-7757)", () => {
+  it("reads the window the backend actually queried", () => {
+    expect(
+      getChartTimeWindow({
+        time_range: {
+          start: "2026-08-23T00:00:00+00:00",
+          end: "2026-08-30T00:00:00+00:00",
+        },
+      }),
+    ).toEqual({
+      min: Date.parse("2026-08-23T00:00:00+00:00"),
+      max: Date.parse("2026-08-30T00:00:00+00:00"),
+    });
+  });
+
+  it("spans the whole window even when only a few buckets reported", () => {
+    // The point of the helper: the axis must not collapse onto the data.
+    const window = getChartTimeWindow({
+      time_range: {
+        start: "2026-08-23T00:00:00Z",
+        end: "2026-08-30T00:00:00Z",
+      },
+    });
+    const firstObserved = Date.parse("2026-08-24T06:26:00Z");
+    const lastObserved = Date.parse("2026-08-26T13:26:00Z");
+    expect(window.min).toBeLessThan(firstObserved);
+    expect(window.max).toBeGreaterThan(lastObserved);
+  });
+
+  it("defers to Apex rather than emit an unusable axis", () => {
+    for (const result of [
+      undefined,
+      null,
+      {},
+      { time_range: {} },
+      { time_range: { start: "not a date", end: "2026-08-30T00:00:00Z" } },
+      { time_range: { start: "2026-08-30T00:00:00Z", end: "not a date" } },
+      // An inverted window would render an axis running backwards.
+      {
+        time_range: {
+          start: "2026-08-30T00:00:00Z",
+          end: "2026-08-23T00:00:00Z",
+        },
+      },
+      // A zero-width window collapses the plot.
+      {
+        time_range: {
+          start: "2026-08-23T00:00:00Z",
+          end: "2026-08-23T00:00:00Z",
+        },
+      },
+    ]) {
+      expect(getChartTimeWindow(result)).toBeNull();
+    }
+  });
+});
+
+describe("getSeriesExtent — sparse and very long ranges (TH-7757)", () => {
+  const bucketsOf = (length, valueAt) => [
+    {
+      name: "a",
+      data: Array.from({ length }, (_, x) => ({ x, y: valueAt(x) })),
+    },
+  ];
+
+  it("ignores empty buckets instead of reading them as zero", () => {
+    // Number(null) is 0, which would anchor the floor at a value never drawn.
+    const series = bucketsOf(50, (x) => (x % 10 === 0 ? x + 5 : null));
+    expect(getSeriesExtent(series)).toEqual({ min: 5, max: 45 });
+  });
+
+  it("ignores them on the stacked path too", () => {
+    const series = [
+      {
+        name: "a",
+        data: [
+          { x: 0, y: 4 },
+          { x: 1, y: null },
+          { x: 2, y: 6 },
+        ],
+      },
+      {
+        name: "b",
+        data: [
+          { x: 0, y: 3 },
+          { x: 1, y: null },
+          { x: 2, y: null },
+        ],
+      },
+    ];
+    expect(getSeriesExtent(series, { stacked: true })).toEqual({
+      min: 6,
+      max: 7,
+    });
+  });
+
+  it("still reports a real zero", () => {
+    expect(getSeriesExtent(bucketsOf(4, (x) => (x === 0 ? 0 : 9)))).toEqual({
+      min: 0,
+      max: 9,
+    });
+  });
+
+  it("measures a quarter of minute buckets without overflowing the stack", () => {
+    // Spreading a collected array into Math.min is an argument list, and the
+    // engine gives up around 125k. A 90-day minute range carries ~132k.
+    const series = bucketsOf(132_481, (x) => x % 7);
+    expect(() => getSeriesExtent(series)).not.toThrow();
+    expect(getSeriesExtent(series)).toEqual({ min: 0, max: 6 });
+    expect(() => getSeriesExtent(series, { stacked: true })).not.toThrow();
+  });
+
+  it("reports an extent from a single observation across a long sparse range", () => {
+    // Reconciled with TH-7680: a lone observation defines a degenerate extent
+    // (min === max) so single-point columns can anchor; only an empty series
+    // yields null. The fold still avoids spreading ~132k points (TH-7757).
+    expect(
+      getSeriesExtent(bucketsOf(9000, (x) => (x === 3 ? 5 : null))),
+    ).toEqual({ min: 5, max: 5 });
+    expect(getSeriesExtent([])).toBeNull();
+  });
+});
+
+describe("getPlottedChartSeries — stacked alignment (TH-7757 review D1)", () => {
+  // ApexCharts stacks by array index, so a stacked chart's series must stay the
+  // same length and index j must denote the same bucket in all of them.
+  const padded = () => [
+    {
+      name: "A",
+      data: [10, 10, null, null, null, 10].map((y, x) => ({ x, y })),
+    },
+    {
+      name: "B",
+      data: [null, null, null, null, null, 100].map((y, x) => ({ x, y })),
+    },
+  ];
+
+  it("keeps every series the same length when stacked", () => {
+    const out = getPlottedChartSeries(padded(), { stacked: true });
+    expect(out[0].data).toHaveLength(out[1].data.length);
+  });
+
+  it("keeps the same array index pointing at the same bucket", () => {
+    const out = getPlottedChartSeries(padded(), { stacked: true });
+    out[0].data.forEach((point, index) => {
+      expect(point.x).toBe(out[1].data[index].x);
+    });
+  });
+
+  it("still collapses buckets that no series reported", () => {
+    const out = getPlottedChartSeries(padded(), { stacked: true });
+    expect(out[0].data.map((p) => p.x)).toEqual([0, 1, 5]);
+  });
+
+  it("pads a series that did not report a kept bucket, rather than shifting it", () => {
+    const out = getPlottedChartSeries(padded(), { stacked: true });
+    expect(out[1].data).toEqual([
+      { x: 0, y: 0, absent: true },
+      { x: 1, y: 0, absent: true },
+      { x: 5, y: 100 },
+    ]);
+  });
+
+  it("coerces a present null to 0 instead of feeding the smooth apex stacker a gap (TH-7757 review fix)", () => {
+    // stacked_line renders as a smooth apex area chart: a null pushed into the
+    // stack baseline makes the next series' point render above the grid top.
+    const series = [
+      { name: "A", data: [10, null, 10].map((y, x) => ({ x, y })) },
+      { name: "B", data: [5, 5, 5].map((y, x) => ({ x, y })) },
+    ];
+    const out = getPlottedChartSeries(series, { stacked: true });
+    out.forEach((item) => {
+      expect(item.data.some((point) => point.y === null)).toBe(false);
+    });
+    expect(out[0].data).toEqual([
+      { x: 0, y: 10 },
+      { x: 1, y: 0, absent: true },
+      { x: 2, y: 10 },
+    ]);
+  });
+
+  it("lets unstacked series drop their own buckets so lines connect across gaps", () => {
+    const out = getPlottedChartSeries(padded());
+    expect(out[0].data).toHaveLength(3);
+    expect(out[1].data).toHaveLength(1);
+  });
+
+  it("collapses a sparse stacked range as hard as an unstacked one", () => {
+    const sparse = [
+      {
+        name: "a",
+        data: Array.from({ length: 7201 }, (_, x) => ({
+          x,
+          y: x % 200 === 0 ? 1 : null,
+        })),
+      },
+      {
+        name: "b",
+        data: Array.from({ length: 7201 }, (_, x) => ({
+          x,
+          y: x % 200 === 0 ? 2 : null,
+        })),
+      },
+    ];
+    expect(
+      getPlottedChartSeries(sparse, { stacked: true })[0].data,
+    ).toHaveLength(37);
+  });
+});
+
+describe("getChartMarkerSizes (TH-7757)", () => {
+  const seriesOf = (...lengths) =>
+    lengths.map((length, index) => ({
+      name: `s${index}`,
+      data: Array.from({ length }, (_, x) => ({ x, y: 1 })),
+    }));
+
+  it("keeps one size for every series while the chart is within the budget", () => {
+    expect(getChartMarkerSizes(seriesOf(300, 50), 5)).toBe(5);
+  });
+
+  it("drops the markers of a dense series and keeps them on a sparse one", () => {
+    const dense = CHART_DENSE_POINT_BUDGET + 1;
+    expect(
+      getChartMarkerSizes(seriesOf(dense, CHART_MARKER_SERIES_LIMIT), 5),
+    ).toEqual([0, 5]);
+  });
+
+  it("drops every marker when every series is dense", () => {
+    expect(getChartMarkerSizes(seriesOf(500, 500), 4)).toEqual([0, 0]);
+  });
+
+  it("leaves a chart type without markers at zero", () => {
+    expect(getChartMarkerSizes(seriesOf(1000), 0)).toBe(0);
+  });
+});
+
+describe("isAbsentChartPoint (TH-7757)", () => {
+  const w = {
+    config: {
+      series: [{ data: [{ x: 0, y: 0, absent: true }, { x: 1, y: 0 }] }],
+    },
+  };
+
+  it("reports a bucket the stack padded for a series that did not report it", () => {
+    expect(isAbsentChartPoint(w, 0, 0)).toBe(true);
+  });
+
+  it("does not report a real zero", () => {
+    expect(isAbsentChartPoint(w, 0, 1)).toBe(false);
+  });
+
+  it("does not report a point it cannot find", () => {
+    expect(isAbsentChartPoint(w, 3, 0)).toBe(false);
+    expect(isAbsentChartPoint(undefined, 0, 0)).toBe(false);
+  });
+});
+
+describe("getChartTimeWindow — bucket alignment (TH-7757 review D2)", () => {
+  // The reported window is the instant the query resolved to, but buckets snap
+  // to the start of their period, so bucket 0 precedes it. Pinning the axis at
+  // the raw instant drew that bucket off-canvas.
+  const result = {
+    time_range: {
+      start: "2026-08-26T12:17:18.076Z",
+      end: "2026-09-02T12:17:18.076Z",
+    },
+    metrics: [
+      {
+        series: [
+          {
+            data: [
+              { timestamp: "2026-08-26T00:00:00Z", value: 1 },
+              { timestamp: "2026-09-02T00:00:00Z", value: 2 },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  it("floors the window at the first bucket, not the resolved instant", () => {
+    expect(getChartTimeWindow(result).min).toBe(
+      Date.parse("2026-08-26T00:00:00Z"),
+    );
+  });
+
+  it("never starts after the earliest point it has to draw", () => {
+    const { min } = getChartTimeWindow(result);
+    const firstPoint = Date.parse(
+      result.metrics[0].series[0].data[0].timestamp,
+    );
+    expect(min).toBeLessThanOrEqual(firstPoint);
+  });
+
+  it("keeps the reported end when no bucket runs past it", () => {
+    expect(getChartTimeWindow(result).max).toBe(
+      Date.parse("2026-09-02T12:17:18.076Z"),
+    );
+  });
+
+  it("extends the end if a bucket somehow runs past the window", () => {
+    const late = JSON.parse(JSON.stringify(result));
+    late.metrics[0].series[0].data.push({
+      timestamp: "2026-09-03T00:00:00Z",
+      value: 3,
+    });
+    expect(getChartTimeWindow(late).max).toBe(
+      Date.parse("2026-09-03T00:00:00Z"),
+    );
+  });
+
+  it("falls back to the reported window when there are no buckets", () => {
+    expect(
+      getChartTimeWindow({ time_range: result.time_range, metrics: [] }),
+    ).toEqual({
+      min: Date.parse("2026-08-26T12:17:18.076Z"),
+      max: Date.parse("2026-09-02T12:17:18.076Z"),
+    });
+  });
+});
+
+describe("describeTableBuckets (review D5)", () => {
+  it("says nothing when nothing was left out", () => {
+    expect(
+      describeTableBuckets({ shown: 30, total: 30, omitted: 0 }),
+    ).toBeNull();
+    expect(describeTableBuckets()).toBeNull();
+  });
+
+  it("names the end it kept when the cap was hit", () => {
+    expect(
+      describeTableBuckets({
+        shown: 500,
+        total: 721,
+        omitted: 221,
+        truncated: true,
+      }),
+    ).toBe("latest 500 of 721 buckets");
+  });
+
+  it("does not claim truncation when only empty buckets were dropped", () => {
+    expect(
+      describeTableBuckets({
+        shown: 46,
+        total: 7201,
+        omitted: 7155,
+        truncated: false,
+      }),
+    ).toBe("46 of 7,201 buckets");
+  });
+});
+
+describe("getSeriesScalar — unbounded ranges (review D4)", () => {
+  const points = (n, valueAt) =>
+    Array.from({ length: n }, (_, i) => ({ x: i, y: valueAt(i) }));
+
+  it("takes min and max over a quarter of minute buckets without crashing", () => {
+    // Spreading into Math.min is an argument list; ~132k values crashed the
+    // whole page through the metric card, not just the widget.
+    const dense = points(132_481, (i) => (i % 97) + 1);
+    expect(() => getSeriesScalar(dense, "min")).not.toThrow();
+    expect(getSeriesScalar(dense, "min")).toBe(1);
+    expect(getSeriesScalar(dense, "max")).toBe(97);
+  });
+
+  it("still handles small, negative and single-value series", () => {
+    expect(
+      getSeriesScalar(
+        points(5, (i) => i - 2),
+        "min",
+      ),
+    ).toBe(-2);
+    expect(
+      getSeriesScalar(
+        points(5, (i) => i - 2),
+        "max",
+      ),
+    ).toBe(2);
+    expect(getSeriesScalar([{ x: 0, y: 7 }], "min")).toBe(7);
+    expect(getSeriesScalar([{ x: 0, y: 7 }], "max")).toBe(7);
+  });
+
+  it("ignores empty buckets and reports nothing for an empty series", () => {
+    expect(
+      getSeriesScalar(
+        points(6, (i) => (i === 3 ? 9 : null)),
+        "min",
+      ),
+    ).toBe(9);
+    expect(getSeriesScalar([], "min")).toBeNull();
+  });
+});

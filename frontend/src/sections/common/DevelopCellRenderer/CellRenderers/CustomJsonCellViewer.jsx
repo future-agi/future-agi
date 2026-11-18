@@ -79,7 +79,7 @@ const CustomJsonViewer = ({ object, ...rest }) => {
         }}
         // Style overrides to hide any copy buttons
         sx={{
-          fontSize: "14px",
+          fontSize: "12px",
           lineHeight: "22px",
           "& [data-testid='copy-icon-button'], & .tj-copy-button, & [class*='copy-button'], & [class*='copyButton']":
             {
@@ -95,7 +95,7 @@ const CustomJsonViewer = ({ object, ...rest }) => {
 };
 
 CustomJsonViewer.propTypes = {
-  object: PropTypes.object,
+  object: PropTypes.any,
 };
 
 export default CustomJsonViewer;

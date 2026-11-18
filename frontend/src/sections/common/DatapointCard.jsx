@@ -1,11 +1,12 @@
 import PropTypes from "prop-types";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
 } from "../develop-detail/AccordianElements";
-import { Box, Chip, Tab, Tabs, Typography, useTheme } from "@mui/material";
+import { Box, Chip, Tab, Typography, useTheme } from "@mui/material";
 import { ShowComponent } from "src/components/show";
 import "react-json-view-lite/dist/index.css";
 import {
@@ -41,6 +42,8 @@ const DatapointCard = ({
   const theme = useTheme();
   const [tabValue, setTabValue] = useState("markdown");
   const shouldApplyDefaultSx = Object.keys(sx).length === 0;
+  const cellValue = value?.cell_value ?? value?.cellValue;
+  const valueInfos = value?.value_infos ?? value?.valueInfos;
   useEffect(() => {
     // changes tab to "raw" if current tab is "difference" and showDiff is off and none of the diff tracker is on
     // showDiff is the state for a single datapoint card whether to show difference tab or not
@@ -74,13 +77,13 @@ const DatapointCard = ({
       return (
         <SvgColor
           src={`/assets/icons/action_buttons/ic_run_prompt.svg`}
-          sx={{ width: 20, height: 20, color: "info.main" }}
+          sx={{ width: 16, height: 16, color: "info.main" }}
         />
       );
     } else if (column?.originType === "evaluation") {
       return (
         <Iconify
-          icon="material-symbols:check-circle-outline"
+          icon="solar:check-circle-linear"
           sx={{ color: "info.success" }}
         />
       );
@@ -91,17 +94,17 @@ const DatapointCard = ({
       return (
         <SvgColor
           src={`/assets/icons/action_buttons/ic_optimize.svg`}
-          sx={{ width: 20, height: 20, color: "primary.main" }}
+          sx={{ width: 16, height: 16, color: "primary.main" }}
         />
       );
     } else if (column?.originType === "annotation_label") {
-      return <Iconify icon="jam:write" sx={iconStyle} />;
+      return <Iconify icon="solar:pen-linear" sx={iconStyle} />;
     } else if (dataType === "text") {
-      return <Iconify icon="material-symbols:notes" sx={iconStyle} />;
+      return <Iconify icon="solar:notes-linear" sx={iconStyle} />;
     } else if (dataType === "array") {
-      return <Iconify icon="material-symbols:data-array" sx={iconStyle} />;
+      return <Iconify icon="solar:brackets-linear" sx={iconStyle} />;
     } else if (dataType === "integer") {
-      return <Iconify icon="material-symbols:tag" sx={iconStyle} />;
+      return <Iconify icon="solar:hashtag-linear" sx={iconStyle} />;
     } else if (dataType === "float") {
       return <Iconify icon="tabler:decimal" sx={iconStyle} />;
     } else if (dataType === "boolean") {
@@ -109,25 +112,21 @@ const DatapointCard = ({
         <Iconify icon="material-symbols:toggle-on-outline" sx={iconStyle} />
       );
     } else if (dataType === "datetime") {
-      return <Iconify icon="tabler:calendar" sx={iconStyle} />;
+      return <Iconify icon="solar:calendar-linear" sx={iconStyle} />;
     } else if (dataType === "json") {
-      return <Iconify icon="material-symbols:data-object" sx={iconStyle} />;
+      return <Iconify icon="solar:braces-linear" sx={iconStyle} />;
     } else if (dataType === "image") {
-      return <Iconify icon="material-symbols:image-outline" sx={iconStyle} />;
+      return <Iconify icon="solar:gallery-linear" sx={iconStyle} />;
     } else if (dataType === "images") {
-      return (
-        <Iconify icon="material-symbols:art-track-outline" sx={iconStyle} />
-      );
+      return <Iconify icon="solar:gallery-linear" sx={iconStyle} />;
     }
   };
 
   const thoughts = useMemo(() => {
-    if (value?.valueInfos) {
+    if (valueInfos) {
       const infoSources = [
-        typeof value.valueInfos === "string" ? value.valueInfos : null,
-        typeof value.valueInfos?.reason === "string"
-          ? value.valueInfos.reason
-          : null,
+        typeof valueInfos === "string" ? valueInfos : null,
+        typeof valueInfos?.reason === "string" ? valueInfos.reason : null,
       ].filter(Boolean);
       for (const src of infoSources) {
         const extracted = extractAllThoughts(src);
@@ -135,7 +134,7 @@ const DatapointCard = ({
       }
     }
     return null;
-  }, [value?.valueInfos]);
+  }, [valueInfos]);
 
   const isAnnotationColumn = column?.originType === "annotation_label";
 
@@ -145,7 +144,7 @@ const DatapointCard = ({
   // value rather than the envelope JSON.
   const annotationUnwrapped = useMemo(() => {
     if (!isAnnotationColumn) return undefined;
-    const parsed = parseAnnotationValue(value?.cellValue);
+    const parsed = parseAnnotationValue(cellValue);
     if (Array.isArray(parsed)) return JSON.stringify(parsed);
     if (parsed && typeof parsed === "object") {
       if (Array.isArray(parsed.selected))
@@ -154,26 +153,26 @@ const DatapointCard = ({
       if (typeof parsed.value === "string" || typeof parsed.value === "number")
         return String(parsed.value);
       if (typeof parsed.text === "string") return parsed.text;
-      return value?.cellValue;
+      return cellValue;
     }
     return parsed == null ? "" : String(parsed);
-  }, [isAnnotationColumn, value?.cellValue]);
+  }, [isAnnotationColumn, cellValue]);
 
   const formattedValue = useMemo(() => {
     if (isAnnotationColumn) return annotationUnwrapped;
     if (dataType === "float") {
-      return `${getScorePercentage(parseFloat(value?.cellValue) * 10)}%`;
+      return `${getScorePercentage(parseFloat(cellValue) * 10)}%`;
     }
     if (dataType === "datetime") {
-      const date = new Date(value?.cellValue);
-      return isNaN(date.getTime()) ? value?.cellValue : date.toLocaleString();
+      const date = new Date(cellValue);
+      return isNaN(date.getTime()) ? cellValue : date.toLocaleString();
     }
-    return value?.cellValue;
-  }, [value?.cellValue, dataType, isAnnotationColumn, annotationUnwrapped]);
+    return cellValue;
+  }, [cellValue, dataType, isAnnotationColumn, annotationUnwrapped]);
 
   const annotationContent = useMemo(
-    () => (isAnnotationColumn ? renderAnnotationValue(value?.cellValue, theme) : null),
-    [isAnnotationColumn, value?.cellValue, theme],
+    () => (isAnnotationColumn ? renderAnnotationValue(cellValue, theme) : null),
+    [isAnnotationColumn, cellValue, theme],
   );
   const parsedJson = useMemo(() => {
     if (!isJsonValue(formattedValue)) return null;
@@ -197,11 +196,30 @@ const DatapointCard = ({
     return value?.cellDiffValue;
   }, [value?.cellDiffValue, dataType]);
 
+  const copyIcon = allowCopy ? (
+    <SvgColor
+      src="/assets/icons/ic_copy.svg"
+      alt="Copy"
+      sx={{
+        width: 16,
+        height: 16,
+        color: "text.disabled",
+        cursor: "pointer",
+      }}
+      onClick={() => {
+        copyToClipboard(cellValue);
+        enqueueSnackbar("Copied to clipboard", {
+          variant: "success",
+        });
+      }}
+    />
+  ) : null;
+
   return (
     <Accordion
       sx={{
         border: "1px solid",
-        borderColor: isAgentsFinalNode ? "blue.500" : "divider",
+        borderColor: isAgentsFinalNode ? "status.info.solid" : "divider",
       }}
       defaultExpanded
       disableGutters
@@ -211,7 +229,9 @@ const DatapointCard = ({
           flexDirection: "row",
           paddingLeft: 1,
           paddingRight: 2,
-          backgroundColor: isAgentsFinalNode ? "blue.o10" : "background.paper",
+          backgroundColor: isAgentsFinalNode
+            ? "status.info.bg"
+            : "background.paper",
         }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -238,9 +258,6 @@ const DatapointCard = ({
               sx={{
                 backgroundColor: "success.lighter",
                 color: "success.main",
-                borderRadius: 0.25,
-                fontWeight: 600,
-                fontSize: "11px",
                 ":hover": {
                   backgroundColor: "success.lighter",
                   color: "success.main",
@@ -256,7 +273,7 @@ const DatapointCard = ({
             paddingX: 2,
             paddingBottom: 1,
             backgroundColor: isAgentsFinalNode
-              ? "blue.o10"
+              ? "status.info.bg"
               : "background.paper",
           }}
         >
@@ -281,8 +298,8 @@ const DatapointCard = ({
                   <SvgColor
                     src={"/assets/icons/ic_thoughts.svg"}
                     sx={{
-                      height: "20px",
-                      width: "20px",
+                      height: "16px",
+                      width: "16px",
                       bgcolor: "primary.main",
                     }}
                   />
@@ -304,7 +321,7 @@ const DatapointCard = ({
                     overflowY: "auto",
                     border: "1px solid",
                     borderColor: "divider",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                   }}
                 >
                   <Typography
@@ -341,55 +358,12 @@ const DatapointCard = ({
                     padding: "8px 12px",
                   }}
                 >
-                  <Tabs
-                    textColor="primary"
-                    value={tabValue}
-                    onChange={handleTabChange}
-                    TabIndicatorProps={{ style: { display: "none" } }}
-                    sx={{
-                      minHeight: 32,
-                      "& .MuiTab-root": {
-                        minHeight: 32,
-                        paddingX: "8px",
-                        paddingY: "4px",
-                        fontWeight: theme.typography["fontWeightMedium"],
-                        typography: "s1",
-                        "&:not(:last-of-type)": {
-                          marginRight: "0px !important",
-                        },
-                        "&:not(.Mui-selected)": {
-                          color: theme.palette.text.secondary,
-                        },
-                        "&.Mui-selected": { color: theme.palette.primary.main },
-                      },
-                      "& .MuiTabs-flexContainer": {
-                        gap: "20px",
-                        display: "flex",
-                      },
-                    }}
-                  >
+                  <SegmentedTabs value={tabValue} onChange={handleTabChange}>
                     <Tab value="markdown" label="Markdown" />
                     <Tab value="raw" label="Raw" />
                     {showDiff && <Tab value="difference" label="Difference" />}
-                  </Tabs>
-                  {allowCopy && (
-                    <SvgColor
-                      src="/assets/icons/ic_copy.svg"
-                      alt="Copy"
-                      sx={{
-                        width: 20,
-                        height: 20,
-                        color: "text.disabled",
-                        cursor: "pointer",
-                      }}
-                      onClick={() => {
-                        copyToClipboard(value?.cellValue);
-                        enqueueSnackbar("Copied to clipboard", {
-                          variant: "success",
-                        });
-                      }}
-                    />
-                  )}
+                  </SegmentedTabs>
+                  {copyIcon}
                 </Box>
               ) : null}
               {showTabs ? (
@@ -508,6 +482,17 @@ const DatapointCard = ({
                     ...sx,
                   }}
                 >
+                  {copyIcon && (
+                    <Box
+                      sx={{
+                        display: "flex",
+                        justifyContent: "flex-end",
+                        mb: 1,
+                      }}
+                    >
+                      {copyIcon}
+                    </Box>
+                  )}
                   <Typography
                     variant="body2"
                     sx={{

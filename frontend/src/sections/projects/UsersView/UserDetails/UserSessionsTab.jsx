@@ -13,7 +13,7 @@ const UserSessionsTab = forwardRef(
     const { userId: selectedUserId } = useParams();
 
     const filtersWithUserId = useMemo(() => {
-      const hasUserIdFilter = filters?.some((f) => f.columnId === "user_id");
+      const hasUserIdFilter = filters?.some((f) => f.column_id === "user_id");
 
       if (hasUserIdFilter || !selectedUserId) {
         return filters;
@@ -22,11 +22,11 @@ const UserSessionsTab = forwardRef(
       return [
         ...filters,
         {
-          columnId: "user_id",
-          filterConfig: {
-            filterOp: "equals",
-            filterType: "text",
-            filterValue: selectedUserId,
+          column_id: "user_id",
+          filter_config: {
+            filter_op: "equals",
+            filter_type: "text",
+            filter_value: selectedUserId,
           },
         },
       ];

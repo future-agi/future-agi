@@ -26,11 +26,11 @@ const STATUS_MAPPER = {
 };
 
 const defaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
   id: getRandomId(),
 };
@@ -57,7 +57,7 @@ export default function PerformanceMetrics() {
 
     // 🟩 CASE 1: total_calls → remove status filters, keep others
     if (type === "total_calls") {
-      const otherFilters = copy.filter((f) => f.columnId !== "status");
+      const otherFilters = copy.filter((f) => f.column_id !== "status");
 
       const newFilters =
         otherFilters.length === 0 ? [defaultFilter] : otherFilters;
@@ -76,32 +76,32 @@ export default function PerformanceMetrics() {
       const targetValue = STATUS_MAPPER[type];
 
       // Remove empty column filters
-      const cleanedFilters = copy.filter((f) => f.columnId !== "");
+      const cleanedFilters = copy.filter((f) => f.column_id !== "");
       const updatedFilters = [...cleanedFilters];
 
       // Find existing status filter
       const existingStatusIndex = updatedFilters.findIndex(
-        (f) => f.columnId === "status",
+        (f) => f.column_id === "status",
       );
 
       if (existingStatusIndex >= 0) {
         // Update existing status filter
         updatedFilters[existingStatusIndex] = {
           ...updatedFilters[existingStatusIndex],
-          filterConfig: {
-            ...updatedFilters[existingStatusIndex].filterConfig,
-            filterValue: targetValue,
+          filter_config: {
+            ...updatedFilters[existingStatusIndex].filter_config,
+            filter_value: targetValue,
           },
         };
       } else {
         // Append new status filter
         updatedFilters.push({
           id: getRandomId(),
-          columnId: "status",
-          filterConfig: {
-            filterType: "text",
-            filterOp: "equals",
-            filterValue: targetValue,
+          column_id: "status",
+          filter_config: {
+            filter_type: "text",
+            filter_op: "equals",
+            filter_value: targetValue,
           },
           _meta: { parentProperty: "status" },
         });
@@ -142,7 +142,7 @@ export default function PerformanceMetrics() {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         padding: 1.5,
         bgcolor: "var(--bg-neutral)",
       }}
@@ -176,7 +176,7 @@ export default function PerformanceMetrics() {
               width: "24px",
               color: "text.primary",
               rotate: collapse ? "0deg" : "180deg",
-              transition: "rotate 0.3s ease-in-out",
+              transition: "rotate 0.2s ease-in-out",
             }}
             src="/assets/icons/custom/lucide--chevron-down.svg"
           />
@@ -190,7 +190,7 @@ export default function PerformanceMetrics() {
               sm: "hidden",
             },
             maxHeight: expanded ? "100%" : "400px",
-            transition: "max-height 0.4s ease-in-out",
+            transition: "max-height 0.2s ease-in-out",
           })}
         >
           {isPending && !kpis ? (
@@ -228,16 +228,13 @@ export default function PerformanceMetrics() {
               display: "flex",
               color: "text.primary",
               typography: "s2",
-              fontWeight: "fontWeightMedium",
-              borderRadius: 1,
               mt: 1,
               borderColor: "text.disabled",
             }}
             startIcon={
               <SvgColor
+                width={16}
                 sx={{
-                  height: "16px",
-                  width: "16px",
                   rotate: "180deg",
                 }}
                 src={

@@ -2,6 +2,8 @@
 
 ## Setup
 
+Run the commands below from the `futureagi/` directory of the repository.
+
 ### Initial Setup
 ```bash
 git submodule update --init --recursive
@@ -9,21 +11,30 @@ git submodule update --init --recursive
 
 ### Type Checking with MyPy
 
-**We use MyPy with a baseline-driven approach** - new code must be typed, but existing code is grandfathered in.
-
-#### Quick Start
+CI runs mypy on the whole backend in the "Python types (advisory)" workflow.
+Known errors are listed in `mypy-baseline.txt`, one line per error, with line
+numbers set to 0 so moving code does not change them. The check fails when a
+file has more errors of a kind than the baseline lists, including errors a
+change causes in files it did not touch. It is advisory for now.
 
 ```bash
-# Create or refresh the baseline
-make mypy-baseline
-
-# Before every commit
-make mypy
+make mypy                # whole-repo mypy, compared with mypy-baseline.txt
+make mypy-baseline-sync  # rewrite mypy-baseline.txt from a whole-repo run
 ```
 
-**🔥 CI will reject PRs with new type errors!**
+mypy's Django plugin loads the production settings, `tfc.settings.settings`
+(`[tool.django-stubs]` in `pyproject.toml`), with
+`EE_LICENSE_KEY=mypy-placeholder` so the EE apps are registered too. The
+variable is a placeholder, not a key; `make mypy` and CI set it, and both run
+`.venv/bin/mypy`.
 
-📚 **[Read the type-checking conventions](../CONTRIBUTING.md#code-style)**
+Fix a new error rather than syncing it into the baseline. After fixing
+baselined errors, run `make mypy-baseline-sync` and commit the smaller
+baseline. CI's environment is the reference (no `ee/cloud` checkout); its run
+uploads mypy's output as the `mypy-output` artifact, which
+`python3 -I ../scripts/mypy_baseline.py sync --input <file>` turns into a
+baseline. See the [baseline helper](../scripts/mypy_baseline.py) and the
+[type-checking conventions](../CONTRIBUTING.md#code-style).
 
 ### Pre-commit Hooks
 
@@ -31,11 +42,10 @@ make mypy
 
 #### What do they check?
 
-- ✅ Code formatting (Black, isort)
+- ✅ Code formatting and import sorting (Ruff)
 - ✅ Linting (Ruff)
 - ✅ Security (Bandit, detect-secrets)
 - ✅ Django checks (migrations, system checks)
-- ✅ Type checking (mypy)
 - ✅ File validation (YAML, JSON)
 
 #### First-time setup
@@ -62,10 +72,12 @@ make mypy               # Check types (baseline-driven)
 
 #### Having issues?
 
-- See the [git hooks setup guide](../CONTRIBUTING.md#3-install-git-hooks)
-- See the [git hooks reference](../TESTING.md#git-hooks)
-- See the [type-checking conventions](../CONTRIBUTING.md#code-style)
-- Run `./bin/verify-team-setup.sh` to diagnose issues
+- See the [git hooks setup guide](../CONTRIBUTING.md#3-install-git-hooks) and
+  [git hooks reference](../TESTING.md#git-hooks).
+- `pre-commit validate-config .pre-commit-config.yaml` checks the backend hook
+  configuration. The [setup checker](bin/verify-team-setup.sh) also looks for
+  `.git/hooks` in the current directory, so its hook-installation check is not
+  reliable from this subdirectory.
 
 ### Common Commands
 
@@ -79,11 +91,11 @@ make check-all           # Run all quality checks
 
 # Testing
 make test                # Run all tests
-make test-unit           # Run unit tests
-make test-integration    # Run integration tests
+make test-unit           # Tests marked unit
+make test-integration    # Tests marked integration
 
 # Django
-python manage.py runserver    # Start dev server
+DEBUG=true python manage.py runserver  # Start dev server (DEBUG defaults to off; set it explicitly to serve app static files and debug pages)
 python manage.py migrate      # Run migrations
 python manage.py test         # Run Django tests
 ```
@@ -95,16 +107,16 @@ Before submitting a PR:
 1. Ensure pre-commit hooks are installed
 2. Run `make pre-commit-all` to check your changes
 3. Run `make test` to ensure tests pass
-4. Follow the [PR template](.github/PULL_REQUEST_TEMPLATE.md)
+4. Follow the [PR template](../.github/PULL_REQUEST_TEMPLATE.md)
 
-See the [Contributing Guide](../CONTRIBUTING.md) for more details.
+See [Contributing Guide](../CONTRIBUTING.md) for more details.
 
 ### Documentation
 
-- 📚 [Development Setup](../CONTRIBUTING.md#development-setup)
-- 🔧 [Git Hooks Setup](../CONTRIBUTING.md#3-install-git-hooks)
-- 🔍 [Git Hooks Reference](../TESTING.md#git-hooks)
-- 📖 [Testing Guide](../TESTING.md)
+- 📚 [Development setup](../CONTRIBUTING.md#development-setup)
+- 🔧 [Git hooks setup](../CONTRIBUTING.md#3-install-git-hooks)
+- 🔍 [Git hooks reference](../TESTING.md#git-hooks)
+- 📖 [Testing guide](../TESTING.md)
 
 ---
 
@@ -125,8 +137,8 @@ pip install -r requirements.txt
 # Install pre-commit hooks (MANDATORY)
 make pre-commit-install
 
-# Verify setup
-./bin/verify-team-setup.sh
+# Validate the backend hook configuration
+pre-commit validate-config .pre-commit-config.yaml
 
 # Start developing!
 ```
@@ -137,7 +149,7 @@ This project uses pre-commit hooks to ensure code quality. They run automaticall
 
 **Setup (one-time):** `make pre-commit-install`
 
-**Documentation:** [Git Hooks Setup](../CONTRIBUTING.md#3-install-git-hooks)
+**Documentation:** [Git hooks setup](../CONTRIBUTING.md#3-install-git-hooks)
 
 ---
 
@@ -178,11 +190,11 @@ make pre-commit-all
 | `make pre-commit-install` | Install pre-commit hooks (one-time) |
 | `make pre-commit` | Run on staged files |
 | `make pre-commit-all` | Run on all files |
-| `make format` | Auto-format code (black + isort) |
-| `make lint` | Run linters (ruff, black, isort) |
-| `make mypy` | Run baseline-driven type checks |
+| `make format` | Auto-fix and format code (`ruff check --fix`, `ruff format`) |
+| `make lint` | Run linters (`ruff check`, `ruff format --check`) |
+| `make mypy` | Compare type errors with the baseline |
 | `make check-all` | Run all quality checks |
-| `make test` | Run all backend tests |
+| `make test` | Run the backend tests |
 
 ## Quick Fixes
 
@@ -217,20 +229,18 @@ detect-secrets scan > .secrets.baseline
 git commit --no-verify
 
 # Skip specific hook
-SKIP=ruff git commit -m "Message"
+SKIP=ruff-check,ruff-format git commit -m "Message"
 ```
 
 ## Installed Hooks
 
 ### Auto-fixing Hooks
-✅ **black** - Python formatter
-✅ **isort** - Import sorter
-✅ **ruff** - Linter with auto-fix
+✅ **ruff-check** - Linter and import sorter, with auto-fix
+✅ **ruff-format** - Python formatter
 ✅ **django-upgrade** - Upgrade Django code
 ✅ **djlint** - Django template formatter
 
 ### Checking Hooks
-🔍 **mypy** - Type checking
 🔍 **bandit** - Security scan
 🔍 **detect-secrets** - Secret detection
 🔍 **django-check** - Django system checks
@@ -243,8 +253,8 @@ SKIP=ruff git commit -m "Message"
 pre-commit clean
 pre-commit install --install-hooks
 
-# Update hooks to latest versions
-pre-commit autoupdate
+# Check the current pinned hook configuration
+pre-commit validate-config .pre-commit-config.yaml
 
 # Run with verbose output
 pre-commit run --all-files --verbose
@@ -252,6 +262,6 @@ pre-commit run --all-files --verbose
 
 ## Help
 
-- 📚 [Git Hooks Setup](../CONTRIBUTING.md#3-install-git-hooks)
+- 📚 [Git hooks setup](../CONTRIBUTING.md#3-install-git-hooks)
 - 🔧 [Configuration](.pre-commit-config.yaml)
 - 💬 Ask in team Slack channel

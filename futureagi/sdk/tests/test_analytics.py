@@ -9,7 +9,9 @@ Tests for the three simulation analytics endpoints:
 These endpoints use APIKeyAuthentication (x-api-key / x-secret-key headers).
 """
 
+import json
 import uuid
+from itertools import permutations
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -272,19 +274,9 @@ class TestAnalyticsAuth:
 
     @pytest.mark.parametrize("url", [METRICS_URL, RUNS_URL, ANALYTICS_URL])
     def test_unauthenticated_request_is_rejected(self, api_client, url):
-        """Request without any credentials is rejected.
-
-        NOTE: These views lack permission_classes, so unauthenticated requests
-        pass DRF auth and hit the view's own validation first, returning 400
-        (no query params) or 500 (no organization). This is a known limitation
-        -- ideally it should return 401.
-        """
+        """Request without any credentials returns 401 before business validation."""
         response = api_client.get(url)
-        assert response.status_code in [
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        ]
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     @pytest.mark.parametrize("url", [METRICS_URL, RUNS_URL, ANALYTICS_URL])
     def test_invalid_api_key_returns_401(self, api_client, url):
@@ -824,7 +816,7 @@ class TestSimulationRunsView:
         result = response.json()["result"]
         eval_outputs = result["eval_outputs"]
         # Only Accuracy should remain, Fluency should be filtered out
-        for config_id, data in eval_outputs.items():
+        for _config_id, data in eval_outputs.items():
             assert data["name"].lower() == "accuracy"
 
     def test_eval_name_filter_comma_separated(self, sdk_client, call_execution):
@@ -868,7 +860,7 @@ class TestSimulationRunsView:
 class TestSimulationAnalyticsView:
     """Happy path tests for GET /sdk/api/v1/simulation/analytics/."""
 
-    def _mock_connection_for_analytics(self, mock_conn):
+    def _mock_connection_for_analytics(self, mock_conn, eval_rows=FAKE_EVAL_ROWS):
         """Set up mock connection returning eval and kpi cursors."""
         mock_cursor_eval = _build_mock_cursor(
             [
@@ -879,7 +871,7 @@ class TestSimulationAnalyticsView:
                 "choice_value",
                 "choice_count",
             ],
-            FAKE_EVAL_ROWS,
+            eval_rows,
             single=False,
         )
         mock_cursor_kpi = _build_mock_cursor(FAKE_KPI_COLUMNS, FAKE_KPI_ROW)
@@ -958,6 +950,252 @@ class TestSimulationAnalyticsView:
         assert eval_averages["avg_accuracy"] == 50.0
         assert "avg_fluency" in eval_averages
         assert eval_averages["avg_fluency"] == 0.85
+
+    @pytest.mark.parametrize(
+        ("eval_rows", "expected_json"),
+        [
+            (
+                [
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                    ("eval-choice", "Avg Tone", "choices", None, "positive", 4),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-choice":{"positive":4}}',
+            ),
+            (
+                [
+                    ("eval-choice", "Avg Tone", "choices", None, "positive", 4),
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-choice":{"positive":4}}',
+            ),
+            (
+                [
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                    ("eval-choice", "Avg Tone", "choices", None, "positive", 4),
+                    ("eval-other", "Avg Tone__eval-choice", "choices", None, "no", 2),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-choice_":{"positive":4},'
+                '"avg_tone__eval-choice":{"no":2}}',
+            ),
+            (
+                [
+                    ("eval-numeric", "Tone", "choices", 4.0, None, 0),
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-numeric":4.0}',
+            ),
+            (
+                [
+                    ("eval-first", "Tone", "score", 10.0, None, 0),
+                    ("x__y", "Tone", "score", 20.0, None, 0),
+                    ("eval-other", "Tone__x", "score", 30.0, None, 0),
+                    ("y", "Tone__x", "score", 40.0, None, 0),
+                ],
+                '{"avg_tone":10.0,"avg_tone__x__y":20.0,'
+                '"avg_tone__x":30.0,"avg_tone__x__y_":40.0}',
+            ),
+            (
+                [
+                    ("eval-first", "Tone", "score", 75.0, None, None),
+                    ("eval-second", "tone", "score", 65.0, None, None),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-second":65.0}',
+            ),
+            (
+                [
+                    ("eval-second", "tone", "score", 65.0, None, None),
+                    ("eval-first", "Tone", "score", 75.0, None, None),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-second":65.0}',
+            ),
+            (
+                [
+                    ("eval-score", "Tone", "score", 75.0, None, None),
+                    ("eval-choice", "Sentiment", "choices", None, "positive", 4),
+                ],
+                '{"avg_tone":75.0,"sentiment":{"positive":4}}',
+            ),
+            (
+                [
+                    ("eval-category", "Avg Tone", "choices", None, "positive", 2),
+                    ("eval-numeric", "Tone", "choices", 4.0, None, 0),
+                ],
+                '{"avg_tone":4.0,"avg_tone__eval-category":{"positive":2}}',
+            ),
+            (
+                [
+                    ("eval-numeric", "Tone", "choices", 4.0, None, 0),
+                    ("eval-category", "Avg Tone", "choices", None, "positive", 2),
+                ],
+                '{"avg_tone":4.0,"avg_tone__eval-category":{"positive":2}}',
+            ),
+            (
+                [
+                    ("eval-choice", "Avg Tone", "choices", None, "positive", 2),
+                    ("eval-empty", "Empty", "choices", None, None, 0),
+                    ("eval-score", "Tone", "score", 75.0, None, 0),
+                ],
+                '{"avg_tone":75.0,"avg_tone__eval-choice":{"positive":2}}',
+            ),
+            (
+                [
+                    ("eval-shared", "Tone", "Pass/Fail", 66.7, None, 0),
+                    ("eval-shared", "Tone", "score", None, None, 0),
+                    ("eval-other", "Accuracy", "score", 82.5, None, 0),
+                ],
+                '{"avg_tone":0,"avg_accuracy":82.5}',
+            ),
+            (
+                [
+                    ("eval-shared", "Tone", "score", None, None, 0),
+                    ("eval-shared", "Tone", "Pass/Fail", 66.7, None, 0),
+                    ("eval-other", "Accuracy", "score", 82.5, None, 0),
+                ],
+                '{"avg_tone":66.7,"avg_accuracy":82.5}',
+            ),
+            (
+                [
+                    ("eval-category", "Avg Tone", "choices", None, "positive", 2),
+                    ("eval-shared", "Tone", "score", None, None, 0),
+                    ("eval-shared", "Tone", "Pass/Fail", 66.7, None, 0),
+                ],
+                '{"avg_tone":66.7,"avg_tone__eval-category":{"positive":2}}',
+            ),
+        ],
+    )
+    def test_execution_id_eval_averages_keep_distinct_metrics(
+        self, sdk_client, test_execution, call_execution, eval_rows, expected_json
+    ):
+        with (
+            patch("sdk.views.analytics.connection") as mock_conn,
+            patch("sdk.views.analytics._get_eval_configs_with_template") as mock_eval,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_eval.return_value = MagicMock(filter=MagicMock(return_value=[]))
+            self._mock_connection_for_analytics(mock_conn, eval_rows)
+            response = sdk_client.get(
+                ANALYTICS_URL,
+                {"execution_id": str(test_execution.id)},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        averages = response.json()["result"]["eval_averages"]
+        assert averages == json.loads(expected_json)
+
+    @pytest.mark.parametrize(
+        "eval_rows",
+        permutations(
+            [
+                ("eval-shared", "Tone", "score", 75.0, None, None),
+                ("eval-shared", "tone", "score", 65.0, None, None),
+                ("eval-shared", "TONE", "score", 55.0, None, None),
+            ]
+        ),
+    )
+    def test_execution_id_repeated_metric_names_keep_prior_value(
+        self, sdk_client, test_execution, call_execution, eval_rows
+    ):
+        with (
+            patch("sdk.views.analytics.connection") as mock_conn,
+            patch("sdk.views.analytics._get_eval_configs_with_template") as mock_eval,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_eval.return_value = MagicMock(filter=MagicMock(return_value=[]))
+            self._mock_connection_for_analytics(mock_conn, eval_rows)
+            response = sdk_client.get(
+                ANALYTICS_URL,
+                {"execution_id": str(test_execution.id)},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        averages = response.json()["result"]["eval_averages"]
+        assert averages == {"avg_tone": eval_rows[-1][3]}
+
+    @pytest.mark.parametrize(
+        "eval_rows",
+        [
+            [
+                ("eval-a", "Tone", "score", 75.0, None, None),
+                ("eval-b", "tone", "Pass/Fail", 50.0, None, None),
+                ("eval-b", "TONE", "score", 40.0, None, None),
+            ],
+            [
+                ("eval-b", "TONE", "score", 40.0, None, None),
+                ("eval-a", "Tone", "score", 75.0, None, None),
+                ("eval-b", "tone", "Pass/Fail", 50.0, None, None),
+            ],
+        ],
+    )
+    def test_execution_id_repeated_rows_reuse_metric_key(
+        self, sdk_client, test_execution, call_execution, eval_rows
+    ):
+        with (
+            patch("sdk.views.analytics.connection") as mock_conn,
+            patch("sdk.views.analytics._get_eval_configs_with_template") as mock_eval,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_eval.return_value = MagicMock(filter=MagicMock(return_value=[]))
+            self._mock_connection_for_analytics(mock_conn, eval_rows)
+            response = sdk_client.get(
+                ANALYTICS_URL, {"execution_id": str(test_execution.id)}
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        last_b_value = next(row[3] for row in reversed(eval_rows) if row[0] == "eval-b")
+        assert response.json()["result"]["eval_averages"] == {
+            "avg_tone": 75.0,
+            "avg_tone__eval-b": last_b_value,
+        }
+
+    @pytest.mark.parametrize(
+        "eval_rows",
+        [
+            [
+                ("eval-errored", "Tone", "choices", None, None, 0),
+                ("eval-valid", "TONE", "choices", None, "Positive", 4),
+            ],
+            [
+                ("eval-valid", "TONE", "choices", None, "Positive", 4),
+                ("eval-errored", "Tone", "choices", None, None, 0),
+            ],
+        ],
+    )
+    def test_execution_id_errored_choice_does_not_claim_key(
+        self, sdk_client, test_execution, call_execution, eval_rows
+    ):
+        with (
+            patch("sdk.views.analytics.connection") as mock_conn,
+            patch("sdk.views.analytics._get_eval_configs_with_template") as mock_eval,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_eval.return_value = MagicMock(filter=MagicMock(return_value=[]))
+            self._mock_connection_for_analytics(mock_conn, eval_rows)
+            response = sdk_client.get(
+                ANALYTICS_URL, {"execution_id": str(test_execution.id)}
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["eval_averages"] == {"tone": {"positive": 4}}
 
     def test_execution_id_system_summary_populated(
         self, sdk_client, test_execution, call_execution
@@ -1157,7 +1395,7 @@ class TestAnalyticsPagination:
     def test_metrics_pagination_params(self, sdk_client, run_test, db, scenario):
         """Metrics run_test_name mode respects page and limit params."""
         # Create multiple executions
-        for i in range(15):
+        for _i in range(15):
             exec_obj = TestExecution.objects.create(
                 run_test=run_test,
                 status="completed",
@@ -1199,7 +1437,7 @@ class TestAnalyticsPagination:
     ):
         """Runs execution_id mode paginates call_results."""
         # Create 12 call executions
-        for i in range(12):
+        for _i in range(12):
             CallExecution.objects.create(
                 test_execution=test_execution,
                 scenario=scenario,
@@ -1234,8 +1472,8 @@ class TestAnalyticsPagination:
 
     def test_runs_run_test_name_pagination(self, sdk_client, run_test, scenario, db):
         """Runs run_test_name mode paginates executions."""
-        for i in range(8):
-            exec_obj = TestExecution.objects.create(
+        for _i in range(8):
+            TestExecution.objects.create(
                 run_test=run_test,
                 status="completed",
             )
@@ -1321,26 +1559,28 @@ class TestAnalyticsEdgeCases:
 
     def test_metrics_view_handles_internal_error(self, sdk_client, db):
         """Metrics view catches exceptions and returns 500."""
-        with patch("sdk.views.analytics.SimulationQuerySerializer") as mock_serializer:
-            mock_serializer.side_effect = RuntimeError("boom")
+        with patch(
+            "sdk.views.analytics.SimulationMetricsView._handle_execution",
+            side_effect=RuntimeError("boom"),
+        ):
             response = sdk_client.get(METRICS_URL, {"execution_id": str(uuid.uuid4())})
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     def test_runs_view_handles_internal_error(self, sdk_client, db):
         """Runs view catches exceptions and returns 500."""
         with patch(
-            "sdk.views.analytics.SimulationRunsQuerySerializer"
-        ) as mock_serializer:
-            mock_serializer.side_effect = RuntimeError("boom")
+            "sdk.views.analytics.SimulationRunsView._handle_execution_detail",
+            side_effect=RuntimeError("boom"),
+        ):
             response = sdk_client.get(RUNS_URL, {"execution_id": str(uuid.uuid4())})
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     def test_analytics_view_handles_internal_error(self, sdk_client, db):
         """Analytics view catches exceptions and returns 500."""
         with patch(
-            "sdk.views.analytics.SimulationAnalyticsQuerySerializer"
-        ) as mock_serializer:
-            mock_serializer.side_effect = RuntimeError("boom")
+            "sdk.views.analytics.SimulationAnalyticsView._handle_execution",
+            side_effect=RuntimeError("boom"),
+        ):
             response = sdk_client.get(
                 ANALYTICS_URL, {"execution_id": str(uuid.uuid4())}
             )
@@ -1753,7 +1993,7 @@ class TestAdditionalCoverage:
         )
 
         # rt1 has an older completed execution
-        older = TestExecution.objects.create(
+        TestExecution.objects.create(
             run_test=rt1,
             status="completed",
             total_calls=5,

@@ -1,6 +1,6 @@
 import React, { memo } from "react";
 import { Handle, Position } from "@xyflow/react";
-import { alpha, Box, IconButton, Stack, Typography } from "@mui/material";
+import { Box, IconButton, Stack, Typography, ButtonBase } from "@mui/material";
 import SvgColor from "src/components/svg-color";
 import PropTypes from "prop-types";
 import NodeSelectionPopper from "../../components/NodeSelectionPopper";
@@ -33,7 +33,7 @@ const BaseNode = ({
   const outputPort = ports?.find((p) => p.direction === PORT_DIRECTION.OUTPUT);
   const outputPortLabel = outputPort?.display_name;
   const typeConfig = NODE_TYPE_CONFIG[type] ?? {};
-  const iconColor = typeConfig.color ?? "orange.500";
+  const iconColor = typeConfig.color ?? "status.warning.fg";
 
   const state = useBaseNodeState({ id, data });
   const {
@@ -43,6 +43,7 @@ const BaseNode = ({
     isCompleted,
     isError,
     isWorkflowRunning,
+    isReadOnly,
   } = state;
 
   const { boxSx, borderColor, theme } = useBaseNodeStyles(state);
@@ -106,7 +107,7 @@ const BaseNode = ({
           type="target"
           position={Position.Left}
           id="input"
-          isConnectable={preview ? false : isConnectable}
+          isConnectable={preview || isReadOnly ? false : isConnectable}
           style={{
             ...handleBaseStyle,
             border: `1px solid ${borderColor}`,
@@ -130,7 +131,7 @@ const BaseNode = ({
             sx={{
               width: 20,
               height: 20,
-              borderRadius: 0.5,
+              borderRadius: "4px",
               border: "1px solid",
               borderColor: "divider",
               display: "flex",
@@ -156,15 +157,14 @@ const BaseNode = ({
           >
             {label}
           </Typography>
-          {!preview && !isWorkflowRunning && (
+          {!preview && !isWorkflowRunning && !isReadOnly && (
             <IconButton
               className="node-delete-btn"
               sx={{
-                color: "red.500",
+                color: "status.danger.fg",
                 bgcolor: "background.paper",
-                borderRadius: 0.5,
                 border: "1px solid",
-                borderColor: "red.500",
+                borderColor: "status.danger.solid",
                 marginLeft: "auto",
                 p: 0.5,
                 position: "absolute",
@@ -172,10 +172,7 @@ const BaseNode = ({
                 top: "50%",
                 transform: "translateY(-50%)",
                 "&:hover": {
-                  bgcolor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? alpha(theme.palette.red[800], 0.3)
-                      : "red.50",
+                  bgcolor: "status.danger.bg",
                 },
               }}
               onClick={handleDeleteClick}
@@ -196,7 +193,7 @@ const BaseNode = ({
           type="source"
           position={Position.Right}
           id="output"
-          isConnectable={preview ? false : isConnectable}
+          isConnectable={preview || isReadOnly ? false : isConnectable}
           style={{
             ...handleBaseStyle,
             border: `1px solid ${borderColor}`,
@@ -212,7 +209,7 @@ const BaseNode = ({
           nodeId={id}
           portId={outputPort?.id}
           label={outputPortLabel}
-          preview={preview || isWorkflowRunning}
+          preview={preview || isWorkflowRunning || isReadOnly}
           sx={{
             left: "100%",
             ml: 2,
@@ -222,8 +219,9 @@ const BaseNode = ({
       )}
 
       {/* Add button — only shown when node has no outgoing edges */}
-      {!preview && !isWorkflowRunning && !hasOutgoingEdge && (
-        <Box
+      {!preview && !isWorkflowRunning && !isReadOnly && !hasOutgoingEdge && (
+        <ButtonBase
+          component="div"
           ref={addButtonRef}
           onClick={handleAddClick}
           sx={{
@@ -235,18 +233,16 @@ const BaseNode = ({
             height: 24,
             borderRadius: "50%",
             border: "1px solid",
-            borderColor: "blue.500",
+            borderColor: "status.info.solid",
             backgroundColor: "background.paper",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            cursor: "pointer",
             transition: "all 0.2s",
             "&:hover": {
-              borderColor: "blue.600",
+              borderColor: "status.info.solid",
               borderStyle: "solid",
-              bgcolor: (theme) =>
-                theme.palette.mode === "dark" ? "black.800" : "blue.100",
+              bgcolor: "action.hover",
             },
             opacity: isWorkflowRunning ? 0.6 : 1,
             pointerEvents: isWorkflowRunning ? "none" : "auto",
@@ -258,10 +254,10 @@ const BaseNode = ({
             sx={{
               width: 20,
               height: 20,
-              bgcolor: "blue.500",
+              bgcolor: "status.info.solid",
             }}
           />
-        </Box>
+        </ButtonBase>
       )}
 
       {!preview && (

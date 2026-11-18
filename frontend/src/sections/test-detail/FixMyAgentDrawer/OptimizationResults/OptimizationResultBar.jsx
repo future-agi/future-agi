@@ -20,8 +20,8 @@ const OptimizationResultBar = ({ optimizationData }) => {
     color: isData ? "text.primary" : "divider",
   };
   const bestOptimization = useMemo(() => {
-    const bestItem = optimizationData?.table?.find((item) => item?.isBest);
-    return bestItem?.scorePercentageChange;
+    const bestItem = optimizationData?.table?.find((item) => item?.is_best);
+    return bestItem?.score_percentage_change;
   }, [optimizationData]);
   const [gridColumnDefs, setGridColumnDefs] = useState([]);
   const gridApi = getGridApi();
@@ -132,7 +132,7 @@ const OptimizationResultBar = ({ optimizationData }) => {
           <SvgColor
             src="/assets/icons/ic_info.svg"
             sx={{
-              color: "blue.500",
+              color: "status.info.fg",
               width: "16px",
               height: "16px",
             }}

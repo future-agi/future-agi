@@ -23,6 +23,11 @@ const APIKeyReadOnlyView = ({
   onDeleteClick,
 }) => {
   const theme = useTheme();
+  const keyValueIsObject = keyValue && typeof keyValue === "object";
+  const showAsJson = showJsonField && (isJsonKey || keyValueIsObject);
+  const textKeyValue = keyValueIsObject
+    ? JSON.stringify(keyValue, null, 2)
+    : keyValue;
   const readOnlyBoxStyles = {
     border: "1px solid var(--border-default)",
     borderRadius: theme.spacing(0.5),
@@ -34,7 +39,7 @@ const APIKeyReadOnlyView = ({
   const readOnlyKeyTextStyles = {
     wordBreak: "break-all",
     color: "text.primary",
-    fontSize: "13px",
+    fontSize: "12px",
   };
 
   const jsonReadOnlyBoxStyles = {
@@ -86,7 +91,7 @@ const APIKeyReadOnlyView = ({
 
   return (
     <>
-      <ShowComponent condition={showJsonField && !isJsonKey}>
+      <ShowComponent condition={showJsonField && !showAsJson}>
         <Box sx={readOnlyBoxStyles}>
           <Typography
             typography="s2"
@@ -100,7 +105,7 @@ const APIKeyReadOnlyView = ({
               fontWeight="fontWeightRegular"
               sx={readOnlyKeyTextStyles}
             >
-              {keyValue || "-"}
+              {textKeyValue || "-"}
             </Typography>
 
             {/* <Tooltip title="Copy">
@@ -116,7 +121,7 @@ const APIKeyReadOnlyView = ({
                   }
                 }}
               >
-                <Iconify icon="basil:copy-outline" sx={{ color: "text.disabled" }} />
+                <Iconify icon="solar:copy-linear" sx={{ color: "text.disabled" }} />
               </IconButton>
             </Tooltip>
 
@@ -142,15 +147,15 @@ const APIKeyReadOnlyView = ({
         </Box>
       </ShowComponent>
 
-      <ShowComponent condition={showJsonField && isJsonKey}>
+      <ShowComponent condition={showAsJson}>
         <Box sx={jsonReadOnlyBoxStyles}>
           <Tooltip title="Copy">
             <IconButton
               size="small"
               sx={copyButtonStyles}
               onClick={() => {
-                if (keyValue) {
-                  copyToClipboard(keyValue);
+                if (textKeyValue) {
+                  copyToClipboard(textKeyValue);
                   enqueueSnackbar("Copied to clipboard", {
                     variant: "success",
                   });
@@ -158,7 +163,7 @@ const APIKeyReadOnlyView = ({
               }}
             >
               <Iconify
-                icon="basil:copy-outline"
+                icon="solar:copy-linear"
                 sx={{ color: "text.disabled" }}
               />
             </IconButton>
@@ -218,7 +223,7 @@ const APIKeyReadOnlyView = ({
 };
 
 APIKeyReadOnlyView.propTypes = {
-  keyValue: PropTypes.string,
+  keyValue: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
   isJsonKey: PropTypes.bool,
   showJsonField: PropTypes.bool,
   label: PropTypes.string,

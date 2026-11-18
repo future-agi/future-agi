@@ -126,11 +126,11 @@ export const getVisiblePercentage = (elementRect, containerRect) => {
 };
 
 export const defaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 
@@ -210,4 +210,37 @@ export const initialVisibility = {
   start_time: true,
   end_time: true,
   user_id: true,
+};
+
+// Keep a non-default column visible when the user turned it on locally but the
+// backend still reports it hidden — visibility save in flight, or a backend
+// config that never persisted it. Default columns follow the backend.
+export const applyUserVisibility = (col, updateObj) =>
+  !Object.hasOwn(initialVisibility, col.id) &&
+  !col.isVisible &&
+  updateObj?.[col.id] === true
+    ? { ...col, isVisible: true }
+    : col;
+
+// Visibility for the column-configure dropdown: the local override wins, else
+// the backend value, else visible. Without the backend fallback a hidden
+// non-default column with no local entry would show as checked.
+export const resolveColumnVisibility = (col, updateObj) =>
+  updateObj?.[col.id] ?? col.isVisible ?? true;
+
+// Reconcile stored non-custom columns against a fresh backend column set,
+// preserving user-shown visibility. On a fresh load `current` is empty so every
+// column flows through `added`; both branches apply the visibility guard.
+export const mergeNonCustomColumns = (current, incoming, updateObj) => {
+  const withUserVisibility = (col) => applyUserVisibility(col, updateObj);
+  const incomingById = new Map(incoming.map((c) => [c.id, c]));
+  const seen = new Set();
+  const kept = current
+    .filter((c) => incomingById.has(c.id))
+    .map((c) => {
+      seen.add(c.id);
+      return withUserVisibility(incomingById.get(c.id));
+    });
+  const added = incoming.filter((c) => !seen.has(c.id)).map(withUserVisibility);
+  return [...kept, ...added];
 };

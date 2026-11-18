@@ -1,7 +1,26 @@
+from django.db.models import Q
 from rest_framework import serializers
 
 from model_hub.models.prompt_base_template import PromptBaseTemplate
 from model_hub.models.run_prompt import PromptVersion
+
+
+def _workspace_filter(workspace, field_name):
+    if workspace is None:
+        return Q()
+    if getattr(workspace, "is_default", False):
+        organization = getattr(workspace, "organization", None)
+        query = Q(**{field_name: workspace})
+        if organization is not None:
+            query |= Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization": organization,
+                }
+            )
+        query |= Q(**{f"{field_name}__isnull": True})
+        return query
+    return Q(**{field_name: workspace})
 
 
 class PromptBaseTemplateSerializer(serializers.ModelSerializer):
@@ -22,7 +41,7 @@ class PromptBaseTemplateSerializer(serializers.ModelSerializer):
             "prompt_config_snapshot",
             "created_by",
         ]
-        read_only_fields = ["organization", "workspace"]
+        read_only_fields = ["organization", "workspace", "is_sample"]
 
     def get_created_by(self, obj):
         """
@@ -53,11 +72,14 @@ class PromptBaseTemplateSerializer(serializers.ModelSerializer):
         user_organization = (
             getattr(request, "organization", None) or request.user.organization
         )
+        workspace = getattr(request, "workspace", None)
 
         try:
-            prompt_version = PromptVersion.objects.get(
+            prompt_version = PromptVersion.no_workspace_objects.get(
+                _workspace_filter(workspace, "original_template__workspace"),
                 id=value.id,
                 original_template__organization=user_organization,
+                original_template__deleted=False,
                 deleted=False,
             )
         except PromptVersion.DoesNotExist:

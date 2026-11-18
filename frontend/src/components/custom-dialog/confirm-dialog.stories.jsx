@@ -1,18 +1,18 @@
-import React from 'react';
-import Button from '@mui/material/Button';
-import ConfirmDialog from './confirm-dialog';
+import React from "react";
+import Button from "@mui/material/Button";
+import ConfirmDialog from "./confirm-dialog";
 
 export default {
-  title: 'Components/ConfirmDialog',
+  title: "Components/ConfirmDialog",
   component: ConfirmDialog,
   parameters: {
-    layout: 'centered',
+    layout: "centered",
   },
   argTypes: {
-    open: { control: 'boolean' },
-    title: { control: 'text' },
-    content: { control: 'text' },
-    onClose: { action: 'closed' },
+    open: { control: "boolean" },
+    title: { control: "text" },
+    content: { control: "text" },
+    onClose: { action: "closed" },
   },
 };
 
@@ -20,10 +20,15 @@ export default {
 export const Basic = {
   args: {
     open: true,
-    title: 'Delete Item',
-    content: 'Are you sure you want to delete this item?',
+    title: "Delete Item",
+    content: "Are you sure you want to delete this item?",
     action: (
-      <Button size="small" variant="contained" color="error" sx={{ paddingX: '24px' }}>
+      <Button
+        size="small"
+        variant="contained"
+        color="error"
+        sx={{ paddingX: "24px" }}
+      >
         Delete
       </Button>
     ),
@@ -34,10 +39,15 @@ export const Basic = {
 export const Warning = {
   args: {
     open: true,
-    title: 'Warning',
-    content: 'This action cannot be undone. Please confirm to proceed.',
+    title: "Warning",
+    content: "This action cannot be undone. Please confirm to proceed.",
     action: (
-      <Button size="small" variant="contained" color="warning" sx={{ paddingX: '24px' }}>
+      <Button
+        size="small"
+        variant="contained"
+        color="warning"
+        sx={{ paddingX: "24px" }}
+      >
         Proceed
       </Button>
     ),
@@ -48,12 +58,17 @@ export const Warning = {
 export const Success = {
   args: {
     open: true,
-    title: 'Confirm Changes',
-    content: 'Your changes will be saved. Do you want to continue?',
+    title: "Confirm Changes",
+    content: "Your changes will be saved. Do you want to continue?",
     action: (
-      <Button size="small" variant="contained" color="success" sx={{ paddingX: '24px' }}>
+      <Button
+        size="small"
+        variant="contained"
+        color="success"
+        sx={{ paddingX: "24px" }}
+      >
         Save Changes
       </Button>
     ),
   },
-}; 
+};

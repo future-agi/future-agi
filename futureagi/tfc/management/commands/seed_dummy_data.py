@@ -5,6 +5,16 @@ Creates data across tracing, datasets, simulation, and prototyping.
 Usage:
     python manage.py seed_dummy_data --email=nikhilpareekiitr@gmail.com
     python manage.py seed_dummy_data --email=nikhilpareekiitr@gmail.com --flush
+
+CH25-TODO: KEEP-PG. Dev seed script — all ObservationSpan.objects sites
+in this file stay PG by design:
+  • ``.create()`` writes are dual-write source-of-truth (D-027). CH
+    receives the seeded rows via PeerDB CDC.
+  • ``_flush()`` performs PG reads/deletes against the legacy
+    ObservationSpan rows; the CH side gets cleaned up by the same
+    CDC pipeline (or a separate dev reset) — the seed script is
+    explicitly PG-scoped.
+``CHSpanReader`` is not applicable here.
 """
 
 import random
@@ -597,7 +607,9 @@ class Command(BaseCommand):
             "question": lambda: random.choice(SAMPLE_INPUTS),
             "answer": lambda: random.choice(SAMPLE_OUTPUTS),
             "prompt": lambda: random.choice(SAMPLE_INPUTS),
-            "expected_code": lambda: f"def solution_{row_idx}():\n    return {random.randint(1, 100)}",
+            "expected_code": lambda: (
+                f"def solution_{row_idx}():\n    return {random.randint(1, 100)}"
+            ),
             "review_text": lambda: random.choice(
                 [
                     "Great product! Exactly what I needed. Fast shipping too.",
@@ -624,7 +636,9 @@ class Command(BaseCommand):
             "specialty": lambda: random.choice(
                 ["cardiology", "neurology", "pediatrics", "oncology", "dermatology"]
             ),
-            "clause_text": lambda: f"Section {row_idx}.{random.randint(1,9)}: The party shall comply with all applicable regulations...",
+            "clause_text": lambda: (
+                f"Section {row_idx}.{random.randint(1, 9)}: The party shall comply with all applicable regulations..."
+            ),
             "classification": lambda: random.choice(
                 ["termination", "liability", "indemnification", "confidentiality"]
             ),
@@ -635,9 +649,15 @@ class Command(BaseCommand):
             "target_lang": lambda: random.choice(
                 ["Spanish", "French", "German", "Japanese", "Chinese"]
             ),
-            "article": lambda: f"In a recent study published in Nature, researchers discovered that {random.choice(['AI models', 'neural networks', 'language models'])} can {random.choice(['predict', 'generate', 'analyze'])} {random.choice(['medical data', 'scientific papers', 'code snippets'])} with unprecedented accuracy...",
-            "summary": lambda: f"Researchers found that AI can effectively process and analyze complex data with high accuracy.",
-            "conversation": lambda: f"User: {random.choice(SAMPLE_INPUTS)}\nAssistant: {random.choice(SAMPLE_OUTPUTS)}",
+            "article": lambda: (
+                f"In a recent study published in Nature, researchers discovered that {random.choice(['AI models', 'neural networks', 'language models'])} can {random.choice(['predict', 'generate', 'analyze'])} {random.choice(['medical data', 'scientific papers', 'code snippets'])} with unprecedented accuracy..."
+            ),
+            "summary": lambda: (
+                f"Researchers found that AI can effectively process and analyze complex data with high accuracy."
+            ),
+            "conversation": lambda: (
+                f"User: {random.choice(SAMPLE_INPUTS)}\nAssistant: {random.choice(SAMPLE_OUTPUTS)}"
+            ),
             "topic": lambda: random.choice(
                 ["tech-support", "sales", "general-inquiry", "complaint", "feedback"]
             ),
@@ -655,7 +675,9 @@ class Command(BaseCommand):
                     "SELECT p.name, SUM(o.total) as revenue FROM products p JOIN orders o ON p.id = o.product_id GROUP BY p.id ORDER BY revenue DESC LIMIT 10",
                 ]
             ),
-            "database_schema": lambda: "users(id, name, email, created_at), orders(id, user_id, total, status, created_at), products(id, name, price, category)",
+            "database_schema": lambda: (
+                "users(id, name, email, created_at), orders(id, user_id, total, status, created_at), products(id, name, price, category)"
+            ),
             "image_url": lambda: f"https://example.com/images/sample_{row_idx}.jpg",
             "caption": lambda: random.choice(
                 [

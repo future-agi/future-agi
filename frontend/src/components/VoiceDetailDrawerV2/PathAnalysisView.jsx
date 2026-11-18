@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
+  Button,
+  Chip,
   CircularProgress,
   Collapse,
   IconButton,
@@ -10,6 +12,7 @@ import {
   Tooltip,
   Typography,
   alpha,
+  useTheme,
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -20,6 +23,9 @@ import {
 } from "@xyflow/react";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { statusColors } from "src/utils/runStatus";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
 import useKpis from "src/hooks/useKpis";
 import GraphView from "src/components/GraphBuilder/GraphView";
@@ -174,21 +180,18 @@ const getStatus = (score, confirmed) => {
 const STATUS_META = {
   pass: {
     label: "Addressed",
-    color: "success.main",
-    bgAlpha: 0.08,
-    icon: "mdi:check-circle",
+    role: "success",
+    icon: "solar:check-circle-bold",
   },
   partial: {
     label: "Partially",
-    color: "warning.main",
-    bgAlpha: 0.08,
-    icon: "mdi:alert-circle-outline",
+    role: "warning",
+    icon: "solar:danger-circle-linear",
   },
   miss: {
     label: "Missed",
-    color: "error.main",
-    bgAlpha: 0.08,
-    icon: "mdi:close-circle-outline",
+    role: "danger",
+    icon: "solar:close-circle-linear",
   },
 };
 
@@ -200,12 +203,15 @@ const PathAnalysisView = ({
   data,
   scenarioId,
   openedExecutionId,
+  testExecutionId,
   enabled,
   viewMode = "checklist",
   onRequestTranscript,
 }) => {
   const { executionId } = useParams();
   const seekTo = useVoiceAudioStore((s) => s.seekTo);
+  const resolvedTestExecutionId = testExecutionId || executionId;
+  const responseScenarioGraph = data?.scenario_graph || null;
 
   // `viewMode` is controlled by the parent (VoiceLeftPanel). Fullscreen
   // remains local so it only matters while the user is on one of the
@@ -219,9 +225,13 @@ const PathAnalysisView = ({
   // parent tab bar level.
   const [selectedStepName, setSelectedStepName] = useState(null);
 
-  const { data: kpis, isLoading: isKpisLoading } = useKpis(executionId, {
-    enabled: false,
-  });
+  const { data: kpis, isLoading: isKpisLoading } = useKpis(
+    resolvedTestExecutionId,
+    {
+      enabled:
+        !!enabled && !!resolvedTestExecutionId && !responseScenarioGraph?.nodes,
+    },
+  );
 
   const {
     data: flowAnalysis,
@@ -235,11 +245,24 @@ const PathAnalysisView = ({
     select: (res) => res.data,
   });
 
-  const scenarioGraph = kpis?.scenarioGraphs?.[scenarioId];
+  const scenarioGraphs = kpis?.scenario_graphs || kpis?.scenarioGraphs || {};
+  const scenarioGraph = responseScenarioGraph?.nodes
+    ? responseScenarioGraph
+    : scenarioGraphs?.[scenarioId];
+  const analysis = flowAnalysis?.analysis || {};
+  const currentPath =
+    analysis.current_path ?? analysis.currentPath ?? undefined;
+  const expectedPath =
+    analysis.expected_path ?? analysis.expectedPath ?? undefined;
+  const newNodes = analysis.new_nodes ?? analysis.newNodes ?? [];
+  const newEdges = analysis.new_edges ?? analysis.newEdges ?? [];
+  const analysisSummary =
+    analysis.analysis_summary ?? analysis.analysisSummary ?? "";
+  const requiresFlowAnalysis = !!openedExecutionId;
 
   const turns = useMemo(() => {
     const raw = (data?.transcript || []).filter(
-      (t) => (t.speakerRole || t.role) !== "system",
+      (t) => (t.speaker_role || t.role) !== "system",
     );
     return enrichTurns(raw);
   }, [data]);
@@ -247,22 +270,20 @@ const PathAnalysisView = ({
   const steps = useMemo(() => {
     const nodes = scenarioGraph?.nodes || [];
     if (!nodes.length) return [];
-    const expectedPath = flowAnalysis?.analysis?.expectedPath;
     if (Array.isArray(expectedPath) && expectedPath.length) {
       const byName = new Map(nodes.map((n) => [n.name, n]));
       return expectedPath.map((name) => byName.get(name)).filter(Boolean);
     }
     return nodes;
-  }, [scenarioGraph, flowAnalysis]);
+  }, [scenarioGraph, expectedPath]);
 
   const currentPathNames = useMemo(() => {
-    const cp = flowAnalysis?.analysis?.currentPath;
-    return Array.isArray(cp) ? new Set(cp) : new Set();
-  }, [flowAnalysis]);
+    return Array.isArray(currentPath) ? new Set(currentPath) : new Set();
+  }, [currentPath]);
 
   // Per-step analysis — precompute once.
   //
-  // Pass/fail source of truth is `flowAnalysis.currentPath` — the same
+  // Pass/fail source of truth is `flowAnalysis.analysis.current_path` — the same
   // list the Graph view uses — so the two views always agree on which
   // scenario steps were addressed.
   //
@@ -277,9 +298,7 @@ const PathAnalysisView = ({
   const stepRows = useMemo(() => {
     if (!steps.length || !turns.length) return [];
     const turnTokens = turns.map((t) => tokenize(t.content));
-    const currentPathList = Array.isArray(flowAnalysis?.analysis?.currentPath)
-      ? flowAnalysis.analysis.currentPath
-      : null;
+    const currentPathList = Array.isArray(currentPath) ? currentPath : null;
 
     // Sequential claim: stepName → { idx, score }. Later-occurring
     // duplicates (same step hit twice) overwrite; that's fine for MVP.
@@ -314,12 +333,12 @@ const PathAnalysisView = ({
       const confirmed = currentPathNames.has(step.name);
 
       // Fallback similarity scan — only for cases where flowAnalysis
-      // isn't available (currentPath is null). When flowAnalysis is
+      // isn't available (current_path is null). When flowAnalysis is
       // present, we trust its pass/fail exclusively so the Graph and
       // Checklist always agree.
       let bestIdx = claim?.idx ?? -1;
       let bestScore = claim?.score ?? 0;
-      if (!flowAnalysis?.analysis?.currentPath && bestIdx < 0) {
+      if (!requiresFlowAnalysis && !currentPath && bestIdx < 0) {
         const target = tokenize(stepTargetText(step));
         turnTokens.forEach((tt, i) => {
           const score = overlapCoefficient(target, tt);
@@ -335,7 +354,7 @@ const PathAnalysisView = ({
       // pass vs miss. The similarity score is only cosmetic (shown as
       // "% match") and used for the partial state when there's no
       // authority.
-      const status = flowAnalysis?.analysis?.currentPath
+      const status = currentPath
         ? confirmed
           ? "pass"
           : "miss"
@@ -356,7 +375,7 @@ const PathAnalysisView = ({
         keywords,
       };
     });
-  }, [steps, turns, flowAnalysis, currentPathNames]);
+  }, [steps, turns, currentPath, currentPathNames, requiresFlowAnalysis]);
 
   const coverage = useMemo(() => {
     if (!stepRows.length) return { pass: 0, partial: 0, miss: 0, total: 0 };
@@ -379,8 +398,8 @@ const PathAnalysisView = ({
   // ── Divergence — the first index where current and expected disagree ──
   // This powers the one-line breadcrumb above the graph / timeline views.
   const divergence = useMemo(() => {
-    const cp = flowAnalysis?.analysis?.currentPath;
-    const ep = flowAnalysis?.analysis?.expectedPath;
+    const cp = currentPath;
+    const ep = expectedPath;
     if (!Array.isArray(cp) || !Array.isArray(ep)) return null;
     const len = Math.max(cp.length, ep.length);
     for (let i = 0; i < len; i++) {
@@ -393,14 +412,10 @@ const PathAnalysisView = ({
       }
     }
     return null;
-  }, [flowAnalysis]);
+  }, [currentPath, expectedPath]);
 
   // ── Legacy graph view ───────────────────────────────────────────────────
   const { graphNodes, graphEdges } = useMemo(() => {
-    const currentPath = flowAnalysis?.analysis?.currentPath;
-    const expectedPath = flowAnalysis?.analysis?.expectedPath;
-    const newNodes = flowAnalysis?.analysis?.newNodes;
-    const newEdges = flowAnalysis?.analysis?.newEdges;
     if (
       !scenarioGraph?.nodes ||
       !Array.isArray(currentPath) ||
@@ -459,10 +474,20 @@ const PathAnalysisView = ({
       },
     }));
     return { graphNodes: recoloredNodes, graphEdges: edges };
-  }, [scenarioGraph, flowAnalysis, selectedStepName]);
+  }, [
+    scenarioGraph,
+    currentPath,
+    expectedPath,
+    newNodes,
+    newEdges,
+    selectedStepName,
+  ]);
 
   // ── Loading / empty ─────────────────────────────────────────────────────
   const loading = isKpisLoading || isFlowLoading;
+  const missingFlowAnalysis =
+    requiresFlowAnalysis && (isFlowError || !Array.isArray(currentPath));
+
   if (loading) {
     return (
       <Box
@@ -481,6 +506,32 @@ const PathAnalysisView = ({
       </Box>
     );
   }
+  if (missingFlowAnalysis) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: 220,
+          gap: 1,
+          p: 2,
+        }}
+      >
+        <Iconify
+          icon="solar:graph-linear"
+          width={28}
+          sx={{ color: "text.disabled" }}
+        />
+        <Typography
+          sx={{ fontSize: 12, color: "text.secondary", textAlign: "center" }}
+        >
+          This call does not have enough data to analyze its flow.
+        </Typography>
+      </Box>
+    );
+  }
   if (!scenarioGraph || steps.length === 0 || turns.length === 0) {
     return (
       <Box
@@ -495,7 +546,7 @@ const PathAnalysisView = ({
         }}
       >
         <Iconify
-          icon="mdi:graph-outline"
+          icon="solar:graph-linear"
           width={28}
           sx={{ color: "text.disabled" }}
         />
@@ -576,14 +627,11 @@ const PathAnalysisView = ({
               size="small"
               onClick={() => setFullscreen(true)}
               sx={{
-                width: 24,
-                height: 24,
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: "3px",
               }}
             >
-              <Iconify icon="mdi:fullscreen" width={14} />
+              <Iconify icon="solar:full-screen-linear" width={14} />
             </IconButton>
           </Tooltip>
         )}
@@ -593,7 +641,7 @@ const PathAnalysisView = ({
       {viewMode === "graph" && divergence && (
         <DivergenceBreadcrumb
           divergence={divergence}
-          newNodes={flowAnalysis?.analysis?.newNodes || []}
+          newNodes={newNodes}
           onJump={(name) => setSelectedStepName(name)}
         />
       )}
@@ -610,7 +658,7 @@ const PathAnalysisView = ({
                 textAlign: "center",
               }}
             >
-              <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
+              <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
                 No steps match the current filter
               </Typography>
             </Box>
@@ -679,7 +727,7 @@ const PathAnalysisView = ({
           >
             <Stack direction="row" alignItems="center" gap={1}>
               <Iconify
-                icon="mdi:graph-outline"
+                icon="solar:graph-linear"
                 width={14}
                 sx={{ color: "primary.main" }}
               />
@@ -690,7 +738,7 @@ const PathAnalysisView = ({
                 <Box sx={{ ml: 1 }}>
                   <DivergenceBreadcrumb
                     divergence={divergence}
-                    newNodes={flowAnalysis?.analysis?.newNodes || []}
+                    newNodes={newNodes}
                     onJump={(name) => {
                       setSelectedStepName(name);
                       setFullscreen(false);
@@ -700,12 +748,8 @@ const PathAnalysisView = ({
                 </Box>
               )}
             </Stack>
-            <IconButton
-              size="small"
-              onClick={() => setFullscreen(false)}
-              sx={{ width: 24, height: 24 }}
-            >
-              <Iconify icon="mdi:close" width={14} />
+            <IconButton size="small" onClick={() => setFullscreen(false)}>
+              <Iconify icon="solar:close-linear" width={14} />
             </IconButton>
           </Stack>
           <Box sx={{ flex: 1, minHeight: 0, p: 1 }}>
@@ -715,7 +759,7 @@ const PathAnalysisView = ({
       </Modal>
 
       {/* Analysis summary — always visible, small */}
-      {flowAnalysis?.analysis?.analysisSummary && (
+      {analysisSummary && (
         <Box
           sx={{
             border: "1px solid",
@@ -732,31 +776,31 @@ const PathAnalysisView = ({
             sx={{ mb: 0.25 }}
           >
             <Iconify
-              icon="mdi:creation"
+              icon="solar:stars-minimalistic-linear"
               width={12}
               sx={{ color: "primary.main" }}
             />
             <Typography
               sx={{
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 600,
                 color: "text.secondary",
-                textTransform: "uppercase",
-                letterSpacing: "0.04em",
+                textTransform: "none",
+                letterSpacing: 0,
               }}
             >
-              Falcon analysis
+              AI analysis
             </Typography>
           </Stack>
           <Typography
             sx={{
-              fontSize: 11,
+              fontSize: 12,
               color: "text.primary",
               lineHeight: 1.5,
               whiteSpace: "pre-wrap",
             }}
           >
-            {flowAnalysis.analysis.analysisSummary}
+            {analysisSummary}
           </Typography>
         </Box>
       )}
@@ -768,6 +812,7 @@ PathAnalysisView.propTypes = {
   data: PropTypes.object,
   scenarioId: PropTypes.string,
   openedExecutionId: PropTypes.string,
+  testExecutionId: PropTypes.string,
   enabled: PropTypes.bool,
   viewMode: PropTypes.oneOf(["checklist", "graph"]),
   onRequestTranscript: PropTypes.func,
@@ -787,51 +832,15 @@ const CoverageStrip = ({ coverage, activeFilter, onFilter }) => {
       gap={0.75}
       sx={{ flexWrap: "wrap" }}
     >
-      <Stack
-        direction="row"
-        alignItems="center"
-        gap={0.5}
-        sx={{
-          border: "1px solid",
-          borderColor:
-            pct >= 80
-              ? "success.main"
-              : pct >= 50
-                ? "warning.main"
-                : "error.main",
-          borderRadius: "12px",
-          px: 0.75,
-          py: 0.25,
-          bgcolor: (t) =>
-            alpha(
-              (pct >= 80
-                ? t.palette.success
-                : pct >= 50
-                  ? t.palette.warning
-                  : t.palette.error
-              ).main,
-              0.08,
-            ),
-        }}
-      >
+      <Stack direction="row" alignItems="center" gap={0.75}>
+        <StatusBadge
+          label={`${pct}%`}
+          role={pct >= 80 ? "success" : pct >= 50 ? "warning" : "danger"}
+          dot={false}
+        />
         <Typography
           sx={{
-            fontSize: 11,
-            fontWeight: 700,
-            color:
-              pct >= 80
-                ? "success.main"
-                : pct >= 50
-                  ? "warning.main"
-                  : "error.main",
-            fontFamily: "monospace",
-          }}
-        >
-          {pct}%
-        </Typography>
-        <Typography
-          sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: "text.secondary",
             fontFamily: "monospace",
           }}
@@ -841,19 +850,19 @@ const CoverageStrip = ({ coverage, activeFilter, onFilter }) => {
       </Stack>
       <FilterPill
         label={`${pass} pass`}
-        color="success.main"
+        role="success"
         active={activeFilter === "pass"}
         onClick={() => onFilter("pass")}
       />
       <FilterPill
         label={`${partial} partial`}
-        color="warning.main"
+        role="warning"
         active={activeFilter === "partial"}
         onClick={() => onFilter("partial")}
       />
       <FilterPill
         label={`${miss} missed`}
-        color="error.main"
+        role="danger"
         active={activeFilter === "miss"}
         onClick={() => onFilter("miss")}
       />
@@ -867,90 +876,55 @@ CoverageStrip.propTypes = {
   onFilter: PropTypes.func,
 };
 
-const FilterPill = ({ label, color, active, onClick }) => (
-  <Box
-    onClick={onClick}
-    sx={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 0.5,
-      px: 0.75,
-      py: 0.25,
-      borderRadius: "12px",
-      border: "1px solid",
-      borderColor: active ? color : "divider",
-      bgcolor: active
-        ? (t) => alpha(t.palette.primary.main, 0.04)
-        : "transparent",
-      cursor: "pointer",
-      "&:hover": { borderColor: color },
-    }}
-  >
-    <Box
-      sx={{
-        width: 6,
-        height: 6,
-        borderRadius: "50%",
-        bgcolor: color,
-      }}
+const FilterPill = ({ label, role, active, onClick }) => {
+  const theme = useTheme();
+  const colors = statusColors(theme, role);
+  return (
+    <Chip
+      size="small"
+      clickable
+      onClick={onClick}
+      variant={active ? "filled" : "outlined"}
+      icon={
+        <Box
+          component="span"
+          sx={{
+            width: 6,
+            // eslint-disable-next-line no-restricted-syntax -- ds: status dot size
+            height: 6,
+            // eslint-disable-next-line no-restricted-syntax -- ds: status dot size
+            borderRadius: "50%",
+            bgcolor: colors.solid,
+          }}
+        />
+      }
+      label={label}
+      sx={{ fontFamily: "monospace" }}
     />
-    <Typography
-      sx={{
-        fontSize: 10,
-        fontWeight: active ? 700 : 500,
-        color: active ? color : "text.secondary",
-        fontFamily: "monospace",
-      }}
-    >
-      {label}
-    </Typography>
-  </Box>
-);
+  );
+};
 
 FilterPill.propTypes = {
   label: PropTypes.string,
-  color: PropTypes.string,
+  role: PropTypes.string,
   active: PropTypes.bool,
   onClick: PropTypes.func,
 };
 
 const ViewToggleButton = ({ active, icon, label, onClick }) => (
-  <Box
+  <Button
+    size="small"
+    variant="outlined"
+    color="inherit"
     onClick={onClick}
+    startIcon={<Iconify icon={icon} width={12} />}
     sx={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 0.4,
-      px: 0.75,
-      py: 0.25,
-      borderRadius: "3px",
-      border: "1px solid",
-      borderColor: active ? "primary.main" : "divider",
-      bgcolor: active
-        ? (t) => alpha(t.palette.primary.main, 0.08)
-        : "transparent",
-      cursor: "pointer",
-      "&:hover": {
-        bgcolor: (t) => alpha(t.palette.primary.main, 0.06),
-        borderColor: "primary.main",
-      },
+      color: active ? "text.primary" : "text.secondary",
+      bgcolor: active ? "action.selected" : "transparent",
     }}
   >
-    <Iconify
-      icon={icon}
-      width={12}
-      sx={{ color: active ? "primary.main" : "text.secondary" }}
-    />
-    <Typography
-      sx={{
-        fontSize: 10.5,
-        fontWeight: active ? 600 : 500,
-        color: active ? "primary.main" : "text.secondary",
-      }}
-    >
-      {label}
-    </Typography>
-  </Box>
+    {label}
+  </Button>
 );
 
 ViewToggleButton.propTypes = {
@@ -992,8 +966,6 @@ const StepCard = ({
       sx={{
         border: "1px solid",
         borderColor: isSelected ? "primary.main" : "divider",
-        borderLeft: "3px solid",
-        borderLeftColor: meta.color,
         borderRadius: "4px",
         bgcolor: "background.paper",
         overflow: "hidden",
@@ -1021,8 +993,12 @@ const StepCard = ({
       >
         <Iconify
           icon={meta.icon}
-          width={15}
-          sx={{ color: meta.color, flexShrink: 0, mt: "2px" }}
+          width={16}
+          sx={{
+            color: (t) => statusColors(t, meta.role).fg,
+            flexShrink: 0,
+            mt: "2px",
+          }}
         />
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Stack
@@ -1033,8 +1009,8 @@ const StepCard = ({
           >
             <Typography
               sx={{
-                fontSize: 9.5,
-                fontWeight: 700,
+                fontSize: 12,
+                fontWeight: 600,
                 color: "text.disabled",
                 fontFamily: "monospace",
                 flexShrink: 0,
@@ -1055,48 +1031,20 @@ const StepCard = ({
               {step.name}
             </Typography>
             <Box sx={{ flex: 1 }} />
-            <Box
-              sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                px: 0.5,
-                borderRadius: "3px",
-                border: "1px solid",
-                borderColor: meta.color,
-                bgcolor: (t) =>
-                  alpha(
-                    t.palette[
-                      status === "pass"
-                        ? "success"
-                        : status === "partial"
-                          ? "warning"
-                          : "error"
-                    ].main,
-                    meta.bgAlpha,
-                  ),
-                flexShrink: 0,
-              }}
-            >
-              <Typography
-                sx={{
-                  fontSize: 9,
-                  fontWeight: 700,
-                  color: meta.color,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
-                  lineHeight: "16px",
-                }}
-              >
-                {meta.label}
-              </Typography>
-            </Box>
+            <StatusBadge
+              status={status}
+              label={meta.label}
+              role={meta.role}
+              size="sm"
+              dot={false}
+            />
           </Stack>
 
           {/* Expected opener — inline, one line */}
           {step?.messagePlan?.firstMessage && (
             <Typography
               sx={{
-                fontSize: 10.5,
+                fontSize: 12,
                 color: "text.secondary",
                 lineHeight: 1.4,
                 whiteSpace: isExpanded ? "normal" : "nowrap",
@@ -1110,7 +1058,7 @@ const StepCard = ({
           )}
         </Box>
         <Iconify
-          icon="mdi:chevron-down"
+          icon="solar:alt-arrow-down-linear"
           width={14}
           sx={{
             color: "text.disabled",
@@ -1132,53 +1080,36 @@ const StepCard = ({
             py: 0.5,
             borderTop: "1px dashed",
             borderColor: "divider",
-            bgcolor: (t) =>
-              alpha(
-                t.palette[
-                  status === "miss"
-                    ? "error"
-                    : status === "partial"
-                      ? "warning"
-                      : "success"
-                ].main,
-                0.03,
-              ),
+            bgcolor: (t) => statusColors(t, meta.role).bg,
           }}
         >
-          <Box
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={bestTurn.start == null}
             onClick={(e) => {
               e.stopPropagation();
               if (bestTurn.start != null) onSeek?.(bestTurn.start);
             }}
+            startIcon={<Iconify icon="solar:play-linear" width={12} />}
             sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 0.25,
-              px: 0.5,
-              py: 0.15,
-              borderRadius: "3px",
-              border: "1px solid",
-              borderColor: "primary.main",
-              color: "primary.main",
-              cursor: bestTurn.start != null ? "pointer" : "default",
-              fontSize: 10,
-              fontFamily: "monospace",
               flexShrink: 0,
-              "&:hover": {
-                bgcolor: (t) => alpha(t.palette.primary.main, 0.08),
-              },
+              fontFamily: "monospace",
+              fontVariantNumeric: "tabular-nums",
             }}
           >
-            <Iconify icon="mdi:play" width={10} />
             {bestTurn.start != null ? formatClock(bestTurn.start) : "—"}
-          </Box>
+          </Button>
           <Typography
             sx={{
-              fontSize: 9.5,
-              fontWeight: 700,
-              color: bestTurn.role === "assistant" ? "primary.main" : "#E9690C",
-              textTransform: "uppercase",
-              letterSpacing: "0.04em",
+              fontSize: 12,
+              fontWeight: 600,
+              color:
+                bestTurn.role === "assistant"
+                  ? "primary.main"
+                  : "status.warning.fg",
+              textTransform: "none",
+              letterSpacing: 0,
               flexShrink: 0,
               mt: "2px",
               width: 18,
@@ -1190,7 +1121,7 @@ const StepCard = ({
             sx={{
               flex: 1,
               minWidth: 0,
-              fontSize: 11,
+              fontSize: 12,
               color: "text.primary",
               lineHeight: 1.4,
               whiteSpace: isExpanded ? "pre-wrap" : "nowrap",
@@ -1203,7 +1134,7 @@ const StepCard = ({
           </Typography>
           <Typography
             sx={{
-              fontSize: 9.5,
+              fontSize: 12,
               color: "text.disabled",
               fontFamily: "monospace",
               flexShrink: 0,
@@ -1227,7 +1158,7 @@ const StepCard = ({
         >
           <Typography
             sx={{
-              fontSize: 10.5,
+              fontSize: 12,
               color: "text.disabled",
               fontStyle: "italic",
             }}
@@ -1257,11 +1188,11 @@ const StepCard = ({
             >
               <Typography
                 sx={{
-                  fontSize: 9,
+                  fontSize: 12,
                   fontWeight: 600,
                   color: "text.disabled",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
+                  textTransform: "none",
+                  letterSpacing: 0,
                 }}
               >
                 Shared keywords
@@ -1272,10 +1203,10 @@ const StepCard = ({
                   sx={{
                     px: 0.5,
                     py: "1px",
-                    borderRadius: "3px",
+                    borderRadius: "4px",
                     bgcolor: (t) => alpha(t.palette.primary.main, 0.1),
                     color: "primary.main",
-                    fontSize: 9.5,
+                    fontSize: 12,
                     fontWeight: 600,
                     fontFamily: "monospace",
                   }}
@@ -1289,11 +1220,11 @@ const StepCard = ({
             <Box>
               <Typography
                 sx={{
-                  fontSize: 9,
+                  fontSize: 12,
                   fontWeight: 600,
                   color: "text.disabled",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
+                  textTransform: "none",
+                  letterSpacing: 0,
                   mb: 0.25,
                 }}
               >
@@ -1301,7 +1232,7 @@ const StepCard = ({
               </Typography>
               <Typography
                 sx={{
-                  fontSize: 10.5,
+                  fontSize: 12,
                   color: "text.secondary",
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-word",
@@ -1424,15 +1355,15 @@ const DivergenceBreadcrumb = ({ divergence, newNodes, onJump, inline }) => {
       }}
     >
       <Iconify
-        icon="mdi:alert-circle"
+        icon="solar:danger-circle-linear"
         width={14}
         sx={{ color: "error.main", flexShrink: 0, mt: "2px" }}
       />
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Typography
-          sx={{ fontSize: 11, color: "text.primary", lineHeight: 1.4 }}
+          sx={{ fontSize: 12, color: "text.primary", lineHeight: 1.4 }}
         >
-          <Box component="span" sx={{ fontWeight: 700 }}>
+          <Box component="span" sx={{ fontWeight: 600 }}>
             Diverged at step {index + 1}
           </Box>
           {expected && (
@@ -1469,7 +1400,7 @@ const DivergenceBreadcrumb = ({ divergence, newNodes, onJump, inline }) => {
         {gotLine && !inline && (
           <Typography
             sx={{
-              fontSize: 10.5,
+              fontSize: 12,
               color: "text.secondary",
               fontStyle: "italic",
               mt: 0.25,
@@ -1484,7 +1415,7 @@ const DivergenceBreadcrumb = ({ divergence, newNodes, onJump, inline }) => {
       </Box>
       {expected && !inline && (
         <Iconify
-          icon="mdi:arrow-right-thick"
+          icon="solar:arrow-right-linear"
           width={12}
           sx={{ color: "text.disabled", flexShrink: 0, mt: "2px" }}
         />
@@ -1508,27 +1439,37 @@ DivergenceBreadcrumb.propTypes = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PathStepNode = React.memo(({ data }) => {
-  const color =
+  const theme = useTheme();
+  const color = statusColors(
+    theme,
     data?.highlightColor === "success"
-      ? "#22c55e"
+      ? "success"
       : data?.highlightColor === "error"
-        ? "#ef4444"
-        : "#64748b";
+        ? "danger"
+        : "neutral",
+  ).solid;
   const opener = data?.messagePlan?.firstMessage;
   const prompt = data?.prompt;
 
   return (
-    <Tooltip
+    <CustomTooltip
+      card
+      show
       arrow
       placement="top"
       title={
         <Box sx={{ maxWidth: 280 }}>
-          <Typography sx={{ fontSize: 11, fontWeight: 700 }}>
+          <Typography sx={{ typography: "c1", color: "text.primary" }}>
             {data?.name}
           </Typography>
           {opener && (
             <Typography
-              sx={{ fontSize: 10, mt: 0.25, color: "text.secondary" }}
+              sx={{
+                typography: "s3",
+                mt: 0.5,
+                color: "text.secondary",
+                lineHeight: 1.4,
+              }}
             >
               “{opener.slice(0, 160)}
               {opener.length > 160 ? "…" : ""}”
@@ -1537,10 +1478,11 @@ const PathStepNode = React.memo(({ data }) => {
           {prompt && (
             <Typography
               sx={{
-                fontSize: 9.5,
+                typography: "s3",
                 mt: 0.5,
-                color: "text.disabled",
+                color: "text.secondary",
                 fontStyle: "italic",
+                lineHeight: 1.4,
               }}
             >
               {prompt.slice(0, 180)}
@@ -1557,18 +1499,16 @@ const PathStepNode = React.memo(({ data }) => {
           maxWidth: 200,
           px: 1.25,
           py: 0.5,
-          borderRadius: "16px",
+          borderRadius: "8px",
           border: "2px solid",
           borderColor: color,
           bgcolor: data?.isSelected ? alpha(color, 0.28) : alpha(color, 0.14),
           cursor: "pointer",
-          transition: "transform 120ms, box-shadow 120ms",
-          boxShadow: data?.isSelected ? `0 0 0 3px ${alpha(color, 0.35)}` : "none",
+          transition: "background-color 120ms, box-shadow 120ms",
+          boxShadow: data?.isSelected
+            ? `0 0 0 3px ${alpha(color, 0.35)}`
+            : "none",
           "&:hover": {
-            transform: "scale(1.04)",
-            boxShadow: data?.isSelected
-              ? `0 0 0 3px ${alpha(color, 0.45)}, 0 2px 10px ${alpha(color, 0.4)}`
-              : `0 2px 10px ${alpha(color, 0.4)}`,
             bgcolor: alpha(color, 0.22),
           },
         }}
@@ -1598,7 +1538,7 @@ const PathStepNode = React.memo(({ data }) => {
           style={{ background: color, width: 6, height: 6, border: "none" }}
         />
       </Box>
-    </Tooltip>
+    </CustomTooltip>
   );
 });
 
