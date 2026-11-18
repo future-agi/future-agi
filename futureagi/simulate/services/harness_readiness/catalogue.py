@@ -35,7 +35,7 @@ from simulate.models import (
 )
 
 CATALOG_VERSION = "1"
-RULES_VERSION = "13"
+RULES_VERSION = "14"
 
 Status = Literal["supported", "partial", "blocked", "unavailable", "untested", "stale"]
 EvidenceSource = Literal["pair_certificate", "build_certificate", "none"]
