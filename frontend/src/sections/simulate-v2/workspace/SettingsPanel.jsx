@@ -17,6 +17,8 @@ import {
   DialogActions,
   Select,
   MenuItem,
+  Radio,
+  FormControlLabel,
 } from "@mui/material";
 import { useSnackbar } from "notistack";
 import { Link as RouterLink } from "react-router-dom";
@@ -101,6 +103,7 @@ export default function SettingsPanel({
   patch,
   onDelete,
   locked = false,
+  runMode = null,
 }) {
   /* Edits made since the pinned version — what "New version" saves. */
   const pending = pendingEnvChanges(envState);
@@ -186,6 +189,9 @@ export default function SettingsPanel({
             locked={locked}
           />
         )}
+
+        {/* ── Simulated or Live, for an agent that can run either way ── */}
+        {runMode && <RunModeSection runMode={runMode} locked={locked} />}
 
         {/* ── what each new run starts from, saved on the environment ── */}
         <SimulationDefaultsSection
@@ -410,6 +416,8 @@ SettingsPanel.propTypes = {
   env: PropTypes.object.isRequired,
   onDelete: PropTypes.func,
   locked: PropTypes.bool,
+  /* { current: "sealed" | "live", onSwitch } — only for an agent that can run either way. */
+  runMode: PropTypes.object,
 };
 
 /* ── environment variables ─────────────────────────────────────────────── */
@@ -1533,6 +1541,61 @@ ToggleSetting.propTypes = {
   the simulated user. Saved on the environment as envState.runDefaults, so a
   run and an improvement read the same numbers.
 */
+/* How a run reaches the agent's tools. Simulated is the default (Nikhil's
+   plan: simulated, resettable tools for the core flow); Live asks for the
+   tool-safety check first. */
+const RUN_MODES = [
+  {
+    id: "sealed",
+    label: "Simulated",
+    note: "Tool calls are answered by this environment's world. Nothing real happens.",
+  },
+  {
+    id: "live",
+    label: "Live",
+    note: "The agent calls its real tools, except the ones marked never for real.",
+  },
+];
+
+function RunModeSection({ runMode, locked = false }) {
+  return (
+    <SectionCard title="Runs" subtitle="How a run reaches the agent's tools">
+      <Stack sx={{ px: 2.5, py: 1.5 }}>
+        {RUN_MODES.map((m) => (
+          <FormControlLabel
+            key={m.id}
+            disabled={locked}
+            control={
+              <Radio
+                size="small"
+                checked={runMode.current === m.id}
+                onChange={() => runMode.current !== m.id && runMode.onSwitch()}
+              />
+            }
+            label={
+              <Box sx={{ py: 0.5 }}>
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  {m.label}
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  {m.note}
+                </Typography>
+              </Box>
+            }
+          />
+        ))}
+      </Stack>
+    </SectionCard>
+  );
+}
+RunModeSection.propTypes = {
+  runMode: PropTypes.shape({
+    current: PropTypes.string,
+    onSwitch: PropTypes.func,
+  }).isRequired,
+  locked: PropTypes.bool,
+};
+
 function SimulationDefaultsSection({ env, envState, patch, locked = false }) {
   const d = runDefaultsOf(envState);
   const save = (next) => {

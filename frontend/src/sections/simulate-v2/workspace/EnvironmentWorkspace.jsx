@@ -1413,6 +1413,26 @@ export default function EnvironmentWorkspace() {
   const connectedAgent =
     connectedAgents.find((a) => a.key === agentKey) || envState.agent;
   const agentName = connectedAgent?.name || "the agent";
+  /* Simulated ↔ Live, for an agent that can run either way — switched from
+     Settings → Runs (the header shows a chip only when runs aren't simulated). */
+  const runModeSwitch =
+    envState?.agent && !envState?.twinBacking?.services?.length
+      ? runModeSwitchOf(connectedAgent)
+      : null;
+  const switchRunMode = runModeSwitch
+    ? () => {
+        if (runModeSwitch.to === "live" && needsToolSafety(connectedAgent))
+          return setSafetyOpen(true);
+        setAgentValues(agentKey, { runMode: runModeSwitch.to });
+        enqueueSnackbar(
+          runModeSwitch.to === "live"
+            ? `${agentName} runs live — its real tools are called, except the ones marked never for real.`
+            : `${agentName} runs simulated — its tool calls are answered by this environment's world.`,
+          { variant: "success" },
+        );
+        return null;
+      }
+    : null;
   /* Run the agent's connection check from the run plan without leaving it:
      the same check as Agent → Capabilities, saved on the agent, so the
      plan's capability rows update where they are. */
@@ -2669,23 +2689,10 @@ export default function EnvironmentWorkspace() {
                 const modeSwitch = sandboxed
                   ? null
                   : runModeSwitchOf(connectedAgent);
-                const switchMode = modeSwitch
-                  ? () => {
-                      if (
-                        modeSwitch.to === "live" &&
-                        needsToolSafety(connectedAgent)
-                      )
-                        return setSafetyOpen(true);
-                      setAgentValues(agentKey, { runMode: modeSwitch.to });
-                      enqueueSnackbar(
-                        modeSwitch.to === "live"
-                          ? `${agentName} runs live — its real tools are called, except the ones marked never for real.`
-                          : `${agentName} runs simulated — its tool calls are answered by this environment's world.`,
-                        { variant: "success" },
-                      );
-                    }
-                  : null;
-                if (pk.kind !== "sealed" || modeSwitch)
+                const switchMode = modeSwitch ? switchRunMode : null;
+                /* Simulated is the normal case — no chip; Live or Prompt only
+                   changes what a run proves, so it shows where Run is pressed. */
+                if (pk.kind !== "sealed")
                   chips.push({
                     ...(switchMode && { onClick: switchMode }),
                     key: "proof",
@@ -4652,6 +4659,15 @@ export default function EnvironmentWorkspace() {
                     envState={envState}
                     patch={patch}
                     locked={readOnlyEnv}
+                    runMode={
+                      runModeSwitch
+                        ? {
+                            current:
+                              runModeSwitch.to === "live" ? "sealed" : "live",
+                            onSwitch: switchRunMode,
+                          }
+                        : null
+                    }
                     onFork={() => setCopyOpen({})}
                     onDelete={
                       isSeededTemplate ? undefined : () => setConfirmDelete(env)
