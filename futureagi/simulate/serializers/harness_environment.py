@@ -999,6 +999,54 @@ class HarnessScenarioCoverageSerializer(serializers.Serializer):
 _LIFECYCLE_STATES = ("draft", "validated", "active", "kept_as_written", "archived")
 
 
+class HarnessProofControlSerializer(serializers.Serializer):
+    """One negative control as the proof ran it."""
+
+    name = serializers.CharField(allow_null=True)
+    why = serializers.CharField(allow_null=True, allow_blank=True)
+    failed = serializers.BooleanField(
+        allow_null=True,
+        help_text="The checks failed the wrong behaviour, as they should.",
+    )
+    assumed = serializers.ListField(child=serializers.CharField())
+
+
+class HarnessProofLeakSerializer(serializers.Serializer):
+    """Grading material someone in the run could see."""
+
+    who = serializers.CharField(required=False)
+    field = serializers.CharField(required=False)
+    grader_field = serializers.CharField(required=False)
+    excerpt = serializers.CharField(required=False, allow_blank=True)
+
+
+class HarnessControlStepSerializer(serializers.Serializer):
+    tool = serializers.CharField(required=False)
+    arguments = serializers.DictField(required=False)
+
+
+class HarnessNegativeControlSerializer(serializers.Serializer):
+    """A wrong behaviour as the case writes it."""
+
+    name = serializers.CharField(required=False)
+    why = serializers.CharField(required=False, allow_blank=True)
+    steps = HarnessControlStepSerializer(many=True, required=False)
+    must_fail = serializers.ListField(child=serializers.CharField(), required=False)
+
+
+class HarnessSourceViewSerializer(serializers.Serializer):
+    """Where one requirement of a case comes from, and whether it was found."""
+
+    kind = serializers.CharField()
+    ref = serializers.CharField(allow_blank=True)
+    quote = serializers.CharField(allow_blank=True)
+    supports = serializers.CharField(allow_blank=True)
+    resolved = serializers.BooleanField()
+    label = serializers.CharField(allow_blank=True)
+    link = serializers.CharField(allow_null=True)
+    problem = serializers.CharField(allow_blank=True)
+
+
 class HarnessScenarioProofSerializer(serializers.Serializer):
     """The case's proof on the pair in view, and the versions it was made with."""
 
@@ -1010,11 +1058,8 @@ class HarnessScenarioProofSerializer(serializers.Serializer):
         child=serializers.CharField(),
         help_text="Tools whose steps never ran because they have no endpoint here.",
     )
-    controls = serializers.ListField(
-        child=serializers.DictField(),
-        help_text="Each negative control: name, why, failed (the checks failed it, as they should), assumed.",
-    )
-    leaks = serializers.ListField(child=serializers.DictField())
+    controls = HarnessProofControlSerializer(many=True)
+    leaks = HarnessProofLeakSerializer(many=True)
     judged_only = serializers.BooleanField()
     proved_at = serializers.CharField(allow_null=True)
     agent_version_id = serializers.CharField(
@@ -1044,8 +1089,8 @@ class HarnessScenarioLifecycleSerializer(serializers.Serializer):
         help_text="Proved before proofs were checked per case."
     )
     proof = HarnessScenarioProofSerializer(allow_null=True)
-    sources = serializers.ListField(
-        child=serializers.DictField(),
+    sources = HarnessSourceViewSerializer(
+        many=True,
         help_text="Where each requirement of the case comes from, with its label.",
     )
     source_changed = serializers.ListField(
@@ -1054,7 +1099,7 @@ class HarnessScenarioLifecycleSerializer(serializers.Serializer):
     source_changed_version = serializers.IntegerField(allow_null=True)
     source_changed_version_id = serializers.CharField(allow_null=True)
     must_pass = serializers.BooleanField()
-    negative_controls = serializers.ListField(child=serializers.DictField())
+    negative_controls = HarnessNegativeControlSerializer(many=True)
 
 
 class HarnessLifecycleCountsSerializer(serializers.Serializer):
@@ -2614,7 +2659,7 @@ class HarnessScenarioRecordsResponseSerializer(serializers.Serializer):
 
 class HarnessScenarioLifecycleResponseSerializer(serializers.Serializer):
     scenario_key = serializers.CharField()
-    lifecycle = serializers.DictField(allow_null=True)
+    lifecycle = HarnessScenarioLifecycleSerializer(allow_null=True)
     # Restore only: true when the case was still in the saved suite and runs again at once.
     live = serializers.BooleanField(required=False)
 
@@ -2627,7 +2672,9 @@ class HarnessScenarioRevisionSerializer(serializers.Serializer):
     )
     first_suite_version = serializers.IntegerField(allow_null=True)
     changed_fields = serializers.ListField(child=serializers.CharField())
-    lifecycle_on_default_environment = serializers.DictField(allow_null=True)
+    lifecycle_on_default_environment = HarnessScenarioLifecycleSerializer(
+        allow_null=True
+    )
 
 
 class HarnessScenarioRevisionsSerializer(serializers.Serializer):

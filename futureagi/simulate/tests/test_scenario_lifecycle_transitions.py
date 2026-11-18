@@ -417,3 +417,33 @@ def test_the_lifecycle_reads_alks_verdict_and_never_shows_a_raw_code(
 
     assert view["state"] == state
     assert (view["warning_text"] or view["reason_text"]) == text
+    served = HarnessScenarioLifecycleSerializer(data=view)
+    assert served.is_valid(), served.errors
+
+
+def test_a_proof_with_controls_and_leaks_serves_their_declared_shape(
+    user, workspace, storage
+):
+    environment = _base(user, workspace, storage, "lt-shape")
+    leaked = {
+        **CONTROL_PASSED,
+        "leaks": [
+            {
+                "who": "simulated person",
+                "field": "instruction",
+                "grader_field": "tests",
+                "excerpt": "x",
+            }
+        ],
+    }
+    _record(environment, {**dict.fromkeys(KEYS, PROVED), CASE: leaked})
+
+    view = scenario_lifecycle(
+        environment,
+        suite_version=environment.suite_version,
+        environment_version=environment.environment_version,
+    )[CASE]
+
+    assert view["proof"]["controls"][0]["name"] == "two refunds"
+    served = HarnessScenarioLifecycleSerializer(data=view)
+    assert served.is_valid(), served.errors
