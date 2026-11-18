@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { READABLE_CONNECT_CHOICES } from "../../environments/buildTestRule";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSnackbar } from "notistack";
 import { Box, Stack } from "@mui/material";
@@ -90,8 +91,8 @@ export default function ConnectAgentPicker({
             setFiles: setBuildFiles,
             request: buildRequest,
             setRequest: setBuildRequest,
-            /* A hosted agent's prompt and tools say what to test. */
-            testOptional: choice === "hosted",
+            /* An agent the builder can read proposes its own tests. */
+            testOptional: READABLE_CONNECT_CHOICES.includes(choice),
           }
         : null,
     [buildMode, scenarioCount, buildFiles, buildRequest, choice],

@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { testIsOptional } from "./buildTestRule";
 import { Children, isValidElement, useEffect, useState } from "react";
 import {
   Box,
@@ -185,11 +186,11 @@ export default function DesignReview({
   const rows = [
     ...(testRequest
       ? [["Tests", testRequest]]
-      : env?.builtFrom?.kind === "platform"
+      : testIsOptional(env?.builtFrom?.kind)
         ? [
             [
               "Tests",
-              "Proposed from the agent's prompt and tools — the scenarios below",
+              "Proposed from the agent's prompt, code and tools — the scenarios below",
             ],
           ]
         : []),

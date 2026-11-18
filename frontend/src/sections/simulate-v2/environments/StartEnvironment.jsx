@@ -57,6 +57,7 @@ import { envValuesSourceOf } from "../_mock/envValues";
 import { addDesignFilesPatch } from "../_mock/designSources";
 import { takeBuild } from "../_mock/pendingBuildFiles";
 import BuildTestField from "./BuildTestField";
+import { testIsOptional } from "./buildTestRule";
 import BuildFilesField from "./BuildFilesField";
 import { paths } from "src/routes/paths";
 import { SectionCard } from "../components/primitives";
@@ -1280,11 +1281,11 @@ function useBuildEnvironment() {
       connect.onConnect(source);
       return;
     }
-    /* What to test is required — except for a hosted agent, whose prompt and
-       tools the builder reads to propose it. */
+    /* What to test is required — except for an agent the builder can read
+       (hosted platform, code, a prompt built here): it proposes the tests. */
     if (
       buildFiles &&
-      source.kind !== "platform" &&
+      !testIsOptional(source.kind) &&
       buildFiles.request.trim().length < BUILD_TEST_MIN
     ) {
       buildFiles.setMissing(true);
@@ -1505,7 +1506,7 @@ function PanelConnectedAgent() {
             </Box>
           )}
           <ScenarioCountRow
-            testOptional={!!agent && sourceKindOf(agent) === "platform"}
+            testOptional={!!agent && testIsOptional(sourceKindOf(agent))}
             value={scenarioCount}
             onChange={setScenarioCount}
           />
@@ -1627,7 +1628,11 @@ function PanelSourceRepo() {
           fullWidth
         />
       </Stack>
-      <ScenarioCountRow value={scenarioCount} onChange={setScenarioCount} />
+      <ScenarioCountRow
+        testOptional
+        value={scenarioCount}
+        onChange={setScenarioCount}
+      />
       <ContinueRow
         disabled={!canGo}
         hint={
@@ -2926,7 +2931,11 @@ function PanelCodeUpload() {
           onEgress={setEgressText}
         />
       )}
-      <ScenarioCountRow value={scenarioCount} onChange={setScenarioCount} />
+      <ScenarioCountRow
+        testOptional
+        value={scenarioCount}
+        onChange={setScenarioCount}
+      />
       <ConnectPreflight
         preflight={preflight}
         required={needsPreflight}

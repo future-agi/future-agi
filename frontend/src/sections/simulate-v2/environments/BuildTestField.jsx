@@ -5,10 +5,9 @@ import { TextField, Typography, Box } from "@mui/material";
   What the environment should test — the first thing every build from an
   agent asks (builder.md "Build from my agent": describe the behavior to
   test). The agent's code says what it can do; this says what to check.
-  Shown in the design review, before anything is built. Optional for a
-  hosted agent (Vapi, Retell…): the builder reads its prompt and tools and
-  proposes what to test itself (builder.md step 2, "answer only requirements
-  the harness cannot infer").
+  Shown in the design review, before anything is built. Optional when the
+  builder can read the agent (hosted platform, code, a prompt built here) —
+  see buildTestRule.js.
 */
 export default function BuildTestField({
   value,
@@ -52,7 +51,7 @@ export default function BuildTestField({
           error
             ? "Say what it should test — a sentence is enough."
             : optional
-              ? "Leave it empty and the builder proposes what to test from the agent's prompt and tools."
+              ? "Leave it empty and the builder proposes what to test from the agent's prompt, code and tools."
               : undefined
         }
         InputProps={{ sx: { typography: "s2" } }}
