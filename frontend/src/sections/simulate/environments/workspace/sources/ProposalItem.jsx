@@ -13,6 +13,7 @@ import {
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { neutralCheckboxSx } from "../runs/detail/trace/traceTable.constants";
+import PersonalDataChoice from "./PersonalDataChoice";
 import {
   PROPOSALS_COPY as COPY,
   PROPOSAL_KINDS,
@@ -432,57 +433,4 @@ ReferenceItem.propTypes = {
   item: PropTypes.object.isRequired,
   inset: PropTypes.number.isRequired,
   onOpen: PropTypes.func.isRequired,
-};
-
-const CHOICES = ["keep", "replace", "none"];
-
-// shortcut: the compact form only, until the full personal-data choice lands with the file's Personal data tab.
-function PersonalDataChoice({ suggested = "replace", choice, onChoose }) {
-  return (
-    <Stack
-      direction="row"
-      role="radiogroup"
-      aria-label={COPY.personal.label}
-      spacing={1.5}
-      useFlexGap
-      flexWrap="wrap"
-    >
-      {CHOICES.map((id) => {
-        const on = choice === id;
-        return (
-          <CustomTooltip
-            key={id}
-            show
-            arrow
-            describeChild
-            title={COPY.personal[id].note}
-          >
-            <ButtonBase
-              role="radio"
-              aria-checked={on}
-              onClick={() => onChoose(id)}
-              sx={{ gap: 0.5, typography: "s3", py: 0.25 }}
-            >
-              <Iconify
-                icon={on ? "solar:check-circle-bold" : "solar:circle-linear"}
-                width={14}
-              />
-              <Box component="span" sx={{ fontWeight: on ? 600 : 400 }}>
-                {COPY.personal[id].label}
-                {id === suggested ? COPY.personal.suggested : ""}
-              </Box>
-            </ButtonBase>
-          </CustomTooltip>
-        );
-      })}
-    </Stack>
-  );
-}
-
-PersonalDataChoice.propTypes = {
-  suggested: PropTypes.string,
-  choice: PropTypes.string,
-  onChoose: PropTypes.func.isRequired,
-  // Accepted so the full version can drop in; this one is always compact.
-  compact: PropTypes.bool,
 };

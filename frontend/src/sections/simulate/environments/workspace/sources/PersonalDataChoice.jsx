@@ -1,5 +1,7 @@
 import PropTypes from "prop-types";
 import { useId } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { upsertPersonalDataEdit } from "src/api/simulate-environments/sources";
 import {
   Box,
   MenuItem,
@@ -208,10 +210,11 @@ PersonalDataChoice.propTypes = {
  * The file drawer's Personal data tab. Every click rewrites the file's one
  * choice and column map, so all its edits stay a single pending edit.
  */
-export function PersonalDataTab({ source, readOnly = false, onEdit }) {
+export function PersonalDataTab({ envId, source, readOnly = false, onEdit }) {
+  const queryClient = useQueryClient();
   const choice = source.ui?.personal_choice || null;
-  const edit = (change) =>
-    onEdit((one) => {
+  const edit = (change) => {
+    const next = (one) => {
       const [columns, nextChoice] = change(
         columnsOf(one),
         one.ui?.personal_choice || null,
@@ -226,7 +229,11 @@ export function PersonalDataTab({ source, readOnly = false, onEdit }) {
           ),
         },
       };
-    });
+    };
+    onEdit(next);
+    // A saved file's one row in Review changes follows the latest choice.
+    upsertPersonalDataEdit(queryClient, envId, next(source));
+  };
 
   return (
     <Box>
@@ -254,6 +261,7 @@ export function PersonalDataTab({ source, readOnly = false, onEdit }) {
 }
 
 PersonalDataTab.propTypes = {
+  envId: PropTypes.string.isRequired,
   source: PropTypes.object.isRequired,
   readOnly: PropTypes.bool,
   onEdit: PropTypes.func.isRequired,

@@ -276,6 +276,17 @@ export const withSampleEdits = (review, changes = [], failed = []) => {
   );
 };
 
+// What files added to a review: rows citing a named file, and the failed rows
+// naming one.
+export const sampleFileEdits = (review) => ({
+  changes: (review?.changes || []).filter((change) =>
+    (change.sources || []).some((source) =>
+      (source.used || []).some((used) => used.kind === "source" && used.name),
+    ),
+  ),
+  failed: (review?.failed || []).filter((one) => one.source_name),
+});
+
 export const withSampleFailureDismissed = (review, id, dismissed) =>
   reviewOf(
     review.changes,

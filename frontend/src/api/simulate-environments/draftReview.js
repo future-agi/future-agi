@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   sampleDraftReview,
+  sampleFileEdits,
   withSampleDecisions,
   withSampleEdits,
   withSampleFailureDismissed,
@@ -20,11 +21,23 @@ export const draftReviewKey = (envId) => [
   "draft-review",
 ];
 
+export { sampleFileEdits };
+
+// The sample, keeping what files added: a refetch (a chat nudge, a save) would
+// otherwise drop them.
+export const freshSampleReview = (cached) => {
+  const kept = sampleFileEdits(cached);
+  return withSampleEdits(sampleDraftReview(), kept.changes, kept.failed);
+};
+
 export function useDraftReview(envId, { enabled = true } = {}) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: draftReviewKey(envId),
     queryFn: async () => {
-      const review = sampleDraftReview();
+      const review = freshSampleReview(
+        queryClient.getQueryData(draftReviewKey(envId)),
+      );
       if (CHECK_CONTRACT) DraftReviewSchema.parse(review);
       return review;
     },

@@ -165,19 +165,6 @@ export const PROPOSALS_COPY = {
     showAll: (n) => `Show all ${n} lines`,
     showFewer: "Show fewer",
   },
-  personal: {
-    label: "Personal data",
-    keep: { label: "Keep", note: "Real values stay as they are in the world." },
-    replace: {
-      label: "Replace",
-      note: "Stand-ins that keep the same person the same across files.",
-    },
-    none: {
-      label: "No personal data present",
-      note: "Nothing in this file identifies a person.",
-    },
-    suggested: " (suggested)",
-  },
   footer: {
     choose: "Choose how to handle personal data first",
     blocked: "Blocked items stay out",

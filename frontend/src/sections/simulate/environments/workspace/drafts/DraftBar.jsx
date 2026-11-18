@@ -5,7 +5,10 @@ import { enqueueSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
-import { useDraftReview } from "src/api/simulate-environments/draftReview";
+import {
+  sampleFileEdits,
+  useDraftReview,
+} from "src/api/simulate-environments/draftReview";
 import {
   useDrafts,
   useEnvironmentVersions,
@@ -33,8 +36,6 @@ const errorText = (error, drafts, fallback) => {
   if (error?.error === "draft_stale") return staleText(drafts, error.piece);
   return COPY.errors[error?.error] || refusalText(error, fallback);
 };
-
-const FILE_KINDS = ["source", "file"];
 
 const noteSx = { typography: "s3", color: "text.secondary", flexBasis: "100%" };
 
@@ -73,9 +74,7 @@ export default function DraftBar({
   }, [signature, resetSave]);
 
   // Edits added from files sit in the review cache before any draft is open.
-  const fromFiles = (review?.changes || []).some((one) =>
-    FILE_KINDS.includes(one.kind),
-  );
+  const fromFiles = sampleFileEdits(review).changes.length > 0;
   if (!enabled || !(drafts?.any || fromFiles)) return null;
 
   const kept = keptChanges(review?.changes);
