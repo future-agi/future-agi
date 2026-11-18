@@ -491,12 +491,14 @@ def _world_tables(path: str, data: bytes | None) -> dict[str, dict[str, str]] | 
                         keys = [
                             row[1]
                             for row in connection.execute(
-                                f"pragma table_info({quoted})"
+                                "select * from pragma_table_info(?)", (name,)
                             )
                             if row[5]
                         ]
                         tables[name] = {}
-                        rows = connection.execute(f"select * from {quoted}")
+                        # A table name cannot be a parameter: it is quoted, and read from the
+                        # file's own sqlite_master, never from a request.
+                        rows = connection.execute(f"select * from {quoted}")  # noqa: S608
                         columns = [one[0] for one in rows.description]
                         for index, row in enumerate(rows):
                             record = dict(zip(columns, row, strict=True))
