@@ -1277,9 +1277,7 @@ class EvaluationRunner:
                 )
 
                 _model = self.user_eval_metric.model or "unknown"
-                _fallback = calculate_total_cost(
-                    _model, _token_usage, at=started_at
-                )
+                _fallback = calculate_total_cost(_model, _token_usage, at=started_at)
                 _fallback_cost = _fallback.get("total_cost", 0)
             except Exception:
                 pass

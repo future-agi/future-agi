@@ -67,7 +67,9 @@ class OpenAiService(AbstractLlmService):
                     "prompt_tokens": response.usage.prompt_tokens,
                     "total_tokens": response.usage.total_tokens,
                 },
-                "cost": calculate_total_cost(model, dict(response.usage), at=started_at),
+                "cost": calculate_total_cost(
+                    model, dict(response.usage), at=started_at
+                ),
                 "response_time": completion_time,
             }
             if response.choices[0].finish_reason == "tool_calls":

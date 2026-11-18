@@ -1424,9 +1424,7 @@ class RunPrompt:
                 "prompt_tokens": chunk.usage.prompt_tokens,
                 "total_tokens": chunk.usage.total_tokens,
             },
-            "cost": calculate_total_cost(
-                chunk.model, dict(chunk.usage), at=started_at
-            ),
+            "cost": calculate_total_cost(chunk.model, dict(chunk.usage), at=started_at),
             "response_time": end_time - start_time,
         }
 
@@ -3142,9 +3140,7 @@ class RunPrompt:
                 "prompt_tokens": chunk.usage.prompt_tokens,
                 "total_tokens": chunk.usage.total_tokens,
             },
-            "cost": calculate_total_cost(
-                chunk.model, dict(chunk.usage), at=started_at
-            ),
+            "cost": calculate_total_cost(chunk.model, dict(chunk.usage), at=started_at),
             "response_time": end_time - start_time,
         }
 
