@@ -29870,6 +29870,18 @@ export const RouteCellApiState = {
   absent: "absent",
 } as const;
 
+export type RouteCellApiStatesItem =
+  (typeof RouteCellApiStatesItem)[keyof typeof RouteCellApiStatesItem];
+
+export const RouteCellApiStatesItem = {
+  step: "step",
+  failed: "failed",
+  no_answer: "no_answer",
+  cut_off: "cut_off",
+  repeated: "repeated",
+  absent: "absent",
+} as const;
+
 /**
  * One per column; null when the trial has no route to compare.
  */
@@ -29880,6 +29892,8 @@ export interface RouteCellApi {
   /** Every step's key in this cell. */
   steps: number[];
   count: number;
+  /** Each occurrence's own state, in the order the trial took them. */
+  states: RouteCellApiStatesItem[];
 }
 
 export interface RouteTrialApi {
@@ -29963,9 +29977,23 @@ export const RouteSplitGroupApiState = {
   absent: "absent",
 } as const;
 
+export type RouteSplitGroupApiStatesItem =
+  (typeof RouteSplitGroupApiStatesItem)[keyof typeof RouteSplitGroupApiStatesItem];
+
+export const RouteSplitGroupApiStatesItem = {
+  step: "step",
+  failed: "failed",
+  no_answer: "no_answer",
+  cut_off: "cut_off",
+  repeated: "repeated",
+  absent: "absent",
+} as const;
+
 export interface RouteSplitGroupApi {
   state: RouteSplitGroupApiState;
   count: number;
+  /** Each occurrence's own state, in order; trials split when these differ. */
+  states: RouteSplitGroupApiStatesItem[];
   trials: number[];
 }
 
