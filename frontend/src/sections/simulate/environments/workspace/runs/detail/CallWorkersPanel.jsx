@@ -234,8 +234,7 @@ export default function CallWorkersPanel({
           onPick={setSelected}
         />
       ) : null}
-      {/* The diagram names them itself when it is drawn. */}
-      {notObserved && !seq?.steps.length ? (
+      {notObserved ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.workersNotObserved(notObserved)}
         </Typography>

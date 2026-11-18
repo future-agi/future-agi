@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
 import { SEQUENCE_COPY as C } from "./sequence.constants";
-import { KIND_WORDS, SLOW_SEC, kindOf, readable, took } from "./sequenceLayout";
+import { SLOW_SEC, kindOf, readable, took } from "./sequenceLayout";
 
 const MAX_LINES = 8;
 
@@ -11,31 +11,31 @@ export default function HoverCard({ seq, row: r, step: s }) {
   const reply = r.type === "back" || r.type === "none" || r.type === "took";
   const closedLoop = r.loop && r.closed;
   const where = closedLoop
-    ? `Steps ${r.loop.first}–${r.loop.last}`
+    ? C.stepsRange(r.loop.first, r.loop.last)
     : reply
-      ? `Reply to step ${s.n}`
-      : `Step ${s.n}`;
+      ? C.replyTo(s.n)
+      : C.step(s.n);
   const who =
     r.type === "tool"
-      ? `${seq.nameOf(s.from)} called ${s.tool}`
+      ? C.called(seq.nameOf(s.from), s.tool)
       : reply
         ? `${seq.nameOf(s.to)} → ${seq.nameOf(r.type === "took" ? seq.lanes[0].id : s.from)}`
         : `${seq.nameOf(s.from)} → ${seq.nameOf(s.to)}`;
   const words = readable(
     r.type === "tool"
-      ? `${s.result || "No result"}`
+      ? s.result || C.noResult
       : reply
         ? s.answer?.full || s.answer?.label
         : s.full || s.label,
   );
   const state = closedLoop
-    ? `Repeated ${r.loop.times} times. Click to see every round`
+    ? C.repeated(r.loop.times)
     : r.type === "none"
       ? null
       : s.refused && r.type === "tool"
-        ? "Refused by the world" /* the reason is already in the words */
+        ? C.refusedByWorld() /* the reason is already in the words */
         : s.bad && !reply
-          ? "Failed"
+          ? C.failed
           : /* The arrow's rule: never "slow" for a conversation with the
                caller, or several turns in one step. */
             s.dur != null &&
@@ -43,7 +43,7 @@ export default function HoverCard({ seq, row: r, step: s }) {
               !reply &&
               s.from !== seq.lanes[0].id &&
               !(s.turns > 1)
-            ? `Slow · took ${took(s.dur)}`
+            ? C.slowTook(took(s.dur))
             : null;
   return (
     <Box sx={{ maxWidth: 340, py: 0.25 }}>
@@ -54,9 +54,9 @@ export default function HoverCard({ seq, row: r, step: s }) {
               ? ` · ${C.recordCut}`
               : s.answer?.stopped
                 ? ` · ${C.stoppedByUser}`
-                : " · No reply came back"
+                : ` · ${C.noReplyCame}`
             : k
-              ? ` · ${KIND_WORDS[k]}`
+              ? ` · ${C.kindWords[k]}`
               : ""
         }`}
       </Typography>
@@ -71,9 +71,7 @@ export default function HoverCard({ seq, row: r, step: s }) {
             mt: 0.5,
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
-            ...(r.type === "tool" && {
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            }),
+            ...(r.type === "tool" && { typography: "code_sm" }),
             // A long message is cut here; the step panel shows it in full.
             display: "-webkit-box",
             WebkitLineClamp: MAX_LINES,
@@ -103,7 +101,7 @@ export default function HoverCard({ seq, row: r, step: s }) {
         <Typography
           sx={{ typography: "s3", color: "inherit", opacity: 0.6, mt: 0.5 }}
         >
-          Click for the full detail
+          {C.clickForDetail}
         </Typography>
       )}
     </Box>

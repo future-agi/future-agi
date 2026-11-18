@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
+import { typography } from "src/theme/typography";
 import { SEQUENCE_COPY as C } from "./sequence.constants";
 import {
   CH,
@@ -29,6 +30,13 @@ import StepDetail from "./StepDetail";
   that never came. Tool calls are steps on the lane of the agent that ran
   them. Picking a step shows the full message and answer under the diagram.
 */
+// The theme's type, for SVG text: s3 for small words, s1 for names and step labels.
+const type = {
+  sm: typography.s3.fontSize,
+  md: typography.s1.fontSize,
+  mono: typography.code_sm.fontFamily,
+};
+
 export default function SequenceDiagram({
   seq,
   selected,
@@ -288,8 +296,8 @@ export default function SequenceDiagram({
     ...(r.type === "go" || r.type === "tool" ? { "data-row": s.n } : {}),
     "aria-label":
       r.type === "go" || r.type === "tool"
-        ? `Step ${s.n}: ${s.label}`
-        : `Reply to step ${s.n}: ${s.answer?.label ?? ""}`,
+        ? C.stepLabel(s.n, s.label)
+        : C.replyLabel(s.n, s.answer?.label ?? ""),
     onClick: () => (r.loop && r.closed ? toggleLoop(r.loop.id) : pick(s.n)),
     onKeyDown: onEnter(() =>
       r.loop && r.closed ? toggleLoop(r.loop.id) : pick(s.n),
@@ -323,7 +331,7 @@ export default function SequenceDiagram({
           x={cx}
           y={cy + 4}
           textAnchor="middle"
-          fontSize="11"
+          fontSize={type.sm}
           fontWeight="600"
           fill={s.bad || s.refused ? c.onColour : c.paper}
         >
@@ -352,7 +360,7 @@ export default function SequenceDiagram({
   const kindTag = (k, color) =>
     k ? (
       <tspan
-        fontSize="11"
+        fontSize={type.sm}
         fontWeight="600"
         letterSpacing="0.06em"
         fill={color || c.muted}
@@ -387,9 +395,9 @@ export default function SequenceDiagram({
       g.turn == null
         ? C.noTurn
         : merged > 1
-          ? `Turns ${g.turn}–${g.turn + merged - 1}`
-          : `Turn ${g.turn}`;
-    const words = `${name} · ${g.label ? `“${cut(g.text || g.label, 46)}”` : `${seq.nameOf(seq.lanes[1]?.id)} follows up`} · ${g.steps.length} ${g.steps.length === 1 ? "step" : "steps"}${who.length ? ` · ${who.join(", ")}` : ""}`;
+          ? C.turnsRange(g.turn, g.turn + merged - 1)
+          : C.turn(g.turn);
+    const words = `${name} · ${g.label ? `“${cut(g.text || g.label, 46)}”` : C.followsUp(seq.nameOf(seq.lanes[1]?.id))} · ${C.stepCount(g.steps.length)}${who.length ? ` · ${who.join(", ")}` : ""}`;
     const toggle = () => setTurnOpen((was) => ({ ...was, [g.turn]: !open }));
     return (
       <Tooltip
@@ -402,7 +410,7 @@ export default function SequenceDiagram({
             <Typography
               sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}
             >
-              {`${name} · ${g.steps.length} ${g.steps.length === 1 ? "step" : "steps"}`}
+              {`${name} · ${C.stepCount(g.steps.length)}`}
             </Typography>
             {g.text && (
               <Typography sx={{ typography: "s3", color: "inherit", mt: 0.5 }}>
@@ -412,7 +420,7 @@ export default function SequenceDiagram({
             <Typography
               sx={{ typography: "s3", color: "inherit", opacity: 0.6, mt: 0.5 }}
             >
-              {open ? "Click to fold" : "Click to open"}
+              {open ? C.clickToFold : C.clickToOpen}
             </Typography>
           </Box>
         }
@@ -421,7 +429,7 @@ export default function SequenceDiagram({
           role="button"
           tabIndex={0}
           aria-expanded={open}
-          aria-label={`${open ? "Fold" : "Open"} ${g.turn == null ? C.noTurn.toLowerCase() : `turn ${g.turn}`}`}
+          aria-label={C.foldTurn(open, g.turn == null ? C.noTurn : C.turn(g.turn))}
           onClick={toggle}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
@@ -438,10 +446,10 @@ export default function SequenceDiagram({
             height={ROW_H.turn - 4}
             fill={c.code}
           />
-          <text x={10} y={yy + 4} fontSize="11.5" fill={c.sub}>
+          <text x={10} y={yy + 4} fontSize={type.sm} fill={c.sub}>
             {open ? "▾" : "▸"}
           </text>
-          <text x={24} y={yy + 4} fontSize="11.5" fontWeight="600" fill={c.fg}>
+          <text x={24} y={yy + 4} fontSize={type.sm} fontWeight="600" fill={c.fg}>
             {cut(words, Math.floor((svgW - 140) / 6.2))}
           </text>
           {probs > 0 && (
@@ -449,11 +457,11 @@ export default function SequenceDiagram({
               x={svgW - 10}
               y={yy + 4}
               textAnchor="end"
-              fontSize="11"
+              fontSize={type.sm}
               fontWeight="600"
               fill={c.bad}
             >
-              {`${probs} ${probs === 1 ? "problem" : "problems"}`}
+              {C.problemCount(probs)}
             </text>
           )}
         </g>
@@ -526,7 +534,7 @@ export default function SequenceDiagram({
           x={mid}
           y={yy - 3}
           textAnchor="middle"
-          fontSize="12"
+          fontSize={type.md}
           fontWeight={wt}
           fill={c.fg}
         >
@@ -555,7 +563,7 @@ export default function SequenceDiagram({
               x={mid + lw / 2 + 6 + chipW / 2}
               y={yy - 3}
               textAnchor="middle"
-              fontSize="10.5"
+              fontSize={type.sm}
               fontWeight="500"
               fill={c.sub}
             >
@@ -569,7 +577,7 @@ export default function SequenceDiagram({
       const x2 = isTook ? X[seq.lanes[0].id] : X[s.from];
       const dir = x2 > x1 ? 1 : -1;
       const bad = !!s.answer.bad;
-      const tag = isTook ? ` · after step ${s.n}` : ` · reply to step ${s.n}`;
+      const tag = ` · ${isTook ? C.afterStep(s.n) : C.replyToStep(s.n)}`;
       /* A reply has its row to itself, so its words may run past a short
          arrow — the "reply to step n" tag never eats them. */
       const rk = kindOf(r, s);
@@ -604,7 +612,7 @@ export default function SequenceDiagram({
           )}
           y={yy - 3}
           textAnchor="middle"
-          fontSize="11.5"
+          fontSize={type.sm}
           fontWeight={r.type === "none" || on ? 600 : 400}
           fill={bad ? c.bad : c.sub}
         >
@@ -620,7 +628,6 @@ export default function SequenceDiagram({
          the tool's name and what came back. */
       const x = X[s.from];
       const side = toolSide(s.from);
-      const mono = "ui-monospace, SFMono-Regular, Menlo, monospace";
       const slow = s.dur != null && s.dur >= SLOW_SEC;
       const tail = slow ? ` · slow · ${took(s.dur)}` : "";
       const lchip = r.loop ? loopChip({ ...r.loop, closed: r.closed }) : null;
@@ -680,15 +687,15 @@ export default function SequenceDiagram({
           x={side.left ? x - 22 : x + 22}
           y={yy + 4}
           textAnchor={side.left ? "end" : "start"}
-          fontSize="11"
+          fontSize={type.sm}
           fontWeight={wt}
           fill={c.fg}
         >
           {kindTag("TOOL", tone)}
-          <tspan fontFamily={mono}>{name}</tspan>
+          <tspan fontFamily={type.mono}>{name}</tspan>
           <tspan
             dx="8"
-            fontSize="11.5"
+            fontSize={type.sm}
             fontWeight={tone ? 600 : 400}
             fill={tone || c.sub}
           >
@@ -711,7 +718,7 @@ export default function SequenceDiagram({
               x={tx + textW + 8 + lchipW / 2}
               y={yy + 4}
               textAnchor="middle"
-              fontSize="10.5"
+              fontSize={type.sm}
               fontWeight="500"
               fill={
                 r.closed && r.loop.badCount
@@ -746,7 +753,7 @@ export default function SequenceDiagram({
   const sel = selected != null ? byN[selected] : null;
   const svgStyle = {
     display: "block",
-    fontFamily: "Inter, system-ui, sans-serif",
+    fontFamily: typography.fontFamily,
   };
   const followed = lane ? seq.lanes.find((l) => l.id === lane) : null;
   const followedCount = followed ? shown.filter(involves).length : 0;
@@ -777,12 +784,12 @@ export default function SequenceDiagram({
                 );
               }}
             >
-              All turns
+              {C.allTurns}
             </Toggle>
           )}
           {hasTools && (
             <Toggle on={foldTools} onClick={() => setFoldTools((v) => !v)}>
-              Fold tool calls
+              {C.foldTools}
             </Toggle>
           )}
           {hasProblems && (
@@ -790,7 +797,7 @@ export default function SequenceDiagram({
               on={problemsOnly}
               onClick={() => setProblemsOnly((v) => !v)}
             >
-              Problems only
+              {C.problemsOnly}
             </Toggle>
           )}
         </Stack>
@@ -814,9 +821,9 @@ export default function SequenceDiagram({
             {[
               problemsOnly &&
                 hasProblems &&
-                `Problems and the steps that led to them · ${shown.length} of ${seq.steps.length} steps`,
+                C.problemsShown(shown.length, seq.steps.length),
               followed &&
-                `Following ${followed.name} · ${followedCount} of ${shown.length} steps`,
+                C.following(followed.name, followedCount, shown.length),
             ]
               .filter(Boolean)
               .join(" · ")}
@@ -840,7 +847,7 @@ export default function SequenceDiagram({
               textUnderlineOffset: "2px",
             }}
           >
-            Show all
+            {C.showAll}
           </Typography>
         </Stack>
       )}
@@ -863,7 +870,7 @@ export default function SequenceDiagram({
             height={H}
             viewBox={`0 0 ${svgW} ${H}`}
             role="group"
-            aria-label={`Sequence of ${shown.length} steps`}
+            aria-label={C.sequenceOf(shown.length)}
             style={svgStyle}
           >
             <defs>
@@ -893,7 +900,7 @@ export default function SequenceDiagram({
                   aria-pressed={on}
                   data-lane-head="true"
                   aria-label={
-                    on ? `Stop following ${ln.name}` : `Follow ${ln.name}`
+                    on ? C.stopFollowing(ln.name) : C.follow(ln.name)
                   }
                   onClick={() => setLane(on ? null : ln.id)}
                   onKeyDown={(e) => {
@@ -906,8 +913,8 @@ export default function SequenceDiagram({
                 >
                   <title>
                     {on
-                      ? `Following ${ln.name} · click to show everyone`
-                      : `${ln.name} · ${ln.role} · click to follow`}
+                      ? C.followingHint(ln.name)
+                      : C.followHint(ln.name, ln.role)}
                   </title>
                   <rect
                     x={X[ln.id] - headW / 2}
@@ -925,7 +932,7 @@ export default function SequenceDiagram({
                       x={X[ln.id]}
                       y={27 + j * 14}
                       textAnchor="middle"
-                      fontSize="12"
+                      fontSize={type.md}
                       fontWeight="600"
                       fill={c.fg}
                     >
@@ -936,7 +943,7 @@ export default function SequenceDiagram({
                     x={X[ln.id]}
                     y={10 + headH - 8}
                     textAnchor="middle"
-                    fontSize="10.5"
+                    fontSize={type.sm}
                     fill={c.muted}
                   >
                     {cut(ln.role, Math.floor((headW - 12) / 5.8))}
@@ -947,20 +954,6 @@ export default function SequenceDiagram({
           </svg>
         </Box>
       </Box>
-      {seq.notObserved.length > 0 && (
-        <Typography
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-            px: 2,
-            py: 0.75,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          {C.notObserved(seq.notObserved.join(", "))}
-        </Typography>
-      )}
       <Box
         sx={{ px: 2, py: 1.5, borderTop: "1px solid", borderColor: "divider" }}
       >

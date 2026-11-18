@@ -255,14 +255,12 @@ describe("CallWorkersPanel", () => {
       },
     );
 
-    it("names declared workers with no events once, under the diagram", () => {
+    it("names declared workers with no events once, beside the diagram", () => {
       render(<CallWorkersPanel callExecutionId="c1" />);
       expect(
-        screen.getByText(/Declared, no events sent: Audit worker/),
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByText(C.workersNotObserved("Audit worker")),
-      ).toBeNull();
+        screen.getAllByText(C.workersNotObserved("Audit worker")),
+      ).toHaveLength(1);
+      expect(document.querySelector("[data-row]")).not.toBeNull();
     });
 
     it.each([

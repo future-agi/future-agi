@@ -5,7 +5,7 @@ import { CALL_WORKERS_COPY } from "../callTraces.constants";
 import { SEQUENCE_COPY as C } from "./sequence.constants";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
 import ChatMarkdown from "src/sections/simulate/environments/buildEnvironment/console/ChatMarkdown";
-import { KIND, asMarkdown, readable, smallBtn, took } from "./sequenceLayout";
+import { asMarkdown, readable, smallBtn, took } from "./sequenceLayout";
 import { CopyLink, Label, Pill, Quote } from "./SequenceParts";
 
 // Nothing to show: the record dropped it at its size limit, or never had it.
@@ -35,7 +35,7 @@ function Json({ data, testId }) {
     >
       <CustomJsonViewer
         object={data}
-        sx={{ fontSize: "12px", lineHeight: "22px", bgcolor: "transparent" }}
+        sx={{ typography: "s1", lineHeight: "22px", bgcolor: "transparent" }}
       />
     </Box>
   );
@@ -212,7 +212,7 @@ export default function StepDetail({
             color: "text.secondary",
           }}
         >
-          {KIND[step.kind]}
+          {C.kind[step.kind]}
         </Box>
         <Box sx={{ flex: 1 }} />
         {onShowInTranscript && step.turn != null && (
