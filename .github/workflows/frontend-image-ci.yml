@@ -1,0 +1,54 @@
+# Frontend image entrypoint CI: builds the frontend image from this checkout
+# (nothing pushed, no registry login) and runs frontend/tests/image against
+# it: default HTTP and HTTPS starts, the read-only root mounts, certificate
+# expiry and rotation, and the private key mode warning, with the image's own
+# busybox and nginx. Needs Docker and openssl, both on the runner; the tests
+# generate every certificate they use. Only the files that image and those
+# tests read trigger it; images-ci.yml keeps the image-free convention tests.
+name: Frontend image CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "frontend/docker-entrypoint.sh"
+      - "frontend/Dockerfile"
+      - "frontend/frontend-healthcheck.sh"
+      - "frontend/nginx*.conf*"
+      - "frontend/tests/image/**"
+      - ".github/workflows/frontend-image-ci.yml"
+  push:
+    branches: [dev, main]
+    paths:
+      - "frontend/docker-entrypoint.sh"
+      - "frontend/Dockerfile"
+      - "frontend/frontend-healthcheck.sh"
+      - "frontend/nginx*.conf*"
+      - "frontend/tests/image/**"
+      - ".github/workflows/frontend-image-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-image-ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  entrypoint-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build the frontend image
+        run: docker build --progress=plain -t futureagi/frontend:ci frontend
+      - name: Entrypoint tests in the real image
+        env:
+          FRONTEND_IMAGE: futureagi/frontend:ci
+        run: python -m unittest discover -s frontend/tests/image -v
