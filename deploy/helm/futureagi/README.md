@@ -723,9 +723,48 @@ spec:
     - app.example.com
 ```
 
-Replace `futureagi` with your release name and namespace, and use a trusted
-issuer or distribute the gateway CA through `global.caBundle`. Configure the
-Service addresses in your DNS (or set the Service types to `LoadBalancer`):
+These names are for release `futureagi` in namespace `futureagi`. The
+Services are `<prefix>-agentcc-gateway` and `<prefix>-frontend` in the
+release namespace, where `<prefix>` is:
+
+- `fullnameOverride`, when set;
+- otherwise the release name, when it already contains the chart name
+  (`futureagi`, or `nameOverride` when set);
+- otherwise `<release>-futureagi` (`<release>-<nameOverride>` with
+  `nameOverride`);
+
+cut to 40 characters, then one trailing `-` removed. So the prefix is not
+simply the release name:
+
+| Release | Namespace | Values | Gateway Service | Dashboard Service |
+|---|---|---|---|---|
+| `futureagi` | `futureagi` | | `futureagi-agentcc-gateway` | `futureagi-frontend` |
+| `futureagi-prod` | `prod` | | `futureagi-prod-agentcc-gateway` | `futureagi-prod-frontend` |
+| `demo` | `team-a` | | `demo-futureagi-agentcc-gateway` | `demo-futureagi-frontend` |
+| `demo` | `team-b` | | `demo-futureagi-agentcc-gateway` | `demo-futureagi-frontend` |
+| `demo` | `demo` | `nameOverride: fagi` | `demo-fagi-agentcc-gateway` | `demo-fagi-frontend` |
+| `futureagi` | `futureagi` | `nameOverride: fagi` | `futureagi-fagi-agentcc-gateway` | `futureagi-fagi-frontend` |
+| `demo` | `demo` | `fullnameOverride: fagi` | `fagi-agentcc-gateway` | `fagi-frontend` |
+| `customer-analytics-platform-production-eu1` | `analytics` | | `customer-analytics-platform-production-e-agentcc-gateway` | `customer-analytics-platform-production-e-frontend` |
+| `observability-platform-staging-eu-west1` | `observability` | | `observability-platform-staging-eu-west1-agentcc-gateway` | `observability-platform-staging-eu-west1-frontend` |
+
+The certificate's names are then `<service>`, `<service>.<namespace>`,
+`<service>.<namespace>.svc` and `<service>.<namespace>.svc.cluster.local`;
+the same release in two namespaces gets the same Service names and different
+namespace-qualified ones. Read the exact names from your own values before
+issuing the certificates:
+
+```bash
+helm template <release> oci://ghcr.io/future-agi/charts/futureagi --version "$VERSION" \
+  -n <namespace> -f values.yaml \
+  --show-only templates/agentcc-gateway/service.yaml \
+  --show-only templates/frontend/service.yaml | grep -E '^  (name|namespace):'
+```
+
+or, once installed, `kubectl get svc -n <namespace> -l app.kubernetes.io/instance=<release>`.
+Use a trusted issuer or distribute the gateway CA through `global.caBundle`.
+Configure the Service addresses in your DNS (or set the Service types to
+`LoadBalancer`):
 
 ```yaml
 agentccGateway:
