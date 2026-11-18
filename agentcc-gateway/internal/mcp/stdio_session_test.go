@@ -46,6 +46,38 @@ func TestKnownStdioCloseReconnectsBeforeNextPing(t *testing.T) {
 	t.Fatal("closed stdio session did not reconnect before the next scheduled ping")
 }
 
+func TestClosedStdioTransportCannotLaunch(t *testing.T) {
+	tr := NewStdioTransport(os.Args[0], []string{"-test.run=^TestStdioCatalogFixture$"})
+	if err := tr.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Start(context.Background()); err == nil {
+		_ = tr.cmd.Process.Kill() // failing implementation has lost Close ownership
+		_ = tr.cmd.Wait()
+		t.Fatal("launched a command on an already closed transport")
+	}
+}
+
+func TestStdioEOFEndsCallAndReconnects(t *testing.T) {
+	c := catalogFixtureClient(t, "eof", filepath.Join(t.TempDir(), "unused"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first := c.currentTransport()
+	if _, err := c.CallTool(ctx, "close-output", nil); err == nil || ctx.Err() != nil || c.Healthy() {
+		t.Fatalf("EOF did not promptly end the pending call and invalidate the session: err=%v ctx=%v healthy=%t", err, ctx.Err(), c.Healthy())
+	}
+	for ctx.Err() == nil {
+		if c.currentTransport() != first && c.Healthy() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("EOF did not reconnect before the next scheduled ping")
+}
+
 func TestRejectedHandshakeDoesNotPublishCatalog(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "reached-prompts")
 	c := catalogFixtureClient(t, "incomplete", marker)
@@ -83,6 +115,12 @@ func TestStdioCatalogFixture(t *testing.T) {
 		}
 		var result any = struct{}{}
 		switch req.Method {
+		case MethodToolsCall:
+			if mode == "eof" {
+				_ = os.Stdout.Close()
+				time.Sleep(10 * time.Second) // no response; transport owns cleanup
+				os.Exit(0)
+			}
 		case MethodToolsList:
 			result = ListToolsResult{Tools: []Tool{{Name: "tool-" + strconv.Itoa(os.Getpid())}}}
 		case MethodResourcesList:

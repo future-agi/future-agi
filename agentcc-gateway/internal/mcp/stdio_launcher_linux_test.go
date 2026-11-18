@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -40,8 +41,21 @@ func TestCloseStopsOwnedLauncherWorker(t *testing.T) {
 	if err := tr.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// Orphan collection belongs to init; the kernel releases the worker's
-	// file lock on exit regardless of when its process entry is collected.
+	// Run the compiled test binary as container PID 1 to exercise adoption.
+	// A zombie releases file locks too; require the /proc entry to be gone.
+	if os.Getpid() == 1 {
+		data, err := os.ReadFile(path + ".pid")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pid, err := strconv.Atoi(string(data))
+		if err != nil || pid <= 1 {
+			t.Fatalf("invalid worker PID %q", data)
+		}
+		if _, err := os.Stat(filepath.Join("/proc", strconv.Itoa(pid))); !os.IsNotExist(err) {
+			t.Fatal("worker still has a process entry after PID 1 closed the transport")
+		}
+	}
 	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
 		if err := tryLock(); err == nil {
 			return
@@ -75,6 +89,9 @@ func TestStdioLauncherFixture(t *testing.T) {
 		os.Exit(2)
 	}
 	defer file.Close()
+	if err := os.WriteFile(path+".pid", []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+		os.Exit(2)
+	}
 	resp, _ := NewResponse(json.RawMessage(`1`), struct{}{})
 	if json.NewEncoder(os.Stdout).Encode(resp) != nil {
 		os.Exit(2)

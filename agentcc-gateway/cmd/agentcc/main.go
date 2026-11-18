@@ -667,9 +667,11 @@ func main() {
 		}
 	}()
 
-	if err := srv.Start(); err != nil {
-		slog.Error("server error", "error", err)
-		os.Exit(1)
+	if lifetime.Err() == nil {
+		if err := srv.Start(); err != nil {
+			slog.Error("server error", "error", err)
+			os.Exit(1)
+		}
 	}
 	// Start returns as soon as the shutdown begins. Wait for the rest of it
 	// (in-flight requests, the last request-log flush) before exiting.
