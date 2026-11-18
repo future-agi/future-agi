@@ -19920,8 +19920,9 @@ export type HarnessCompareRowApiMovement =
 
 export const HarnessCompareRowApiMovement = {
   regressed: "regressed",
-  improved: "improved",
   mixed: "mixed",
+  improved: "improved",
+  inconclusive: "inconclusive",
   same: "same",
 } as const;
 
@@ -19949,6 +19950,8 @@ export interface HarnessCompareRowApi {
   /** By run id, in trial order; empty when the run did not run it. */
   calls: HarnessCompareRowApiCalls;
   movement: HarnessCompareRowApiMovement;
+  /** Runs that played this row's scenario unlike the baseline did. */
+  edited_run_ids: string[];
 }
 
 export interface HarnessCompareRunsApi {

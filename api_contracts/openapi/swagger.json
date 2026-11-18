@@ -142531,7 +142531,8 @@
                 "situation",
                 "ideal_outcome",
                 "calls",
-                "movement"
+                "movement",
+                "edited_run_ids"
             ],
             "type": "object",
             "properties": {
@@ -142592,10 +142593,19 @@
                     "type": "string",
                     "enum": [
                         "regressed",
-                        "improved",
                         "mixed",
+                        "improved",
+                        "inconclusive",
                         "same"
                     ]
+                },
+                "edited_run_ids": {
+                    "description": "Runs that played this row's scenario unlike the baseline did.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 }
             }
         },

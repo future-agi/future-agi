@@ -102362,6 +102362,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "ideal_outcome",
         "calls",
         "movement",
+        "edited_run_ids",
       ],
       type: "object",
       properties: {
@@ -102421,7 +102422,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         movement: {
           title: "Movement",
           type: "string",
-          enum: ["regressed", "improved", "mixed", "same"],
+          enum: ["regressed", "mixed", "improved", "inconclusive", "same"],
+        },
+        edited_run_ids: {
+          description:
+            "Runs that played this row's scenario unlike the baseline did.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },

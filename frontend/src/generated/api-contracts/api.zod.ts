@@ -39517,7 +39517,18 @@ export const SimulateApiHarnessEnvironmentsCompareRunsResponse = zod.object({
         .describe(
           "By run id, in trial order; empty when the run did not run it.",
         ),
-      movement: zod.enum(["regressed", "improved", "mixed", "same"]),
+      movement: zod.enum([
+        "regressed",
+        "mixed",
+        "improved",
+        "inconclusive",
+        "same",
+      ]),
+      edited_run_ids: zod
+        .array(zod.string().min(1))
+        .describe(
+          "Runs that played this row's scenario unlike the baseline did.",
+        ),
     }),
   ),
 });
