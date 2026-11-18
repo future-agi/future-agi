@@ -84,7 +84,7 @@ CONFIG_KEY_FIELDS = ("id", "updated_at", "config", "eval_template__updated_at")
 CACHE_TIMEOUT = 5 * 60
 # Compare's facts derive from a run's whole-run rows and hold the stamp those
 # rows were cached with; rows cached again under a new stamp drop them.
-COMPARE_FACTS_SHAPE = "compare-facts:v5"
+COMPARE_FACTS_SHAPE = "compare-facts:v6"
 
 
 def _score_expressions(
@@ -261,7 +261,8 @@ def cached_run_values(
                 if stamps is not None:
                     to_cache[_stamp_key(key)] = stamps[execution_id]
         try:
-            # One transaction, so no reader sees new rows under the old stamp.
+            # django-redis sends set_many as one MULTI/EXEC, so no reader sees new
+            # rows under the old stamp; other backends (e.g. LocMem) may tear it.
             cache.set_many(to_cache, timeout=CACHE_TIMEOUT)
         except Exception:
             # The values are already read; a refused write must not fail the page.
@@ -315,6 +316,7 @@ def _cached_call_values(
     if key:
         try:
             # The whole-run rows carry a new stamp, which compare's facts check.
+            # One MULTI/EXEC on django-redis, as above.
             cache.set_many(
                 {key: rows, **({} if subset else {_stamp_key(key): uuid.uuid4().hex})},
                 timeout=CACHE_TIMEOUT,

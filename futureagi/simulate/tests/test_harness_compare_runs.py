@@ -467,6 +467,7 @@ class TestContract:
             "ideal_outcome",
             "calls",
             "movement",
+            "edited_run_ids",
         }
         assert set(row["calls"]) == {str(run.id) for run in runs}
         for histograms in (run["histograms"] for run in body["runs"]):
@@ -699,11 +700,16 @@ class TestSemantics:
         assert set(joined) == {row["row_id"] for row in body["rows"]}
 
     def test_movement_orders_the_rows(self, auth_client, environment):
-        order = {"regressed": 0, "mixed": 1, "improved": 2, "same": 3}
+        from simulate.services.run_compare_page import MOVEMENT_ORDER as order
 
-        body = _ok(
-            _compare(auth_client, environment, _runs(environment), page_size=100)
-        )
+        runs = _runs(environment)
+        regressed, same = _shared_keys(runs)[:2]
+        for key, outcome in ((regressed, "failed"), (same, "passed")):
+            _grade(_key_calls(runs[0], key), "passed")
+            for run in runs[1:]:
+                _grade(_key_calls(run, key), outcome)
+
+        body = _ok(_compare(auth_client, environment, runs, page_size=100))
 
         ranks = [order[row["movement"]] for row in body["rows"]]
         assert ranks == sorted(ranks)
@@ -836,14 +842,16 @@ class TestSemantics:
         )
 
     def test_runs_moving_both_ways_are_mixed_between_regressions_and_improvements(
-        self, auth_client, environment
+        self, auth_client, workspace
     ):
+        environment = build_environment(workspace, trials=10, edited=())
         runs = _runs(environment)
-        mixed, regressed, improved = _shared_keys(runs)[:3]
+        mixed, regressed, improved = _shared_keys(runs, trials=10)[:3]
+        half = ["passed", "failed"] * 5
         for key, grades in (
-            (mixed, (["passed", "failed"], ["failed", "failed"], ["passed"] * 2)),
-            (regressed, (["passed"] * 2, ["failed"] * 2, ["passed"] * 2)),
-            (improved, (["failed"] * 2, ["passed"] * 2, ["passed"] * 2)),
+            (mixed, (half, ["failed"] * 10, ["passed"] * 10)),
+            (regressed, (["passed"] * 10, ["failed"] * 10, ["passed"] * 10)),
+            (improved, (["failed"] * 10, ["passed"] * 10, ["passed"] * 10)),
         ):
             for run, outcomes in zip(runs, grades, strict=True):
                 for call, outcome in zip(_key_calls(run, key), outcomes, strict=True):
@@ -1014,6 +1022,45 @@ class TestSemantics:
             )
             assert late["harness-late"]["scored"] > 0
 
+    def test_a_late_harness_judgement_keeps_the_page_its_rows_built(
+        self, auth_client, environment
+    ):
+        runs = _runs(environment)
+        key = _shared_key(runs)
+        for run in runs:
+            _grade(_key_calls(run, key), "passed")
+        params = {
+            "group_by": "status",
+            "page_size": 100,
+            "filters": {"status": ["passed"]},
+        }
+        before = _ok(_compare(auth_client, environment, runs, **params))
+        # A late failing judgement flips a matching call, after its rows were cached.
+        call = _key_calls(runs[1], key)[0]
+        call.call_metadata = {
+            **call.call_metadata,
+            "harness_outcome_status": "failed",
+            "hosted_harness_receipt": {
+                **call.call_metadata["hosted_harness_receipt"],
+                "status": "failed",
+            },
+        }
+        call.eval_outputs["harness-late"] = {
+            "name": "Late",
+            "output": "Failed",
+            "source": "harness",
+        }
+        call.save(update_fields=["call_metadata", "eval_outputs"])
+
+        body = _ok(_compare(auth_client, environment, runs, **params))
+
+        assert "harness-late" in {c["id"] for c in body["evaluation_columns"]}
+        assert body["count"] == before["count"]
+        shown = {row["row_id"] for row in body["rows"]}
+        assert body["groups"]
+        for group in body["groups"]:
+            assert set(group["row_ids"]) <= shown
+
     def test_an_eval_graded_as_a_sub_goal_in_one_run_reads_as_an_evaluation(
         self, auth_client, environment
     ):
@@ -1083,6 +1130,208 @@ def test_a_use_case_alone_tells_scenario_versions_apart(columns, same):
 
     assert (one == other) is same
     assert _row_id("k", {**shown, "goal": "Sample scenario"}) == "k"
+
+
+@pytest.mark.parametrize(
+    "baseline,candidates,movement",
+    [
+        ((1, 1), [(0, 1)], "inconclusive"),
+        ((0, 1), [(1, 1)], "inconclusive"),
+        ((1, 2), [(0, 2), (2, 2)], "inconclusive"),
+        ((1, 2), [(1, 2)], "same"),
+        ((5, 10), [(10, 20)], "same"),
+        ((10, 10), [(0, 10)], "regressed"),
+        ((0, 10), [(10, 10)], "improved"),
+        ((5, 10), [(0, 10), (10, 10)], "mixed"),
+        ((10, 10), [(0, 10), (9, 10)], "regressed"),
+        ((5, 10), [(0, 0)], "same"),
+        ((0, 0), [(10, 10)], "same"),
+    ],
+)
+def test_movement_is_the_verdict_against_the_baseline(baseline, candidates, movement):
+    from simulate.services.run_compare_page import _movement
+
+    assert _movement(baseline, candidates) == movement
+
+
+def _scenario_content(scenario: HostedHarnessScenario, **changes: Any) -> dict:
+    return {
+        "name": scenario.name,
+        "instruction": scenario.instruction,
+        "use_case": scenario.use_case,
+        "persona": scenario.persona,
+        "coverage": scenario.coverage,
+        "sub_goals": scenario.sub_goals,
+        **changes,
+    }
+
+
+def _version_fields(environment: HostedHarnessJob, number: int) -> dict[str, Any]:
+    return {
+        "job": environment,
+        "organization_id": environment.organization_id,
+        "workspace_id": environment.workspace_id,
+        "version_number": number,
+        "status": "active",
+        "origin": "manual",
+        "hash": "sha256:" + uuid.uuid4().hex * 2,
+        "archive_object_key": "harness/x.tar.gz",
+        "archive_sha256": "",
+        "archive_size": 0,
+    }
+
+
+def _pin_suite(
+    environment: HostedHarnessJob,
+    run: TestExecution,
+    number: int,
+    contents: dict[str, dict[str, Any]],
+) -> None:
+    """Pin ``run`` to a new suite version holding ``contents`` by scenario key."""
+    from simulate.models.harness_versioning import (
+        HarnessSuiteMember,
+        HarnessSuiteVersion,
+    )
+
+    suite = HarnessSuiteVersion.no_workspace_objects.create(
+        **_version_fields(environment, number)
+    )
+    for index, scenario in enumerate(
+        HostedHarnessScenario.no_workspace_objects.filter(job=environment)
+    ):
+        HarnessSuiteMember.no_workspace_objects.create(
+            suite_version=suite,
+            scenario=scenario,
+            scenario_key=scenario.scenario_key,
+            number=index + 1,
+            content=contents.get(scenario.scenario_key) or _scenario_content(scenario),
+        )
+    HostedHarnessJob.no_workspace_objects.filter(test_execution=run).update(
+        suite_version=suite
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestEditedRuns:
+    """A row pairs a scenario by key; a run that played it edited is flagged."""
+
+    KEY = "t-cmp-0000"
+
+    @pytest.fixture
+    def played(self, workspace):
+        environment = build_environment(workspace, runs=2, edited=())
+        authored = HostedHarnessScenario.no_workspace_objects.get(
+            job=environment, scenario_key=self.KEY
+        )
+        return environment, _runs(environment), authored
+
+    def _edited(self, auth_client, environment, runs) -> dict[str, list[list[str]]]:
+        body = _ok(_compare(auth_client, environment, runs, page_size=100))
+        _assert_declared(body)
+        edited: dict[str, list[list[str]]] = {}
+        for row in body["rows"]:
+            edited.setdefault(row["scenario_key"], []).append(row["edited_run_ids"])
+        return edited
+
+    def test_an_edited_instruction_is_one_row_flagged_on_its_run(
+        self, auth_client, played
+    ):
+        environment, runs, authored = played
+        _pin_suite(environment, runs[0], 1, {})
+        _pin_suite(
+            environment,
+            runs[1],
+            2,
+            {self.KEY: _scenario_content(authored, instruction="Call twice.")},
+        )
+
+        edited = self._edited(auth_client, environment, runs)
+
+        assert edited.pop(self.KEY) == [[str(runs[1].id)]]
+        assert edited == dict.fromkeys(edited, [[]])
+
+    def test_a_renamed_scenario_is_not_edited(self, auth_client, played):
+        environment, runs, authored = played
+        _pin_suite(environment, runs[0], 1, {})
+        _pin_suite(
+            environment,
+            runs[1],
+            2,
+            {self.KEY: _scenario_content(authored, name="Renamed", folder="x")},
+        )
+
+        assert self._edited(auth_client, environment, runs)[self.KEY] == [[]]
+
+    def test_reordered_sub_goals_are_not_edited(self, auth_client, played):
+        environment, runs, authored = played
+        _pin_suite(environment, runs[0], 1, {})
+        _pin_suite(
+            environment,
+            runs[1],
+            2,
+            {
+                self.KEY: _scenario_content(
+                    authored, sub_goals=list(reversed(authored.sub_goals))
+                )
+            },
+        )
+
+        assert self._edited(auth_client, environment, runs)[self.KEY] == [[]]
+
+    @pytest.mark.parametrize("pinned", [0, 1])
+    def test_a_legacy_run_is_not_edited_once_the_scenario_moves_on(
+        self, auth_client, played, pinned
+    ):
+        environment, runs, authored = played
+        # Both runs played the same content; one was pinned to a suite holding it.
+        _pin_suite(environment, runs[pinned], 1, {})
+        # The scenario is edited since, so the identity row no longer holds it.
+        authored.instruction = "Call twice."
+        authored.save(update_fields=["instruction"])
+
+        edited = self._edited(auth_client, environment, runs)
+
+        assert edited == dict.fromkeys(edited, [[]])
+
+    def test_unpinned_runs_are_not_edited(self, auth_client, played):
+        environment, runs, _ = played
+
+        edited = self._edited(auth_client, environment, runs)
+
+        assert edited == dict.fromkeys(edited, [[]])
+
+    def test_a_redefined_sub_goal_is_edited(self, auth_client, played):
+        from simulate.models.harness_versioning import HarnessEnvironmentVersion
+
+        environment, runs, authored = played
+        [goal] = [g for g in authored.sub_goals if g == SUB_GOALS[0]]
+        for number, run in enumerate(runs, start=1):
+            version = HarnessEnvironmentVersion.no_workspace_objects.create(
+                **_version_fields(environment, number),
+                documents={
+                    "sub_goal_digests": {
+                        goal: f"sha256:{number}",
+                        SUB_GOALS[2]: "sha256:same",
+                    }
+                },
+            )
+            HostedHarnessJob.no_workspace_objects.filter(test_execution=run).update(
+                environment_version=version
+            )
+
+        edited = self._edited(auth_client, environment, runs)
+
+        holds = {
+            scenario.scenario_key: goal in scenario.sub_goals
+            for scenario in HostedHarnessScenario.no_workspace_objects.filter(
+                job=environment
+            )
+        }
+        assert any(holds.values()) and not all(holds.values())
+        assert edited == {
+            key: [[str(runs[1].id)] if held else []] for key, held in holds.items()
+        }
 
 
 @pytest.mark.integration
@@ -1165,21 +1414,22 @@ class TestDatasetRowScenarios:
                     row["situation"]
                 }
 
-    def test_dataset_rows_read_like_the_scenario_sources(
+    def test_compares_narrow_calls_read_the_columns_full_calls_do(
         self, auth_client, environment, versions
     ):
-        """Compare's narrow dataset-row read gives the row columns the full read does."""
+        """Calls loaded as compare's facts load them show the columns full calls do."""
         runs, key, cells = versions
         _ok(_compare(auth_client, environment, runs))
         from simulate.models.harness_versioning import (
             HarnessSuiteMember,
             HarnessSuiteVersion,
         )
-        from simulate.services.run_compare_page import (
-            call_dataset_rows,
+        from simulate.services.run_compare_page import ROW_METADATA_KEYS
+        from simulate.services.run_results_v3 import (
             call_scenario_sources,
             row_level_columns,
         )
+        from simulate.services.run_results_v3_page import JsonbKeySubset
 
         authored = HostedHarnessScenario.no_workspace_objects.get(
             job=environment, scenario_key=key
@@ -1234,20 +1484,33 @@ class TestDatasetRowScenarios:
             call_execution=registered,
             dataset_row=cells[1].row,
         )
-        calls = list(
-            CallExecution.objects.filter(test_execution__in=runs).select_related(
-                "scenario"
-            )
+        played = CallExecution.objects.filter(test_execution__in=runs).select_related(
+            "scenario"
         )
+        calls = list(played)
+        narrow = {
+            call.id: call
+            for call in played.only(
+                "id",
+                "test_execution_id",
+                "row_id",
+                "scenario__name",
+                "scenario__metadata",
+            ).annotate(row_metadata=JsonbKeySubset("call_metadata", ROW_METADATA_KEYS))
+        }
 
-        narrow = call_dataset_rows(calls)
         full = call_scenario_sources(calls)
+        read = call_scenario_sources(list(narrow.values()))
 
-        assert narrow[1] == full[1]
-        assert str(orphan.id) not in narrow[0]
-        assert narrow[0][str(registered.id)].dataset_row_id == cells[1].row_id
+        scenarios = full[0]
+        assert scenarios[str(orphan.id)].dataset_row_id is None
+        assert scenarios[str(registered.id)].dataset_row_id == cells[1].row_id
+        pinned = _key_calls(runs[0], key)[0]
+        assert scenarios[str(pinned.id)].use_case == "A pinned use case"
         for call in calls:
-            assert row_level_columns(call, *narrow) == row_level_columns(call, *full)
+            assert row_level_columns(narrow[call.id], *read) == row_level_columns(
+                call, *full
+            )
 
     def test_the_same_content_is_one_row(self, auth_client, environment, versions):
         runs, key, cells = versions
@@ -1703,7 +1966,7 @@ def test_list_groups_hold_the_calls_the_calls_page_groups(auth_client, workspace
 
 
 # Queries a compare makes: a constant plus one per run warm, five per run cold.
-COLD_QUERIES = (23, 5)
+COLD_QUERIES = (25, 5)
 WARM_QUERIES = (16, 1)
 
 

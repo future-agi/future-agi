@@ -16,7 +16,14 @@ from typing import Any
 from django.core.cache import cache
 from django.utils import timezone
 
-from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.models import (
+    CallExecution,
+    HostedHarnessScenario,
+    SimulateEvalConfig,
+    TestExecution,
+)
+from simulate.services import run_compare
+from simulate.services.harness_scenarios import scenario_fields
 from simulate.services.run_call_match import (
     STATUS_FILTERS,
     filter_rows,
@@ -26,7 +33,6 @@ from simulate.services.run_call_match import (
 from simulate.services.run_results_v3 import (
     build_call_rows,
     build_evaluation_catalog,
-    call_dataset_rows,
     call_scenario_sources,
     harness_columns_cache_key,
     row_level_columns,
@@ -76,7 +82,24 @@ ROW_METADATA_KEYS = (
     "goal",
     "harness_scenario_key",
 )
-MOVEMENT_ORDER = {"regressed": 0, "mixed": 1, "improved": 2, "same": 3}
+MOVEMENT_ORDER = {
+    "regressed": 0,
+    "mixed": 1,
+    "improved": 2,
+    "inconclusive": 3,
+    "same": 4,
+}
+# The scenario fields a run plays: an edit to any of them changes what it tested.
+PLAYED_FIELDS = (
+    "instruction",
+    "use_case",
+    "persona",
+    "tests",
+    "sub_goals",
+    "branch",
+    "max_turns",
+    "background_noise",
+)
 HISTOGRAM_BANDS = 10
 # The most calls a page builds: rows with many trials make for fewer rows.
 MAX_PAGE_CALLS = 600
@@ -94,6 +117,24 @@ def _row_id(scenario_key: str, columns: dict[str, Any]) -> str:
         json.dumps([columns[name] for name in ROW_COLUMNS], sort_keys=True).encode()
     ).hexdigest()[:12]
     return f"{scenario_key}:{digest}"
+
+
+def _played_digest(scenario: HostedHarnessScenario | None) -> str | None:
+    """A digest of the scenario content a call played; ``None`` off the harness."""
+    if scenario is None:
+        return None
+    # Normalised as a suite member is, an empty field as absent, so an identity
+    # row and its member agree.
+    played = scenario_fields(
+        {name: getattr(scenario, name) or None for name in PLAYED_FIELDS},
+        scenario.scenario_key,
+    )
+    played["sub_goals"] = sorted(
+        json.dumps(one, sort_keys=True) for one in played["sub_goals"] or []
+    )
+    return hashlib.sha1(
+        json.dumps([played[name] for name in PLAYED_FIELDS], sort_keys=True).encode()
+    ).hexdigest()
 
 
 def _settled_statuses(
@@ -153,15 +194,20 @@ def _read_compare_facts(
     )
     for call in calls:
         call.result_goal = goals.get(str(call.id))  # type: ignore[attr-defined]
-    dataset_rows, dimensions = call_dataset_rows(calls)
+    scenarios, dimensions = call_scenario_sources(calls)
+    pinned = run_compare.run_versions([execution.id for execution in executions])
     versions: dict[Any, dict[str, str]] = defaultdict(dict)
     shown: dict[Any, dict[str, dict[str, Any]]] = defaultdict(dict)
+    digests: dict[Any, dict[str, str | None]] = defaultdict(dict)
     for call in calls:
         run_id, key = representatives[str(call.id)]
-        columns = row_level_columns(call, dataset_rows, dimensions)
+        columns = row_level_columns(call, scenarios, dimensions)
         row_id = _row_id(key, columns)
         versions[run_id][key] = row_id
         shown[run_id][row_id] = {"scenario_key": key, **columns}
+        # An unpinned run reads today's identity row, not what it played.
+        if pinned[str(run_id)]["suite"]:
+            digests[run_id][row_id] = _played_digest(scenarios.get(str(call.id)))
     # A representative deleted since the facts were read: its key alone.
     for run_id, key in representatives.values():
         if key not in versions[run_id]:
@@ -180,6 +226,8 @@ def _read_compare_facts(
                 for call_id, one in facts[execution.id].items()
             },
             "rows": shown[execution.id],
+            "digests": digests[execution.id],
+            "environment": (pinned[str(execution.id)]["environment"] or {}).get("id"),
             "settled": _settled_statuses(
                 rows_by_run[execution.id], settled_for[execution.id], now
             ),
@@ -190,21 +238,62 @@ def _read_compare_facts(
     }
 
 
-def _rate(outcomes: list[str]) -> float | None:
-    decided = sum(outcome in {"passed", "failed"} for outcome in outcomes)
-    return outcomes.count("passed") / decided if decided else None
+def _counts(outcomes: list[str]) -> tuple[int, int]:
+    """``(passed, decided)``: the calls that passed, and those that passed or failed."""
+    passed = outcomes.count("passed")
+    return passed, passed + outcomes.count("failed")
 
 
-def _movement(baseline: float | None, rates: list[float | None]) -> str:
-    worse = better = False
-    if baseline is not None:
-        for rate in rates:
-            if rate is not None:
-                worse |= rate < baseline
-                better |= rate > baseline
+def _movement(baseline: tuple[int, int], candidates: list[tuple[int, int]]) -> str:
+    """The row's movement: each candidate's verdict against the baseline.
+
+    A side with no passed or failed call has nothing to compare, as before.
+    """
+    verdicts = {
+        run_compare.verdict(*candidate, *baseline)[0]
+        for candidate in candidates
+        if candidate[1] and baseline[1]
+    }
+    worse = run_compare.REGRESSED in verdicts
+    better = run_compare.IMPROVED in verdicts
     if worse and better:
         return "mixed"
-    return "regressed" if worse else "improved" if better else "same"
+    if worse or better:
+        return "regressed" if worse else "improved"
+    return "inconclusive" if run_compare.INCONCLUSIVE in verdicts else "same"
+
+
+def _edited_runs(
+    entry: dict[str, Any],
+    executions: list[TestExecution],
+    compare_facts: dict[Any, dict[str, Any]],
+    sub_goal_digests: dict[str, Any],
+) -> list[str]:
+    """The runs that played this row's scenario unlike the baseline did."""
+    baseline = executions[0].id
+    if not entry["calls"][baseline]:
+        return []
+    names = {
+        name
+        for run_id, ids in entry["calls"].items()
+        for call_id in ids
+        for name in compare_facts[run_id]["calls"][call_id]["facet_sub_goals"]
+    }
+    ours = compare_facts[baseline]
+    digest = ours["digests"].get(entry["row_id"])
+    edited = []
+    for execution in executions[1:]:
+        if not entry["calls"][execution.id]:
+            continue
+        theirs = compare_facts[execution.id]
+        other = theirs["digests"].get(entry["row_id"])
+        if (digest and other and digest != other) or run_compare.changed_sub_goals(
+            names,
+            sub_goal_digests.get(ours["environment"]),
+            sub_goal_digests.get(theirs["environment"]),
+        ):
+            edited.append(str(execution.id))
+    return edited
 
 
 def _changed(
@@ -378,9 +467,9 @@ def build_compare_page(
             for run_id, ids in entry["calls"].items()
         }
         entry["movement"] = _movement(
-            _rate([outcome for _, outcome in outcomes[baseline.id]]),
+            _counts([outcome for _, outcome in outcomes[baseline.id]]),
             [
-                _rate([outcome for _, outcome in outcomes[one.id]])
+                _counts([outcome for _, outcome in outcomes[one.id]])
                 for one in executions[1:]
             ],
         )
@@ -450,10 +539,17 @@ def build_compare_page(
         rows = rows_by_run[execution.id]
         # The page may add harness columns the cached rows predate: rescan the
         # run, as the calls page's groups re-read, so groups and charts score them.
+        # Only the scores are taken, so the page stays the one its rows built.
         if rows and any(str(c["id"]) not in rows[0]["scores"] for c in columns):
-            rows_by_run[execution.id] = scan_call_values(
-                execution, columns, "-started_at", live_evals=live_evals
-            )
+            scores = {
+                row["id"]: row["scores"]
+                for row in scan_call_values(
+                    execution, columns, "-started_at", live_evals=live_evals
+                )
+            }
+            rows_by_run[execution.id] = [
+                {**row, "scores": scores.get(row["id"], row["scores"])} for row in rows
+            ]
             matched[execution.id] = filter_rows(
                 rows_by_run[execution.id], compare_facts[execution.id]["calls"], query
             )
@@ -472,6 +568,12 @@ def build_compare_page(
                 **entry["shown"],
                 **row_level_columns(call, *scenario_sources),
             }
+
+    # Sub-goal definitions are read only when the runs span environment versions.
+    environments = {facts["environment"] for facts in compare_facts.values()} - {None}
+    sub_goal_digests = (
+        run_compare.sub_goal_digests(environments) if len(environments) > 1 else {}
+    )
 
     # Without a status filter the status chips count the matching calls.
     status_filtered = any(
@@ -589,6 +691,9 @@ def build_compare_page(
                     for run_id, ids in entry["calls"].items()
                 },
                 "movement": entry["movement"],
+                "edited_run_ids": _edited_runs(
+                    entry, executions, compare_facts, sub_goal_digests
+                ),
             }
             for entry in page_entries
         ],

@@ -109,7 +109,11 @@ class HarnessCompareRowSerializer(serializers.Serializer):
         help_text="By run id, in trial order; empty when the run did not run it.",
     )
     movement = serializers.ChoiceField(
-        choices=["regressed", "improved", "mixed", "same"]
+        choices=["regressed", "mixed", "improved", "inconclusive", "same"]
+    )
+    edited_run_ids = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Runs that played this row's scenario unlike the baseline did.",
     )
 
 

@@ -387,54 +387,18 @@ def call_scenario_sources(
     return harness_scenarios, dimensions
 
 
-class _DatasetRow(NamedTuple):
-    dataset_row_id: Any
-
-
-def call_dataset_rows(
-    calls: list[CallExecution],
-) -> tuple[dict[str, _DatasetRow], dict[str, dict[str, Any]]]:
-    """``call_scenario_sources`` narrowed to the dataset row the row-level columns read.
-
-    Pinning never changes a scenario's dataset row, so the suite is not read.
-    """
-    call_ids = [call.id for call in calls]
-    rows: dict[str, Any] = {}
-    if call_ids:
-        # The execution's scenario wins, even when it has none; then the registration.
-        for call_id, row_id in (
-            HostedHarnessExecution.all_objects.filter(call_execution_id__in=call_ids)
-            .order_by()
-            .values_list("call_execution_id", "source_scenario__dataset_row_id")
-        ):
-            rows[str(call_id)] = row_id
-        for call_id, row_id in (
-            HostedHarnessScenario.all_objects.filter(call_execution_id__in=call_ids)
-            .order_by()
-            .values_list("call_execution_id", "dataset_row_id")
-        ):
-            rows.setdefault(str(call_id), row_id)
-    dataset_rows = {
-        call_id: _DatasetRow(row_id) for call_id, row_id in rows.items() if row_id
-    }
-    dimensions = _row_dimensions(
-        calls, {str(row.dataset_row_id) for row in dataset_rows.values()}
-    )
-    return dataset_rows, dimensions
-
-
 class _RowSources(NamedTuple):
     metadata: dict[str, Any]
     row_data: dict[str, Any]
     row_dimensions: dict[str, Any]
     scenario_dimensions: dict[str, Any]
     scenario_metadata: dict[str, Any]
-    harness_scenario: HostedHarnessScenario | _DatasetRow | None
+    harness_scenario: HostedHarnessScenario | None
 
 
 def _row_sources(
     call: CallExecution,
-    harness_scenarios: Mapping[str, HostedHarnessScenario | _DatasetRow],
+    harness_scenarios: Mapping[str, HostedHarnessScenario],
     dimensions: dict[str, dict[str, Any]],
 ) -> _RowSources:
     metadata = call_row_metadata(call)
@@ -461,7 +425,7 @@ def _row_sources(
 
 def row_level_columns(
     call: CallExecution,
-    harness_scenarios: Mapping[str, HostedHarnessScenario | _DatasetRow],
+    harness_scenarios: Mapping[str, HostedHarnessScenario],
     dimensions: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     """A call row's scenario-level columns, as the run detail table shows them."""
