@@ -37,7 +37,12 @@ export default function WorldToolsPanel({
     <Box sx={{ p: 2 }}>
       {hasWorld && (
         <Box sx={{ mb: 2 }}>
-          <CapabilityGraph env={env} envState={envState} data={graphData} />
+          <CapabilityGraph
+            env={env}
+            envState={envState}
+            data={graphData}
+            defaultOpen
+          />
         </Box>
       )}
       <SourcesSection envId={env.id} readOnly={locked} />
