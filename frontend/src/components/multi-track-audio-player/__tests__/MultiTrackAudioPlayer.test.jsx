@@ -15,6 +15,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 const makeWavesurfer = () => {
   const handlers = {};
   return {
+    destroy: vi.fn(),
     on: (event, cb) => {
       (handlers[event] ||= []).push(cb);
     },
@@ -32,6 +33,9 @@ vi.mock("wavesurfer-multitrack", () => ({
       // Empty until canplay, exactly like the real one.
       this.wavesurfers = [];
       this.handlers = {};
+      this.destroy = vi.fn(() => {
+        this.wavesurfers.forEach((wavesurfer) => wavesurfer.destroy());
+      });
       instances.push(this);
     }
     on(event, cb) {
@@ -49,7 +53,6 @@ vi.mock("wavesurfer-multitrack", () => ({
       this.wavesurfers.forEach((ws) => ws.emit("ready"));
     }
     initAllAudios() {}
-    destroy() {}
     play() {}
     pause() {}
     getCurrentTime() {
@@ -256,6 +259,19 @@ describe("MultiTrackAudioPlayer — audio failed to load", () => {
 });
 
 describe("MultiTrackAudioPlayer — stale instances after teardown", () => {
+  it("destroys children created by a stale async canplay", () => {
+    const { unmount } = renderPlayer();
+    const stale = latest();
+
+    unmount();
+    act(() => stale.arrive());
+
+    expect(stale.destroy).toHaveBeenCalledTimes(2);
+    stale.wavesurfers.forEach((wavesurfer) => {
+      expect(wavesurfer.destroy).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("ignores a stale instance that finishes loading after a rebuild", async () => {
     const { rerender } = renderPlayer({ height: 50 });
     const stale = latest();
