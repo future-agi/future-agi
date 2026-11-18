@@ -4,6 +4,7 @@ references and channels, the world actions and knowledge an actor may be given, 
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, TypedDict, cast
@@ -86,6 +87,8 @@ class ActorRules(TypedDict, total=False):
     # What each actor limit left unset takes, by limit: `{default, by_modality: {modality: value}}`, `by_modality`
     # empty when every modality shares the default; a release that seals none leaves the defaults unsaid.
     limit_defaults: dict[str, dict[str, object]]
+    # How a `knowledge/roles.json` key is read, by the release that sealed it.
+    knowledge_roles: KnowledgeRoleKeys
 
 
 class WorldAction(TypedDict):
@@ -201,7 +204,7 @@ def actor_rules(files: dict[str, bytes]) -> ActorRules:
     rules = read_json(files, ACTOR_RULES_FILE) or _rules_before_declared()
     hidden = [
         path.rsplit("/", 1)[-1]
-        for path, role in file_roles(files).items()
+        for path, role in file_roles(files, rules.get("knowledge_roles")).items()
         if role == "evaluator_only"
     ]
     if not hidden:
@@ -229,26 +232,71 @@ FILE_ROLES: tuple[FileRole, ...] = ("policy", "seed_records", "evaluator_only")
 UNKNOWN_ROLE: FileRole = "evaluator_only"
 
 
-def file_roles(files: dict[str, bytes]) -> dict[str, FileRole]:
-    """Each attached file's role from `knowledge/roles.json`. A role the platform does not know reads
-    evaluator-only, as the harness keeps such a file hidden; a path outside `knowledge/` is left out, and a file
-    that is not a JSON object is no roles."""
+class KnowledgeRoleKeys(TypedDict):
+    """How a `knowledge/roles.json` key is read. ALK seals it in the actor rules as `knowledge_roles`
+    (agent-learning-kit ``fi/alk/harness/actors.py`` ``KNOWLEDGE_ROLE_KEYS``)."""
+
+    file: str
+    roles: list[str]
+    unknown_role_reads_as: str
+    strip: bool
+    drop_prefix: str
+    under: str
+    refuse_parts: list[str]
+
+
+# For a release that sealed no rule: the same values ALK seals. Pinned with ALK by the shared key fixture
+# ``tests/fixtures/knowledge_role_keys.json``.
+KNOWLEDGE_ROLE_KEYS: KnowledgeRoleKeys = {
+    "file": KNOWLEDGE_ROLES,
+    "roles": list(FILE_ROLES),
+    "unknown_role_reads_as": UNKNOWN_ROLE,
+    "strip": True,
+    "drop_prefix": "./",
+    "under": "knowledge/",
+    "refuse_parts": [".."],
+}
+
+
+def knowledge_role_key(
+    raw: object, rule: Mapping[str, Any] | None = None
+) -> str | None:
+    """The attached file a `knowledge/roles.json` key names, or None when it names none, by the sealed rule."""
+    keys = {**KNOWLEDGE_ROLE_KEYS, **(rule or {})}
+    path = str(raw)
+    if keys["strip"]:
+        path = path.strip()
+    path = path.removeprefix(str(keys["drop_prefix"]))
+    if (
+        not path.startswith(str(keys["under"]))
+        or any(part in path.split("/") for part in keys["refuse_parts"])
+        or path == keys["file"]
+    ):
+        return None
+    return path
+
+
+def file_roles(
+    files: dict[str, bytes], rule: Mapping[str, Any] | None = None
+) -> dict[str, FileRole]:
+    """Each attached file's role from `knowledge/roles.json`, each key read by ``rule`` (the sealed
+    `knowledge_roles` rule, else the same values ALK seals). A role the platform does not know reads as the rule
+    says (evaluator-only, kept hidden); a key that names no attached file is left out, and a file that is not a
+    JSON object is no roles."""
+    keys = {**KNOWLEDGE_ROLE_KEYS, **(rule or {})}
     try:
-        body = json.loads(files.get(KNOWLEDGE_ROLES) or b"null")
+        body = json.loads(files.get(str(keys["file"])) or b"null")
     except ValueError:
         # Not JSON: no roles, every file as before, as the harness reads it.
         body = None
     roles: dict[str, FileRole] = {}
-    for path, role in body.items() if isinstance(body, dict) else []:
-        # Spelled as the harness reads it: surrounding spaces and a leading `./` are not part of the path.
-        name = str(path).strip().removeprefix("./")
-        if (
-            not name.startswith("knowledge/")
-            or ".." in name.split("/")
-            or name == KNOWLEDGE_ROLES
-        ):
+    for raw, role in body.items() if isinstance(body, dict) else []:
+        name = knowledge_role_key(raw, keys)
+        if name is None:
             continue
-        roles[name] = role if role in FILE_ROLES else UNKNOWN_ROLE
+        roles[name] = cast(
+            FileRole, role if role in keys["roles"] else keys["unknown_role_reads_as"]
+        )
     return roles
 
 

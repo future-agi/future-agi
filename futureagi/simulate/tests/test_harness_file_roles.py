@@ -149,3 +149,42 @@ def test_a_role_path_is_read_as_the_harness_spells_it():
         "knowledge/a.md": "policy",
         "knowledge/b.md": "evaluator_only",
     }
+
+
+def _key_cases():
+    import json
+    from pathlib import Path
+
+    fixture = Path(__file__).parent / "fixtures" / "knowledge_role_keys.json"
+    return [
+        (one["key"], one["names"])
+        for one in json.loads(fixture.read_text(encoding="utf-8"))["cases"]
+    ]
+
+
+@pytest.mark.parametrize("key, names", _key_cases())
+def test_a_roles_key_names_the_file_alk_reads_it_as(key, names):
+    """The shared fixture agent-learning-kit tests its reader against: both read every key the same way."""
+    from simulate.services.harness_actor_rules import knowledge_role_key
+
+    assert knowledge_role_key(key) == names
+
+
+def test_a_dot_slash_evaluator_only_key_is_hidden_and_the_sealed_rule_is_the_one_applied():
+    import json
+
+    from simulate.services.harness_actor_rules import KNOWLEDGE_ROLE_KEYS, actor_rules
+
+    files = {
+        "knowledge/roles.json": json.dumps(
+            {"./knowledge/answers.md": "evaluator_only"}
+        ).encode(),
+        "knowledge/answers.md": b"the answers",
+    }
+    assert "answers.md" in actor_rules(files)["evaluator_only"]["files"]
+    # A release that sealed another rule is read by its rule, not the platform's copy.
+    sealed = {**KNOWLEDGE_ROLE_KEYS, "drop_prefix": ""}
+    files["actor_rules.json"] = json.dumps(
+        {"knowledge_roles": sealed, "evaluator_only": {"files": []}}
+    ).encode()
+    assert "answers.md" not in actor_rules(files)["evaluator_only"]["files"]
