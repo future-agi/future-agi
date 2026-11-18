@@ -64255,7 +64255,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/EmptyRequest"
+                            "$ref": "#/definitions/EvalTaskUnpauseRequest"
                         }
                     },
                     {
@@ -64274,6 +64274,12 @@
                         }
                     },
                     "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -169498,6 +169504,10 @@
                     ],
                     "x-nullable": true
                 },
+                "can_start": {
+                    "title": "Can start",
+                    "type": "boolean"
+                },
                 "filters_applied": {
                     "title": "Filters applied",
                     "type": "object",
@@ -171352,6 +171362,15 @@
                 },
                 "result": {
                     "$ref": "#/definitions/SamplingPreviewResult"
+                }
+            }
+        },
+        "EvalTaskUnpauseRequest": {
+            "type": "object",
+            "properties": {
+                "start": {
+                    "title": "Start",
+                    "type": "boolean"
                 }
             }
         },
