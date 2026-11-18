@@ -108513,6 +108513,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         measured: {
           title: "Measured",
+          description:
+            "A check of the pairing measures this row, so it decides the answer and can hold cases back. A row that is false (audio, files, sub-agents, hidden material) is read from the agent's own runs. Either way a row reads Supported only from a passed finding (a check, or a run that produced the evidence), never from metadata.",
           type: "boolean",
         },
         finding: {
@@ -144196,6 +144198,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         measured: {
           title: "Measured",
+          description:
+            "A check of the pairing measures this row, so it decides the answer and can hold cases back. A row that is false (audio, files, sub-agents, hidden material) is read from the agent's own runs. Either way a row reads Supported only from a passed finding (a check, or a run that produced the evidence), never from metadata.",
           type: "boolean",
         },
         finding: {
