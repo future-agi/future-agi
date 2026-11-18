@@ -699,7 +699,7 @@ def test_save_promotes_in_one_transaction(user, workspace, storage, auth_client)
     defaults = (environment.environment_version_id, environment.suite_version_id)
 
     with patch(
-        "simulate.services.harness_versioning.candidate_promotion.set_defaults",
+        "simulate.services.harness_versioning.drafts.set_defaults",
         side_effect=RuntimeError("boom"),
     ):
         with pytest.raises(RuntimeError):
@@ -1687,10 +1687,10 @@ def test_a_repeated_save_answers_the_same_even_while_chat_works(
     saved = _save(auth_client, environment, candidates, digest=digest)
     assert saved.status_code == 200, saved.content
 
-    def working(_):
+    def working(*_):
         raise HostedHarnessError("chat_working", "busy", status_code=409)
 
-    monkeypatch.setattr(candidate_promotion, "require_chat_idle", working)
+    monkeypatch.setattr(candidate_promotion, "require_idle", working)
     again = _save(auth_client, environment, candidates, digest=digest)
     assert (again.status_code, again.json()) == (200, saved.json())
 

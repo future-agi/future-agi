@@ -32,25 +32,19 @@ from simulate.services.harness_versioning.candidate_sets import (
 from simulate.services.harness_versioning.draft_pieces import (
     DRAFT_PIECES,
     draft_content,
-    exempted_keys,
-    is_stale,
-    open_draft,
     piece_files,
     piece_model,
     prepare_tree,
-    refuse_scenario_keys,
-    version_error,
 )
 from simulate.services.harness_versioning.drafts import (
-    require_chat_idle,
-    require_no_rebuild,
+    open_drafts,
+    require_revisions,
+    require_saveable,
 )
 from simulate.services.harness_versioning.review import DraftReview
 from simulate.services.harness_versioning.versions import (
     lock_environment,
-    require_not_busy,
 )
-from simulate.services.hosted_harness import HostedHarnessError
 
 logger = structlog.get_logger(__name__)
 
@@ -72,43 +66,6 @@ class ValidateBody(TypedDict):
 
 
 UNAVAILABLE = ValidateBody(validation=Unavailable(state="unavailable"), candidates=None)
-
-
-def open_drafts(locked: HostedHarnessJob) -> dict[str, Any]:
-    """The locked environment's open drafts by piece; refuses `draft_not_found` when there are none."""
-    opened = {piece: open_draft(locked, piece, lock=True) for piece in DRAFT_PIECES}
-    opened = {piece: draft for piece, draft in opened.items() if draft is not None}
-    if not opened:
-        raise version_error("draft_not_found", "No unsaved changes", 404)
-    return opened
-
-
-def _require_fresh(locked: HostedHarnessJob, opened: Mapping[str, Any]) -> None:
-    """The checks today's Save makes before anything moves: no stale draft, and no retired or taken scenario key."""
-    for piece, draft in opened.items():
-        if is_stale(draft, locked):
-            raise version_error(
-                "draft_stale",
-                "The environment changed since you started editing; discard or re-apply in chat",
-                409,
-                piece=piece,
-            )
-        if piece == "suite":
-            refuse_scenario_keys(
-                locked,
-                (draft.documents or {}).get("scenarios") or [],
-                origin="manual",
-                exempt=exempted_keys(draft),
-            )
-
-
-def edits_moved(piece: str) -> HostedHarnessError:
-    return version_error(
-        "draft_changed",
-        "Someone changed these edits a moment ago; review them and try again",
-        409,
-        piece=piece,
-    )
 
 
 def _candidate(
@@ -238,11 +195,7 @@ def validate_drafts(
     with transaction.atomic():
         locked = lock_environment(environment)
         opened = open_drafts(locked)
-        first = next(iter(opened))
-        require_not_busy(locked, first)
-        require_no_rebuild(locked, piece=first)
-        require_chat_idle(locked)
-        _require_fresh(locked, opened)
+        require_saveable(locked, opened, expected_revisions={})
         review.heal_suite_index(locked)
         # Read again: a healed suite draft has a new archive.
         opened = open_drafts(locked)
@@ -250,9 +203,7 @@ def validate_drafts(
         review.check_review(
             reviewed, expected_review_digest, digest_required=True, environment=locked
         )
-        for piece, draft in opened.items():
-            if expected_revisions.get(piece) != draft.revision:
-                raise edits_moved(piece)
+        require_revisions(opened, expected_revisions, required=True)
         # A pairing that can be validated pins an agent version.
         if not validation_available(locked) or locked.agent_version_id is None:
             return UNAVAILABLE, False
