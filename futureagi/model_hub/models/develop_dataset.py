@@ -310,8 +310,11 @@ def validate_column_metadata(value):
         else:
             json_data = value
 
-        # Other metadata can remain after an audio duration is cleared.
-        if isinstance(json_data, dict) and "audio_duration_seconds" not in json_data:
+        # Other metadata can remain after an audio duration is cleared; only the keys
+        # the schema knows are checked.
+        if isinstance(json_data, dict) and not (
+            {"audio_duration_seconds", "run_started_at"} & json_data.keys()
+        ):
             return
 
         ColumnMetadataSchema(**json_data)
