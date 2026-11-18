@@ -2225,7 +2225,7 @@ export default function EnvironmentWorkspace() {
               kind: "note",
               text: res
                 ? `Added ${parts.join(", ")} to the design on the right.${fresh.length ? " One question about it first:" : " Approve it when it looks right — nothing is built before that."}`
-                : "I couldn't find records or actions in that, so the design is unchanged. Name what the agent works with (customers, orders, bookings…) and what it can do (look up, refund, book, cancel).",
+                : "I couldn't find what the agent does in that, so the design is unchanged. Say what it works with and what it does — for example “it triages new issues: labels, assigns and closes duplicates” or “customers and their orders; it can look up an order and refund up to $200”.",
             },
             ...fresh.slice(0, 1).map((q) => ({
               kind: "ask",
