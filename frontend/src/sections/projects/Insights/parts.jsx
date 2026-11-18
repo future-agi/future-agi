@@ -336,7 +336,7 @@ export function NotableLine({ note }) {
 NotableLine.propTypes = { note: PropTypes.object.isRequired };
 
 // An item's facets as a line of text, each in its tone's colour.
-export function FacetChips({ facets, dense }) {
+export function FacetLabels({ facets, dense }) {
   const theme = useTheme();
   const chips = facetChips(facets);
   if (!chips.length) return null;
@@ -356,7 +356,7 @@ export function FacetChips({ facets, dense }) {
   );
 }
 
-FacetChips.propTypes = { facets: PropTypes.object, dense: PropTypes.bool };
+FacetLabels.propTypes = { facets: PropTypes.object, dense: PropTypes.bool };
 
 export function AttributePills({ attributes }) {
   const pills = attributePills(attributes);

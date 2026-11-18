@@ -1,140 +1,29 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
-import Iconify from "src/components/iconify";
-import { TEMPLATES } from "./insightsLenses";
+import { Button } from "@mui/material";
+import EmptyState from "src/components/empty-state";
 
-const STEPS = [
-  [
-    "solar:document-text-linear",
-    "Reads a sample of your traces, sessions or users",
-  ],
-  ["solar:widget-linear", "Groups them into categories and subcategories"],
-  [
-    "solar:chart-square-linear",
-    "Measures each one: how many, which users, how they end",
-  ],
-  [
-    "solar:chat-square-like-linear",
-    "Cites the conversations behind every finding",
-  ],
-];
-
-/** The right pane before the first report: what a report does, and the lenses. */
+/**
+ * The right pane before the first report. New report opens the creation
+ * flow, where the lens is picked; the rail lists the templates too.
+ */
 export default function InsightsEmpty({ onNew }) {
   return (
-    <Box sx={{ px: 4, py: 5, maxWidth: 920 }}>
-      <Typography variant="m1" component="h2" fontWeight={600}>
-        What do you want to learn about your traffic?
-      </Typography>
-      <Typography
-        variant="body2"
-        color="text.secondary"
-        sx={{ mt: 1, maxWidth: 640 }}
-      >
-        Pick a question. Insights reads real conversations, finds the patterns
-        and gives you numbers you can trace back to examples. A report takes a
-        few minutes and can run again to show what changed.
-      </Typography>
-
-      <Box
-        component="ol"
-        sx={{
-          m: 0,
-          mt: 3,
-          p: 0,
-          listStyle: "none",
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
-          gap: 2,
-        }}
-      >
-        {STEPS.map(([icon, text]) => (
-          <Stack key={text} component="li" direction="row" spacing={1}>
-            <Iconify
-              icon={icon}
-              width={16}
-              sx={{ color: "text.secondary", mt: "2px", flexShrink: 0 }}
-            />
-            <Typography variant="caption" color="text.secondary">
-              {text}
-            </Typography>
-          </Stack>
-        ))}
-      </Box>
-
-      <Box
-        sx={{
-          mt: 4,
-          display: "grid",
-          gap: 1.5,
-          gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))",
-        }}
-      >
-        {TEMPLATES.map((template) => (
-          <Box
-            key={template.lens}
-            component="button"
-            type="button"
-            onClick={() => onNew(template.lens)}
-            sx={{
-              p: 2.5,
-              minHeight: 132,
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "8px",
-              bgcolor: "background.paper",
-              textAlign: "left",
-              font: "inherit",
-              color: "text.primary",
-              cursor: "pointer",
-              display: "flex",
-              flexDirection: "column",
-              gap: 1,
-              "&:hover": { borderColor: "border.hover" },
-              "&:hover .go": { color: "text.primary" },
-              "&:focus-visible": {
-                outline: "2px solid",
-                outlineColor: "border.focus",
-                outlineOffset: 2,
-              },
-            }}
-          >
-            <Box
-              sx={{
-                width: 32,
-                height: 32,
-                borderRadius: 1,
-                bgcolor: "background.neutral",
-                display: "grid",
-                placeItems: "center",
-              }}
-            >
-              <Iconify icon={template.icon} width={18} />
-            </Box>
-            <Typography variant="m3" fontWeight={500}>
-              {template.title}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {template.description}
-              {template.unit === "users" ? " Reads whole users." : ""}
-            </Typography>
-            <Stack
-              className="go"
-              direction="row"
-              spacing={0.5}
-              alignItems="center"
-              sx={{ mt: "auto", color: "text.secondary" }}
-            >
-              <Typography variant="caption" fontWeight={600} color="inherit">
-                Start
-              </Typography>
-              <Iconify icon="solar:arrow-right-linear" width={14} />
-            </Stack>
-          </Box>
-        ))}
-      </Box>
-    </Box>
+    <EmptyState
+      icon="solar:chart-square-linear"
+      title="No reports yet"
+      description="A report reads your traffic, groups it into categories and cites the conversations behind every number."
+      action={
+        <Button
+          variant="contained"
+          color="primary"
+          size="small"
+          onClick={() => onNew()}
+        >
+          New report
+        </Button>
+      }
+    />
   );
 }
 

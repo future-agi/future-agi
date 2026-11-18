@@ -4,7 +4,7 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { EvidenceQuote } from "./Citation";
-import { AttributePills, FacetChips } from "./parts";
+import { AttributePills, FacetLabels } from "./parts";
 
 // Why the report would leave an example out, in the user's terms.
 function leftOutReason(unit, lens, attributes) {
@@ -101,7 +101,7 @@ export default function PreviewExamples({ units, lens, attributes = [] }) {
               .map((e) => (
                 <EvidenceQuote key={e.quote} quote={e.quote} dense />
               ))}
-            <FacetChips facets={facets} dense />
+            <FacetLabels facets={facets} dense />
             <AttributePills attributes={facets.attributes} />
           </Section>
         );

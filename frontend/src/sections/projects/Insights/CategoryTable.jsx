@@ -619,14 +619,8 @@ export default function CategoryTable({ reportId, run, attributes }) {
               36 +
               shown.reduce((sum, column) => sum + (column.width || 96), 0),
             "& td, & th": { borderColor: "divider" },
-            "& thead th": {
-              bgcolor: "background.neutral",
-              color: "text.secondary",
-              typography: "s1",
-              fontWeight: 500,
-              py: 0.75,
-              whiteSpace: "nowrap",
-            },
+            // The theme styles the header (type, colour, height, no fill).
+            "& thead th": { whiteSpace: "nowrap" },
           }}
         >
           <TableHead>

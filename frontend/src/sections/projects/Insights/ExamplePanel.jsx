@@ -32,7 +32,7 @@ import {
 } from "./insightsFormat";
 import { unitLink, userPageLink } from "./insightsLinks";
 import { useReport } from "./reportContext";
-import { AttributePills, ErrorState, FacetChips, Swatch } from "./parts";
+import { AttributePills, ErrorState, FacetLabels, Swatch } from "./parts";
 
 export const EXAMPLE_PANEL_WIDTH = 600;
 
@@ -495,7 +495,7 @@ export default function ExamplePanel({ open, unitId, onClose }) {
 
               {(facets.topic || Object.keys(facets).length > 0) && (
                 <Stack spacing={0.75}>
-                  <FacetChips facets={facets} />
+                  <FacetLabels facets={facets} />
                   <AttributePills attributes={facets.attributes} />
                 </Stack>
               )}

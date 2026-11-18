@@ -244,7 +244,9 @@ function LensPicker({ value, onChange, disabled }) {
               color: "text.primary",
               bgcolor: active ? "action.selected" : "background.paper",
               border: "1px solid",
-              borderColor: active ? "border.selected" : "divider",
+              // Selected is neutral, as in Environments; purple is only the
+              // keyboard focus ring below.
+              borderColor: active ? "text.secondary" : "divider",
               borderRadius: "8px",
               cursor: disabled ? "default" : "pointer",
               display: "flex",
@@ -252,7 +254,7 @@ function LensPicker({ value, onChange, disabled }) {
               gap: 0.5,
               "&:hover": disabled
                 ? undefined
-                : { borderColor: active ? "border.selected" : "border.hover" },
+                : { borderColor: active ? "text.secondary" : "border.hover" },
               "&:focus-visible": {
                 outline: "2px solid",
                 outlineColor: "border.focus",
@@ -645,8 +647,10 @@ export default function NewReport({
                   size="small"
                   value={draft.unit}
                   onChange={(_, value) => {
-                    if (!value) return;
-                    setDraft((current) => withUnit(current, value));
+                    // Clicking the selected unit gives null: it is still a
+                    // choice, and makes the unit shown final.
+                    const unit = value || draft.unit;
+                    setDraft((current) => withUnit(current, unit));
                     setTouched((current) => ({ ...current, unit: true }));
                   }}
                   aria-label="What each item is"
