@@ -51966,6 +51966,12 @@
                             "$ref": "#/definitions/SimulateEvalConfigResponse"
                         }
                     },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -57616,6 +57622,12 @@
                         "description": "Unauthorized"
                     },
                     "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/EvalErrorResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/EvalErrorResponse"
