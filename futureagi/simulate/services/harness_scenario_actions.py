@@ -25,6 +25,7 @@ from simulate.models import (
     HostedHarnessScenario,
 )
 from simulate.services.canonical_json import canonical_digest
+from simulate.services.harness_scenario_sources import file_path
 from simulate.services.hosted_harness import HostedHarnessError
 
 logger = structlog.get_logger(__name__)
@@ -675,12 +676,12 @@ def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChan
                     entry["before"], old_rules, new_rules
                 )
             else:
-                files.add(ref.removeprefix("file:").strip().lstrip("/"))
+                files.add(file_path(ref))
     before_texts = _file_texts(parent, files) if parent else {}
     after_texts = _file_texts(version, files)
     for (kind, ref), entry in by_change.items():
         if kind == "file":
-            path = ref.removeprefix("file:").strip().lstrip("/")
+            path = file_path(ref)
             entry["before"] = before_texts.get(path)
             entry["after"] = after_texts.get(path)
     changes = sorted(by_change.values(), key=lambda one: (one["kind"], one["ref"]))

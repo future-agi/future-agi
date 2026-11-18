@@ -486,6 +486,11 @@ def scenario_lifecycle(
             for key, content in contents.items()
         },
         stored={key: list(row.get("sources") or []) for key, row in rows.items()},
+        proved={
+            key: list(entry.get("sources") or [])
+            for key, entry in (proofs.items() if isinstance(proofs, Mapping) else ())
+            if isinstance(entry, Mapping) and entry.get("format") == 2
+        },
     )
     changed = source_changed(environment_version, contents)
     cited_files = {
@@ -924,7 +929,7 @@ def changed_refs(
                 if now is None or now != before:
                     refs.append(ref)
             elif source.get("kind") == "file":
-                path = ref.removeprefix("file:").strip().lstrip("/")
+                path = file_path(ref)
                 if not isinstance(new_files, Mapping) or not isinstance(
                     old_files, Mapping
                 ):
@@ -947,7 +952,7 @@ def _files_differ_by_text(
     from simulate.services.harness_scenario_sources import file_bodies
 
     paths = {
-        str(source.get("ref") or "").removeprefix("file:").strip().lstrip("/")
+        file_path(str(source.get("ref") or ""))
         for content in contents.values()
         for source in (content or {}).get("sources") or []
         if isinstance(source, Mapping) and source.get("kind") == "file"

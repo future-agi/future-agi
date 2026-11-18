@@ -60,7 +60,8 @@ class SourceView(TypedDict):
 
 
 def normalise(text: object) -> str:
-    """The same normalisation ALK uses for quotes: casefold, no punctuation, single spaces."""
+    """The normalisation ALK uses for quotes (agent-learning-kit ``fi/alk/harness/leaks.py`` ``normalise``): casefold,
+    no punctuation, single spaces. Pinned by ``tests/test_harness_source_rules_contract.py``."""
     text = str(text or "").casefold().replace("_", " ").replace("-", " ")
     text = re.sub(r"[^\w\s.]", " ", text)
     text = re.sub(r"(?<!\d)\.|\.(?!\d)", " ", text)
@@ -287,8 +288,11 @@ def _rule_match(quote: str, rules: list[str]) -> int | None:
 
 
 def file_path(ref: str) -> str:
-    """The attached file a file source cites, as its path in the environment."""
-    return ref.removeprefix("file:").strip().lstrip("/")
+    """The attached file a file source cites, as its path in the environment; empty for a path that climbs out
+    (a ``..`` part). ALK reads a cited file the same way (agent-learning-kit ``fi/alk/harness/grounding.py``
+    ``_file``), pinned by ``tests/test_harness_source_rules_contract.py``."""
+    name = ref.removeprefix("file:").strip().lstrip("/")
+    return "" if ".." in name.split("/") else name
 
 
 def _rules(environment_version: Any) -> list[str]:
@@ -411,8 +415,11 @@ def resolve(
     by_key: Mapping[str, list[Mapping[str, Any]]],
     *,
     stored: Mapping[str, list[Mapping[str, Any]]] | None = None,
+    proved: Mapping[str, list[Mapping[str, Any]]] | None = None,
 ) -> dict[str, list[SourceView]]:
-    """Every key's sources as views, in at most two queries whatever the suite's size."""
+    """Every key's sources as views, in at most two queries whatever the suite's size. Where the case's proof on
+    this pair carries ALK's own verdict for a source (``proved``: its ``resolved`` true or false), that verdict is
+    used; the platform decides only what ALK left to it (``resolved`` null) or never saw (an unsaved case)."""
     from simulate.models import HostedHarnessConversationMessage
 
     rules = _rules(environment_version)
@@ -443,6 +450,11 @@ def resolve(
             str(one.get("ref")): one
             for one in (stored or {}).get(key) or []
             if isinstance(one, Mapping)
+        }
+        verdicts = {
+            str(one.get("ref")): one
+            for one in (proved or {}).get(key) or []
+            if isinstance(one, Mapping) and isinstance(one.get("resolved"), bool)
         }
         out: list[SourceView] = []
         for one in sources or []:
@@ -495,6 +507,10 @@ def resolve(
                 problem = (
                     "" if resolved else "a requirement needs the person's own words"
                 )
+            verdict = verdicts.get(ref)
+            if verdict is not None and verdict.get("kind", kind) == kind:
+                resolved = verdict["resolved"] is True
+                problem = "" if resolved else str(verdict.get("problem") or problem)
             out.append(
                 SourceView(
                     kind=kind,
