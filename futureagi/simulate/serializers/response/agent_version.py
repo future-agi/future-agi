@@ -29,6 +29,7 @@ class AgentVersionCheckFailureSerializer(serializers.Serializer):
     code = serializers.CharField()
     message = serializers.CharField(allow_blank=True)
     retryable = serializers.BooleanField()
+    missing = serializers.ListField(child=serializers.CharField(), required=False)
 
 
 class VersionCheckFields(serializers.Serializer):
@@ -39,18 +40,33 @@ class VersionCheckFields(serializers.Serializer):
     preflight_status = serializers.SerializerMethodField()
     check_step = serializers.SerializerMethodField()
     check_failure = serializers.SerializerMethodField()
+    check_started_at = serializers.SerializerMethodField()
     environments_count = serializers.SerializerMethodField()
 
     def _runtime(self, obj):
         return (self.context.get("runtimes") or {}).get(obj.id)
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
     def get_origin(self, obj) -> str | None:
         runtime = self._runtime(obj)
         return (runtime.trigger or None) if runtime is not None else None
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
     def get_preflight_status(self, obj) -> str | None:
         runtime = self._runtime(obj)
         return runtime.preflight_status if runtime is not None else None
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.DateTimeField(allow_null=True)
+    )
+    def get_check_started_at(self, obj) -> str | None:
+        runtime = self._runtime(obj)
+        started = runtime.check_started_at if runtime is not None else None
+        return started.isoformat() if started is not None else None
 
     @swagger_serializer_method(
         serializer_or_field=serializers.ChoiceField(
@@ -118,6 +134,7 @@ class AgentVersionResponseSerializer(VersionCheckFields, serializers.ModelSerial
             "preflight_status",
             "check_step",
             "check_failure",
+            "check_started_at",
             "environments_count",
             "created_at",
             "updated_at",
@@ -236,6 +253,7 @@ class AgentVersionListResponseSerializer(
             "preflight_status",
             "check_step",
             "check_failure",
+            "check_started_at",
             "environments_count",
             "source",
             "created_at",
@@ -409,6 +427,59 @@ class AgentCodeChangeSerializer(serializers.Serializer):
     status = serializers.ChoiceField(
         choices=("added", "removed", "modified"), read_only=True
     )
+
+
+class AgentCodeCompareFileSerializer(serializers.Serializer):
+    path = serializers.CharField(read_only=True)
+    previous_path = serializers.CharField(read_only=True, allow_null=True)
+    status = serializers.ChoiceField(
+        choices=("added", "removed", "modified", "renamed"), read_only=True
+    )
+    kind = serializers.ChoiceField(
+        choices=("text", "binary", "too_large"), read_only=True
+    )
+    additions = serializers.IntegerField(read_only=True, allow_null=True)
+    deletions = serializers.IntegerField(read_only=True, allow_null=True)
+    collapsed = serializers.BooleanField(read_only=True)
+
+
+class AgentCodeCompareResponseSerializer(serializers.Serializer):
+    version = serializers.CharField(read_only=True)
+    against = serializers.CharField(read_only=True, allow_null=True)
+    unavailable = serializers.CharField(read_only=True, required=False)
+    same_code = serializers.BooleanField(read_only=True)
+    env_changed = serializers.BooleanField(read_only=True)
+    files = AgentCodeCompareFileSerializer(many=True, read_only=True)
+    total_files = serializers.IntegerField(read_only=True)
+    additions = serializers.IntegerField(read_only=True)
+    deletions = serializers.IntegerField(read_only=True)
+    truncated = serializers.BooleanField(read_only=True)
+
+
+class AgentCodeHunkSerializer(serializers.Serializer):
+    old_start = serializers.IntegerField(read_only=True)
+    old_lines = serializers.IntegerField(read_only=True)
+    new_start = serializers.IntegerField(read_only=True)
+    new_lines = serializers.IntegerField(read_only=True)
+    lines = serializers.ListField(
+        child=serializers.CharField(allow_blank=True, trim_whitespace=False),
+        read_only=True,
+    )
+
+
+class AgentCodePatchSerializer(serializers.Serializer):
+    path = serializers.CharField(read_only=True)
+    kind = serializers.ChoiceField(
+        choices=("text", "binary", "too_large"), read_only=True, allow_null=True
+    )
+    unchanged = serializers.BooleanField(read_only=True)
+    hunks = AgentCodeHunkSerializer(many=True, read_only=True)
+
+
+class AgentCodePatchesResponseSerializer(serializers.Serializer):
+    version = serializers.CharField(read_only=True)
+    against = serializers.CharField(read_only=True)
+    files = AgentCodePatchSerializer(many=True, read_only=True)
 
 
 class AgentCodeChangesResponseSerializer(serializers.Serializer):

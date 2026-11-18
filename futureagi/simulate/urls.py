@@ -98,7 +98,9 @@ from .views import (
 )
 from .views.agent_code import (
     AgentCodeChangesView,
+    AgentCodeCompareView,
     AgentCodeFileView,
+    AgentCodePatchesView,
     AgentCodeTreeView,
 )
 from .views.agent_connect import (
@@ -410,6 +412,16 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/code/changes/",
         AgentCodeChangesView.as_view(),
         name="agent-code-changes",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/code/compare/",
+        AgentCodeCompareView.as_view(),
+        name="agent-code-compare",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/code/compare/patches/",
+        AgentCodePatchesView.as_view(),
+        name="agent-code-compare-patches",
     ),
     path(
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/restore/",
