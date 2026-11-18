@@ -117,6 +117,7 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
       ownerId: owner.userId, memberId: member.userId, workspaceId: member.workspaceId, fixtureHash: fake.fixtureHash }), contentType: 'application/json' });
     await test.step('Open the member draft and its Tests tab', async () => {
       await page.goto(`${UI}/${id}?tab=tests`);
+      await page.getByRole('tab', {name:'Cases', exact:true}).click();
       await expect(page.getByRole('button', { name: 'Add first test case', exact: true })).toBeVisible({ timeout: UI_READY });
     }, { timeout: UI_READY });
     for (let index = 0; index < 3; index++) {
@@ -152,17 +153,20 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
     const runComparison = async (label: string) => {
       let runId = '';
       await test.step(`Review ${label} inventory, model and spend`, async () => {
+        await page.getByRole('tab', {name:'Run a test', exact:true}).click();
         await select(page, 'Task model', 'gpt-4o-mini');
         await page.getByRole('textbox', { name: 'Estimated-cost stop (USD)', exact: true }).fill('1');
         await page.getByRole('button', { name: 'Preview work and spend', exact: true }).click();
-        await expect(page.getByText('3 examples × 2 arms × 1 repeats = 6 attempts', { exact: true })).toBeVisible({ timeout: UI_READY });
-        await page.getByRole('checkbox', { name: 'The files sent to the model contain no answer keys or grading material.', exact: true }).check();
-        await page.getByRole('checkbox', { name: 'I reviewed every file and input that will be sent to the model.', exact: true }).check();
-        await page.getByRole('checkbox', { name: 'Send the reviewed files and example inputs to these model providers within this spend stop', exact: true }).check();
+        await expect(page.getByText('3 test cases × 2 versions × 1 attempt per version = 6 attempts', { exact: true })).toBeVisible({ timeout: UI_READY });
+        const consent = page.getByRole('checkbox', {name: /^Send (?:this file|these \d+ files) and 3 test cases to .+, up to \$[0-9.]+\. (?:It contains|They contain) no answer keys or grading material\.$/});
+        await consent.check();
+        await expect(consent).toBeChecked();
         const response = page.waitForResponse(res => res.url().endsWith(`${SKILLS}${id}/test-runs/`) && res.request().method() === 'POST', { timeout: UI_READY });
         await page.getByRole('button', { name: 'Run quick check', exact: true }).click();
         const accepted = await response;
         expect(accepted.status(), await accepted.text()).toBe(202);
+        expect(accepted.request().postDataJSON()).toMatchObject({ acknowledge_provider_processing: true,
+          inventory_review: { reviewed_all_files:true, no_known_answer_keys:true } });
         runId = (await accepted.json()).result.id;
         await testInfo.attach(`${label}-run`, { body: JSON.stringify({ runId, request: accepted.request().postDataJSON() }), contentType: 'application/json' });
       }, { timeout: UI_READY });
@@ -185,12 +189,12 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
       await page.getByRole('button', { name: 'Review this check', exact: true }).first().click();
       await select(page, 'Your assessment', 'Agree');
       await page.getByRole('textbox', { name: 'Cited clause or answer excerpt', exact: true }).fill('{"eligible":false}');
-      await page.getByRole('textbox', { name: 'Review explanation', exact: true }).fill('The retained answer confirms the failing policy boundary.');
+      await page.getByRole('textbox', { name: 'Explanation', exact: true }).fill('The retained answer confirms the failing policy boundary.');
       const annotationResponse = page.waitForResponse(res => res.url().endsWith(`/evidence/skills_text/${first.id}/annotations/`) && res.request().method() === 'POST');
-      await page.getByRole('button', { name: 'Append review', exact: true }).click();
+      await page.getByRole('button', { name: 'Add check', exact: true }).click();
       const annotated = await annotationResponse;
       expect(annotated.status(), await annotated.text()).toBe(201);
-      await expect(page.getByText(/Review recorded\. The automatic result is unchanged/)).toBeVisible();
+      await expect(page.getByText(/Check recorded\. The automatic result is unchanged/)).toBeVisible();
       const submitted = annotated.request().postDataJSON();
       expect(submitted).toMatchObject({ annotation_revision: 0, verdict: 'agree', cited_text: '{"eligible":false}' });
       expect(await probe.pg('SELECT actor_id::text, check_id::text, attempt_id::text, revision, verdict, cited_text FROM model_hub_hubskillevidenceannotation WHERE source_id = $1', [first.id]))
@@ -249,7 +253,7 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
     await test.step('Explicitly share the frozen evidence', async () => {
       await page.getByRole('button', { name: 'Share evidence', exact: true }).click();
       await page.getByRole('dialog').getByRole('button', { name: 'Share with workspace', exact: true }).click();
-      await expect(page.getByText('Shared with workspace', { exact: true })).toBeVisible({ timeout: UI_READY });
+      await expect(page.getByRole('cell', {name:'Shared with workspace',exact:true})).toBeVisible({ timeout: UI_READY });
     }, { timeout: UI_READY });
     expect((await visible()).results.map(row => row.id)).toEqual([tested.id]);
     expect((await visible()).count).toBe(1);

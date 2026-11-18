@@ -770,15 +770,24 @@ class UsageVersion(HubSerializer):
 
 class Consumer(HubSerializer):
     label = s.CharField(allow_blank=True)  # type: ignore[assignment]
-    channel = s.ChoiceField(choices=["api", "download", "mcp"])
+    channel = s.ChoiceField(choices=["api", "download", "mcp", "sdk"])
     count = s.IntegerField()
     last_at = s.DateTimeField()
+    # SKILL-TRACES §6.7: the newest bucket's SDK version and tracing mode, and
+    # whether that consumer can record loads. A capability hint, never a load.
+    sdk_version = s.CharField(allow_null=True, required=False)
+    tracing_mode = s.ChoiceField(
+        choices=["on", "load_only", "off", "no_otel"], allow_null=True, required=False
+    )
+    can_record = s.BooleanField(required=False)
 
 
 class Channels(HubSerializer):
     api = s.IntegerField()
     download = s.IntegerField()
     mcp = s.IntegerField()
+    # Present once an SDK fetch exists in the window (the legacy shape is kept).
+    sdk = s.IntegerField(required=False)
 
 
 class Usage(HubSerializer):

@@ -75,6 +75,17 @@ def test_library_sql_is_parameterized_and_scoped_on_both_narrow_and_span_sources
     assert DIGEST not in sql and params["verified_identities"] == ((SKILL, VERSION, DIGEST),)
 
 
+@pytest.mark.parametrize("table,guard", [("tracer_eval_logger", "raw_eval_logger._peerdb_is_deleted"),
+                                        ("tracer_eval_logger_v2", "raw_eval_logger.is_deleted")])
+def test_eval_coverage_reads_configured_live_results(settings, table, guard):
+    settings.CH25_EVAL_LOGGER_TABLE = table
+    project, trace, config = (str(uuid4()) for _ in range(3))
+    sql, params = builder(project).build_usage_evals(config_ids=[config], members=[(project, trace)])
+    assert f"FROM {table} AS raw_eval_logger FINAL" in sql
+    assert guard + " = 0" in sql
+    assert params["config_ids"] == (config,) and params["trace_ids"] == (trace,)
+
+
 def test_agent_filter_rejects_foreign_project_and_binds_names():
     project = str(uuid4())
     query = builder(project)

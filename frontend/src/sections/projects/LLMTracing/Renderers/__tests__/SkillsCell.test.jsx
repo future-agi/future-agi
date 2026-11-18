@@ -9,6 +9,7 @@ import SkillsCell, {
   chunkTraceIds,
   mapTraceSkillsEntry,
   skillsCellModel,
+  SkillAgentCell,
   skillsColumnDef,
   useTracePageSkills,
 } from "../SkillsCell";
@@ -67,6 +68,18 @@ describe("mapTraceSkillsEntry", () => {
         failed: [],
         more: 0,
       });
+  });
+});
+
+describe("SkillAgentCell", () => {
+  it("opens a load's project/service/agent identity rather than inferring it from the label", () => {
+    const agent_key = [SKILL, "support-service", "billing"];
+    const data = mapTraceSkillsEntry({ skills: [skill("policy", 1, { agent_key, agent: "billing" }),
+      skill("tone", 2, { agent_key, agent: "billing" })] });
+    const open = vi.fn();
+    render(<SkillAgentCell data={{ trace_id: "t1" }} context={{ onOpenAgent: open, traceSkills: { byTrace: { t1: data } } }} />);
+    fireEvent.click(screen.getByRole("button", { name: "billing" }));
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({ agent_key }));
   });
 });
 

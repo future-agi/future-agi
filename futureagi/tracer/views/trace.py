@@ -5225,6 +5225,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
 
         tasks: dict[str, Any] = {}
+        if project_id and validated_data.get("include_skill_links") and page_number == 0:
+            # This is a column-availability hint, not delivery evidence. Probe
+            # the narrow link table for the project/window, not this page's IDs.
+            start, end = builder.parse_time_range(filters)
+            tasks["skill_links"] = (
+                "SELECT 1 FROM skill_trace_links FINAL WHERE project_id = %(project_id)s "
+                "AND start_time >= %(start_date)s AND start_time < %(end_date)s "
+                "AND is_deleted = 0 AND status != 'ERROR' LIMIT 1",
+                {"project_id": project_id, "start_date": start, "end_date": end},
+            )
         content_task_names: list[str] = []
         attribute_task_names: list[str] = []
         attribute_task_expected_rows: dict[str, int] = {}
@@ -5821,6 +5831,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             metadata_total_rows = cursor_seen_rows
 
         metadata = {"total_rows": metadata_total_rows}
+        if "skill_links" in enrichment_results:
+            metadata["skill_links_exist"] = bool(enrichment_results["skill_links"].data)
         if bounded_page is not None:
             published_has_more = (
                 bool(bounded_page.complete and bounded_page.has_more) or cursor_has_more

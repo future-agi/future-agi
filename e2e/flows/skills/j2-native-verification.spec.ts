@@ -224,7 +224,7 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     expect(nativeLinks.n).toBe('0');
 
     // Human disagreement is appended beside the automatic grade.
-    await page.getByRole('row', { name: /Original refund failure.*Was failing on v/ }).first().click();
+    await page.getByRole('row', { name: 'Inspect Original refund failure Was failing on repeat 1' }).getByText('Was failing on v4', {exact:true}).click();
     await page.getByRole('radio', { name: /Disagree/ }).check();
     await page.getByLabel('Why').fill('The answer claims success but the business ledger shows the refund was declined.');
     await page.getByRole('button', { name: 'Record assessment' }).click();

@@ -349,9 +349,10 @@ test('SKILLS-E2E-001: author, restore and consume the reviewed workspace skill',
 
     await test.step('Copy the production install command and capture fetch baseline', async () => {
       await page.goto(`${LIBRARY}/${id}?tab=use`);
-      await page.getByRole('combobox', { name: /^Coding client/ }).click();
-      await page.getByRole('option', { name: 'Claude Code', exact: true }).click();
-      await page.getByRole('button', { name: 'Copy', exact: true }).click();
+      // This flow qualifies the frozen ZIP command (including its exact lock
+      // and download count), not the read-only SDK plan on the Install tab.
+      await page.getByRole('button', {name:'Skill actions', exact:true}).click();
+      await page.getByRole('menuitem', {name:'Copy install command', exact:true}).click();
       command = await page.evaluate(() => navigator.clipboard.readText());
       expect(command.includes(credentials.apiKey)).toBe(false);
       beforeUsage = await read<Usage>(`${SKILLS}${id}/usage/`, { days: 7 });

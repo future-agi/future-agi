@@ -1,0 +1,13 @@
+# Managed-model qualification: no second interface on the API/worker process.
+# Keep the native guests isolated; do not attach them to the default bridge.
+services:
+  app:
+    networks: !override [default]
+    environment:
+      SKILLS_NATIVE_RUNTIME_URL: ""
+      SKILLS_NATIVE_CALLBACK_URL: ""
+      SKILLS_NATIVE_RUNTIME_TOKEN: ""
+      SKILLS_NATIVE_RUNTIME_NAME: ""
+      SKILLS_NATIVE_EVIDENCE_CLASS: ""
+  skills-fakes:
+    networks: !override [default]

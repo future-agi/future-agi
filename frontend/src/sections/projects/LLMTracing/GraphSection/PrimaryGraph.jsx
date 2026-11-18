@@ -25,6 +25,8 @@ import {
   Box,
   Button,
   ButtonBase,
+  FormControlLabel,
+  Switch,
   InputAdornment,
   MenuItem,
   Popover,
@@ -45,6 +47,8 @@ import {
 } from "src/hooks/useDashboards";
 import { format } from "date-fns";
 import _ from "lodash";
+import SkillVersionGraph, { skillVersionSeries } from "./SkillVersionGraph";
+import { hasSkillFilter, OBSERVE_SKILL_COPY } from "../skillFilters";
 import GraphSkeleton from "./GraphSkeleton";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { observePresetDateFilter } from "../../timeWindowPresets";
@@ -353,6 +357,7 @@ const PrimaryGraph = ({
   onFilterToggle,
   // Optional: override the graph API endpoint (for sessions/users graphs)
   graphEndpoint,
+  allowSkillSplit = false,
   // Optional: override the default metric (e.g. "session_count" for sessions)
   defaultMetric,
   // Optional: static metric options (instead of fetching from dashboard API)
@@ -520,6 +525,12 @@ const PrimaryGraph = ({
     [filters, extraFilters, metricFilters, dateFilter, hasEvalFilter],
   );
 
+  const [splitRequested, setSplitRequested] = useState(false);
+  const splitAvailable = allowSkillSplit && hasSkillFilter(combinedFilters) &&
+    (!metricDef.apiType || metricDef.apiType === "SYSTEM_METRIC") &&
+    ["latency", "cost", "tokens", "total_tokens", "traffic", "error_rate"].includes(metricDef.id);
+  const splitEnabled = splitAvailable && splitRequested;
+
   // Fetch graph data
   const apiEndpoint = graphEndpoint || endpoints.project.getTraceGraphData();
   const forceRefreshRef = useRef(false);
@@ -626,6 +637,7 @@ const PrimaryGraph = ({
       graphTransportSource,
       observeType,
       excludeSimulationCalls,
+      ...(splitEnabled ? ["skill_version"] : []),
     ],
     queryFn: async ({ queryKey, signal }) => {
       const refresh = forceRefreshRef.current;
@@ -640,6 +652,7 @@ const PrimaryGraph = ({
               apiEndpoint,
               {
                 interval: selectedInterval,
+                ...(splitEnabled ? { split_by: "skill_version" } : {}),
                 filters: toBackendFilters(combinedFilters),
                 property: "average",
                 req_data_config: {
@@ -733,9 +746,11 @@ const PrimaryGraph = ({
         selectedInterval,
         combinedFilters,
         apiEndpoint,
+        splitEnabled,
       ]),
     [
       apiEndpoint,
+      splitEnabled,
       combinedFilters,
       effectiveObserveId,
       selectedInterval,
@@ -1147,6 +1162,8 @@ const PrimaryGraph = ({
             {graphLabel}
           </Typography>
 
+          {splitAvailable && <FormControlLabel label={OBSERVE_SKILL_COPY.splitBySkillVersion}
+            control={<Switch size="small" checked={splitEnabled} onChange={(event) => setSplitRequested(event.target.checked)} />} />}
           {/* Metric picker trigger */}
           <ButtonBase
             data-testid="graph-metric-picker-trigger"
@@ -1470,7 +1487,9 @@ const PrimaryGraph = ({
         >
           <GraphSkeleton />
         </Box>
-      ) : hasData ? (
+      ) : splitEnabled && skillVersionSeries(displayGraphData).length ? (
+        <SkillVersionGraph result={displayGraphData} />
+      ) : !splitEnabled && hasData ? (
         <Box sx={{ mx: -0.5 }}>
           <ReactApexChart
             options={chartOptions}
@@ -1508,6 +1527,7 @@ PrimaryGraph.propTypes = {
   lineColorOverride: PropTypes.string,
   barColorOverride: PropTypes.string,
   graphLabel: PropTypes.string,
+  allowSkillSplit: PropTypes.bool,
   showDateFilter: PropTypes.bool,
   observeIdOverride: PropTypes.string,
   hasActiveFilter: PropTypes.bool,

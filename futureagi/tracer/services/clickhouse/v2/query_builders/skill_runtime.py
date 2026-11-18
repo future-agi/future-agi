@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.read_budget import ReadDeadline, WallCappedAnalytics
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
@@ -161,14 +162,15 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
         # Config IDs are PG-authorized by project. Trace IDs use the same textual
         # UUID join as EvalMetricsQueryBuilderV2; results on ANY live span count.
         params = {**self.params, "config_ids": tuple(config_ids), "trace_ids": tuple(sorted({trace for _, trace in members}))}
-        return """
-            SELECT toString(trace_id) AS trace_id, observation_span_id,
+        table, live = eval_logger_source("raw_eval_logger", include_cdc_tombstone_guard=True)
+        return f"""
+            SELECT toString(raw_eval_logger.trace_id) AS trace_id, observation_span_id,
                    toString(custom_eval_config_id) AS config_id,
                    output_float, output_bool, output_str
-            FROM tracer_eval_logger_v2 FINAL
-            WHERE is_deleted = 0 AND error = 0
+            FROM {table} AS raw_eval_logger FINAL
+            WHERE {live} AND error = 0 AND ifNull(output_str, '') != 'ERROR'
               AND toString(custom_eval_config_id) IN %(config_ids)s
-              AND toString(trace_id) IN %(trace_ids)s
+              AND toString(raw_eval_logger.trace_id) IN %(trace_ids)s
             LIMIT 20001
         """, params
 

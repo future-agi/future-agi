@@ -270,7 +270,8 @@ export async function createDriver({ jobId, runId, registration }) {
         requireValue(retired.status === 404, 'The refund child source must be retired');
         await expect(authorPage.getByText('Source retired:', { exact: false }).first()).toBeVisible();
         // The view preselects the newest eligible release older than the failing one and says why; choosing another is still one click.
-        await expect(authorPage.getByText('Roll back to: v1 (suggested)', { exact: false }).first()).toBeVisible();
+        await expect(authorPage.getByRole('heading', {name:`Roll back ${input.contextName} to v1`, exact:true})).toBeVisible();
+        await expect(authorPage.getByText('v1 is the newest eligible release before v3.', {exact:false})).toBeVisible();
         await expect(authorPage.getByRole('button', { name: 'Choose v1', exact: true })).toBeEnabled();
         const closure = await readCompleteClosure(read, input.contextId, 1, signal);
         const production = await readCompleteClosure(read, input.contextId, 3, signal);
@@ -282,7 +283,7 @@ export async function createDriver({ jobId, runId, registration }) {
         const items = closure.files.map((_, index) => `closure-file-${index}`);
         const exceptions = closure.files.flatMap((file, index) => (changed.includes(file.path) ? [`closure-file-${index}`] : []));
         // The closure table shows its first rows and keeps the rest behind one disclosure; open it so every file is inspected.
-        const moreFiles = authorPage.getByRole('button', { name: /^Show \d+ more files?$/ });
+        const moreFiles = authorPage.getByRole('button', { name: /^Show \d+ unchanged files?$/ });
         if (await moreFiles.count()) await operator.click(moreFiles, 'show-all-closure-files');
         const retiredHash = await record('retired-child-closure', { retired_status: retired.status, closure_paths: closure.files.map((file) => file.path), changed });
         const decision = decisionFor({ candidate: closure.files.map((file) => [file.path, sha256(Buffer.from(file.content, 'utf8'))]), production: [...before] },
@@ -303,7 +304,7 @@ export async function createDriver({ jobId, runId, registration }) {
             await expect(block).toContainText(added);
           }
         }, decision);
-        await operator.click(authorPage.getByRole('checkbox', { name: /I reviewed everything v1 contains/ }), 'acknowledge-complete-review');
+        await operator.click(authorPage.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?)(?: and the linked skill versions)?$/ }), 'acknowledge-complete-review');
         await shot(authorPage, '02-closure-review');
         await record('eligible-closure', closure);
         ledger.stage({ step: stage.id, phase: stage.phase, source: 'api', artifactHash: retiredHash, actionSequences: [], decision });
@@ -315,11 +316,11 @@ export async function createDriver({ jobId, runId, registration }) {
         const submit = async (cycle) => {
           // Acknowledging the review prepares the packet; the reviewer chosen once stays selected for a restarted review.
           const reviewerBox = authorPage.getByRole('combobox', { name: 'Reviewer' });
-          await expect(authorPage.getByText('Rollback request ready.', { exact: false })).toBeVisible();
+          await expect(authorPage.getByRole('button', {name:'Request rollback to v1', exact:true})).toBeEnabled();
           // The person who last moved production is the suggested reviewer; no list to open for a restarted or a first review alike.
           await expect(reviewerBox).toContainText(reviewerName);
-          await operator.click(authorPage.getByRole('button', { name: 'Submit rollback for review', exact: true }), `submit-rollback-${cycle}`);
-          await expect(authorPage.getByText('Rollback request submitted.', { exact: false })).toBeVisible();
+          await operator.click(authorPage.getByRole('button', { name: 'Request rollback to v1', exact: true }), `submit-rollback-${cycle}`);
+          await expect(authorPage.getByText(`Rollback to v1 requested from ${reviewerName}. Production has not moved.`, {exact:true})).toBeVisible();
         };
         const latestRequest = async () => {
           const inboxResponse = await call(reviewer, 'GET', 'review-inbox/?page=1&page_size=50', undefined, signal);
@@ -354,7 +355,7 @@ export async function createDriver({ jobId, runId, registration }) {
         // (a change after the review restarts it), so no later poll can restart the new review.
         const movedRevision = (await read(`${context}release-state/`, signal)).release_revision;
         await expect(authorPage.locator(`[data-release-revision="${movedRevision}"]`, { hasText: 'Reviewed against the release that made' })).toBeVisible({ timeout: 60_000 });
-        const reack = authorPage.getByRole('checkbox', { name: /I reviewed everything v1 contains/ });
+        const reack = authorPage.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?)(?: and the linked skill versions)?$/ });
         await expect(reack).toBeEnabled({ timeout: 30_000 });
         await expect(reack).not.toBeChecked();
         await operator.click(reack, 'acknowledge-complete-review-again');
@@ -373,16 +374,16 @@ export async function createDriver({ jobId, runId, registration }) {
         const decision = decisionFor({ packet: detail.fingerprint }, { candidate: v1.id, from_version: 3, release_revision: (await read(`${context}release-state/`, signal)).release_revision });
         await operator.handoff('release-reviewer', async () => {});
         // The author copies the exact review link from the submitted request; the reviewer opens it.
-        await operator.click(authorPage.getByRole('button', { name: 'Copy review link', exact: true }), 'copy-review-link');
-        await expect(authorPage.getByText('Copied the review link.', { exact: true })).toBeVisible();
+        await operator.click(authorPage.getByRole('button', { name: 'Copy request link', exact: true }), 'copy-review-link');
+        await expect(authorPage.getByText('Copied the request link.', { exact: true })).toBeVisible();
         const reviewLink = await authorPage.evaluate(() => navigator.clipboard.readText());
-        requireValue(reviewLink === await authorPage.getByRole('link', { name: 'Review link' }).getAttribute('href') && reviewLink.includes(`request=${fresh.id}`), 'The copied link must open the fresh request');
-        await authorPage.getByRole('link', { name: 'Review link' }).scrollIntoViewIfNeeded();
+        requireValue(reviewLink === await authorPage.getByRole('link', { name: 'Open request' }).getAttribute('href') && reviewLink.includes(`request=${fresh.id}`), 'The copied link must open the fresh request');
+        await authorPage.getByRole('link', { name: 'Open request' }).scrollIntoViewIfNeeded();
         // No credential is on this screen (the replacement is issued later), so the link is captured unmasked.
         await authorPage.screenshot({ path: resolve(output, 'shots', '03-review-link.png') });
         await navigate(admin, ledger, stage, reviewerPage, reviewLink, 'open-review-link');
         await expect(reviewerPage).toHaveURL(new RegExp(`request=${fresh.id}`));
-        const ack = reviewerPage.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true });
+        const ack = reviewerPage.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/, exact: true });
         await expect(ack).toBeEnabled();
         await admin.click(ack, 'acknowledge-fresh-packet');
         await admin.approve('approve-fresh-packet', ['packet'], () => reviewerPage.getByRole('button', { name: 'Approve release', exact: true }).click(), decision);

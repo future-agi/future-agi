@@ -213,6 +213,7 @@ class TraceListQuerySerializer(StrictInputSerializer):
 
 
 class TraceObserveListQuerySerializer(StrictInputSerializer):
+    include_skill_links = serializers.BooleanField(required=False)
     sort_params = SortParamListQueryParamField(required=False, default=list)
     project_id = serializers.UUIDField(required=False)
     project_version_id = serializers.UUIDField(required=False)
@@ -305,6 +306,7 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
 
 
 class TraceObserveListMetadataSerializer(serializers.Serializer):
+    skill_links_exist = serializers.BooleanField(required=False)
     total_rows = serializers.IntegerField()
     total_rows_exact = serializers.IntegerField(required=False, allow_null=True)
     total_rows_is_lower_bound = serializers.BooleanField(required=False)

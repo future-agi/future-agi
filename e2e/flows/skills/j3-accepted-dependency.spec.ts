@@ -128,6 +128,9 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       await page.goto(`${UI}/${parent.id}?version=1`);
       await page.getByRole('button', { name: 'Edit latest v1', exact: true }).click();
       await page.getByRole('button', { name: 'Start selected draft', exact: true }).click();
+      const details = page.getByRole('button', {name:'Linked skills and settings', exact:true});
+      await expect(details).toBeVisible();
+      if (await details.getAttribute('aria-expanded') === 'false') await details.click();
       await page.getByRole('checkbox', { name: `Check for update: ${prefix}-leaf-0`, exact: true }).check();
       const before = await req(author, 'GET', `contexts/${parent.id}/draft/`);
       await page.getByRole('button', { name: 'Preview dependency changes', exact: true }).click();
@@ -174,6 +177,8 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
         expect(raced).toBe(wrong !== 'inflight-save');
         expect((await req(author, 'GET', `${childId}/`)).latest_version).toBe(9);
       }
+      const settings = page.getByRole('button', {name:'Linked skills and settings',exact:true});
+      if (await settings.getAttribute('aria-expanded') === 'false') await settings.click();
       await page.getByRole('textbox', { name: 'Context purpose', exact: true }).fill('Reviewed purchasing purpose; retain the accepted shared policy.');
       await expect.poll(async () => (await req(author, 'GET', `contexts/${parent.id}/draft/`)).context_spec.description, { timeout: UI_READY }).toBe('Reviewed purchasing purpose; retain the accepted shared policy.');
       const saved = await req(author, 'GET', `contexts/${parent.id}/draft/`);
@@ -181,10 +186,13 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       expect(saved.resolved_lock.links.find((l: any) => l.skill_id === childId).version).toBe(wrong === 'autosave' ? 99 : 8);
       events.push({ stage: 'autosave', parent: parent.id, revision: saved.revision, digest: saved.digest });
       await page.getByRole('tab', { name: 'Tests', exact: true }).click();
+      await page.getByRole('tab', { name: 'Run a test', exact:true }).click();
       await page.getByRole('button', { name: 'Save and open answer check', exact: true }).click();
       await page.getByRole('textbox', { name: 'Test request', exact: true }).fill(prompt);
       await page.getByRole('textbox', { name: 'Expected answer contains', exact: true }).fill('approved-response');
-      await page.getByRole('checkbox', { name: 'I reviewed this request and its expected answer.', exact: true }).check();
+      await page.getByRole('checkbox', { name: 'I checked this request and its expected answer.', exact: true }).check();
+      const changeSettings = page.getByRole('button', {name:'Change model and cost limit',exact:true});
+      if (await changeSettings.isVisible()) await changeSettings.click();
       await page.getByRole('combobox', { name: /^Task model/ }).click();
       await page.getByRole('option', { name: 'gpt-4o-mini', exact: true }).click();
       await page.getByRole('textbox', { name: 'Maximum estimated cost (USD)', exact: true }).fill('2');
@@ -198,15 +206,17 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       // the accepted child from its immutable context snapshot, never a DB seed.
       await fake.dispose();
       await fake.register([toolRule(prompt, 0, 'load_skill', { skill_id: handle }), answerRule(prompt, 1, 'approved-response')]);
-      await page.getByRole('checkbox', { name: 'The files sent to the model contain no answer keys or grading material.', exact: true }).check();
-      await page.getByRole('checkbox', { name: 'I reviewed every file and input that will be sent to the model.', exact: true }).check();
-      await page.getByRole('checkbox', { name: 'I acknowledge provider processing of this reviewed context and test request.', exact: true }).check();
+      const send = page.getByRole('checkbox',{name:/^Send (?:this file|these \d+ files) and the request to .+, up to \$[0-9.]+\. (?:It contains|They contain) no answer keys or grading material\.$/});
+      await send.check();
+      await expect(send).toBeChecked();
       await expect(page.getByRole('button', { name: 'Run answer check', exact: true })).toBeEnabled();
       await shot(`whole-context-preview-${parent.name}`);
       const started = page.waitForResponse(res => res.url().endsWith(`/contexts/${parent.id}/test-runs/`) && res.request().method() === 'POST');
       await page.getByRole('button', { name: 'Run answer check', exact: true }).click();
       const startResponse = await started;
       expect(startResponse.status()).toBe(202);
+      expect(startResponse.request().postDataJSON()).toMatchObject({ acknowledge_provider_processing:true,
+        inventory_review:{reviewed_all_files:true,no_known_answer_keys:true} });
       const runId = (await startResponse.json()).result.id;
       await expect.poll(async () => (await req(author, 'GET', `contexts/${parent.id}/test-runs/${runId}/`)).status, { timeout: 180_000 }).toBe('completed');
       const summary = await req(author, 'GET', `contexts/${parent.id}/test-runs/${runId}/`);

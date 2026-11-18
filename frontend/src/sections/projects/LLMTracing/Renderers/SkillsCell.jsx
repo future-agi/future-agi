@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Link as RouterLink } from "react-router-dom";
-import { Box, Chip, Menu, MenuItem, Skeleton, Tooltip, Typography } from "@mui/material";
+import { Box, Button, Chip, Menu, MenuItem, Skeleton, Tooltip, Typography } from "@mui/material";
 import { useQueries } from "@tanstack/react-query";
 import axios, {
   traceSkillsEndpoint,
@@ -70,6 +70,8 @@ export function mapTraceSkillsEntry(entry) {
       version_id: isUuid(skill.version_id) ? skill.version_id : null,
       version: Number.isInteger(skill.version) ? skill.version : null,
       requested_label: typeof skill.requested_label === "string" ? skill.requested_label : null,
+      ...(Array.isArray(skill.agent_key) && skill.agent_key.length === 3 && skill.agent_key.every((part) => typeof part === "string")
+        ? { agent_key: skill.agent_key } : {}),
       agent: typeof skill.agent === "string" ? skill.agent : null,
       evidence: typeof skill.evidence === "string" ? skill.evidence : null,
       loads: Number.isFinite(skill.loads) ? skill.loads : null,
@@ -332,6 +334,21 @@ SkillsCell.propTypes = {
   data: PropTypes.object,
   context: PropTypes.object,
 };
+
+// Resolve agent identity from the load's full (project, service, agent) key;
+// two services can use the same display name, even within the same trace.
+export function SkillAgentCell({ data, value, context }) {
+  const skills = context?.traceSkills?.byTrace?.[data?.trace_id]?.skills || [];
+  const agents = new Map(skills.filter((skill) => skill.agent_key && skill.agent)
+    .map((skill) => [JSON.stringify(skill.agent_key), skill]));
+  if (!agents.size) return value ?? null;
+  return Array.from(agents, ([key, skill]) => (
+    <Button key={key} size="small" data-skill-agent="" onClick={() => context.onOpenAgent(skill)}>
+      {skill.agent}
+    </Button>
+  ));
+}
+SkillAgentCell.propTypes = { data: PropTypes.object, value: PropTypes.string, context: PropTypes.object };
 
 /** The AG Grid column definition for the Skills column (used by TraceGrid). */
 export const skillsColumnDef = (column) => ({

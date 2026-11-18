@@ -1,3 +1,4 @@
+import { openRequestButton } from '../../lib/skills-r3/release-inbox.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -13,7 +14,7 @@ import { SkillsFixtures, answerRule } from '../../lib/skills-fixtures';
 // public-API prerequisites. The assigned reviewer then works only in the UI.
 // Races are injected through public APIs and the E2E-image retention clock.
 const B = '/model-hub/skills/';
-const ACK = "I've checked this version, where it's going, the evidence and what the release will change.";
+const ACK = /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/;
 const fallible = (name: string) => process.env.J4_FALLIBILITY === name;
 
 test('SKILLS-E2E-041: an approved context packet is refused after each race and released only after explicit reviewer renewal', {
@@ -151,8 +152,9 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
   page.on('response', (res) => { if (res.url().includes('/model-hub/skills/release-requests/') || res.status() >= 400) diagnostics.push(`${Date.now() % 100000} ${res.status()} ${res.request().method()} ${new URL(res.url()).pathname.replace('/model-hub/skills/', '')}`); });
   const ack = page.getByRole('checkbox', { name: ACK, exact: true });
   const attempt = async (acknowledge = true) => {
-    if (acknowledge) await ack.check();
     await page.getByRole('button', { name: 'Release to production', exact: true }).click();
+    // A returning reviewer attests in the final move dialog if the exact packet was not checked in this session.
+    if (acknowledge && await ack.isVisible()) await ack.check();
     const response = page.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/release-requests/${requestId}/execute/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Move production', exact: true }).click();
     const result = await response;
@@ -170,12 +172,12 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     // injects the next race, so the race lands after the approved state is
     // shown (as in the registered driver), not inside the refresh itself.
     await expect(page.getByRole('button', { name: 'Release to production', exact: true })).toBeEnabled();
-    await expect(ack).toBeChecked();
+    await expect(page.getByText('You checked this release when you approved it.', {exact:true})).toBeVisible();
   };
   const renewals: unknown[] = [];
   const renew = async (label: string, { reloaded = false } = {}) => {
     const before = await api(reviewer, 'GET', `release-requests/${requestId}/renewal/`);
-    const dialog = page.getByRole('dialog').filter({ hasText: 'Renew release review' });
+    const dialog = page.getByRole('dialog').filter({ hasText: 'Renew request' });
     // A refusal opens the inspection directly; a reloaded page offers the button.
     if (reloaded) await page.getByRole('button', { name: 'Renew request', exact: true }).click();
     await expect(dialog).toBeVisible();
@@ -195,7 +197,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
   // single decision bound to the inspected fingerprint.
   const renewAndApprove = async (label: string) => {
     const before = await api(reviewer, 'GET', `release-requests/${requestId}/renewal/`);
-    const dialog = page.getByRole('dialog').filter({ hasText: 'Renew release review' });
+    const dialog = page.getByRole('dialog').filter({ hasText: 'Renew request' });
     await expect(dialog).toBeVisible();
     for (const row of before.changes) await expect(dialog.locator(`tr[data-field="${row.item}"]`)).toBeVisible();
     const approveRenewed = dialog.getByRole('button', { name: 'Approve again', exact: true });
@@ -209,7 +211,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     if (fallible('renewal')) observed.decisions = [];
     expect(observed).toMatchObject({ revision: before.revision + 1, status: 'approved', fingerprint: before.fingerprint, decisions: [{ actor_id: reviewer.userId, decision: 'approve' }] });
     // The renewed packet itself is attested on the page before release.
-    await expect(ack).not.toBeChecked();
+    await expect(page.getByText('Approved. Confirm the move to release it.', {exact:true})).toBeVisible();
     renewals.push(observed);
     return observed;
   };
@@ -217,7 +219,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
   try {
     await page.goto('/dashboard/skills');
     await page.getByRole('tab', { name: 'Reviews', exact: true }).click();
-    await page.getByRole('button', { name, exact: true }).click();
+    await openRequestButton(page, name).click();
     await approve();
     // Safety policy A -> B -> A.
     const safety = await api(admin, 'GET', `version-safety/${v2.id}/`);
@@ -277,8 +279,8 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     const remaining = await api(reviewer, 'GET', `release-requests/${requestId}/`);
     expect(remaining.packet.evidence.map((ref: { source_id: string }) => ref.source_id)).toEqual([runs[0]]);
     await approve();
-    await ack.check();
     await page.getByRole('button', { name: 'Release to production', exact: true }).click();
+    if (await ack.isVisible()) await ack.check();
     const executed = page.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/release-requests/${requestId}/execute/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Move production', exact: true }).click();
     const response = await executed;

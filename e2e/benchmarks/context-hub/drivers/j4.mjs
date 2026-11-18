@@ -1,3 +1,4 @@
+import { openRequestButton } from '../../../lib/skills-r3/release-inbox.mjs';
 import { randomUUID } from 'node:crypto';
 import { chromium, expect } from '@playwright/test';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
@@ -156,8 +157,8 @@ export async function createDriver({ jobId, runId, registration }) {
       // The reviewer inspects every change, acknowledges it and approves the
       // renewed revision in one decision bound to the inspected fingerprint.
       const renew = async (reviewer, operator, name) => {
-        const dialog = reviewer.getByRole('dialog').filter({ hasText: 'Renew release review' });
-        await expect(dialog.getByText('Renew release review', { exact: true })).toBeVisible();
+        const dialog = reviewer.getByRole('dialog').filter({ hasText: 'Renew request' });
+        await expect(dialog.getByText('Renew request', { exact: true })).toBeVisible();
         // Independent read of exactly what the dialog shows.
         const preview = await read(`release-requests/${submitted.id}/renewal/`, signal);
         const items = preview.changes.map((row) => row.item);
@@ -283,11 +284,11 @@ export async function createDriver({ jobId, runId, registration }) {
           const attach = author.getByRole('checkbox', { name: /^Attach Answer check/ });
           await expect(attach).toHaveCount(input.evidenceIds.length);
           await expect(author.getByText('No matching test evidence. Not tested is not a pass.', { exact: true })).toHaveCount(0);
-          await expect(author.getByRole('button', { name: 'Share and attach', exact: true })).toHaveCount(input.evidenceIds.length);
+          await expect(author.getByRole('row').filter({has: attach}).getByText('Private',{exact:true})).toHaveCount(input.evidenceIds.length);
           // Capture without scrolling or adding an operator action. Private
           // results must occupy the same evidence table, never an empty state.
           await author.screenshot({ path: resolve(output, 'composer-private-evidence.png'), fullPage: true });
-          await op.click(author.getByRole('button', { name: `Share and attach ${input.evidenceIds.length} results`, exact: true }), 'share-all-evidence');
+          await op.click(author.getByRole('button', { name: `Share and attach ${input.evidenceIds.length} selected`, exact: true }), 'share-all-evidence');
           const confirmShare = author.getByRole('dialog');
           for (const id of input.evidenceIds) await expect(confirmShare.getByTitle(id, { exact: true })).toBeVisible();
           await expect(confirmShare.getByText('Private', { exact: true })).toHaveCount(input.evidenceIds.length);
@@ -322,7 +323,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const inbox = await read('review-inbox/', signal);
           requireValue(inbox.results.some((row) => row.id === submitted.id && row.unread), 'Assigned unread request absent');
           await shot(reviewer, 'reviewer-inbox-arrival');
-          await op.transition('assigned-request', () => op.click(reviewer.getByRole('button', { name: input.contextName, exact: true }), 'open-assigned-packet'));
+          await op.transition('assigned-request', () => op.click(openRequestButton(reviewer, input.contextName), 'open-assigned-packet'));
           await expect(ack(reviewer)).toBeVisible();
           await stamp('reviewer-arrival', inbox);
           return;

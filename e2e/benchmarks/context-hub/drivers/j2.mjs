@@ -125,11 +125,15 @@ export async function createDriver({ jobId, runId, registration }) {
           });
           // The context link opens on its application Tests tab (the tab is part of the link).
           await go('inspect-context-tests', `/dashboard/skills/contexts/${input.contextId}?version=${input.versions.recorded}&tab=tests`);
+          await op.click(page.getByRole('tab',{name:'Run a test',exact:true}), 'open-test-setup');
+          const appMode = page.getByRole('radio',{name:/^Test on the application/});
+          await expect(appMode).toBeVisible();
+          if (!await appMode.isChecked()) await op.click(appMode, 'choose-application-test');
           // The application's production binding already exists; a deployment without one registers it here.
           if (await page.getByRole('button', { name: 'Add application target', exact: true }).count()) await op.click(page.getByRole('button', { name: 'Add application target', exact: true }), 'add-application-target');
           await op.click(page.getByRole('button', { name: 'Show app configuration', exact: true }), 'review-runtime-configuration');
           await expect(page.getByText('Pin the application configuration')).toBeVisible();
-          await expect(page.getByText('Source commit')).toBeVisible();
+          await expect(page.getByTestId('pin-sentence')).toContainText(`code version ${commit.slice(0, 7)}`);
           await shot('01-pin-configuration');
           await op.click(page.getByRole('button', { name: 'Pin this configuration', exact: true }), 'pin-application-configuration');
           await expect(page.getByText('Configuration pinned')).toBeVisible();
@@ -217,7 +221,10 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.transition('historical-context', () => op.click(page.getByRole('button', { name: `Repair from the failing v${input.versions.recorded}`, exact: true }), 'repair-from-recorded'));
           await op.click(page.getByRole('checkbox', { name: 'Save a recovery checkpoint and suspend my current draft.', exact: true }), 'confirm-preservation');
           await op.click(page.getByRole('button', { name: 'Preserve and suspend draft', exact: true }), 'preserve-and-suspend');
-          // The exact-origin start follows the explicit preservation by itself.
+          // The head-review control is now under the linked settings disclosure.
+          const settings = page.getByRole('button', {name:'Linked skills and settings', exact:true});
+          await expect(settings).toBeVisible({timeout:60_000});
+          if (await settings.getAttribute('aria-expanded') === 'false') await op.click(settings, 'show-head-review');
           await expect(page.getByRole('button', { name: 'Review against current latest', exact: true })).toBeVisible();
           const checkpoints = await pool.query('SELECT digest, payload FROM model_hub_hubskilldraftcheckpoint WHERE skill_id=$1 AND workspace_id=$2', [input.contextId, input.actor.workspaceId]);
           const draft = await api('GET', `${root}draft/`);
@@ -236,12 +243,12 @@ export async function createDriver({ jobId, runId, registration }) {
           await expect(page.getByText('Saved', { exact: true })).toBeVisible();
           await op.transition('review-candidate', () => op.click(page.getByRole('button', { name: 'Continue to publish' }), 'review-changes'));
           await edit('version-note', () => page.getByLabel('Version note').fill('Cap refunds at the order total'));
-          await op.click(page.getByRole('checkbox', { name: /I reviewed these changes against the current published version/ }), 'review-candidate-against-head');
-          await op.click(page.getByRole('checkbox', { name: /I've read the check warnings/ }), 'acknowledge-warnings');
-          // One publish click acknowledges the reviewed head and publishes; the ticks and note are checked before it.
+          // One visible tick covers both the head comparison and the warnings.
+          const publishAck = page.getByRole('checkbox', {name: new RegExp(
+            `^I've checked the (?:changes|\\d+ changed files?) against v${input.versions.head} and the \\d+ check warnings?$`)});
+          await op.click(publishAck, 'review-candidate-and-warnings-against-head');
           await expect(page.getByRole('button', { name: 'Publish version', exact: true })).toBeEnabled();
-          await expect(page.getByRole('checkbox', { name: /I reviewed these changes against the current published version/ })).toBeChecked();
-          await expect(page.getByRole('checkbox', { name: /I've read the check warnings/ })).toBeChecked();
+          await expect(publishAck).toBeChecked();
           await expect(page.getByLabel('Version note')).toHaveValue('Cap refunds at the order total');
           const published = page.waitForResponse((res) => res.url().endsWith(`${root}draft/publish/`) && res.request().method() === 'POST');
           published.catch(() => {});
@@ -262,6 +269,8 @@ export async function createDriver({ jobId, runId, registration }) {
           // Publishing a repair carries the responder to the repaired release on its Tests tab; the application's
           // current production (its one live runtime binding) is already the baseline for the neighboring cases.
           await expect(page).toHaveURL(new RegExp(`version=${state.repaired.number}&tab=tests`));
+          const runTab = page.getByRole('tab', {name:'Run a test',exact:true});
+          if (await runTab.getAttribute('aria-selected') !== 'true') await op.click(runTab, 'open-matched-test-setup');
           await expectPlan({ candidate: state.repaired.number, reference: input.versions.recorded, titles: Object.values(TITLE) });
           await expect(page.getByRole('combobox', { name: /^Compare with/ })).toContainText(`v${input.versions.head}`);
           await shot('05a-matched-plan');
@@ -312,7 +321,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const historical = run.cases.find((item) => item.historical);
           const cells = run.cells.filter((cell) => cell.case_id === historical.id && cell.variant === 'reference');
           const decision = { packet_sha256: digest({ run: run.id, cell: cells[0].attempt_id, outcomes: [cells[0].tools, cells[0].answer] }), preconditions_sha256: digest({ annotationRevision: run.annotation_revision, fingerprint: run.execution_fingerprint }) };
-          await op.click(page.getByRole('row', { name: new RegExp(`${TITLE.refund}.*Was failing on v`) }).first(), 'open-original-failure-cell');
+          await op.click(page.getByRole('row', { name: `Inspect ${TITLE.refund} Was failing on repeat 1` }).getByText('Was failing on v4', { exact: true }), 'open-original-failure-cell');
           await expect(page.getByText('Observed by the application')).toBeVisible();
           await shot('06-cell-observation');
           await op.click(page.getByRole('radio', { name: /Disagree/ }), 'choose-disagree');
@@ -354,8 +363,11 @@ export async function createDriver({ jobId, runId, registration }) {
           // The matched verification is still the one on screen (the CI ran elsewhere); the responder closes the
           // reviewed cell and continues; nothing is reopened or chosen again.
           await op.click(page.getByRole('button', { name: 'Close', exact: true }), 'close-reviewed-cell');
-          // The optional CI attachment is shown open under the result; no gesture opens it.
-          await expect(page.getByRole('button', { name: 'Attach your CI run (optional)', exact: true })).toHaveAttribute('aria-expanded', 'true', { timeout: 120_000 });
+          // The optional attachment now lives inside the result's Technical details.
+          const currentResult = page.getByRole('region', {name:'Latest result'});
+          const details = currentResult.getByRole('button', {name:'Technical details',exact:true}).first();
+          if (await details.getAttribute('aria-expanded') !== 'true') await op.click(details, 'show-ci-attachment');
+          await expect(currentResult.getByRole('group', {name:'Attach your CI run (optional)',exact:true})).toBeVisible();
           await expect(page.locator(`[data-execution-fingerprint="${state.runs.matched.execution_fingerprint}"]`)).toBeVisible();
           // The pipeline's identity is carried from the CI result into the packet by the operator: a counted reconciliation.
           await op.reconcile('pipeline-identity-into-packet', async () => {

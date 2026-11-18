@@ -1614,7 +1614,10 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         request_start, request_end = self._bounded_request_window
         request_width = request_end - request_start
-        if self.has_runtime_cohort() or self._uses_full_window_time_only_bulk_identity_scan():
+        if self.has_runtime_cohort():
+            # Short post-release windows already fit in the default first slice.
+            return request_width if request_width >= timedelta(minutes=5) else None
+        if self._uses_full_window_time_only_bulk_identity_scan():
             return request_width
         if self._public_scalar_candidate_seed_plan() is not None:
             return request_width
@@ -1677,7 +1680,10 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         request_start, request_end = self._bounded_request_window
         request_width = request_end - request_start
-        if self.has_runtime_cohort() or self._uses_full_window_time_only_bulk_identity_scan():
+        if self.has_runtime_cohort():
+            # Short post-release windows already fit in the default first slice.
+            return request_width if request_width >= timedelta(minutes=5) else None
+        if self._uses_full_window_time_only_bulk_identity_scan():
             return request_width
         if self._public_scalar_candidate_seed_plan() is not None:
             return request_width

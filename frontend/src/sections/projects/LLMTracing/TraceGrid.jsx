@@ -81,11 +81,14 @@ import {
 } from "../observeEvents";
 import { getRandomId } from "src/utils/utils";
 import { useSkillTracesEnabled } from "src/sections/skills/runtime/skillTracesFlag";
-import { SKILLS_COLUMN_ID } from "./defaultColumns";
+import { SKILLS_COLUMN_ID, SKILL_AGENT_COLUMN_ID } from "./defaultColumns";
 import {
   skillsColumnDef,
+  SkillAgentCell,
   TracePageSkillsProbe,
 } from "./Renderers/SkillsCell";
+
+const AgentPanel = React.lazy(() => import("src/sections/skills/runtime/AgentPanel"));
 
 const traceRowIdentity = (row) => {
   const id = row?.trace_id || row?.id;
@@ -179,15 +182,16 @@ const TraceGrid = React.forwardRef(
     // while unknown (an older server, or a contract without the field). The
     // Skills column is hidden while the probe says there are none (§10 ST9).
     const [skillLinksExist, setSkillLinksExist] = useState(null);
-    const showSkillsColumn =
+    const [openAgent, setOpenAgent] = useState(null);
+    const needsSkillHydration =
       skillTracesEnabled &&
       skillLinksExist !== false &&
       (columns || []).some(
         (column) =>
-          column?.id === SKILLS_COLUMN_ID && column?.isVisible !== false,
+          [SKILLS_COLUMN_ID, SKILL_AGENT_COLUMN_ID].includes(column?.id) && column?.isVisible !== false,
       );
     const [traceSkillsState, setTraceSkillsState] = useState(null);
-    const traceSkills = showSkillsColumn && traceSkillsState
+    const traceSkills = needsSkillHydration && traceSkillsState
       ? traceSkillsState
       : IDLE_TRACE_SKILLS;
     const syncShownTraceIdsRef = useRef(null);
@@ -198,7 +202,7 @@ const TraceGrid = React.forwardRef(
     // page must not leave its cells blank.
     const syncShownTraceIds = useCallback(
       (api) => {
-        if (!showSkillsColumn || !isGridApiLive(api)) return;
+        if (!needsSkillHydration || !isGridApiLive(api)) return;
         const first = api.getFirstDisplayedRowIndex?.();
         const last = api.getLastDisplayedRowIndex?.();
         if (!Number.isInteger(first) || !Number.isInteger(last) || last < first) {
@@ -216,12 +220,12 @@ const TraceGrid = React.forwardRef(
             : ids,
         );
       },
-      [showSkillsColumn],
+      [needsSkillHydration],
     );
     syncShownTraceIdsRef.current = syncShownTraceIds;
     useEffect(() => {
-      if (showSkillsColumn) syncShownTraceIds(gridRef?.current?.api);
-    }, [gridRef, showSkillsColumn, syncShownTraceIds]);
+      if (needsSkillHydration) syncShownTraceIds(gridRef?.current?.api);
+    }, [gridRef, needsSkillHydration, syncShownTraceIds]);
     const canUsageSort = supportsUsageSort(
       projectId,
       toBackendFilters([
@@ -466,17 +470,19 @@ const TraceGrid = React.forwardRef(
         canEditTags,
         traceSkills,
         onAddSkillFilters: addSkillFilters,
+        onOpenAgent: ({ agent_key: [projectId, service, agentName], agent: name }) =>
+          setOpenAgent({ projectId, service, agentName, name }),
       }),
       [canEditTags, traceSkills, addSkillFilters],
     );
     // Cell renderers read the page's skills from the grid context; redraw the
     // Skills cells when that hydration settles.
     useEffect(() => {
-      if (!showSkillsColumn) return;
+      if (!needsSkillHydration) return;
       withLiveGridApi(gridRef?.current?.api, (api) =>
-        api.refreshCells?.({ columns: [SKILLS_COLUMN_ID], force: true }),
+        api.refreshCells?.({ columns: [SKILLS_COLUMN_ID, SKILL_AGENT_COLUMN_ID], force: true }),
       );
-    }, [gridRef, showSkillsColumn, traceSkills.status, traceSkills.byTrace]);
+    }, [gridRef, needsSkillHydration, traceSkills.status, traceSkills.byTrace]);
 
     const dataSource = useMemo(
       () => {
@@ -535,6 +541,7 @@ const TraceGrid = React.forwardRef(
                   // project_id as org-scoped (used by the cross-project user
                   // detail page).
                   ...(projectId ? { project_id: projectId } : {}),
+                  ...(projectId && skillTracesEnabled ? { include_skill_links: true } : {}),
                   page_size: requestPageSize,
                   ...(usageSortKey !== "[]"
                     ? { sort_params: usageSortKey }
@@ -688,10 +695,7 @@ const TraceGrid = React.forwardRef(
                 rowCount: discoveredRowCount,
               });
               if (pageNumber === 0 && metadata) {
-                // `skill_links_exist` is the list's cheap probe for skill
-                // loads in the window (provisional name, SKILL-TRACES §7.1).
-                // The generated list contract does not carry it yet, so it
-                // reads as unknown until the server and contract add it.
+                // Older servers omit the project/window probe.
                 const probe =
                   typeof metadata.skill_links_exist === "boolean"
                     ? metadata.skill_links_exist
@@ -809,6 +813,7 @@ const TraceGrid = React.forwardRef(
         // request key changes for every semantic input used above without
         // changing for referential-only parent renders.
         filterRequestKey,
+        skillTracesEnabled,
         beginPageLoad,
         finishPageLoad,
         handoffToFirstPageRequest,
@@ -850,7 +855,9 @@ const TraceGrid = React.forwardRef(
         }
         if (c?.groupBy === "Custom Columns") {
           const colDef = getTraceListColumnDefs(c);
-          columnDefsResult.push({ ...colDef, minWidth: 200, flex: 1 });
+          columnDefsResult.push({ ...colDef, minWidth: 200, flex: 1,
+            ...(skillTracesEnabled && c.id === SKILL_AGENT_COLUMN_ID ? { cellRendererSelector: () => ({ component: SkillAgentCell }) } : {}),
+          });
           continue;
         }
         columnDefsResult.push(getTraceListColumnDefs(c));
@@ -944,6 +951,7 @@ const TraceGrid = React.forwardRef(
         if (event?.column?.colId === "status") return;
         if (RENDERER_CONFIG.tagColumns.includes(event?.column?.getColId()))
           return;
+        if (event?.event?.target?.closest?.("[data-skill-agent]")) return;
         // A Skills chip adds a filter or opens its menu. AG Grid's native
         // click listener runs before React's, so the chip's own
         // stopPropagation cannot keep the trace drawer from opening.
@@ -1043,7 +1051,7 @@ const TraceGrid = React.forwardRef(
             {readMessage}
           </Box>
         )}
-        {showSkillsColumn && enabled && projectId && (
+        {needsSkillHydration && enabled && projectId && (
           <TracePageSkillsProbe
             projectId={projectId}
             traceIds={pageTraceIds}
@@ -1163,6 +1171,11 @@ const TraceGrid = React.forwardRef(
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
+        {openAgent && (
+          <React.Suspense fallback={null}>
+            <AgentPanel open agent={openAgent} onClose={() => setOpenAgent(null)} />
+          </React.Suspense>
+        )}
         {!hideDetailDrawer && (
           <LLMTracingTraceDetailDrawer refreshGrid={refreshGrid} />
         )}

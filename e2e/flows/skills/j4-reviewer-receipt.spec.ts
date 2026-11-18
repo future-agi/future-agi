@@ -1,3 +1,4 @@
+import { openRequestButton } from '../../lib/skills-r3/release-inbox.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -85,7 +86,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     const response = await submission;
     expect(response.status()).toBe(201);
     submitted = (await response.json()).result;
-    await expect(authorPage.getByRole('button', { name, exact: true })).toBeVisible();
+    await expect(openRequestButton(authorPage, name)).toBeVisible();
     await authorPage.evaluate(() => { const value = JSON.parse(localStorage.getItem('settings') || '{}'); localStorage.setItem('settings', JSON.stringify({ ...value, themeMode: 'dark' })); });
     await authorPage.reload();
     await authorPage.getByRole('button', { name: 'Request release', exact: true }).click();
@@ -111,9 +112,9 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
   try {
     await page.goto('/dashboard/skills');
     await page.getByRole('tab', { name: 'Reviews', exact: true }).click();
-    await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
+    await expect(openRequestButton(page, name)).toBeVisible();
     await page.screenshot({ path: `${output}/shots/01-inbox.png` });
-    await page.getByRole('button', { name, exact: true }).click();
+    await openRequestButton(page, name).click();
     const acknowledged = page.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/ });
     await expect(acknowledged).toBeEnabled();
     await expect(page.getByText('Candidate policy requiring independent approval.', { exact: false }).first()).toBeVisible();
@@ -140,7 +141,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     expect(decisions).toEqual([{ reviewer_id: reviewer.userId, packet_fingerprint: preview.fingerprint, request_revision: String(submitted.revision) }]);
     // The same reviewer's attestation of this unchanged revision survives the
     // pending -> approved refresh; it is not re-requested before release.
-    await expect(acknowledged).toBeChecked();
+    await expect(page.getByText('You checked this release when you approved it.', {exact:true})).toBeVisible();
     await page.getByRole('button', { name: 'Release to production', exact: true }).click();
     // Environmental race: policy A -> B -> A leaves visible protection unchanged
     // but must invalidate approval by monotonically advancing release revision.
@@ -152,7 +153,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     expect((await staleResponse).status()).toBe(409);
     // The refusal opens the renewal inspection for the assigned reviewer
     // directly; nothing is renewed or approved until they decide.
-    await expect(page.getByRole('dialog').filter({ hasText: 'Renew release review' })).toBeVisible();
+    await expect(page.getByRole('dialog').filter({ hasText: 'Renew request' })).toBeVisible();
     const beforeRenewal = await probe.pg('SELECT id FROM model_hub_hubskilllabelevent WHERE skill_id = $1 AND to_version = 2', [id]);
     if (process.env.J4_FALLIBILITY === 'policy') beforeRenewal.push({ id: 'unexpected-event' });
     expect(beforeRenewal).toHaveLength(0);
@@ -168,9 +169,9 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
       await renewalPage.goto('/dashboard/skills');
       await renewalPage.getByRole('tab', { name: 'Reviews', exact: true }).click();
       await renewalPage.getByRole('tab', { name: 'My requests', exact: true }).click();
-      await renewalPage.getByRole('button', { name, exact: true }).click();
+      await openRequestButton(renewalPage, name).click();
       await renewalPage.getByRole('button', { name: 'Revise request', exact: true }).click();
-      await expect(renewalPage.getByRole('heading', { name: 'Renew release review', exact: true })).toBeVisible();
+      await expect(renewalPage.getByRole('heading', { name: 'Renew request', exact: true })).toBeVisible();
       await renewalPage.getByLabel('Version to release').click();
       await renewalPage.getByRole('option', { name: /^v2/ }).click();
       await renewalPage.getByLabel('Assigned reviewer').click();
@@ -186,13 +187,13 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     // Reviewer returns through the inbox, not a test-injected request URL.
     await page.goto('/dashboard/skills');
     await page.getByRole('tab', { name: 'Reviews', exact: true }).click();
-    await page.getByRole('button', { name, exact: true }).click();
+    await openRequestButton(page, name).click();
     await expect(acknowledged).not.toBeChecked();
     await acknowledged.check();
     const renewedDecision = page.waitForResponse(res => res.url().endsWith(`/release-requests/${submitted.id}/decisions/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Approve release', exact: true }).click();
     expect((await renewedDecision).ok()).toBe(true);
-    await expect(acknowledged).toBeChecked();
+    await expect(page.getByText('You checked this release when you approved it.', {exact:true})).toBeVisible();
     await page.getByRole('button', { name: 'Release to production', exact: true }).click();
     evidence.policyRace = { restored, beforeRenewal, staleStatus: 409 };
     const executed = page.waitForResponse(res => res.url().endsWith(`/release-requests/${submitted.id}/execute/`) && res.request().method() === 'POST');

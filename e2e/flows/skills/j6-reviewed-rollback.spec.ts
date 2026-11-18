@@ -1,3 +1,4 @@
+import { openRequestButton } from '../../lib/skills-r3/release-inbox.mjs';
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '../../lib/scope-actors';
 import { authInitScript } from '../../lib/auth';
@@ -124,10 +125,10 @@ test('SKILLS-E2E-062: review a lower-number rollback with a retained retired chi
     if (await requestLink.count()) await requestLink.click();
     else {
       // Current inbox rows expose a button; the latest submitted row is first.
-      await page.getByRole('button', { name, exact: true }).first().click();
+      await openRequestButton(page, name).first().click();
     }
     await expect(page).toHaveURL(new RegExp(`request=${fresh.id}`));
-    const acknowledged = page.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true });
+    const acknowledged = page.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/, exact: true });
     await expect(acknowledged).toBeEnabled();
     await expect(page.getByText('Original reviewed synthetic policy.', { exact: false }).first()).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('j6-lower-release-review.png') });

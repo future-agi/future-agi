@@ -269,6 +269,8 @@ export async function createDriver({ jobId, runId, registration }) {
             await expect.poll(async () => (await read(`contexts/${parent.id}/draft/`, signal)).files.find(file => file.path === 'AGENTS.md').content, { timeout: 120_000 }).toBe(root);
             if (index === 0) { await page.unroute(pattern); if (raceError) throw raceError; requireValue(raced, 'Save race did not execute'); }
             const purpose = 'Reviewed purchasing purpose; retain the accepted shared policy.';
+            const details = page.getByRole('button', {name:'Linked skills and settings', exact:true});
+            if (await details.getAttribute('aria-expanded') === 'false') await operator.click(details, `parent-${index}-open-linked-settings`);
             await fill('Context purpose', purpose, `parent-${index}-purpose-edit`);
             await expect.poll(async () => (await read(`contexts/${parent.id}/draft/`, signal)).context_spec.description).toBe(purpose);
             const saved = await read(`contexts/${parent.id}/draft/`, signal);
@@ -357,8 +359,7 @@ export async function createDriver({ jobId, runId, registration }) {
             ledger.fault('unrelated-heartbeat', `parent-${index}-observation-only`);
             // The acknowledgement is keyed to the exact packet revision and fingerprint and carries across
             // pending -> approved; only a cleared acknowledgement (a new revision) is a new review action.
-            if (!(await reviewed.isChecked())) await reviewer.review(`parent-${index}-execution-review`, ['exact-approved-packet', 'current-preconditions'], [], () => reviewed.check(), decision);
-            await expect(reviewed).toBeChecked();
+            await expect(reviewerPage.getByText('You checked this release when you approved it.', {exact:true})).toBeVisible();
             await reviewer.approve(`parent-${index}-authorize-execution`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Release to production', exact: true }).click(), decision);
             await reviewer.approve(`parent-${index}-move-production`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Move production', exact: true }).click(), decision);
             await expect(reviewerPage.getByText('Release receipt', { exact: true })).toBeVisible();

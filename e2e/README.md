@@ -840,3 +840,18 @@ judge model to compose its own JSON — which is why `EVAL-E2E-001` authors its 
 - Frontend test conventions: [`../frontend/TESTING.md`](../frontend/TESTING.md)
 - Architecture spec and decision record:
   [`../../internal-docs/e2e-testing-setup/02-architecture.md`](../../internal-docs/e2e-testing-setup/02-architecture.md)
+
+### Standalone native and managed-model qualifications
+
+Use the default standalone topology for the Skills native drivers and F6. For F10
+and other managed-model flows, recreate the app and fixture on the single managed
+bridge first; the inspector intentionally refuses the native topology. On the
+isolated test VM, with `E2E_STACK=standalone` and `DOCKER_CONTEXT=default`:
+
+```sh
+E2E_STANDALONE_NETWORK=managed-mock bin/e2e up
+E2E_STANDALONE_NETWORK=managed-mock bin/e2e test flows/skills/skill-traces.spec.ts -g 'SKILLS-E2E-110'
+bin/e2e up  # restore the native application interface before native tests
+```
+
+Run the two topologies sequentially. Neither mode grants native guests an external network.

@@ -55,9 +55,9 @@ for (const [flow, language] of [[1, 'python'], [6, 'typescript']] as const) {
     await expect.soft(offered,'Skills is visible by default for a project with real loads').toBeChecked({timeout:3000});
     if (await offered.isChecked()) await chooser.getByRole('button',{name:'Cancel'}).click();
     else { await offered.check(); await chooser.getByRole('button',{name:'Apply'}).click(); }
-    if (await page.getByText('View columns',{exact:true}).isVisible()) await page.keyboard.press('Escape');
+    // Returning from the chooser leaves Display open.
+    await expect(chooser).toBeHidden();
     // AG Grid virtualizes far-right columns; display the two asserted fields.
-    await page.getByRole('button',{name:'Display',exact:true}).click();
     await page.getByText('View columns',{exact:true}).click();
     const popup = page.locator('.MuiPopover-paper:visible').filter({has:page.getByPlaceholder('Search',{exact:true})});
     const box = (name:string) => popup.getByText(name,{exact:true}).locator('..').getByRole('checkbox');
@@ -135,10 +135,12 @@ test('SKILLS-E2E-119: F19 count SDK fetches on both Activity tabs', meta(19, 'Se
 async ({ scenario:s, page }) => {
   s.emit('python', [s.agent('support', [s.refund])]);
   for (const [path, resource] of [['', s.refund], ['contexts/', s.context]] as const) {
-    const activity = await s.call('GET', `${resource.id}/usage/?days=7`);
+    const kind = resource === s.context ? 'agent_context' : 'skill';
+    const activity = await s.call('GET', `${resource.id}/usage/?days=7&kind=${kind}`);
     expect(activity.consumers).toEqual(expect.arrayContaining([expect.objectContaining({ channel:'sdk', sdk_version:'0.8.0' })]));
     await page.goto(`/dashboard/skills/${path}${resource.id}?tab=usage`);
-    await expect(page.getByText(/SDK · 0\.8\.0/).first()).toBeVisible();
+    if (kind === 'skill') await page.getByRole('button', {name:'Counts and details',exact:true}).click();
+    await expect(page.getByRole('table', {name:kind === 'skill' ? 'Skill consumers' : 'Agent context consumers'}).getByText('SDK · 0.8.0', {exact:true})).toBeVisible();
   }
 });
 
@@ -227,8 +229,8 @@ async ({ scenario:s, page, probe }) => {
   await page.goto(`/dashboard/skills/${s.refund.id}?tab=runtime`);
   const versionRow = page.locator('tr[data-row="version"]').first();
   await expect(versionRow).toBeVisible();
-  if (await versionRow.getAttribute('aria-expanded') !== 'true') await versionRow.click();
-  await page.locator('tr[data-row="agent"]').filter({hasText:'billing'}).click();
+  if (await versionRow.getAttribute('aria-expanded') !== 'true') await versionRow.getByRole('cell').first().click();
+  await page.locator('tr[data-row="agent"]').getByText('billing', {exact:true}).click();
   await check();
   const [project] = await probe.pg<{id:string}>('SELECT id FROM tracer_project WHERE name=$1',[s.project]);
   await page.goto(`/dashboard/observe/${project.id}/llm-tracing?tab=traces`);
@@ -238,9 +240,13 @@ async ({ scenario:s, page, probe }) => {
   const chooser = page.getByRole('dialog');
   await chooser.getByRole('checkbox',{name:'Agent',exact:true}).check();
   await chooser.getByRole('button',{name:'Apply',exact:true}).click();
+  await expect(chooser).toBeHidden();
+  await expect(page.getByText('View columns',{exact:true})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('View columns',{exact:true})).toBeHidden();
   const scroll = page.locator('.ag-body-horizontal-scroll-viewport:visible').first();
   await scroll.evaluate(el => { el.scrollLeft = el.scrollWidth; });
-  await row.getByText('billing',{exact:true}).click();
+  await row.getByRole('button',{name:'billing',exact:true}).click();
   await check();
   await scroll.evaluate(el => { el.scrollLeft=0; });
   await row.locator('[col-id="trace_name"]').click();
@@ -279,13 +285,28 @@ for (const [flow, goal] of [[3,'Read production adoption and the reason an agent
       await page.getByRole('link',{name:'Review 32 failed requests'}).click();
       const listResponse = await listed;
       expect(listResponse.status(), 'Observe must execute the Runtime cohort link').toBe(200);
-      const result = (await listResponse.json()).result;
+      const firstPage = (await listResponse.json()).result;
+      let result = firstPage;
+      const seen = firstPage.table.map((row:{trace_id:string}) => row.trace_id);
+      // A full first page reports a lower bound, not the cohort total. Read
+      // the next signed page through Observe before asserting the exact 32.
+      if (firstPage.metadata.total_rows_is_lower_bound) {
+        expect(firstPage.metadata.has_more).toBe(true);
+        const next = page.waitForResponse(r => r.url().includes('/tracer/trace/list_traces_of_session/') && r.request().method() !== 'OPTIONS' &&
+          (r.request().postData() || r.url()).includes('cursor'));
+        await page.getByRole('button',{name:'Next page',exact:true}).click();
+        const response = await next;
+        expect(response.status()).toBe(200);
+        result = (await response.json()).result;
+        seen.push(...result.table.map((row:{trace_id:string}) => row.trace_id));
+      }
+      expect(result.metadata.total_rows_is_lower_bound).toBe(false);
       expect(result.metadata.total_rows).toBe(32);
       const actual = await probe.ch<{trace_id:string}>('SELECT DISTINCT trace_id FROM skill_trace_links FINAL WHERE skill_version_id={version:String}', {version:v2.id});
       expect(actual).toHaveLength(32);
       expect(actual.map(r => r.trace_id)).toContain(failed);
       expect(result.table.length).toBeGreaterThan(0);
-      for (const row of result.table) expect(actual.map(r => r.trace_id)).toContain(row.trace_id);
+      expect(seen.sort()).toEqual(actual.map(r => r.trace_id).sort());
       const params = new URL(page.url()).searchParams;
       expect(params.get('observeLinkFilter')).toContain('skill.trace_cohort');
       expect(params.get('skillSource')).toBeTruthy();
@@ -316,15 +337,22 @@ mockTest.describe('F10 background-safe eval fixture', () => {
     try {
       const trace = s.emit('python',[s.agent('billing',[s.refund],false)])!;
       const [project] = await probe.pg<{id:string}>('SELECT id FROM tracer_project WHERE organization_id=$1 AND name=$2',[actor.organizationId,s.project]);
+      await expect.poll(() => probe.ch("SELECT name FROM spans FINAL WHERE project_id={p:UUID} AND trace_id={t:String} AND parent_span_id=''", {p:project.id,t:trace}), POLL.SPAN_VISIBLE)
+        .toEqual([{name:'Python support request'}]);
       await mockModel.assertReady();
       const path = '/model-hub/eval-templates/create-v2/';
       const name = `${s.project}-review`;
-      const tmpl = await actor.api.post<{result:{id:string}}>(path,{name,eval_type:'llm', instructions:'Review {{answer}}. Reply with exactly this JSON: {"result":"Pass","explanation":"synthetic review"}', model:mockModel.model,output_type:'pass_fail',pass_threshold:0.5,check_internet:false,error_localizer_enabled:false});
-      const mapping = {answer:'output.value'};
+      const tmpl = await actor.api.post<{result:{id:string}}>(path,{name,eval_type:'llm', instructions:'Reply with exactly this JSON: {"result":"Pass","explanation":"reviewed {{answer}}"}', model:mockModel.model,output_type:'pass_fail',pass_threshold:0.5,check_internet:false,error_localizer_enabled:false});
+      const mapping = {answer:'name'};
       const cfg = await actor.api.post<{result:{id:string}}>('/tracer/custom-eval-config/',{project:project.id,eval_template:tmpl.result.id,name,model:mockModel.model,mapping,config:{mapping},error_localizer:false});
       await mockModel.assertReady();
       const task = await actor.api.post<{result:{id:string}}>('/tracer/eval-task/',{name,project:project.id,evals:[cfg.result.id],filters:{project_id:project.id,trace_id:[trace],date_range:[new Date(Date.now()-3600000).toISOString(),new Date(Date.now()+3600000).toISOString()]},run_type:'historical',row_type:'traces',spans_limit:1,sampling_rate:100});
       await expect.poll(() => probe.pg('SELECT status FROM tracer_eval_task WHERE id=$1',[task.result.id]),POLL.EVAL_RESULT).toEqual([{status:'completed'}]);
+      await expect.poll(() => probe.pg('SELECT status,error FROM tracer_eval_logger WHERE eval_task_id=$1',[task.result.id]),POLL.EVAL_RESULT).toEqual([{status:'completed',error:false}]);
+      // Runtime reads the selected ClickHouse mirror. PG task completion alone
+      // can race its arrival and cache a legitimate pre-score snapshot in the UI.
+      await expect.poll(() => probe.ch('SELECT toString(trace_id) AS trace, toUInt8(output_bool) AS score FROM tracer_eval_logger FINAL WHERE eval_task_id={task:String} AND status=\'completed\' AND error=0',
+        {task:task.result.id}),POLL.CDC_VISIBLE).toEqual([{trace,score:1}]);
       await page.goto(`/dashboard/skills/${s.refund.id}?tab=runtime`);
       await expect(page.getByRole('table',{name:'Loaded by'})).toContainText(/1\.00 · 100% evaluated/);
     } finally { await s.revoke(); }

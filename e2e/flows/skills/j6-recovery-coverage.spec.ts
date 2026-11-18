@@ -128,7 +128,7 @@ test('SKILLS-E2E-060: distinguish reported delivery from incomplete and unknown 
       // Times read relatively in the view; each keeps its exact UTC instant as the time element's title.
       await expect(page.getByText(/^As of /).getByTitle(/^\d{1,2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2} UTC$/)).toBeVisible();
       await expect(complete.getByTitle(/^\d{1,2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2} UTC$/)).toBeVisible();
-      await expect(page.getByText(/^3 of 4 connected consumers need a delivery report to confirm the version received\. /)).toBeVisible();
+      await expect(page.getByText('4 apps follow this context. 3 of 4 still need a delivery report to confirm the version received.')).toBeVisible();
       for (const binding of bindings.slice(1)) {
         const row = table.getByRole('row').filter({ hasText: binding.name });
         await expect(row.getByText('No report from this app yet', { exact: true })).toBeVisible();

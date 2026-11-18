@@ -4141,6 +4141,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           {effectiveViewMode === "graph" && !isUserMode && (
             <>
               <PrimaryGraph
+                allowSkillSplit={skillTracesEnabled && selectedTab === "trace" && traceGraphObserveType !== "voice"}
                 filters={
                   selectedTab === "trace"
                     ? primaryTraceValidatedFilters
@@ -4179,6 +4180,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               />
               {showCompare && (
                 <PrimaryGraph
+                  allowSkillSplit={skillTracesEnabled && selectedTab === "trace" && traceGraphObserveType !== "voice"}
                   filters={
                     selectedTab === "trace"
                       ? compareTraceValidatedFilters

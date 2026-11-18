@@ -28,7 +28,9 @@ def project(organization, workspace):
 
 
 @pytest.fixture
-def live_service(runtime_ch, monkeypatch):
+def live_service(runtime_ch, monkeypatch, settings):
+    # This isolated CH25 fixture installs and seeds the direct-write eval schema.
+    settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
     class Service:
         def execute_ch_query(self, sql, params, **kwargs):
             data = list(runtime_ch.query(sql, parameters=params).named_results())

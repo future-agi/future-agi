@@ -103,16 +103,20 @@ test('SKILLS-E2E-021: captured span identity and inputs reach context Tests with
   expect(leaf.status()).toBe(404);
   await page.goto(`/dashboard/skills/contexts/${created.context_id}?version=1`);
   await page.getByRole('tab', { name: 'Tests', exact: true }).click();
+  await page.getByRole('tab', {name:'Cases', exact:true}).click();
   await expect(page.getByRole('table', { name: 'Context regression cases' })).toContainText(requestText);
   // The captured case sits beside the application target; text capture alone is never native evidence.
   // With no application registered the answer check is the default, so choose the application test first.
+  await page.getByRole('tab', {name:'Run a test', exact:true}).click();
   await page.getByRole('radio', { name: /^Test on the application/ }).check();
   await expect(page.getByText('Application target', { exact: true })).toBeVisible();
+  await page.getByRole('tab', {name:'Cases', exact:true}).click();
   await expect(page.getByText('Test cases', { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('J2-context-tests.png'), animations: 'disabled' });
   await page.evaluate(() => { const settings = JSON.parse(localStorage.getItem('settings') || '{}'); settings.themeMode = 'dark'; localStorage.setItem('settings', JSON.stringify(settings)); });
   await page.reload();
   await page.getByRole('tab', { name: 'Tests', exact: true }).click();
+  await page.getByRole('tab', {name:'Cases', exact:true}).click();
   await expect(page.getByRole('table', { name: 'Context regression cases' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('J2-context-tests-dark.png'), animations: 'disabled' });
   await testInfo.attach('J2-capture-independent', { body: JSON.stringify({ evidenceClass: 'synthetic fixture', suite, capture: rows[0], expected, fallibility: ['wrong-source-rejected', 'changed-request-rejected'], nativeQualification: false }), contentType: 'application/json' });

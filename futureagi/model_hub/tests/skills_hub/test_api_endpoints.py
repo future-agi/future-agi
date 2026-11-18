@@ -253,6 +253,20 @@ def test_real_auth_consumption_etag_zip_and_usage(
     }
 
 
+def test_activity_preserves_sdk_diagnosis(client, hub_skill, publish_skill):
+    version = publish_skill(hub_skill).version
+    hub_skill.usage_days.create(
+        version=version, day=timezone.localdate(), channel="sdk", consumer_key="fixture",
+        sdk_language="python", sdk_version="0.8.0", tracing_mode="off", count=1,
+        last_at=timezone.now(),
+    )
+    summary = result(client.get(BASE + str(hub_skill.pk) + "/usage/"))
+    assert summary["by_channel"]["sdk"] == 1
+    consumer, = summary["consumers"]
+    assert (consumer["channel"], consumer["sdk_version"], consumer["tracing_mode"],
+            consumer["can_record"]) == ("sdk", "0.8.0", "off", False)
+
+
 def test_push_idempotency_and_api_key_attribution(
     client, credentials, make_skill_files
 ):
