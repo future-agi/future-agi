@@ -55,19 +55,23 @@ func TestCustomPricing_PerMillionTokens(t *testing.T) {
 		{"small output", 0, 1_000, 0.01},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := cp.Cost(context.Background(), "org-1", "acme-model", tc.input, tc.output)
+			got, ok := cp.Cost(context.Background(), "org-1", "acme-model", tc.input, tc.output, true)
 			if !ok || got < tc.want-1e-9 || got > tc.want+1e-9 {
 				t.Fatalf("want %v USD, got %v (found=%v)", tc.want, got, ok)
 			}
 		})
+	}
+	// The same cached settings retain their legacy interpretation outside Observe.
+	if got, ok := cp.Cost(context.Background(), "org-1", "acme-model", 1_000_000, 0, false); !ok || got != 2500 {
+		t.Fatalf("non-Observe control: want 2500 USD, got %v (found=%v)", got, ok)
 	}
 }
 
 func TestCustomPricing_CachesPositiveAndNegative(t *testing.T) {
 	db := &fakeDB{row: fakeRow{in: 1, out: 1}}
 	cp := NewCustomPricing(db, time.Hour, slog.Default())
-	cp.Cost(context.Background(), "org-1", "m", 10, 10)
-	cp.Cost(context.Background(), "org-1", "m", 10, 10)
+	cp.Cost(context.Background(), "org-1", "m", 10, 10, true)
+	cp.Cost(context.Background(), "org-1", "m", 10, 10, true)
 	if db.calls != 1 {
 		t.Fatalf("positive result must be cached, got %d queries", db.calls)
 	}
@@ -75,10 +79,10 @@ func TestCustomPricing_CachesPositiveAndNegative(t *testing.T) {
 	// Not-found is cached too (Django cached {"not_found": True} for 24h).
 	db2 := &fakeDB{row: fakeRow{err: pgx.ErrNoRows}}
 	cp2 := NewCustomPricing(db2, time.Hour, slog.Default())
-	if _, ok := cp2.Cost(context.Background(), "org-2", "ghost", 10, 10); ok {
+	if _, ok := cp2.Cost(context.Background(), "org-2", "ghost", 10, 10, true); ok {
 		t.Fatal("missing custom model must return ok=false")
 	}
-	cp2.Cost(context.Background(), "org-2", "ghost", 10, 10)
+	cp2.Cost(context.Background(), "org-2", "ghost", 10, 10, true)
 	if db2.calls != 1 {
 		t.Fatalf("negative result must be cached, got %d queries", db2.calls)
 	}
@@ -87,12 +91,12 @@ func TestCustomPricing_CachesPositiveAndNegative(t *testing.T) {
 func TestCustomPricing_DBErrorCachedBriefly(t *testing.T) {
 	db := &fakeDB{row: fakeRow{err: errors.New("conn refused")}}
 	cp := NewCustomPricing(db, time.Hour, slog.Default())
-	if _, ok := cp.Cost(context.Background(), "org-3", "m", 10, 10); ok {
+	if _, ok := cp.Cost(context.Background(), "org-3", "m", 10, 10, true); ok {
 		t.Fatal("db error must yield ok=false")
 	}
 	// Second immediate call must be served from the short error-TTL cache
 	// entry, not re-query the DB.
-	if _, ok := cp.Cost(context.Background(), "org-3", "m", 10, 10); ok {
+	if _, ok := cp.Cost(context.Background(), "org-3", "m", 10, 10, true); ok {
 		t.Fatal("db error must yield ok=false")
 	}
 	if db.calls != 1 {
@@ -109,7 +113,7 @@ func TestCustomPricing_DBErrorCachedBriefly(t *testing.T) {
 	cp.cache[key] = e
 	cp.mu.Unlock()
 
-	if _, ok := cp.Cost(context.Background(), "org-3", "m", 10, 10); ok {
+	if _, ok := cp.Cost(context.Background(), "org-3", "m", 10, 10, true); ok {
 		t.Fatal("db error must yield ok=false")
 	}
 	if db.calls != 2 {
@@ -131,7 +135,7 @@ func TestCustomPricing_DetachesFromCallerCtx(t *testing.T) {
 	cancelledCtx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled before Cost is even called
 
-	c, ok := cp.Cost(cancelledCtx, "org-detach", "m", 10, 10)
+	c, ok := cp.Cost(cancelledCtx, "org-detach", "m", 10, 10, true)
 	if !ok {
 		t.Fatal("want ok=true: the detached query context must not inherit the caller's cancellation")
 	}
@@ -172,7 +176,7 @@ func TestCustomPricing_SweepsExpiredEntriesOnGrowth(t *testing.T) {
 	// One Cost call for a brand-new key forces the write path (cache miss),
 	// which — because len(cache) >= cacheSweepThreshold — sweeps expired
 	// entries before inserting the new one.
-	if _, ok := cp.Cost(context.Background(), "org-new", "m", 10, 10); !ok {
+	if _, ok := cp.Cost(context.Background(), "org-new", "m", 10, 10, true); !ok {
 		t.Fatal("want ok=true")
 	}
 

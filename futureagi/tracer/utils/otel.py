@@ -908,6 +908,7 @@ def convert_otel_span_to_observation_span(
             completion_tokens=completion_tokens,
             model=model,
             organization_id=organization_id,
+            project_type=project.trace_type,
         )
         user_cost_input = attributes.get("gen_ai.cost.input") or attributes.get(
             "llm.cost.prompt"
@@ -931,6 +932,7 @@ def convert_otel_span_to_observation_span(
                 completion_tokens=completion_tokens,
                 model=model,
                 organization_id=organization_id,
+                project_type=project.trace_type,
             )
 
         # Use AttributeRegistry for provider (supports multiple conventions)
@@ -1591,6 +1593,7 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         completion_tokens=completion_tokens,
         model=model,
         organization_id=organization_id,
+        project_type=project.trace_type,
     )
     user_cost_input = attributes.get("gen_ai.cost.input") or attributes.get(
         "llm.cost.prompt"
@@ -1614,6 +1617,7 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
             completion_tokens=completion_tokens,
             model=model,
             organization_id=organization_id,
+            project_type=project.trace_type,
         )
 
     # Use AttributeRegistry for provider (supports multiple conventions)
@@ -1733,6 +1737,8 @@ def calculate_cost(
     completion_tokens: Optional[int],
     model: Optional[str],
     organization_id: Optional[str] = None,
+    *,
+    project_type: str = "observe",
 ):
     """
     Calculates cost for a span. Checks user-provided cost attributes first
@@ -1793,6 +1799,7 @@ def calculate_cost(
         completion_tokens=completion_tokens,
         model=model,
         organization_id=organization_id,
+        project_type=project_type,
     )
     if track_cost:
         attributes.setdefault("fi.cost.kind", "estimated" if value else "unknown")
@@ -1804,6 +1811,8 @@ def calculate_cost_from_tokens(
     completion_tokens: Optional[int],
     model: Optional[str],
     organization_id: Optional[str] = None,
+    *,
+    project_type: str = "observe",
 ):
     """
     Calculates the cost of a model call based on the number of prompt and completion tokens.
@@ -1867,12 +1876,13 @@ def calculate_cost_from_tokens(
                 else:
                     # input_cost/output_cost are entered in the UI as price per
                     # million tokens ("Input/Output Token Cost Per Million
-                    # Tokens"); scale by 1_000_000 to match that unit.
+                    # Tokens"). Keep the existing unit outside Observe.
+                    unit = 1_000_000 if project_type == "observe" else 1_000
                     prompt_tokens_cost_usd_dollar = prompt_tokens * (
-                        custom_pricing["input_cost"] / 1_000_000
+                        custom_pricing["input_cost"] / unit
                     )
                     completion_tokens_cost_usd_dollar = completion_tokens * (
-                        custom_pricing["output_cost"] / 1_000_000
+                        custom_pricing["output_cost"] / unit
                     )
                     cost = (
                         prompt_tokens_cost_usd_dollar

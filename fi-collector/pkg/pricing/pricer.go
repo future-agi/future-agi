@@ -3,6 +3,8 @@ package pricing
 import (
 	"context"
 	"sync/atomic"
+
+	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 )
 
 // Pricer chains the token-based pricing sources. The first two keep Django's
@@ -32,9 +34,9 @@ func (p *Pricer) SetTable(t *Table) { p.table.Store(t) }
 // TokenCost returns (cost, true) when priceable. Gate mirrors Django:
 // `if model and (prompt_tokens > 0 or completion_tokens > 0)`.
 func (p *Pricer) TokenCost(
-	ctx context.Context, orgID, model string, promptTokens, completionTokens int32,
+	ctx context.Context, orgID, model string, promptTokens, completionTokens int32, projectID string,
 ) (float64, bool) {
-	return p.tokenCost(ctx, orgID, model, promptTokens, completionTokens, false)
+	return p.tokenCost(ctx, orgID, model, promptTokens, completionTokens, false, projectID)
 }
 
 // OpenRouterTokenCost is TokenCost for a span that came through OpenRouter,
@@ -44,13 +46,13 @@ func (p *Pricer) TokenCost(
 // provider entry, so a slug like anthropic/claude-haiku-4.5, which has no
 // same-provider bare key, is still priced.
 func (p *Pricer) OpenRouterTokenCost(
-	ctx context.Context, orgID, model string, promptTokens, completionTokens int32,
+	ctx context.Context, orgID, model string, promptTokens, completionTokens int32, projectID string,
 ) (float64, bool) {
-	return p.tokenCost(ctx, orgID, model, promptTokens, completionTokens, true)
+	return p.tokenCost(ctx, orgID, model, promptTokens, completionTokens, true, projectID)
 }
 
 func (p *Pricer) tokenCost(
-	ctx context.Context, orgID, model string, promptTokens, completionTokens int32, viaOpenRouter bool,
+	ctx context.Context, orgID, model string, promptTokens, completionTokens int32, viaOpenRouter bool, projectID string,
 ) (float64, bool) {
 	if model == "" || (promptTokens <= 0 && completionTokens <= 0) {
 		return 0, false
@@ -60,8 +62,12 @@ func (p *Pricer) tokenCost(
 		return c, true
 	}
 	if p.custom != nil && orgID != "" {
+		// Use the resolved project, not the sender's project_type hint. Unknown
+		// and non-Observe projects keep their existing custom estimate.
+		resolved := auth.FromContext(ctx)
+		observe := resolved != nil && resolved.ProjectTypeInWorkspace(resolved.WorkspaceID, projectID) == auth.ProjectTypeObserve
 		// An org's own price for the exact name beats the prefix fallbacks.
-		if c, ok := p.custom.Cost(ctx, orgID, model, promptTokens, completionTokens); ok {
+		if c, ok := p.custom.Cost(ctx, orgID, model, promptTokens, completionTokens, observe); ok {
 			return c, true
 		}
 	}

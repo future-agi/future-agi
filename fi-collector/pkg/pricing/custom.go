@@ -72,7 +72,7 @@ func NewCustomPricing(db rowQuerier, ttl time.Duration, log *slog.Logger) *Custo
 // Cost applies the configured USD rates per million input and output tokens.
 // It returns ok=false when the organization has no price for this model.
 func (c *CustomPricing) Cost(
-	ctx context.Context, orgID, model string, promptTokens, completionTokens int32,
+	ctx context.Context, orgID, model string, promptTokens, completionTokens int32, observe bool,
 ) (float64, bool) {
 	key := orgID + "\x00" + model
 
@@ -122,6 +122,11 @@ func (c *CustomPricing) Cost(
 	if !e.found {
 		return 0, false
 	}
-	return float64(promptTokens)*(e.inPerMillion/1_000_000) +
-		float64(completionTokens)*(e.outPerMillion/1_000_000), true
+	// Keep legacy estimates outside Observe; the cache contains raw configured rates.
+	unit := 1_000.0
+	if observe {
+		unit = 1_000_000
+	}
+	return float64(promptTokens)*(e.inPerMillion/unit) +
+		float64(completionTokens)*(e.outPerMillion/unit), true
 }

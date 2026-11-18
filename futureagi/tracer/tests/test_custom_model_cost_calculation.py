@@ -14,6 +14,7 @@ from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.models.workspace import Workspace
 from model_hub.models.custom_models import CustomAIModel
+from tracer.models.observation_span import ObservationSpan
 from tracer.utils.otel import calculate_cost_from_tokens
 
 
@@ -64,8 +65,7 @@ class TestCustomModelCostCalculation:
         assert cost == pytest.approx(2.50 + 10.00)
 
     def test_custom_model_cost_scales_linearly_below_a_million_tokens(self):
-        """1000 tokens at $2.50/1M input should cost a fraction of a cent, not
-        the pre-fix $0.0025 (which was itself 1000x the correct $0.0000025)."""
+        """1,000 tokens at $2.50 per million cost $0.0025, not $2.50."""
         cost = calculate_cost_from_tokens(
             prompt_tokens=1_000,
             completion_tokens=0,
@@ -73,3 +73,49 @@ class TestCustomModelCostCalculation:
             organization_id=str(self.organization.id),
         )
         assert cost == pytest.approx(2.50 * 1_000 / 1_000_000)
+
+
+@pytest.mark.django_db
+def test_observe_bulk_create_estimates_only_missing_cost(
+    auth_client, observe_project, session_trace, project, trace, user
+):
+    model = CustomAIModel.objects.create(
+        organization=observe_project.organization,
+        workspace=observe_project.workspace,
+        user=user,
+        user_model_id="parcel-cost-fixture",
+        provider="openai",
+        input_token_cost=2.50,
+        output_token_cost=10,
+    )
+    span = {
+        "project": str(observe_project.pk),
+        "trace": str(session_trace.pk),
+        "observation_type": "llm",
+        "model": model.user_model_id,
+        "prompt_tokens": 1_000_000,
+    }
+    response = auth_client.post(
+        "/tracer/observation-span/bulk_create/",
+        {
+            "spans": [
+                {**span, "name": "estimate"},
+                {**span, "name": "reported zero", "cost": 0},
+                {**span, "name": "reported nonzero", "cost": 0.75},
+                {
+                    **span,
+                    "project": str(project.pk),
+                    "trace": str(trace.pk),
+                    "name": "experiment control",
+                },
+            ]
+        },
+        format="json",
+    )
+    assert response.status_code == 200
+    assert dict(
+        ObservationSpan.objects.filter(trace=session_trace).values_list("name", "cost")
+    ) == {"estimate": 2.50, "reported zero": 0, "reported nonzero": 0.75}
+    assert (
+        ObservationSpan.objects.get(trace=trace, name="experiment control").cost == 2500
+    )
