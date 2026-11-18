@@ -26,6 +26,7 @@ from simulate.services.scenario_faults import (
     scenario_key,
     target_of,
 )
+from simulate.services.scenario_refs import arrives_on_tool, step_tools
 
 if TYPE_CHECKING:
     from simulate.models import HarnessEnvironmentVersion
@@ -132,15 +133,7 @@ def needed_production_tools(scenario: Any, blocked: list[str]) -> list[str]:
     alternative paths calls none of them."""
 
     def calls(steps: Any) -> set[str]:
-        return (
-            {
-                str(step.get("tool"))
-                for step in steps
-                if isinstance(step, dict) and step.get("tool") in blocked
-            }
-            if isinstance(steps, list)
-            else set()
-        )
+        return {tool for tool in step_tools(steps) if tool in blocked}
 
     if any(
         isinstance(path, list) and path and not calls(path)
@@ -606,10 +599,7 @@ def _acts(actor: object) -> bool:
     """Whether a scenario's actor acts in the world: it has actions, or one of the agent's tool calls brings it in."""
     if not isinstance(actor, dict):
         return False
-    trigger = actor.get("trigger")
-    return bool(actor.get("actions")) or (
-        isinstance(trigger, dict) and trigger.get("kind") == "on_tool"
-    )
+    return bool(actor.get("actions")) or arrives_on_tool(actor) is not None
 
 
 def door_problem(

@@ -228,11 +228,11 @@ def draft_review(environment: Any) -> DraftReview:
     base = _scenarios(environment, base=True)
     actors = (
         _saved_actors(environment)
-        if any(one["kind"] == "tool" and one["action"] == "removed" for one in changes)
+        if any(one["kind"] == "tool" for one in changes)
         else {}
     )
     for change in changes:
-        change["affects"] = affects(change, scenarios, base)
+        change["affects"] = affects(change, scenarios, base, actors)
         change["depends_on"] = depends_on(
             change, changes, scenarios, base, base_actors=actors
         )
