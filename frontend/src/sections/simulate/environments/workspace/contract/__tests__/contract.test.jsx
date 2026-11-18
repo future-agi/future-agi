@@ -69,12 +69,14 @@ describe("RlContractPanel", () => {
 
   it("leaves the world to World & tools", () => {
     renderPanel();
-    expect(screen.queryByText("World state · database")).toBeNull();
+    expect(screen.queryByText("World state · database schema")).toBeNull();
   });
 
   it("renders the world-internals cards over real data only: tables and tools", () => {
     renderWorld();
-    expect(screen.getByText("World state · database")).toBeInTheDocument();
+    expect(
+      screen.getByText("World state · database schema"),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("Tools").length).toBeGreaterThan(0);
     // The synthesised handler/check source cards are gone: their bodies were
     // generated from the env manifest by _fixtures/envInternals, not read from

@@ -33,14 +33,18 @@ import {
   isSaved,
   overUploadLimit,
   participantFilesOf,
+  rejectedRowsOf,
+  usageOf,
 } from "./sources.constants";
 
 const GRID = "minmax(180px, 2fr) 56px 1fr 1.1fr 1fr 80px 0.9fr 28px";
 const DRAWER_PARAMS = ["source", "sourceTab", "at"];
 
-const stateOf = (source) => {
-  const problem = COPY.problem[source.status];
-  if (problem) return { problem: problem(source.status_note) };
+// Rejected rows show before the file is saved too, not only once it is.
+const stateOf = (source, formats) => {
+  const rejected = source.status === "not_saved" && rejectedRowsOf(source) > 0;
+  const problem = COPY.problem[rejected ? "rows_rejected" : source.status];
+  if (problem) return { problem: problem(source, formats) };
   return { label: COPY.state[source.status] };
 };
 
@@ -97,19 +101,25 @@ export default function SourcesSection({
       { replace: true },
     );
 
-  const setRemoved = (id, value) =>
+  const updateSources = (change) =>
     queryClient.setQueryData(sourceSummaryKey(envId), (current) =>
-      current
-        ? {
-            ...current,
-            sources: current.sources.map((source) =>
-              source.source_id === id
-                ? { ...source, ui: { ...source.ui, removed: value } }
-                : source,
-            ),
-          }
-        : current,
+      current ? { ...current, sources: change(current.sources) } : current,
     );
+  const setRemoved = (id, value) =>
+    updateSources((list) =>
+      list.map((source) =>
+        source.source_id === id
+          ? { ...source, ui: { ...source.ui, removed: value } }
+          : source,
+      ),
+    );
+  // A saved file goes to Removed; one not saved yet is discarded.
+  const remove = (source) =>
+    isSaved(source)
+      ? setRemoved(source.source_id, true)
+      : updateSources((list) =>
+          list.filter((one) => one.source_id !== source.source_id),
+        );
 
   const addFiles = (picked) => {
     const limit = overUploadLimit(picked, capabilities?.upload);
@@ -211,6 +221,7 @@ export default function SourcesSection({
             <SourceRow
               key={source.source_id}
               source={source}
+              formats={capabilities?.upload?.formats}
               readOnly={readOnly}
               onOpen={openSource}
               onRemove={() => setRemoving(source)}
@@ -311,15 +322,21 @@ export default function SourcesSection({
       <ConfirmDialog
         open={Boolean(removing)}
         onClose={() => setRemoving(null)}
-        title={removing ? COPY.removeTitle(removing.name) : ""}
-        content={removing ? COPY.removeBody(isSaved(removing)) : ""}
+        title={
+          removing ? COPY.removeTitle(removing.name, isSaved(removing)) : ""
+        }
+        content={
+          removing
+            ? COPY.removeBody(isSaved(removing), usageOf(removing).rules.length)
+            : ""
+        }
         action={
           <Button
             size="small"
             variant="contained"
             color="error"
             onClick={() => {
-              setRemoved(removing.source_id, true);
+              remove(removing);
               setRemoving(null);
             }}
           >
@@ -344,9 +361,16 @@ SourcesSection.propTypes = {
   onReviewChanges: PropTypes.func,
 };
 
-function SourceRow({ source, readOnly, onOpen, onRemove, onReviewRefresh }) {
+function SourceRow({
+  source,
+  formats,
+  readOnly,
+  onOpen,
+  onRemove,
+  onReviewRefresh,
+}) {
   const reading = source.status === "reading";
-  const { label, problem } = stateOf(source);
+  const { label, problem } = stateOf(source, formats);
   const role = ROLES.find((one) => one.id === source.role);
   const visibility = VISIBILITY.find((one) => one.id === source.visibility);
   const personal =
@@ -421,10 +445,7 @@ function SourceRow({ source, readOnly, onOpen, onRemove, onReviewRefresh }) {
               noWrap
               sx={{
                 typography: "s1",
-                color:
-                  source.status === "ready"
-                    ? "text.primary"
-                    : "status.warning.fg",
+                color: problem ? "status.warning.fg" : "text.primary",
                 ...(problem && {
                   textDecoration: "underline dotted",
                   textUnderlineOffset: "3px",
@@ -494,6 +515,8 @@ function SourceRow({ source, readOnly, onOpen, onRemove, onReviewRefresh }) {
 }
 
 SourceRow.propTypes = {
+  // The upload route's formats, named in the Not supported hint.
+  formats: PropTypes.arrayOf(PropTypes.string),
   source: PropTypes.shape({
     source_id: PropTypes.string.isRequired,
     name: PropTypes.string.isRequired,

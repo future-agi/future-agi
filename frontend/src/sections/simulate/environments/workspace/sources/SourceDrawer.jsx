@@ -13,7 +13,7 @@ import {
 import SideDrawer from "../../components/SideDrawer";
 import SourceUsage from "./SourceUsage";
 import WhatWasRead from "./WhatWasRead";
-import { SOURCES_COPY, isSaved } from "./sources.constants";
+import { SOURCES_COPY, isSaved, usageOf } from "./sources.constants";
 
 const PURPOSES = ["policy", "reference", "seed_records"];
 
@@ -24,22 +24,6 @@ const defaultVisibility = (role) => {
 };
 
 const fromKb = (source) => source.origin?.kind === "knowledge_base";
-
-// What the file feeds once saved, from what reading it found.
-const usageOf = (source) => {
-  const parsed = source.ui?.parsed;
-  const saved = isSaved(source);
-  return {
-    rules:
-      saved && source.role === "policy" && parsed?.kind === "text"
-        ? parsed.passages.filter((passage) => passage.rule)
-        : [],
-    seeds:
-      saved && source.role === "seed_records" && parsed?.kind === "table"
-        ? [parsed]
-        : [],
-  };
-};
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
