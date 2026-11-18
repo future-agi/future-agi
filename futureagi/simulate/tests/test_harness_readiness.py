@@ -1316,6 +1316,44 @@ class TestApi:
         assert header["capability_snapshot"]["answer"]["kind"] == "ready"
         assert _get(auth_client, environment.id).json()["answer"]["kind"] == "blocked"
 
+    def test_the_run_header_report_has_the_capabilities_report_s_shape(
+        self, user, workspace, storage, auth_client, django_capture_on_commit_callbacks
+    ):
+        """The run dialog and the run header read one report: the run's kept snapshot carries every field and row
+        field GET capabilities serves, less what only a selection adds, and an old snapshot reads the same way."""
+        from simulate.serializers.harness_environment import (
+            HarnessCapabilityReportSerializer,
+        )
+
+        environment = _environment(user, workspace, storage, "rd-api-shape")
+        _certify(environment, storage)
+        run = _committed_run(environment, django_capture_on_commit_callbacks)
+        live = _get(auth_client, environment.id).json()
+
+        def header():
+            return auth_client.get(
+                f"/simulate/v3/test-executions/{run.test_execution_id}/calls/"
+            ).json()["execution"]["capability_snapshot"]
+
+        selection_only = {"needed_by", "affected"}
+        kept = header()
+        assert set(kept) == set(live) - {"selection"}
+        assert [set(row) for row in kept["rows"]] == [
+            set(row) - selection_only for row in live["rows"]
+        ]
+        assert HarnessCapabilityReportSerializer(data=kept).is_valid()
+
+        # A snapshot kept before workers and blockers were read serves them as the report does now.
+        old = {
+            key: value
+            for key, value in run.capability_snapshot.items()
+            if key not in ("workers", "blockers")
+        }
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            capability_snapshot=old
+        )
+        assert set(header()) == set(kept)
+
 
 class TestDoneWhen:
     def test_production_only_refund_tool_blocks_routing_then_goes_stale(
