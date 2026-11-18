@@ -957,14 +957,23 @@ def control_ran(control: Mapping[str, Any]) -> bool:
 
 
 def build_proofs(suite: Mapping[str, bytes]) -> dict[str, Any]:
-    """A build's proofs of its cases: those its certify made on the sealed runtime (`scenario-proofs.json`, live
-    where a running service served a step) over those its authoring made offline (`proofs.json`), case by case."""
+    """A build's proofs of its cases, case by case the newer of two: the one its certify made on the sealed runtime
+    (`scenario-proofs.json`, live where a running service served a step) and the one its authoring made offline
+    (`proofs.json`). The live one wins when their times are equal or either has none."""
     offline = _json(suite, "proofs.json")
     live = _json(suite, "scenario-proofs.json")
-    return {
-        **(offline if isinstance(offline, dict) else {}),
-        **(live if isinstance(live, dict) else {}),
-    }
+    offline = offline if isinstance(offline, dict) else {}
+    live = live if isinstance(live, dict) else {}
+    merged = dict(offline)
+    for key, entry in live.items():
+        earlier = offline.get(key)
+        made, other = (
+            _proved_at(entry) if isinstance(entry, Mapping) else None,
+            _proved_at(earlier) if isinstance(earlier, Mapping) else None,
+        )
+        if made is None or other is None or made >= other:
+            merged[key] = entry
+    return merged
 
 
 def _validation(

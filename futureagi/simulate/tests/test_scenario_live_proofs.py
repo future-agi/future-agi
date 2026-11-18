@@ -147,3 +147,28 @@ def test_validate_on_an_install_with_no_hosted_runtime_answers_cleanly(
     assert "can't be validated here" in response.json()["message"]
     assert response.json()["retryable"] is False
     assert HostedHarnessJob.no_workspace_objects.count() == jobs
+
+
+def test_the_newer_of_a_live_and_an_offline_proof_is_kept_per_case():
+    """A live file from an earlier certify never hides a newer offline proof; on equal or missing times live wins."""
+    older_live = {**LIVE, "proved_at": "2099-01-01T00:00:00Z"}
+    newer_offline = {**OFFLINE, "proved_at": "2099-01-02T00:00:00Z"}
+    untimed_live = {k: v for k, v in LIVE.items() if k != "proved_at"}
+    suite = {
+        "proofs.json": json.dumps(
+            {
+                "a": newer_offline,
+                "b": newer_offline,
+                "c": {**OFFLINE, "proved_at": "2099-01-01T00:00:00Z"},
+            }
+        ).encode(),
+        "scenario-proofs.json": json.dumps(
+            {"a": older_live, "b": untimed_live, "c": older_live}
+        ).encode(),
+    }
+
+    proofs = build_proofs(suite)
+
+    assert proofs["a"] == newer_offline
+    assert proofs["b"] == untimed_live
+    assert proofs["c"] == older_live
