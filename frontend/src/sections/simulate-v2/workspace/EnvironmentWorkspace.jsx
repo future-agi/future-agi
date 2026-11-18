@@ -161,12 +161,12 @@ import { envOf } from "../_mock/runGroup";
 import { RUN_PLAN_PARAMS, runPlanRequestOf } from "../_mock/runPlanLink";
 import { withPinnedWorld, worldToolsFor } from "../_mock/toolFit";
 import {
+  isBrowserAgent,
   proofKindOf,
   runModeSwitchOf,
-  isComingSoon,
-  COMING_SOON_NOTE,
   runDefaultsOf,
 } from "../_mock/rsiModel";
+import { allowedSitesOf } from "../_mock/browserAgents";
 import { finishBuildPatch } from "../_mock/quickBuild";
 import PrivateUpdateBanner from "./PrivateUpdateBanner";
 import { privateUpdateOf } from "../_mock/envCopy";
@@ -251,7 +251,7 @@ const TABS = [
   {
     id: "evals",
     label: "Evaluations",
-    icon: "solar:shield-check-linear",
+    icon: "solar:global-linear",
     badge: "evals",
   },
   {
@@ -2597,7 +2597,8 @@ export default function EnvironmentWorkspace() {
               Sealed · Live · Prompt only (RSI PRD "Environments, defined"):
               where the agent runs and how its tools are answered — which is
               how much a pass here proves. Quiet outline, the drift chip's
-              shape. Browser and computer-use agents read "Coming soon".
+              shape. A browser environment names how many sites its
+              browser may open (T36).
             */}
             {(() => {
               const chips = [];
@@ -2666,13 +2667,20 @@ export default function EnvironmentWorkspace() {
                   });
               }
               /* "Managed in code" lives in the Code drawer — the header's Code button opens it. */
-              if (isComingSoon(env))
+              if (isBrowserAgent(env)) {
+                const n = allowedSitesOf(env, envState).length;
                 chips.push({
-                  key: "soon",
-                  icon: "solar:clock-circle-linear",
-                  label: "Coming soon",
-                  tip: COMING_SOON_NOTE,
+                  key: "sites",
+                  icon: "solar:global-linear",
+                  label: `${n} allowed site${n === 1 ? "" : "s"}`,
+                  tip: "The browser opens only these sites. Anything else is blocked and reported in the trial.",
+                  tipAction: "Click to see them.",
+                  onClick: () =>
+                    navigate(
+                      paths.dashboard.simulate.environmentStep(envId, "world"),
+                    ),
                 });
+              }
               return chips.map((c) => (
                 <Tooltip
                   key={c.key}
@@ -2962,14 +2970,6 @@ export default function EnvironmentWorkspace() {
               {gapTip && (
                 <Typography sx={{ typography: "s3", color: "inherit" }}>
                   {gapTip}
-                </Typography>
-              )}
-              {isComingSoon(env) && (
-                <Typography
-                  sx={{ typography: "s3", color: "inherit", opacity: 0.8 }}
-                >
-                  Coming soon — runs work here, but improvements don&apos;t run
-                  on browser or computer-use agents yet.
                 </Typography>
               )}
             </Stack>

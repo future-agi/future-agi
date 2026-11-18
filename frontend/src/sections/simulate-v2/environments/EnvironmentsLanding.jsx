@@ -4,12 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
-import {
-  WORLD_TYPES,
-  detectPaste,
-  prebuiltWorlds,
-  worldTotal,
-} from "./landingData";
+import { detectPaste, prebuiltWorlds, worldTotal } from "./landingData";
 import { newAgentChoicesFor } from "../agents/connect/agentConnectData";
 import ConnectCatalog from "../agents/connect/ConnectCatalog";
 import { SectionHead, WorldCard } from "./LandingBits";
@@ -353,15 +348,12 @@ ConnectSection.propTypes = {
 
 function PrebuiltSection({ sectionRef, onBrowse }) {
   const worlds = useMemo(() => prebuiltWorlds(), []);
-  /* Three upfront, each a different agent type — the rest are in Browse all.
-     Coming-soon types (computer use) are never featured: they can't be built yet. */
+  /* Three upfront, each a different agent type — the rest are in Browse all. */
   const featured = useMemo(() => {
-    const soon = new Set(WORLD_TYPES.filter((t) => t.soon).map((t) => t.id));
     const seen = new Set();
     /* Only ready, launch-set worlds lead: not benchmarks, third-party or pending ones. */
     const open = worlds.filter(
       (w) =>
-        !soon.has(w.type) &&
         (w.readiness || "ready") === "ready" &&
         !w.entry?.benchmark &&
         !w.entry?.host &&

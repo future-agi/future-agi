@@ -12,7 +12,6 @@ import { mcpServerHost } from "../_mock/mcpServers";
 import { ENVIRONMENT_TEMPLATES } from "../_mock/environments";
 import {
   CATALOGUE,
-  CATALOGUE_ALL,
   rlOpenOf,
   sourceOf,
   splitsOf,
@@ -517,8 +516,8 @@ export const itemCount = CONNECT_GROUPS.reduce((n, g) => n + g.items.length, 0);
 */
 
 /* The kind of agent a world is built for — the same as the agent types:
-   voice and chat, with browser and computer use coming soon. Worlds built
-   for other kinds of agent (coding, robotics) aren't offered. */
+   voice, chat, coding and computer use (browser agents). Worlds built for
+   other kinds of agent (robotics) aren't offered. */
 export const WORLD_TYPES = [
   { id: "voice", label: "Voice" },
   { id: "chat", label: "Chat" },
@@ -616,8 +615,7 @@ const worldCardOf = (t, entry = null) => {
 const LAUNCH_ORDER = ["V15", "V01", "V02", "V13", "V16"];
 
 /**
- * Prebuilt worlds — the 11-world launch catalogue (launch order first, then
- * by task ID), plus worlds for agent types that are Coming soon.
+ * Prebuilt worlds — the launch catalogue, launch order first, then by task ID.
  */
 export const prebuiltWorlds = () => {
   const byId = Object.fromEntries(ENVIRONMENT_TEMPLATES.map((t) => [t.id, t]));
@@ -634,17 +632,7 @@ export const prebuiltWorlds = () => {
         `${b.catalogueId[0] === "V" ? 0 : 1}${b.catalogueId}`,
       );
     });
-  const used = new Set(CATALOGUE_ALL.map((c) => c.templateId));
-  const others = ENVIRONMENT_TEMPLATES.filter(
-    (t) =>
-      t.agentType !== "twin_backed" &&
-      worldTypeOf(t.agentType) &&
-      !used.has(t.id),
-  )
-    .map((t) => worldCardOf(t))
-    /* Only worlds for agent types that are Coming soon sit outside the catalogue. */
-    .filter((w) => WORLD_TYPES.find((x) => x.id === w.type)?.soon);
-  return [...tasks, ...others];
+  return tasks;
 };
 
 /** Worlds a search, a type, a domain and a readiness leave. Search covers the task, its ID and its tools. */

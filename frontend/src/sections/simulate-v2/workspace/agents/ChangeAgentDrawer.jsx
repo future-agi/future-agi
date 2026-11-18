@@ -62,7 +62,7 @@ export default function ChangeAgentDrawer({
 }) {
   const navigate = useNavigate();
   const { agents, state } = useConnectedAgents();
-  /* Agents it can be built for: not a template's stand-in, not archived or cut off, not Coming soon. */
+  /* Agents it can be built for: not a template's stand-in, not archived or cut off. */
   const candidates = useMemo(
     () => buildableAgentsOf(agents).filter((a) => a.key !== currentKey),
     [agents, currentKey],

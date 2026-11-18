@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import CodeBlock from "src/components/code-block";
+import RunWithAlk from "./RunWithAlk";
 import {
   PYTHON_DEFINE,
   AGENT_PROMPT,
@@ -1137,9 +1138,11 @@ function WhereItRuns({ choice }) {
             ? "Built from the branch above each run · nothing to deploy"
             : "Built from the uploaded bundle each run · nothing to deploy"}
         </Typography>
-        <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
-          Running locally is coming soon with ALK, our open-source toolkit.
-        </Typography>
+        <Box sx={{ mt: 1.25 }}>
+          <RunWithAlk
+            path={choice === "source" ? "./your-repo" : "./your-bundle"}
+          />
+        </Box>
       </Box>
     </Stack>
   );
@@ -1155,7 +1158,8 @@ WhereItRuns.propTypes = {
 export function FlowPanel({ choice, prefill = null, bare = false }) {
   const connect = useContext(ConnectModeContext);
   const opt = OPTIONS.find((o) => o.id === choice);
-  const Body = PANELS[choice] || PanelNotImplemented;
+  /* An unknown way in opens the agent picker rather than an empty panel. */
+  const Body = PANELS[choice] || PanelConnectedAgent;
   /* Building an environment from code asks where the agent runs too. */
   const [runtime, setRuntime] = useState({ endpoint: "", tokenRef: "" });
   const runtimeCtx = useMemo(
@@ -1713,12 +1717,19 @@ function PanelRunningAgent() {
               key={t.id}
               icon={t.icon}
               label={t.label}
-              comingSoon={t.comingSoon}
               on={agentType === t.id}
               onClick={() => setAgentType(t.id)}
             />
           ))}
         </Box>
+        {agentType === "computer" && (
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}
+          >
+            Each step we send a screenshot of the sandbox browser; it answers
+            with the next action.
+          </Typography>
+        )}
       </Box>
       <Box>
         <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>
@@ -1995,7 +2006,6 @@ function PanelHostedPlatform() {
               key={t.id}
               icon={t.icon}
               label={t.label}
-              comingSoon={t.comingSoon}
               on={agentType === t.id}
               onClick={() => pickAgentType(t.id)}
             />
@@ -2030,7 +2040,6 @@ function PanelHostedPlatform() {
                 label={
                   PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name
                 }
-                comingSoon={p.comingSoon}
                 on={chosen?.id === p.id}
                 onClick={() => setPlatform(p.id)}
               />
@@ -3322,16 +3331,6 @@ function PanelBuildLocally() {
             : "It shows up in My environments, marked Managed in code."}
         </Typography>
       </Stack>
-    </Box>
-  );
-}
-
-function PanelNotImplemented() {
-  return (
-    <Box sx={{ p: 2.5 }}>
-      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-        Coming soon.
-      </Typography>
     </Box>
   );
 }

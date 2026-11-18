@@ -11,10 +11,10 @@ import {
 import Iconify from "src/components/iconify";
 import SpanDetailPane from "src/components/traceDetail/SpanDetailPane";
 import {
-  CHECKS_SOON,
   LIMITS_SOON,
   TOPOLOGY,
   participantsOf,
+  workerChecksOf,
 } from "../_mock/participants";
 import { participantsGraphOf } from "../_mock/participantsGraph";
 import { sequenceOf } from "../_mock/participantsSequence";
@@ -89,9 +89,71 @@ function Recorded({ p }) {
 }
 Recorded.propTypes = { p: PropTypes.object.isRequired };
 
-/* What isn't recorded yet, and the call's shared state. The Tool / Used by
-   list is gone: the graph draws each tool under the worker that called it. */
-function Details({ agent, task }) {
+/* Each worker's own checks, one row per worker — beside the verdict, never
+   changing it. Only a problem takes colour. */
+function WorkerChecks({ p }) {
+  const rows = workerChecksOf(p);
+  if (!rows.length) return null;
+  const cols = "160px 70px 160px 1fr";
+  const cell = { typography: "s3", minWidth: 0 };
+  return (
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: cols,
+        columnGap: 2,
+        rowGap: 0.75,
+      }}
+    >
+      {["Worker", "Retries", "Duplicate write", "What the caller was told"].map(
+        (h) => (
+          <Box
+            key={h}
+            sx={{ ...cell, fontWeight: 600, color: "text.secondary" }}
+          >
+            {h}
+          </Box>
+        ),
+      )}
+      {rows.map((r) => (
+        <Box key={r.id} sx={{ display: "contents" }}>
+          <Box sx={{ ...cell, color: "text.primary" }}>{r.name}</Box>
+          <Box
+            sx={{
+              ...cell,
+              color: "text.secondary",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {r.retries}
+          </Box>
+          <Box
+            sx={{
+              ...cell,
+              color: r.duplicate.bad ? "error.main" : "text.secondary",
+            }}
+          >
+            {r.duplicate.text}
+          </Box>
+          <Box
+            sx={{
+              ...cell,
+              color: r.told.bad ? "error.main" : "text.secondary",
+            }}
+          >
+            {r.told.text}
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+WorkerChecks.propTypes = { p: PropTypes.object };
+
+/* Each worker's checks, what isn't recorded yet, and the call's shared
+   state. The Tool / Used by list is gone: the graph draws each tool under
+   the worker that called it. */
+function Details({ agent, task, p }) {
   const [open, setOpen] = useState(false);
   return (
     <Box>
@@ -125,21 +187,29 @@ function Details({ agent, task }) {
           >
             <Box>Tool limits</Box>
             <Box>{LIMITS_SOON}</Box>
-            <Box>Checks on worker events</Box>
-            <Box>{CHECKS_SOON}</Box>
           </Box>
+          <WorkerChecks p={p} />
           <SharedState agent={agent} task={task} />
         </Stack>
       )}
     </Box>
   );
 }
-Details.propTypes = { agent: PropTypes.object, task: PropTypes.object };
+Details.propTypes = {
+  agent: PropTypes.object,
+  task: PropTypes.object,
+  p: PropTypes.object,
+};
 
 /* What went wrong, one line each: where (Step 6, Reply to step 8) and what. The line
    itself opens that step — no separate "Go to" (17 Nov, "too verbose"). */
 function IssueLine({ at, text, tone, title, icon, onClick }) {
-  const color = tone === "warning" ? "warning.main" : tone === "muted" ? "text.secondary" : "error.main";
+  const color =
+    tone === "warning"
+      ? "warning.main"
+      : tone === "muted"
+        ? "text.secondary"
+        : "error.main";
   return (
     <Box
       component={onClick ? "button" : "div"}
@@ -159,7 +229,11 @@ function IssueLine({ at, text, tone, title, icon, onClick }) {
         "&:hover .issue-text": onClick ? { textDecoration: "underline" } : {},
       }}
     >
-      <Iconify icon={icon || "solar:danger-circle-linear"} width={14} sx={{ flexShrink: 0 }} />
+      <Iconify
+        icon={icon || "solar:danger-circle-linear"}
+        width={14}
+        sx={{ flexShrink: 0 }}
+      />
       <Typography
         component="span"
         sx={{
@@ -175,7 +249,11 @@ function IssueLine({ at, text, tone, title, icon, onClick }) {
       <Typography
         component="span"
         className="issue-text"
-        sx={{ typography: "s3", color: "text.primary", textUnderlineOffset: "2px" }}
+        sx={{
+          typography: "s3",
+          color: "text.primary",
+          textUnderlineOffset: "2px",
+        }}
       >
         {text}
       </Typography>
@@ -214,7 +292,12 @@ function Issues({ seq, placed, onGo }) {
       const critical = f.mark === "critical";
       return {
         key: f.key || f.text,
-        at: f.n == null ? "No step" : f.row === "answer" ? `Reply to step ${f.n}` : `Step ${f.n}`,
+        at:
+          f.n == null
+            ? "No step"
+            : f.row === "answer"
+              ? `Reply to step ${f.n}`
+              : `Step ${f.n}`,
         text: `${unsure ? "Unsure" : critical ? "Critical sub-goal failed" : "Sub-goal missed"}: ${f.text}`,
         tone: unsure ? "warning" : critical ? "error" : "muted",
         title: f.n == null ? `Not tied to a step · ${f.untied}` : undefined,
@@ -446,7 +529,7 @@ export default function HandoffTimeline({
       )}
       <Divider />
       <Box sx={{ px: 2, py: 1.5 }}>
-        <Details agent={agent} task={task} />
+        <Details agent={agent} task={task} p={p} />
       </Box>
     </Stack>
   );

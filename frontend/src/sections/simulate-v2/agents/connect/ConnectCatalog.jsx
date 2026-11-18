@@ -610,7 +610,6 @@ function CatalogRow({
   active = false,
   query = "",
 }) {
-  const inert = !!(item.soon || item.later);
   const rowRef = useRef(null);
   /* The row the arrow keys are on stays in view. */
   useEffect(() => {
@@ -620,7 +619,6 @@ function CatalogRow({
   return (
     <ButtonBase
       ref={rowRef}
-      disabled={inert}
       onClick={() => onPick(item)}
       aria-pressed={selected}
       data-active={active || undefined}
@@ -647,14 +645,14 @@ function CatalogRow({
         "&.Mui-disabled": { opacity: 0.55 },
       }}
     >
-      <LogoTile logo={item.logo} icon={item.icon} muted={inert} />
+      <LogoTile logo={item.logo} icon={item.icon} />
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Typography
           noWrap
           sx={{
             typography: "s2_1",
             fontWeight: 500,
-            color: inert ? "text.secondary" : "text.primary",
+            color: "text.primary",
           }}
         >
           {hit ? (
@@ -678,9 +676,7 @@ function CatalogRow({
         </Typography>
         {!single && (
           <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
-            {inert ? (
-              "Coming soon"
-            ) : ready ? (
+            {ready ? (
               /* Its account is connected already: say what's waiting there. */
               <>
                 <Box
@@ -711,34 +707,32 @@ function CatalogRow({
         )}
       </Box>
       {/* Looks like a button; the whole row is the click. */}
-      {!inert && (
-        <Box
-          className="cat-connect"
-          sx={{
-            flexShrink: 0,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 0.5,
-            px: 1.25,
-            height: dense ? 24 : 28,
-            borderRadius: "4px",
-            border: "1px solid",
-            borderColor: "divider",
-            /* Dense: the row is the click; Connect shows on hover or focus. */
-            ...(dense && !selected && { opacity: 0 }),
-            typography: "s3",
-            fontWeight: 600,
-            color: "text.primary",
-            transition: "border-color .12s ease",
-          }}
-        >
-          {selected && <Iconify icon="solar:check-circle-linear" width={14} />}
-          {/* The verb says what happens next: code is uploaded, the rest connected. */}
-          {selected
-            ? "Selected"
-            : ready?.action || (item.kind === "upload" ? "Upload" : "Connect")}
-        </Box>
-      )}
+      <Box
+        className="cat-connect"
+        sx={{
+          flexShrink: 0,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 0.5,
+          px: 1.25,
+          height: dense ? 24 : 28,
+          borderRadius: "4px",
+          border: "1px solid",
+          borderColor: "divider",
+          /* Dense: the row is the click; Connect shows on hover or focus. */
+          ...(dense && !selected && { opacity: 0 }),
+          typography: "s3",
+          fontWeight: 600,
+          color: "text.primary",
+          transition: "border-color .12s ease",
+        }}
+      >
+        {selected && <Iconify icon="solar:check-circle-linear" width={14} />}
+        {/* The verb says what happens next: code is uploaded, the rest connected. */}
+        {selected
+          ? "Selected"
+          : ready?.action || (item.kind === "upload" ? "Upload" : "Connect")}
+      </Box>
     </ButtonBase>
   );
 }

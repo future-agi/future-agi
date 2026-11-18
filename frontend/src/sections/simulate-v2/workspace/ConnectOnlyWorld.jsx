@@ -4,8 +4,6 @@ import Iconify from "src/components/iconify";
 import { SectionCard } from "../components/primitives";
 import {
   proofKindOf,
-  isComingSoon,
-  COMING_SOON_NOTE,
   platformTestingOf,
   numbersPinned,
 } from "../_mock/rsiModel";
@@ -210,8 +208,7 @@ const withArticle = (phrase) =>
 
 export function EnvironmentKindNote({ env, envState, sx, compact = false }) {
   const agent = envState?.agent;
-  const soon = isComingSoon(env);
-  if (!agent && !soon) return null;
+  if (!agent) return null;
   const pk = agent ? proofKindOf(agent) : null;
   const local = runsLocally(env);
   const copy = pk
@@ -248,15 +245,11 @@ export function EnvironmentKindNote({ env, envState, sx, compact = false }) {
     .join(" ");
   /* Compact: the label alone, everything else on hover — for a strip that carries other things. */
   if (compact) {
-    if (!pk && !soon) return null;
+    if (!pk) return null;
     return (
       <Tooltip
         arrow
-        title={[
-          short && `${pk?.label} — ${short}.`,
-          tip,
-          soon ? COMING_SOON_NOTE : null,
-        ]
+        title={[short && `${pk.label} — ${short}.`, tip]
           .filter(Boolean)
           .join(" ")}
       >
@@ -274,7 +267,7 @@ export function EnvironmentKindNote({ env, envState, sx, compact = false }) {
           <Typography
             sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}
           >
-            {pk?.label || "Coming soon"}
+            {pk.label}
           </Typography>
         </Stack>
       </Tooltip>
@@ -301,7 +294,6 @@ export function EnvironmentKindNote({ env, envState, sx, compact = false }) {
           </Box>
         )}
         {short && ` — ${short}`}
-        {soon && `${pk ? " · " : ""}${COMING_SOON_NOTE}`}
       </Typography>
       {tip && (
         <Tooltip arrow title={tip}>

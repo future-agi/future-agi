@@ -5,7 +5,7 @@
   five starter cases. No sample agents: a world is used with your agent.
 
   The five launch worlds lead. A task whose starter cases aren't all proved
-  is Coming soon and can't be run; a retired release can still be copied,
+  reads Checks pending and can't be run; a retired release can still be copied,
   with a notice; a withdrawn one can't be adopted at all and names a safe
   replacement. Existing copies keep their runs either way.
 

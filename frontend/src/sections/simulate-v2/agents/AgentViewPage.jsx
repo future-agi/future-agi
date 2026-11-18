@@ -85,13 +85,7 @@ import BuildEnvironmentDialog from "./BuildEnvironmentDialog";
 import SwitchVersionDialog from "./SwitchVersionDialog";
 import MovePlatformDialog from "./MovePlatformDialog";
 import AgentSetupCard from "./AgentSetupCard";
-import {
-  COMING_SOON_NOTE,
-  agentStatusOf,
-  fixDepthOf,
-  isComingSoon,
-  mainEnvOf,
-} from "../_mock/rsiModel";
+import { agentStatusOf, fixDepthOf, mainEnvOf } from "../_mock/rsiModel";
 import { OUTSIDE_CHANGE_LABEL, isOutsideChange } from "../_mock/agentSync";
 import { runIdentityOf } from "../_mock/runIdentity";
 import { limitsOf } from "./agentLimits";
@@ -728,13 +722,6 @@ export default function AgentViewPage() {
                 <Pill>{`${replication.label} · ${replication.proofLabel}`}</Pill>
               </Box>
             </Tooltip>
-            {isComingSoon(agent) && (
-              <Tooltip arrow title={COMING_SOON_NOTE}>
-                <Box component="span">
-                  <QuietTag>Coming soon</QuietTag>
-                </Box>
-              </Tooltip>
-            )}
             {/* Draft until its connection check passes; Needs attention when
                 something it relied on lapsed after a good test. */}
             {checksConnection(agent) &&

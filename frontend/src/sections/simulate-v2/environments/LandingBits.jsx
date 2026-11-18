@@ -158,8 +158,7 @@ SectionHead.propTypes = {
 };
 
 /**
- * One prebuilt world: name, type, what it is, what's inside. A world for an
- * agent type that's Coming soon (computer use) is shown, named, and inert.
+ * One prebuilt world: name, type, what it is, what's inside.
  */
 
 export function WorldCard({
@@ -167,12 +166,11 @@ export function WorldCard({
   onOpen,
   actions = false,
   selected = false,
-  soon = false,
 }) {
   /* Ready to use: the two things to do with a world sit on its card (the
      catalogue's Use with my agent, the builder's Customize). */
   const actionable =
-    actions && !soon && (!world.readiness || world.readiness === "ready");
+    actions && (!world.readiness || world.readiness === "ready");
   const count = world.splits
     ? Object.values(world.splits).reduce((n, v) => n + (Number(v) || 0), 0)
     : world.scenarios;
@@ -182,14 +180,12 @@ export function WorldCard({
   };
   return (
     <Box
-      role={soon ? undefined : "button"}
-      tabIndex={soon ? -1 : 0}
-      aria-pressed={soon ? undefined : selected}
-      aria-disabled={soon || undefined}
-      onClick={soon ? undefined : () => onOpen(world)}
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      onClick={() => onOpen(world)}
       onKeyDown={(e) => {
         if (
-          !soon &&
           e.target === e.currentTarget &&
           (e.key === "Enter" || e.key === " ")
         ) {
@@ -205,15 +201,11 @@ export function WorldCard({
         flexDirection: "column",
         alignItems: "stretch",
         textAlign: "left",
-        cursor: soon ? "default" : "pointer",
+        cursor: "pointer",
         borderColor: (t) =>
-          selected && !soon
-            ? alpha(t.palette.text.primary, 0.5)
-            : t.palette.divider,
+          selected ? alpha(t.palette.text.primary, 0.5) : t.palette.divider,
         transition: "border-color .12s ease",
-        "&:hover": soon
-          ? {}
-          : { borderColor: (t) => alpha(t.palette.text.primary, 0.3) },
+        "&:hover": { borderColor: (t) => alpha(t.palette.text.primary, 0.3) },
         "&:focus-visible": focusRing,
       }}
     >
@@ -230,35 +222,31 @@ export function WorldCard({
             fontWeight: 600,
             flex: 1,
             minWidth: 0,
-            color: soon ? "text.secondary" : "text.primary",
+            color: "text.primary",
           }}
         >
           {world.name}
         </Typography>
-        {soon && <QuietTag>Coming soon</QuietTag>}
         {/* A third-party world says whether it runs here: listing isn't support. */}
-        {!soon && world.host && (
+        {world.host && (
           <QuietTag>
             {world.host.support === "runs" ? "Runs here" : "Listed only"}
           </QuietTag>
         )}
         {/* Only an unusual state is a tag; RL access and versions live in the drawer. */}
-        {!soon &&
-          !world.host &&
-          world.readiness &&
-          world.readiness !== "ready" && (
-            <QuietTag>
-              {world.readiness === "soon"
-                ? "Checks pending"
-                : world.readiness === "retired"
-                  ? "Retired"
-                  : world.readiness === "unsupported"
-                    ? "Discovered · Unsupported"
-                    : world.readiness === "access"
-                      ? "Needs access"
-                      : "Withdrawn"}
-            </QuietTag>
-          )}
+        {!world.host && world.readiness && world.readiness !== "ready" && (
+          <QuietTag>
+            {world.readiness === "soon"
+              ? "Checks pending"
+              : world.readiness === "retired"
+                ? "Retired"
+                : world.readiness === "unsupported"
+                  ? "Discovered · Unsupported"
+                  : world.readiness === "access"
+                    ? "Needs access"
+                    : "Withdrawn"}
+          </QuietTag>
+        )}
         <QuietTag>{world.typeLabel}</QuietTag>
       </Stack>
       <Typography
@@ -338,5 +326,4 @@ WorldCard.propTypes = {
   /* Show Use with my agent and Customize on the card. */
   actions: PropTypes.bool,
   selected: PropTypes.bool,
-  soon: PropTypes.bool,
 };

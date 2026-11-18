@@ -26,14 +26,14 @@ export const PLATFORM_LOGOS = {
 
 /* Hosted-platform providers grouped by agent type — the platform roster
    only makes sense once we know what kind of agent is being connected.
-   Agents supports voice and chat; computer-use agents are listed as
-   Coming soon. Frameworks (LangGraph, CrewAI, Claude Agent SDK,
+   Agents supports voice, chat and computer use (a browser the agent drives,
+   hosted on Browserbase, Anthropic or Skyvern). Frameworks (LangGraph, CrewAI, Claude Agent SDK,
    OpenAI Agents SDK…) aren't hosted platforms: they come in as code,
    through a repository or an upload. */
 export const AGENT_TYPES = [
   { id: "voice", label: "Voice", icon: "solar:phone-calling-rounded-linear" },
   { id: "chat", label: "Chat", icon: "solar:chat-round-linear" },
-  { id: "computer", label: "Computer use", icon: "solar:monitor-linear", comingSoon: true },
+  { id: "computer", label: "Computer use", icon: "solar:monitor-linear" },
 ];
 
 /*
@@ -131,7 +131,7 @@ export const PLATFORM_KEY_HELPER = "Stored encrypted. Used only to read the agen
 export const OPENAI_AGENT_BUILDER_NOTE = "OpenAI agents come in as code, through the Agents SDK.";
 export const TRACEAI_FRAMEWORK_NOTE = "traceAI traces every framework here except Microsoft Agent Framework.";
 
-export const isLivePlatform = (p) => !!p && !p.comingSoon && !p.later;
+export const isLivePlatform = (p) => !!p && !p.later;
 export const firstLive = (platforms) => platforms.find(isLivePlatform);
 
 /* Full country list from src/assets/data/countries. Ordering surfaces

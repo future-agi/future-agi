@@ -31,9 +31,7 @@ const rowsOf = (id, fallback) =>
   DATASETS.find((d) => d.id === id)?.rowCount ?? fallback;
 
 /*
-  Datasets an agent could be improved against — listed so the option is
-  visible, but there's no dataset improvement flow yet: no results, no runs,
-  and every place they show says Coming soon.
+  Datasets an agent could be improved against, by dataset id.
 */
 export const DATASET_SOURCES = [
   {

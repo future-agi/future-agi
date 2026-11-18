@@ -19,6 +19,7 @@ import {
   replicationOf,
   runLocationReason,
 } from "../../_mock/replication";
+import RunWithAlk from "../../environments/RunWithAlk";
 
 /*
   The copy a simulation drives (PRD v6 Story 1): how the platform makes it,
@@ -346,6 +347,11 @@ export function RunLocationChoice({ value = "hosted", onChange, dense }) {
             : "We build it from the code for every run."}
         </HintLine>
       </Typography>
+      {value !== "sdk" && (
+        <Box sx={{ mt: 1.25 }}>
+          <RunWithAlk />
+        </Box>
+      )}
     </Box>
   );
 }

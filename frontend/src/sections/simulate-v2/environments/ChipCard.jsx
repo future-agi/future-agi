@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Tooltip, Typography } from "@mui/material";
+import { Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { focusRing } from "./landingStyles";
 
@@ -10,14 +10,13 @@ export default function ChipCard({
   label,
   on,
   onClick,
-  comingSoon,
   tag,
   disabled,
 }) {
-  /* A quiet tag after the label — "Phase 2" — and "Coming soon" said, not only hovered.
-     `disabled` is the same inert chip with its own tag ("Coming soon"). */
-  const shownTag = comingSoon ? "Coming soon" : tag;
-  const inert = comingSoon || disabled;
+  /* A quiet tag after the label, said rather than only hovered. `disabled`
+     is the same chip, inert. */
+  const shownTag = tag;
+  const inert = !!disabled;
   const chip = (
     <Stack
       direction="row"
@@ -85,13 +84,6 @@ export default function ChipCard({
       )}
     </Stack>
   );
-  if (comingSoon) {
-    return (
-      <Tooltip title="Coming soon" arrow placement="top">
-        <Box sx={{ display: "inline-flex" }}>{chip}</Box>
-      </Tooltip>
-    );
-  }
   return chip;
 }
 ChipCard.propTypes = {
@@ -100,7 +92,6 @@ ChipCard.propTypes = {
   label: PropTypes.node,
   on: PropTypes.bool,
   onClick: PropTypes.func,
-  comingSoon: PropTypes.bool,
   tag: PropTypes.string,
   disabled: PropTypes.bool,
 };

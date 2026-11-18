@@ -31,12 +31,69 @@ export const NO_ANSWER = "No answer came back.";
 export const NO_EVENTS = "No events from this worker.";
 export const NOT_TIED = "Not tied to a worker";
 export const NOT_DECLARED = "Not declared";
-/* Not recorded yet: which worker may call which tool, and the checks built on
-   worker events. */
+/* Not recorded yet: which worker may call which tool. */
 export const LIMITS_SOON =
   "Not enforced — which worker may call which tool isn't checked yet.";
-export const CHECKS_SOON =
-  "Coming soon — retries, duplicate writes and what the caller was told, per worker.";
+
+/* A tool that changes something in the world — run twice, it's a duplicate. */
+const WRITES =
+  /^(issue|create|refund|cancel|update|book|send|post|charge|add|delete|set|submit|approve|transfer|reschedule)/i;
+
+/**
+ * Each worker's own checks (plan multiagent.md: "whether the coordinator
+ * retried, whether the payment worker created a duplicate, and whether the
+ * customer was incorrectly told the refund succeeded"). Read from the
+ * worker's events, beside the verdict — they never change it. A worker
+ * with no events is Unmeasured.
+ *   [{ id, name, retries, duplicate, told: { text, bad } }]
+ */
+export const workerChecksOf = (p) =>
+  (p?.workers || []).map((w) => {
+    const base = { id: w.id, name: w.name };
+    if (w.state === "unobserved" || !p.observed)
+      return {
+        ...base,
+        retries: "Unmeasured",
+        duplicate: { text: "Unmeasured", bad: false },
+        told: { text: "Unmeasured", bad: false },
+      };
+    const timedOut = w.state === "timeout";
+    const after = timedOut ? p.after || {} : {};
+    /* The same tool asked again: by the worker itself, or the coordinator
+       sending the timed-out work back. */
+    const seen = {};
+    (w.calls || []).forEach((c) => {
+      seen[c.name] = (seen[c.name] || 0) + 1;
+    });
+    const again =
+      Object.values(seen).reduce((n, k) => n + (k - 1), 0) +
+      (after.retried ? 1 : 0);
+    /* A write that landed twice — or the coordinator's retry of a write the
+       timed-out worker had already attempted. */
+    const twice = Object.entries(seen).find(
+      ([name, k]) => k > 1 && WRITES.test(name),
+    );
+    const dupName =
+      twice?.[0] ||
+      (after.duplicateWrite
+        ? [...(w.calls || [])].reverse().find((c) => WRITES.test(c.name))
+            ?.name || "its last write"
+        : null);
+    const failed = timedOut || !!w.failed;
+    const told = after.toldSuccess
+      ? { text: "Told it worked — it didn't", bad: true }
+      : failed
+        ? { text: "Told it didn't finish", bad: false }
+        : { text: "Told the result", bad: false };
+    return {
+      ...base,
+      retries: again ? `${again}` : "None",
+      duplicate: dupName
+        ? { text: `${dupName} ran twice`, bad: true }
+        : { text: "None", bad: false },
+      told,
+    };
+  });
 
 /** 0:42 — seconds into the call. */
 export const clock = (s) => {
@@ -848,6 +905,8 @@ export const participantsOf = ({ agent, task }) => {
     traces: observed && agent?.values?.sendsTraces !== false,
     topology: TOPOLOGY,
     observed,
+    /* What the coordinator did after a worker timed out, from its events. */
+    after: observed ? h.after || null : null,
     enforced: h.enforced,
     evidence: observed
       ? "Observed — from the delegation and return events this run recorded, under the same run ID."
@@ -881,8 +940,6 @@ export const participantsOf = ({ agent, task }) => {
 /* ── Engineer detail: the exact words, sizes and timings behind each row ── */
 
 export const TIMEOUT_S = 30;
-export const TRACES_SOON =
-  "Coming soon — linking a tool call to its span (TH-9024)";
 
 /* What the coordinator asks for, in the imperative, and what to reply with. */
 const askOf = (name) => {

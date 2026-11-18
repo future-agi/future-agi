@@ -101,7 +101,7 @@ const label = {
  * button checks, so every way in (the button, Prove it before it ships, Fix
  * again on a reopened issue) follows the same rules: a fix already in flight
  * opens that fix, an issue no agent is linked to connects one, and Start
- * waits for the agent's gate (not archived, disconnected or Coming soon,
+ * waits for the agent's gate (not archived or disconnected,
  * its code read confirmed), live-test consent, a built environment and at
  * least one scenario picked. An issue the feed hasn't confirmed is noted,
  * not held: the fix reproduces it first.

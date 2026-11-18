@@ -23,7 +23,7 @@ import { currentAgentVersion, productionAgentVersion } from "../_mock/versions";
 import { measureTodayRun, measuredSummaryOf } from "../_mock/measureToday";
 import { runPlan } from "../_mock/proofs";
 import { needsRecheck } from "../improvements/behindProduction";
-import { isComingSoon, needsLiveConsent } from "../_mock/rsiModel";
+import { needsLiveConsent } from "../_mock/rsiModel";
 import { agentStatusFor, mainEnvFor } from "../_mock/improvementPolicy";
 import {
   connectedAgentsFrom,
@@ -388,7 +388,7 @@ export const productionVersionOf = (agent, state, issue, fallbackEs) => {
 
 /**
  * Why Fix can't start, said rather than hidden: the agent is disconnected or
- * archived, its environment is Coming soon (browser, computer use), or it runs
+ * archived, or it runs
  * live and needs the user's consent first. Null when Fix can start.
  *   { key, title, body, action?: "connections" | "overview" }
  */
@@ -412,13 +412,6 @@ export const fixGateOf = (agent, env, es = null) => {
         status.reason ||
         "Reconnect it on the agent's Connections tab to fix this issue.",
       action: "connections",
-    };
-  }
-  if (isComingSoon(agent) || (env && isComingSoon(env))) {
-    return {
-      key: "coming-soon",
-      title: "Coming soon",
-      body: "Browser and computer-use agents are coming soon. Improvements don't run on them yet.",
     };
   }
   /* A newly connected code agent is fixed, like it's run, once what we read

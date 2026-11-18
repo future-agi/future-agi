@@ -18,33 +18,24 @@
       full · settings · suggestion (agents we can only call) · coding-agent
   · Platform testing — how each hosted platform tests and ships a candidate:
                    a copy, a pinned draft, a branch or a draft version.
-  · Coming soon — agent types outside Phase 1 (browser, computer use…).
+  · Browser agents — the environment's browser opens only its allowed sites.
   · Personal data — production-derived text keeps the problem, not the person.
 */
 import { definitionOf, sourceKindOf } from "./agentRegistry";
 
 /* ── agent types ──────────────────────────────────────────────────────────── */
 
-const COMING_SOON = new Set([
-  "browser",
-  "computer",
-  "cua",
-  "sim",
-  "robotics",
-  "background",
-]);
-
-/** Agent types the PRD defers past Phase 1 — shown, tagged "Coming soon". */
-export const isComingSoon = (thing) => {
+/** A browser or computer-use agent: its code drives a browser we start in the
+    sandbox, limited to the sites its environment allows (plan T36, T47). */
+export const isBrowserAgent = (thing) => {
   const s =
     thing?.surface || thing?.typeId || thing?.values?.surface || thing?.type;
   return (
-    COMING_SOON.has(String(s || "").replace(/_agent$/, "")) ||
-    /browser|computer/i.test(String(thing?.typeId || ""))
+    ["browser", "computer", "cua"].includes(
+      String(s || "").replace(/_agent$/, ""),
+    ) || /browser|computer/i.test(String(thing?.typeId || ""))
   );
 };
-export const COMING_SOON_NOTE =
-  "Coming soon — browser and computer-use agents. You can look around; improvements don't run on them yet.";
 
 /* ── how deep a fix can go ───────────────────────────────────────────────── */
 

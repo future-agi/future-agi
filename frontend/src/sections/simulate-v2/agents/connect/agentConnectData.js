@@ -74,7 +74,7 @@ export const AGENT_CONNECT_GROUPS = [
     id: "platforms",
     title: "Hosted platforms",
     reach:
-      "Your API key and agent — voice or chat, tested in your account on a copy, draft or branch.",
+      "Your API key and agent — voice, chat or computer use, tested in your account on a copy, draft or branch.",
     items: [
       platformItem("vapi", "Vapi", ["voice", "chat"], {
         logo: "vapi",
@@ -111,6 +111,20 @@ export const AGENT_CONNECT_GROUPS = [
       platformItem("copilot_studio", "Microsoft Copilot Studio", ["chat"], {
         icon: "simple-icons:microsoft",
         need: "Entra app · agent",
+      }),
+      /* Computer use (T36): a hosted agent that drives a browser. The
+         environment starts the browser and sets the sites it may open. */
+      platformItem("browserbase", "Browserbase", ["computer"], {
+        icon: "solar:global-linear",
+        need: "API key · session template",
+      }),
+      platformItem("anthropic_cu", "Anthropic Computer Use", ["computer"], {
+        icon: "solar:monitor-linear",
+        need: "API key · agent",
+      }),
+      platformItem("skyvern", "Skyvern", ["computer"], {
+        icon: "solar:mouse-linear",
+        need: "API key · task template",
       }),
       {
         id: "builtin",

@@ -25,8 +25,8 @@ export default function ReopenedBanner({ issue, onFixAgain }) {
   const improving = useAgentImprovementFlag();
   if (!improving || status?.key !== "reopened" || !status.change) return null;
   const c = status.change;
-  /* Same hold as the header's Fix: a disconnected or archived agent, or one
-     that's Coming soon — said on hover. Live-test consent isn't one: the Fix
+  /* Same hold as the header's Fix: a disconnected or archived agent — said
+     on hover. Live-test consent isn't one: the Fix
      drawer asks for it before anything runs. */
   const blockedWhy =
     gate && gate.key !== "consent" ? `${gate.title}. ${gate.body}` : null;

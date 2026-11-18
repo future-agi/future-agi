@@ -438,7 +438,7 @@ export const runtimeOf = (agent) => {
  * A framework agent served by our adapter, with no repository to build it
  * from and nowhere to reach it — connected and versioned, but a simulation has
  * nothing to drive yet. Code from a repository or an upload needs nothing: we
- * build it fresh in the hosted sandbox (your own machine is Coming soon).
+ * build it fresh in the hosted sandbox, or you run it yourself with ALK.
  */
 export const agentNeedsRuntime = (agent) => {
   if (!agent) return false;
@@ -661,6 +661,8 @@ export const agentRecordFromSource = (
 ) => {
   const kind = source?.kind || "repo";
   const voice = source?.agentType === "voice";
+  /* Computer use: an agent that drives a browser (T36). */
+  const computer = source?.agentType === "computer";
   /* An adapter that calls in with the API key has no address to record. */
   const runtime = source?.runtime?.dialOut
     ? { dialOut: true }
@@ -681,7 +683,11 @@ export const agentRecordFromSource = (
   if (kind === "platform") {
     const pasted = source?.agentMode === "prompt";
     record = {
-      typeId: voice || !source?.agentType ? "voice_platform" : "chat_openai",
+      typeId: computer
+        ? "browser_agent"
+        : voice || !source?.agentType
+          ? "voice_platform"
+          : "chat_openai",
       values: {
         provider: source?.provider || "vapi",
         ...(!pasted && {
@@ -750,7 +756,7 @@ export const agentRecordFromSource = (
     };
   } else if (kind === "endpoint") {
     record = {
-      typeId: voice ? "voice_sip" : "chat_webhook",
+      typeId: computer ? "browser_agent" : voice ? "voice_sip" : "chat_webhook",
       values: {
         endpoint: (source?.value || "").trim(),
         ...secretFlag("hasToken", "tokenRef", source?.tokenRef, source?.token),

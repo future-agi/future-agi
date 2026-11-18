@@ -118,7 +118,7 @@ export default function FixButton({ issue, onOpenSheet, rootCause = null }) {
     );
   }
 
-  /* Disconnected, archived or Coming soon — said on the button, with the
+  /* Disconnected or archived — said on the button, with the
      way out when there is one. Live-test consent isn't one of them: the
      sheet asks for it, right where it's needed, before anything runs. */
   /* "Check what we found" on a new code agent is advice, not a stop: the

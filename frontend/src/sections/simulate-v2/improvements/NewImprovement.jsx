@@ -20,7 +20,6 @@ import {
   todaySpend,
 } from "../_mock/improvementStart";
 import { productionAgentVersion } from "../_mock/versions";
-import { isComingSoon } from "../_mock/rsiModel";
 import ImprovementSetup from "../run/fixmyagent/ImprovementSetup";
 import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
 import { buildPresetFor } from "../agents/agentViewUtils";
@@ -60,17 +59,12 @@ export default function NewImprovement({
   const [picked, setPicked] = useState(null);
   const [buildOpen, setBuildOpen] = useState(false);
 
-  /* Agents that can be improved: real (not a template's stand-in) and a type
-     improvements run on. One with no environment yet is listed too. */
+  /* Agents that can be improved: real (not a template's stand-in), of any
+     type. One with no environment yet is listed too. */
   const choices = useMemo(
     () =>
       agents
-        .filter(
-          (a) =>
-            !a.placeholder &&
-            !isComingSoon(a) &&
-            !isComingSoon(mainEnvOf(a, state)?.env),
-        )
+        .filter((a) => !a.placeholder)
         .map((a) => ({
           agent: a,
           main: mainEnvOf(a, state),

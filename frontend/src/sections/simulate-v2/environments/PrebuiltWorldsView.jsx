@@ -24,7 +24,7 @@ import {
   worldTotal,
 } from "./landingData";
 import { SaasSandboxCard } from "./SaasSandbox";
-import { QuietTag, WorldCard } from "./LandingBits";
+import { WorldCard } from "./LandingBits";
 import { AGENT_TYPES } from "./connectOptions";
 import WorldDrawer from "./WorldDrawer";
 import { READINESS, SOURCES } from "../_mock/catalogue";
@@ -52,7 +52,7 @@ export default function PrebuiltWorldsView({
   const [query, setQuery] = useState("");
   const [type, setType] = useState("all");
   const [domain, setDomain] = useState("all");
-  /* Ready, Coming soon (starter cases not proved), Retired or Withdrawn. */
+  /* Ready, Checks pending (starter cases not proved), Retired or Withdrawn. */
   const [readiness, setReadiness] = useState("all");
   /* T29: browse by split, and by where a world comes from. */
   const [split, setSplit] = useState("all");
@@ -99,11 +99,6 @@ export default function PrebuiltWorldsView({
     })),
   ].filter((t) => countOf(t.id) > 0);
   const listed = type === SANDBOX_TYPE.id ? [] : shown;
-  /* Agent types that are Coming soon — their worlds can't be built yet. */
-  const soonTypes = useMemo(
-    () => new Set(WORLD_TYPES.filter((t) => t.soon).map((t) => t.id)),
-    [],
-  );
   const grid = {
     display: "grid",
     gap: 1.5,
@@ -232,7 +227,6 @@ export default function PrebuiltWorldsView({
                 />
               )}
               {t.label}
-              {t.soon && <QuietTag>Coming soon</QuietTag>}
               <Box
                 component="span"
                 sx={{
@@ -375,7 +369,6 @@ export default function PrebuiltWorldsView({
               }}
               actions
               selected={open?.id === w.id}
-              soon={soonTypes.has(w.type)}
             />
           ))}
         </Box>

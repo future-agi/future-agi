@@ -13,22 +13,19 @@ import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import { buildPresetFor } from "../agents/agentViewUtils";
-import { agentStatusOf, isComingSoon } from "../_mock/rsiModel";
+import { agentStatusOf } from "../_mock/rsiModel";
 import { worldFromTemplate } from "../_mock/agentWorlds";
 import { generatedPool, getPacks, getRows } from "../_mock/scenarios";
 import { MODALITY_FOR } from "../_mock/fidelity";
 
 /**
  * The agents an environment can be built for: in Agents (not a template's
- * stand-in), connected (not archived or cut off),
- * and not Coming soon.
+ * stand-in) and connected (not archived or cut off).
  */
 export const buildableAgentsOf = (agents = []) =>
   agents.filter(
     (a) =>
-      !a.placeholder &&
-      !isComingSoon(a) &&
-      agentStatusOf(a).status === "connected",
+      !a.placeholder && agentStatusOf(a).status === "connected",
   );
 
 /** The channel a prebuilt world is for — "voice" or "chat". */

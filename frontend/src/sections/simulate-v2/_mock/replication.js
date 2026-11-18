@@ -287,7 +287,7 @@ export const keyLacksCreateScope = (key) => /read[-_]?only|(^|[^a-z])ro_/i.test(
 /** Why a code agent runs where it does. */
 export const runLocationReason = (location = "hosted") => (location === "sdk"
   ? "Your agent checks in from your machine with the commit it's on plus a fingerprint of uncommitted changes — we score what it runs"
-  : "We build it fresh from the code for every run. Running locally is coming soon with ALK, our open-source toolkit");
+  : "We build it fresh from the code for every run");
 
 const slug = (s) => String(s || "env").toLowerCase().replace(/\s+environment$/, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "env";
 const shortHash = (s) => {

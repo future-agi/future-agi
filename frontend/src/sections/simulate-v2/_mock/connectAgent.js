@@ -425,6 +425,44 @@ const ASSISTANTS = {
       model: "gpt-4o",
       channels: ["chat"],
     },
+  ],  /* Computer use: agents that drive a browser (T36). */
+  browserbase: [
+    {
+      id: "sess_tmpl_refund-portal",
+      name: "Refund portal operator",
+      updated: "yesterday",
+      phone: null,
+      model: "claude-sonnet-5-5",
+      channels: ["computer"],
+    },
+    {
+      id: "sess_tmpl_order-lookup",
+      name: "Order lookup",
+      updated: "last week",
+      phone: null,
+      model: "gpt-5",
+      channels: ["computer"],
+    },
+  ],
+  anthropic_cu: [
+    {
+      id: "returns-agent",
+      name: "Returns console agent",
+      updated: "3 days ago",
+      phone: null,
+      model: "claude-sonnet-5-5",
+      channels: ["computer"],
+    },
+  ],
+  skyvern: [
+    {
+      id: "tmpl_invoice-download",
+      name: "Invoice download",
+      updated: "2 days ago",
+      phone: null,
+      model: "gpt-5",
+      channels: ["computer"],
+    },
   ],
 };
 

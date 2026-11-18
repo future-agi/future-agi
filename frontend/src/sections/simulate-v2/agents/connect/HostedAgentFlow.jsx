@@ -418,7 +418,6 @@ export default function HostedAgentFlow({
                   key={t.id}
                   icon={t.icon}
                   label={t.label}
-                  comingSoon={t.comingSoon}
                   on={agentType === t.id}
                   onClick={() => pickType(t.id)}
                 />
@@ -446,7 +445,6 @@ export default function HostedAgentFlow({
                   label={
                     PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name
                   }
-                  comingSoon={p.comingSoon}
                   on={platform?.id === p.id}
                   onClick={() => {
                     setPlatformId(p.id);

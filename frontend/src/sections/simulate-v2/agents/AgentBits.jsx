@@ -139,7 +139,7 @@ KvRow.propTypes = {
 };
 
 /**
- * A quiet inline tag — "Phase 2", "Coming soon", "Main", "Outside change".
+ * A quiet inline tag — "Main", "Draft", "Outside change".
  * Neutral by default; `tone="error"` is kept for blocking states.
  */
 export function QuietTag({ children, tone, icon, title }) {
