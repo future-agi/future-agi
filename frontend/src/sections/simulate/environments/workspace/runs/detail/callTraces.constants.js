@@ -129,6 +129,9 @@ export const TRIAL_ROUTES_COPY = {
   trials: (count) => `${count} trials`,
   splitAt: "Split at ",
   sameRoute: "Every trial took the same route",
+  // The server compares only trials that finished with a whole record.
+  sameRouteCompared: "Every compared trial took the same route",
+  tooFewCompared: "Fewer than two trials could be compared",
   show: "Show trials",
   hide: "Hide trials",
   showTools: "Show tool calls",
@@ -146,7 +149,18 @@ export const TRIAL_ROUTES_COPY = {
       repeated: `×${count}`,
       absent: "Not asked",
     })[state] ?? state,
-  splitGroup: (word, trials) => `${word} in ${trials.join(", ")}`,
+  // "Asked in trials 1 and 3", "Asked 2 times in trial 1".
+  splitGroup: (state, kind, count, trials) => {
+    const word =
+      state === "repeated"
+        ? `${kind === "tool_call" ? "Called" : "Asked"} ${count} times`
+        : TRIAL_ROUTES_COPY.cell(state, kind, count);
+    const list =
+      trials.length === 1
+        ? `trial ${trials[0]}`
+        : `trials ${trials.slice(0, -1).join(", ")} and ${trials.at(-1)}`;
+    return `${word} in ${list}`;
+  },
   openStep: (n) => `Open trial ${n} at this step`,
   // A trial the server lists but doesn't compare, and why.
   notCompared: {

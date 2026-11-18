@@ -439,6 +439,33 @@ describe("CallWorkersPanel, the record's own words", () => {
 });
 
 describe("CallWorkersPanel, an earlier attempt", () => {
+  it("ignores a step link and offers no transcript, trace or link out of an earlier attempt's steps", () => {
+    window.history.replaceState({}, "", "/run?participantsStep=1");
+    result = {
+      data: { ...TIMELINE, project_id: "p1" },
+      isLoading: false,
+      isError: false,
+    };
+    render(
+      <CallWorkersPanel
+        callExecutionId="c1"
+        attempt="a1"
+        onOpenTrace={vi.fn()}
+        onShowInTranscript={vi.fn()}
+      />,
+    );
+    // The link names a step of the latest attempt's record, not this one's.
+    expect(screen.queryByTestId("step-detail")).toBeNull();
+    fireEvent.click(document.querySelector('[data-row="2"]'));
+    expect(screen.getByTestId("step-detail")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Show in transcript/ }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Open in trace/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Copy a link/ })).toBeNull();
+    window.history.replaceState({}, "", "/");
+  });
+
   it("reads the earlier attempt's record when one is picked, and the call's own otherwise", () => {
     result = { data: TIMELINE, isLoading: false, isError: false };
     asked.length = 0;

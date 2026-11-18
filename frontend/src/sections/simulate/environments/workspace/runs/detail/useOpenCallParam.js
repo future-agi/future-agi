@@ -128,7 +128,8 @@ export default function useOpenCallParam({
           : "Couldn't load the row",
         { variant: "error" },
       );
-      writeRowId(null);
+      // A call already open (the link came from inside it) stays open; otherwise the bad link is dropped.
+      writeRowId(openCall?.task?.id ?? null);
     }
   }, [
     pending,
@@ -138,6 +139,7 @@ export default function useOpenCallParam({
     detail.error,
     showCall,
     writeRowId,
+    openCall,
   ]);
 
   // The param went away without the page closing the call (e.g. navigation).

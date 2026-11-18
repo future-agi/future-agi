@@ -50,12 +50,13 @@ export default function CallWorkersPanel({
   // A link to a step names the API's own step key. It opens that step once per call, so a refetch keeps the user's pick.
   const linkedFor = useRef(null);
   useEffect(() => {
-    if (!seq || linkedFor.current === callExecutionId) return;
+    // A step key belongs to one record: a link names the latest attempt's, never an earlier one's.
+    if (!seq || attempt || linkedFor.current === callExecutionId) return;
     linkedFor.current = callExecutionId;
     const key = linkedStepKey();
     const step = key && seq.steps.find((one) => String(one.key) === key);
     if (step) setSelected(step.n);
-  }, [seq, callExecutionId]);
+  }, [seq, callExecutionId, attempt]);
   // A failed refetch keeps the tree it has. A call known to have no record never gets here: the drawers drop the tab.
   if (!data)
     return isError ? (
@@ -192,10 +193,11 @@ export default function CallWorkersPanel({
           seq={seq}
           selected={selected}
           onSelect={setSelected}
-          // Open in trace waits for the record to name its trace project.
-          onOpenTrace={data.project_id ? onOpenTrace : undefined}
-          onShowInTranscript={showInTranscript}
-          linkOf={linkOf}
+          // Open in trace waits for the record's trace project. The transcript, Traces and step links hold the
+          // latest attempt only, so an earlier attempt offers none of them.
+          onOpenTrace={!attempt && data.project_id ? onOpenTrace : undefined}
+          onShowInTranscript={attempt ? undefined : showInTranscript}
+          linkOf={attempt ? undefined : linkOf}
         />
       ) : null}
       {data.workers.some((one) => one.checks.length) ? (

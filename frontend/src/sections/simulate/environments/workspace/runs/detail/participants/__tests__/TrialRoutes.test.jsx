@@ -110,7 +110,7 @@ describe("TrialRoutes", () => {
     draw();
     expect(screen.getByText(/^3 trials$/)).toBeInTheDocument();
     expect(screen.getByTestId("trial-routes-split")).toHaveTextContent(
-      "Split at Returns coordinator → refund worker: Asked in 1, 3 · No answer in 2",
+      "Split at Returns coordinator → refund worker: Asked in trials 1 and 3 · No answer in trial 2",
     );
   });
 
@@ -119,6 +119,36 @@ describe("TrialRoutes", () => {
     draw();
     expect(screen.getByTestId("trial-routes-split")).toHaveTextContent(
       "Every trial took the same route",
+    );
+  });
+
+  it("says only the compared trials took the same route when one was not compared", () => {
+    routes = {
+      ...SPLIT,
+      split: null,
+      same_route: true,
+      trials: [...SPLIT.trials, trial(4, "failed", null, "not_finished")],
+    };
+    draw();
+    expect(screen.getByTestId("trial-routes-split")).toHaveTextContent(
+      "Every compared trial took the same route",
+    );
+  });
+
+  it("claims no route when fewer than two trials could be compared", () => {
+    routes = {
+      ...SPLIT,
+      split: null,
+      same_route: true,
+      trials: [
+        SPLIT.trials[0],
+        trial(2, "failed", null, "not_finished"),
+        trial(3, "failed", null, "unreadable"),
+      ],
+    };
+    draw();
+    expect(screen.getByTestId("trial-routes-split")).toHaveTextContent(
+      "Fewer than two trials could be compared",
     );
   });
 

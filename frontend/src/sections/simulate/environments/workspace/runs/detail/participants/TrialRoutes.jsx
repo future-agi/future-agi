@@ -92,17 +92,28 @@ export default function TrialRoutes({
   if (!data || data.trials.length < 2) return null;
   const { columns, trials, split } = data;
   const tint = (t) => alpha(t.palette.warning.main, 0.08);
-  const splitColumn = split ? columns[split.column] : null;
-  const splitWords = split
+  const splitColumn = split
+    ? columns.find((column) => column.key === split.key)
+    : null;
+  const splitWords = splitColumn
     ? split.groups
         .map((group) =>
           C.splitGroup(
-            C.cell(group.state, splitColumn.kind, group.count),
+            group.state,
+            splitColumn.kind,
+            group.count,
             group.trials,
           ),
         )
         .join(" · ")
     : "";
+  const compared = trials.filter((one) => one.cells).length;
+  const sameRoute =
+    compared < 2
+      ? C.tooFewCompared
+      : compared < trials.length
+        ? C.sameRouteCompared
+        : C.sameRoute;
 
   return (
     <Box
@@ -128,7 +139,7 @@ export default function TrialRoutes({
             minWidth: 200,
           }}
         >
-          {split ? (
+          {splitColumn ? (
             <>
               {C.splitAt}
               <Box
@@ -140,7 +151,7 @@ export default function TrialRoutes({
               {`: ${splitWords}`}
             </>
           ) : (
-            C.sameRoute
+            sameRoute
           )}
         </Typography>
         <Typography

@@ -1897,6 +1897,18 @@ describe("RunDetail ?rowId=", () => {
     expect(locationText()).toContain("participantsStep=3");
   });
 
+  it("keeps the open call when a trial picked from the trials table can't be found", async () => {
+    const user = userEvent.setup();
+    detailFor("x1", { data: undefined, error: { statusCode: 404 } });
+    renderDetail({ initialEntries: ["/?foo=1"] });
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    await user.click(
+      screen.getByRole("button", { name: "open trial x1 at step 3" }),
+    );
+    await waitFor(() => expect(locationText()).toContain("rowId=c1"));
+    expect(screen.getByText("drawer:c1")).toBeInTheDocument();
+  });
+
   it("writes a row opened from Analytics to the URL", async () => {
     const user = userEvent.setup();
     renderDetail();
