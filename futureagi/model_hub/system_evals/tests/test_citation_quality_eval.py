@@ -15,6 +15,10 @@ from pathlib import Path
 
 import pytest
 import yaml
+from django.core.cache import cache
+
+from model_hub.management.commands import seed_system_evals as seeder
+from model_hub.models.evals_metric import EvalTemplate
 
 YAML_PATH = Path(__file__).resolve().parent.parent / "agent" / "citation_quality.yaml"
 
@@ -108,21 +112,52 @@ def test_context_supports_knowledge_base_modality(eval_def):
 # ---------------------------------------------------------------------------
 
 
-def test_eval_id_is_within_expected_range(eval_def):
-    """eval_id 203 should not collide with existing agent evals (max was 200)."""
-    assert eval_def["eval_id"] == 203
+def test_allocated_eval_id(eval_def):
+    assert eval_def["eval_id"] == 226
 
 
-def test_no_other_agent_eval_uses_same_eval_id(eval_def):
-    agent_dir = YAML_PATH.parent
+def test_no_other_eval_uses_same_eval_id(eval_def):
+    catalog_dir = YAML_PATH.parent.parent
     our_id = eval_def["eval_id"]
-    for path in agent_dir.glob("*.yaml"):
-        if path.name == "citation_quality.yaml":
+    for path in catalog_dir.glob("*/*.yaml"):
+        if path == YAML_PATH:
             continue
         other = yaml.safe_load(path.read_text())
         assert other.get("eval_id") != our_id, (
             f"eval_id {our_id} collision with {path.name}"
         )
+
+
+@pytest.mark.django_db
+def test_existing_catalog_adds_citation_judge_without_replacing_advice(monkeypatch):
+    templates = EvalTemplate.no_workspace_objects
+    version_key = "system_evals_version"
+    previous_cache = cache.get(version_key)
+    definitions = seeder.load_yaml_evals()
+    previous_catalog = [row for row in definitions if row["name"] != "citation_quality"]
+    try:
+        # Seed the pre-citation catalog and its version just as on an installed DB.
+        with monkeypatch.context() as previous_install:
+            previous_install.setattr(
+                seeder, "load_yaml_evals", lambda: previous_catalog
+            )
+            previous_install.setattr(seeder, "SYSTEM_EVALS_VERSION", 32)
+            seeder.seed_evals(force=True)
+        advice_before = templates.values().get(eval_id=203)
+        assert advice_before["name"] == "advice_authority_boundary"
+        assert not templates.filter(name="citation_quality").exists()
+
+        assert seeder.seed_evals() == (1, 0, len(previous_catalog))
+        assert templates.values().get(eval_id=203) == advice_before
+        judge = templates.get(name="citation_quality", owner="system", visible_ui=True)
+        assert not judge.allow_edit
+        assert judge.config["rule_prompt"] == judge.criteria
+        assert seeder.seed_evals() == (0, 0, 0)
+    finally:
+        if previous_cache is None:
+            cache.delete(version_key)
+        else:
+            cache.set(version_key, previous_cache, timeout=None)
 
 
 # ---------------------------------------------------------------------------
