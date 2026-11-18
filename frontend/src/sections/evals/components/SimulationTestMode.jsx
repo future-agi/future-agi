@@ -1169,22 +1169,23 @@ const SimulationTestMode = React.forwardRef(
       [selectedRunTestId, variables, mapping],
     );
 
-    // Translate scenario column keys: top-level -> UUID; deep path -> walker form.
-    const persistedMapping = useMemo(() => {
-      const out = {};
-      for (const [variable, field] of Object.entries(mapping)) {
-        out[variable] =
-          preview?.scenarioIdsByPath.get(field) ??
-          translateDeepScenarioColumn(field) ??
-          field;
-      }
-      return out;
-    }, [mapping, preview]);
-
+    // Keep selected fields' save keys across preview loads, not their call values.
+    const savedKeysByPath = useRef(new Map());
     useEffect(() => {
+      const persistedMapping = {};
+      const selectedKeys = new Map();
+      for (const [variable, field] of Object.entries(mapping)) {
+        const saveKey =
+          preview?.scenarioIdsByPath.get(field) ??
+          savedKeysByPath.current.get(field) ??
+          (preview && translateDeepScenarioColumn(field));
+        if (saveKey) selectedKeys.set(field, saveKey);
+        persistedMapping[variable] = saveKey ?? field;
+      }
+      savedKeysByPath.current = selectedKeys;
       onReadyChange?.(isReady, persistedMapping);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isReady, persistedMapping]);
+    }, [isReady, mapping, preview]);
 
     // Run test
     const handleRunTest = useCallback(async () => {

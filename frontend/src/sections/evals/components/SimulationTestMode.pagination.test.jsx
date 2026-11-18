@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -256,6 +257,55 @@ describe("SimulationTestMode exact snapshot pagination", () => {
   const selectedId = "4202acbe-7de9-4a00-a338-cc1003cf5a21";
   const otherId = "4202acbe-7de9-4a00-a338-cc1003cf5a22";
   const columnName = "Expected reply";
+
+  it("keeps the selected scenario column UUID for save while the next call loads", async () => {
+    const original = mocks.get.getMockImplementation();
+    mocks.get.mockImplementation((url, config) => {
+      if (url === endpoints.runTests.callExecutionDetail("call-1")) {
+        return Promise.resolve({
+          data: {
+            ...call("call-1"),
+            scenario_columns: {
+              [columnName]: {
+                column_name: columnName,
+                dataset_column_id: selectedId,
+                value: "first reply",
+              },
+            },
+          },
+        });
+      }
+      if (url === endpoints.runTests.callExecutionDetail("call-2")) {
+        return new Promise(() => {});
+      }
+      return original(url, config);
+    });
+    const ready = vi.fn();
+    render(
+      <SimulationTestMode
+        initialRunTestId="run-1"
+        variables={["output"]}
+        onReadyChange={ready}
+      />,
+    );
+    fireEvent.mouseDown(await screen.findByPlaceholderText("Search field..."));
+    fireEvent.click(
+      await screen.findByRole("option", {
+        name: `scenario.columns.${columnName}`,
+      }),
+    );
+    expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more calls" }));
+    const counter = await screen.findByText("Call 1 · 2 of 2 loaded");
+    const [, nextCall] = within(counter.parentElement).getAllByRole("button");
+    fireEvent.click(nextCall);
+    expect(await screen.findByText("Call 2 · 2 of 2 loaded")).toBeVisible();
+    expect(
+      await screen.findByPlaceholderText("Loading columns..."),
+    ).toBeDisabled();
+    expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
+  });
 
   function mockEmptyFirstExecution(scenarioColumns = {}) {
     const original = mocks.get.getMockImplementation();
