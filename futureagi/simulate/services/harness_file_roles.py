@@ -17,6 +17,7 @@ from simulate.services.harness_actor_rules import (
     cast_records,
     file_roles,
 )
+from simulate.services.harness_seed_joins import seed_records_problem
 from simulate.services.hosted_harness import HostedHarnessError
 
 if TYPE_CHECKING:
@@ -42,8 +43,9 @@ def set_file_role(
 ) -> Cast:
     """Give one attached file its role in the environment draft and return the cast.
 
-    Refuses `file_not_found` (404) for a path the draft does not attach, `file_in_use` (409) when making a file
-    evaluator-only that an actor is given to read, and `draft_changed` (409)."""
+    Refuses `file_not_found` (404) for a path the draft does not attach, `seed_records_invalid` (400) for seed records
+    that cannot be read as rows, `file_in_use` (409) when making a file evaluator-only that an actor is given to read,
+    and `draft_changed` (409)."""
     refs, environment_files, suite_files = draft_read(environment, expected_revision)
     if (
         not path.startswith("knowledge/")
@@ -54,6 +56,14 @@ def set_file_role(
             "file_not_found",
             "This environment has no attached file at that path",
             status_code=404,
+        )
+    if role == "seed_records" and (
+        problem := seed_records_problem(path, environment_files[path])
+    ):
+        raise HostedHarnessError(
+            "seed_records_invalid",
+            f"{path.rsplit('/', 1)[-1]} cannot be read as seed records: {problem}",
+            status_code=400,
         )
     if role == "evaluator_only":
         readers = [

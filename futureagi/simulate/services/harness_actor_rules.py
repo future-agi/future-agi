@@ -228,6 +228,10 @@ def private_scenario_fields(rules: ActorRules) -> list[str]:
 KNOWLEDGE_ROLES = "knowledge/roles.json"
 FileRole = Literal["policy", "seed_records", "evaluator_only"]
 FILE_ROLES: tuple[FileRole, ...] = ("policy", "seed_records", "evaluator_only")
+# A role that is not one of them, answered with the roles there are.
+FILE_ROLE_ERRORS = {
+    "invalid_choice": f'"{{input}}" is not a file role: use {", ".join(FILE_ROLES)}.'
+}
 # The role a file with a role the platform does not know is read as: the safe side, as the harness reads it.
 UNKNOWN_ROLE: FileRole = "evaluator_only"
 
@@ -392,6 +396,8 @@ def readable_file(path: str, rules: ActorRules) -> bool:
     return (
         bool(name)
         and ".." not in name.split("/")
+        # The roles file is harness metadata: it names the evaluator-only files.
+        and name != KNOWLEDGE_ROLES
         and (
             name.rsplit("/", 1)[-1]
             not in (rules.get("evaluator_only") or {}).get("files", [])

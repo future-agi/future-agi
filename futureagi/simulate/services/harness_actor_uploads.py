@@ -21,6 +21,7 @@ from simulate.services.harness_actor_rules import (
     readable_file,
 )
 from simulate.services.harness_file_roles import with_role
+from simulate.services.harness_seed_joins import seed_records_problem
 from simulate.services.hosted_harness import HostedHarnessError
 
 if TYPE_CHECKING:
@@ -60,7 +61,10 @@ def upload_environment_file(
     except UnicodeDecodeError:
         problems.append("the file is not UTF-8 text")
         text = ""
-    if text and base.lower().endswith(".json"):
+    if text and role == "seed_records":
+        if problem := seed_records_problem(base, content):
+            problems.append(problem)
+    elif text and base.lower().endswith(".json"):
         try:
             json.loads(text)
         except ValueError:

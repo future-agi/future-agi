@@ -11,6 +11,7 @@ from rest_framework.exceptions import ErrorDetail
 from model_hub.serializers.contracts import JsonObjectRequestField
 from simulate.services.harness_actor_labels import choice_labels
 from simulate.services.harness_actor_rules import (
+    FILE_ROLE_ERRORS,
     FILE_ROLES,
     LIMIT_FIELDS,
     UPLOAD_KINDS,
@@ -688,6 +689,7 @@ class HarnessEnvironmentFileUploadSerializer(serializers.Serializer):
     expected_revision = serializers.IntegerField(min_value=0, required=False)
     role = serializers.ChoiceField(
         choices=FILE_ROLES,
+        error_messages=FILE_ROLE_ERRORS,
         required=False,
         help_text=(
             "The file's role: `policy` (a policy or reference), `seed_records` (records the world starts with) or "
@@ -700,7 +702,7 @@ class HarnessEnvironmentFileRoleSerializer(serializers.Serializer):
     path = serializers.CharField(
         max_length=255, help_text="The attached file, as the knowledge sources list it."
     )
-    role = serializers.ChoiceField(choices=FILE_ROLES)
+    role = serializers.ChoiceField(choices=FILE_ROLES, error_messages=FILE_ROLE_ERRORS)
     expected_revision = serializers.IntegerField(min_value=0, required=False)
 
 
