@@ -424,14 +424,15 @@ export default function ScenariosStep({
   }, [hasSelection, overlayOpen, clearSelection]);
 
   const handleClickAway = (event) => {
-    // The builder chat uses the checked scenarios as context for its next message.
-    if (
-      hasSelection &&
-      !overlayOpen &&
-      !event.target.closest?.("[data-builder-chat]")
-    ) {
-      clearSelection();
-    }
+    if (!hasSelection || overlayOpen) return;
+    // The chat uses the checked rows. Cancel can unmount the run dialog before
+    // this document listener fires, but the click's original path still includes it.
+    const keepSelection = event
+      .composedPath()
+      .some((node) =>
+        node.matches?.("[data-builder-chat], [data-scenario-run-dialog]"),
+      );
+    if (!keepSelection) clearSelection();
   };
 
   // The scenario names a bulk delete targets. Names — not ids — because the

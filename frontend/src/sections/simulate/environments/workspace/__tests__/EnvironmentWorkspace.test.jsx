@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { flushSync } from "react-dom";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import {
   queryScenarioFixture,
@@ -753,12 +754,21 @@ describe("EnvironmentWorkspace route shell", () => {
     );
     expect(await dialog.findByText("Runs 2 selected scenarios.")).toBeVisible();
     await user.click(dialog.getByRole("button", { name: "Edit" }));
+    // Browsers can commit Cancel's update at the portal (body) before the
+    // same click reaches the document. jsdom otherwise batches past that point.
+    document.body.addEventListener("click", () => flushSync(() => {}), {
+      once: true,
+    });
     await user.click(dialog.getByRole("button", { name: "Cancel" }));
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(first).toBeChecked();
     expect(second).toBeChecked();
     expect(runSelection()).toBeEnabled();
+
+    await user.click(screen.getByText("Done Environment", { selector: "p" }));
+    expect(first).not.toBeChecked();
+    expect(second).not.toBeChecked();
   });
 
   it("hosts the build experience in place for a still-building job", async () => {
