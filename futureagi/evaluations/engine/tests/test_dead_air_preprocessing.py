@@ -142,7 +142,15 @@ def test_decodable_wav_does_not_require_ffmpeg():
             "dead_air_detection", {"input_audio": {"bytes": wav}}
         )
     assert "_dead_air_error" not in actual
-    which.assert_not_called()
+    # Only media tool lookups count. The patch is process-wide, and the first
+    # librosa.load in a process scans audioread backends, which asks ctypes
+    # for a C compiler (``which("gcc")``, ``which("cc")``).
+    tool_lookups = [
+        call.args[0]
+        for call in which.call_args_list
+        if call.args and call.args[0] in {"ffmpeg", "ffprobe"}
+    ]
+    assert tool_lookups == []
 
 
 def test_raw_aac_decodes_all_frames():
