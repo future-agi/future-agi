@@ -33,6 +33,7 @@ import CopyCommandButton from "../components/CopyCommandButton";
 import ClosableDialog from "../components/ClosableDialog";
 import BuildFilesField from "../environments/BuildFilesField";
 import BuildTestField from "../environments/BuildTestField";
+import { testIsOptional } from "../environments/buildTestRule";
 
 const MONO = "ui-monospace, Menlo, monospace";
 /* Any count from 1 to 1,000 can be typed — the range the build accepts. */
@@ -225,9 +226,11 @@ export default function BuildEnvironmentDialog({
     setRequest("");
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* An agent the builder can read proposes its own tests (buildTestRule.js). */
+  const testOptional = testIsOptional(sourceKindOf(agent));
   const blocked = !name.trim()
     ? "Name it first"
-    : request.trim().length < 10
+    : !testOptional && request.trim().length < 10
       ? "Say what it should test"
       : !countOk
         ? `Scenarios: ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
@@ -274,7 +277,11 @@ export default function BuildEnvironmentDialog({
           />
         </Box>
         {/* The same field every build from an agent asks first. */}
-        <BuildTestField value={request} onChange={setRequest} />
+        <BuildTestField
+          value={request}
+          onChange={setRequest}
+          optional={testOptional}
+        />
         <Stack direction="row" spacing={1.5}>
           <Box flex={1}>
             <Label>
