@@ -2197,7 +2197,10 @@ class HostedHarnessProvider:
 
         asked = request.query_params.get("group_by")
         group_by = DEFAULT_GROUP_BY if asked is None else asked
-        from simulate.services.harness_actor_rules import actor_rules
+        from simulate.services.harness_actor_rules import (
+            actor_rules,
+            private_scenario_fields,
+        )
         from simulate.services.harness_environment import (
             environment_actor_side,
             working_contract,
@@ -2240,6 +2243,9 @@ class HostedHarnessProvider:
             offerable, spoken=spoken, call_actor_labels=lambda: call_actor_labels(job)
         )
         response.data["scenario_editing"] = self._editing_contract(spoken)
+        # The scenario fields only the grader reads, as the environment's sealed rules name them: never shown to
+        # the agent or to a simulated person.
+        response.data["private_fields"] = private_scenario_fields(rules)
         from simulate.services.harness_scenarios import GROUPINGS
 
         response.data["groupings"] = [

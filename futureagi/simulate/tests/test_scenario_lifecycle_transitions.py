@@ -317,6 +317,11 @@ def test_dropped_and_restored_cases_are_served_with_why_and_whether_proved_again
         return body.get("result", body)
 
     first = listed()
+    # What only the grader reads, for the editor to group apart from what the agent and actors see.
+    assert {"solution", "sub_goals", "negative_controls"} <= set(
+        first["private_fields"]
+    )
+    assert "persona" not in first["private_fields"]
     assert first["dropped"] == [
         {
             "key": "cancel-a-ride",

@@ -1128,6 +1128,11 @@ class HarnessScenarioListResponseSerializer(serializers.Serializer):
         child=serializers.CharField(),
         help_text="The name to show for each coverage level, sub-goal and noise bed on the page, keyed by it.",
     )
+    private_fields = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Scenario fields only the grader reads: never shown to the agent or to a simulated person.",
+    )
     dropped = HarnessDroppedCaseSerializer(
         many=True,
         required=False,

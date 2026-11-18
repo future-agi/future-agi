@@ -211,6 +211,16 @@ def actor_rules(files: dict[str, bytes]) -> ActorRules:
     return cast(ActorRules, {**rules, "evaluator_only": evaluator_only})
 
 
+# Scenario fields that grade the case even where a sealed release does not list them.
+GRADER_FIELDS = frozenset({"negative_controls", "must_pass"})
+
+
+def private_scenario_fields(rules: ActorRules) -> list[str]:
+    """The scenario fields only the grader reads: the sealed evaluator-only fields and the grading fields."""
+    sealed = (rules.get("evaluator_only") or {}).get("scenario_fields") or []
+    return sorted({*(str(one) for one in sealed), *GRADER_FIELDS})
+
+
 # Each attached file's role, by its path under `knowledge/`: what the harness seals it as.
 KNOWLEDGE_ROLES = "knowledge/roles.json"
 FileRole = Literal["policy", "seed_records", "evaluator_only"]
