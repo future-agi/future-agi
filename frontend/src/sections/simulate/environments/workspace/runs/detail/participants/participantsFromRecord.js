@@ -118,6 +118,11 @@ export function participantsFromRecord(record) {
       resultShown: step.returned?.result_shown ?? null,
       recorded: true,
       endState: step.end_state ?? null,
+      // The participant's own model and token total, shown once, on its first hand-off.
+      usage:
+        step.first_of_worker && (worker?.model || worker?.tokens)
+          ? { model: worker.model ?? null, tokens: worker.tokens ?? null }
+          : null,
       spanId: step.handoff?.span_id ?? null,
       traceId: step.handoff?.trace_id ?? null,
       calls: children.filter((child) => child.kind === "tool_call").map(toCall),
