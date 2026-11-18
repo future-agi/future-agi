@@ -75,6 +75,7 @@ func NewEngine(plugins ...Plugin) *Engine {
 
 // Process executes the plugin pipeline: pre-plugins → provider call → post-plugins.
 func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, providerCall ProviderFunc) error {
+	attachInspection(ctx, rc)
 	// Make the authoritative request context available to plugins without
 	// copying correlation fields into client-visible metadata or changing the
 	// context passed to the provider.
@@ -155,12 +156,21 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 // provider without Process, such as a lifecycle read, calls it first so the
 // caller is admitted or refused as Process would.
 func (e *Engine) CheckAccess(ctx context.Context, rc *models.RequestContext) *models.APIError {
+	attachInspection(ctx, rc)
+	ctx = models.WithRequestContext(ctx, rc)
 	for _, p := range e.plugins {
 		if g, ok := p.(AccessGate); !ok || !g.IsAccessGate() {
 			continue
 		}
 		if result := p.ProcessRequest(ctx, rc); result.Error != nil {
 			return result.Error
+		}
+	}
+	for _, p := range e.plugins {
+		if admission, ok := p.(selectedRequestAdmission); ok {
+			if err := admission.AdmitSelectedRequest(ctx, rc); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -190,6 +200,7 @@ func loggedError(rc *models.RequestContext, err error) any {
 // the plugins after it, logging among them, see the request as refused. A
 // streamed response is already sent, so its caller has nothing to refuse.
 func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) *models.APIError {
+	attachInspection(ctx, rc)
 	// Streaming handlers can invoke RunPostPlugins directly after Process returns,
 	// so reattach RequestContext here as well.
 	ctx = models.WithRequestContext(ctx, rc)
