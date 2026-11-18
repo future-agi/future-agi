@@ -34,6 +34,13 @@ const summary = (overrides = {}) => ({
   ...overrides,
 });
 
+const startGroup = (sample, code) => ({
+  normalized: sample,
+  sample,
+  count: 1,
+  start_reason_code: code,
+});
+
 function renderView(taskStatus = "completed", canRerun = false) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -66,7 +73,7 @@ describe("TaskLogsView totals", () => {
       summary({
         status: "failed",
         total_count: 0,
-        error_groups: [{ normalized: reason, sample: reason, count: 1 }],
+        error_groups: [startGroup(reason, "start_failed")],
       }),
     );
     renderView("failed", canRerun);
@@ -77,23 +84,68 @@ describe("TaskLogsView totals", () => {
       expect(screen.queryByText(/choose re-run/i)).not.toBeInTheDocument();
   });
 
-  it.each(["Pending", "Running", "Completed"])(
-    "hides cached start-failure advice when the replacement is %s",
-    async (taskStatus) => {
-      const reason =
-        "The run couldn't start after an automatic retry. Your task is saved.";
+  const notStarted = "The run couldn't start after an automatic retry. Your task is saved.";
+  const closed = "The workflow ended before evaluation began. Your task is saved.";
+  it.each([
+    ["r8-1", "running", "start_failed", notStarted, false],
+    ["paused-status-does-not-erase-closure", "paused", "exhausted", closed, true],
+    ["pending-status-cannot-reopen-exhaustion", "pending", "exhausted", closed, false],
+  ])(
+    "%s: shows the recorded reason on a fresh %s response",
+    async (_, status, code, reason, canRerun) => {
       mocks.readEvalTaskLogs.mockResolvedValue(
         summary({
-          status: "failed",
+          status,
           total_count: 0,
-          error_groups: [{ normalized: reason, sample: reason, count: 1 }],
+          success_count: 0,
+          error_groups: [startGroup(reason, code)],
         }),
       );
-      renderView(taskStatus, true);
-      await screen.findByText("Completed runs");
-      expect(screen.queryByText(/couldn't start|choose re-run/i)).toBeNull();
+      renderView(status, canRerun);
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(reason);
+      expect(alert.textContent.includes("Choose Re-run")).toBe(canRerun);
+      expect(screen.queryByText("Error Log")).not.toBeInTheDocument();
     },
   );
+
+  it("withdraws old Re-run advice while refreshing and clears the superseded reason", async () => {
+    const reason = "Start delivery was unsuccessful.";
+    mocks.readEvalTaskLogs.mockResolvedValueOnce(
+      summary({
+        status: "failed", total_count: 0, success_count: 0,
+        error_groups: [startGroup(reason, "start_failed")],
+      }),
+    );
+    const { queryClient } = renderView("failed", true);
+    expect(await screen.findByRole("alert")).toHaveTextContent(`${reason} Choose Re-run`);
+    let resolveRefresh;
+    mocks.readEvalTaskLogs.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveRefresh = resolve; }),
+    );
+    let refreshing;
+    act(() => {
+      refreshing = queryClient.refetchQueries({ queryKey: ["eval-task-logs", "task-1"] });
+    });
+    await waitFor(() => expect(screen.queryByText(/choose re-run/i)).toBeNull());
+    await act(async () => {
+      resolveRefresh(summary({ status: "running", total_count: 0, success_count: 0 }));
+      await refreshing;
+    });
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
+  });
+
+  it("does not infer a start outcome from evaluator copy", async () => {
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "failed",
+        error_groups: [{ normalized: notStarted, sample: notStarted, count: 1 }],
+      }),
+    );
+    renderView("failed", true);
+    expect(await screen.findByText("Error Log")).toBeVisible();
+    expect(screen.queryByText(/choose re-run/i)).not.toBeInTheDocument();
+  });
 
   it("offers Re-run, not Resume, when the create closed before evaluation", async () => {
     const reason =
@@ -102,7 +154,7 @@ describe("TaskLogsView totals", () => {
       summary({
         status: "failed",
         total_count: 0,
-        error_groups: [{ normalized: reason, sample: reason, count: 1 }],
+        error_groups: [startGroup(reason, "exhausted")],
       }),
     );
     renderView("failed", true);
@@ -118,7 +170,7 @@ describe("TaskLogsView totals", () => {
       summary({
         status: "pending",
         total_count: 0,
-        error_groups: [{ normalized: reason, sample: reason, count: 1 }],
+        error_groups: [startGroup(reason, "watching")],
       }),
     );
     renderView("pending", true);

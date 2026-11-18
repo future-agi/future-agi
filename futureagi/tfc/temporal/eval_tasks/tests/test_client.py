@@ -400,6 +400,14 @@ async def test_start_probe_distinguishes_success_from_other_closed_runs(monkeypa
         assert await probe("task") == client.WF_CLOSED
         assert await probe("task", distinguish_completion=True) == expected
 
+    describe.return_value = SimpleNamespace(status=WorkflowExecutionStatus.CONTINUED_AS_NEW)
+    assert await probe("task") == client.WF_CLOSED
+    assert await probe("task", distinguish_completion=True) == client.WF_PROGRESSING
+    describe.return_value = SimpleNamespace(status=None)
+    assert await probe("task") == client.WF_CLOSED
+    with pytest.raises(RuntimeError, match="unconfirmed"):
+        await probe("task", distinguish_completion=True)
+
     for workflow_type, expected in (
         ("RequestedHistoricalEvalTaskWorkflow", client.WF_CLOSED),
         ("HistoricalEvalTaskWorkflow", client.WF_LEGACY_CLOSED),

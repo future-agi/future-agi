@@ -14,6 +14,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from tfc.temporal.eval_tasks import client
 from tfc.temporal.schedules.tracer import TRACER_SCHEDULES
+from tfc.tests.lagging_replica import lagging_replica  # noqa: F401
 from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStartRequest
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 from tracer.services.eval_tasks import start_requests as service
@@ -176,7 +177,7 @@ def test_restarted_sender_admits_one_execution_and_one_usage_row(
 ):
     from ee.usage.models.usage import APICallLog
 
-    start, _ = transport
+    start, describe = transport
     executions = []
 
     def send(task, **kwargs):
@@ -196,6 +197,7 @@ def test_restarted_sender_admits_one_execution_and_one_usage_row(
     if not first_accepted:
         tick()  # A separate worker spends the one remaining start reservation.
     expire(intent)
+    describe.return_value = client.WF_COMPLETED
     tick()
     assert tick() == {"candidates": 0}
     assert start.call_count == (1 if first_accepted else 2)
@@ -230,7 +232,7 @@ def test_second_failure_needs_negative_describe_before_exhaustion(
     assert data["start_time"] is None and data["end_time"] is None
     assert data["total_count"] == data["errors_count"] == 0
     assert data["error_groups"] == [
-        {"normalized": message, "sample": message, "count": 1}
+        {"normalized": message, "sample": message, "count": 1, "start_reason_code": "start_failed"}
     ]
     assert "private" not in logs.content.decode()
     start.reset_mock()
@@ -450,7 +452,6 @@ def test_save_or_rerun_supersedes_a_committed_start(
         "paused",
         "deleted",
         "deleted_project",
-        "end_time",
         "continuous_cursor",
         "task_logger",
         "retired_task_logger",
@@ -636,7 +637,7 @@ def test_acknowledged_execution_closes_before_next_check(
     task = EvalTask.objects.get(pk=intent.pk)
     if with_progress:
         check(intent, "accepted", 1)
-        assert intent.last_outcome == "execution_progress"
+        assert intent.last_outcome == "execution_completed"
         assert task.status == "completed"
         assert not EvalLogger.all_objects.filter(eval_task_id=str(task.pk)).exists()
         assert service.start_refusal(task) is None
@@ -663,7 +664,7 @@ def test_successful_workflow_without_local_progress_is_not_a_failed_start(
     start.assert_called_once()
 
 
-@pytest.mark.parametrize("next_event", ["closed", "cursor", "completed"])
+@pytest.mark.parametrize("next_event", ["closed", "cursor", "logger", "completed"])
 def test_admission_is_watched_until_work_or_confirmed_closure(
     auth_client, intent, transport, next_event
 ):
@@ -682,9 +683,6 @@ def test_admission_is_watched_until_work_or_confirmed_closure(
         assert service.admit_start(intent.pk, run_id)  # idempotent redelivery
     expire(intent)
     if next_event == "closed":
-        # A legacy task log is not an evaluation entry. Admission itself already
-        # set start_time; neither is a reason to ignore this confirmed closure.
-        EvalTaskLogger.objects.create(eval_task_id=intent.pk)
         describe.side_effect = [client.WF_CLOSED]
         tick()
         check(intent, "exhausted", 1)
@@ -700,14 +698,18 @@ def test_admission_is_watched_until_work_or_confirmed_closure(
     else:
         if next_event == "cursor":
             tasks.update(continuous_cursor=timezone.now())
+        elif next_event == "logger":
+            EvalTaskLogger.objects.create(eval_task_id=intent.pk)
         else:
             tasks.update(status="completed", end_time=timezone.now())
+            describe.side_effect = [client.WF_COMPLETED]
         tick()
         check(intent, "accepted", 1)
-        assert intent.last_outcome == "execution_progress"
-        expected = "running" if next_event == "cursor" else "completed"
+        completed = next_event == "completed"
+        assert intent.last_outcome == ("execution_completed" if completed else "execution_progress")
+        expected = "completed" if completed else "running"
         assert tasks.get().status == expected
-        assert describe.call_count == 2
+        assert describe.call_count == (3 if completed else 2)
     start.assert_called_once()
     assert tick() == {"candidates": 0}
 
@@ -1193,3 +1195,35 @@ def test_failed_intent_is_not_a_veto_on_a_later_drain(
     assert resumed.status_code == 200, resumed.content
     start.assert_called_once_with(intent.task, replace_existing=True)
     check(intent, "start_failed", 2)
+
+
+def test_no_intent_task_loads_follow_the_configured_router(
+    lagging_replica, settings, project, transport, monkeypatch,  # noqa: F811
+):
+    from tracer.services import instant_eval_rows
+    from tracer.utils.eval import evaluate_trace_observe
+    from tracer.utils.eval_tasks import eval_task_cron, process_eval_task, run_for_processed_spans
+    from tracer.views import instant_eval_scale
+
+    settings.READ_REPLICA_OPT_IN = [*settings.READ_REPLICA_OPT_IN, "EvalTask"]
+    task = EvalTask.objects.create(
+        project=project, status="paused", filters={instant_eval_rows.RUN_MARKER: True},
+    )
+    lagging_replica.freeze()
+    EvalTask.objects.filter(pk=task.pk).update(status="running")
+    assert not EvalTaskStartRequest.objects.filter(pk=task.pk).exists()
+    enqueue = Mock()
+    monkeypatch.setattr(process_eval_task, "delay", enqueue)
+    eval_task_cron._original_func()
+    enqueue.assert_not_called()
+    process_eval_task._original_func(str(task.pk))
+    run_for_processed_spans._original_func([], [], str(task.pk))
+    evaluate_trace_observe._original_func(eval_task_id=str(task.pk))
+    start, _ = transport
+    start.assert_not_called()
+
+    monkeypatch.setattr(instant_eval_scale, "_project", lambda *_: project)
+    loaded, error = instant_eval_scale._load(
+        Mock(), {"project_id": project.pk, "eval_task_id": task.pk}, Mock(),
+    )
+    assert error is None and loaded.status == "paused"
