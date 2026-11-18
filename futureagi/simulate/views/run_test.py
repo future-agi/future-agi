@@ -137,6 +137,10 @@ from simulate.serializers.test_execution import (
     TestExecutionStatusSerializer,
 )
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.call_provider import (
+    call_agent_provider_expression,
+    execution_agent_provider,
+)
 from simulate.services.call_rerun import (
     call_snapshot,
     clear_call_for_rerun,
@@ -2303,6 +2307,7 @@ class RunTestCallExecutionsView(APIView):
             if call_exec_ids:
                 call_execs = (
                     CallExecution.objects.filter(id__in=call_exec_ids)
+                    .annotate(result_provider=call_agent_provider_expression())
                     .select_related(
                         "scenario",
                         "test_execution",
@@ -2326,6 +2331,8 @@ class RunTestCallExecutionsView(APIView):
                     "call_execution__test_execution",
                     "call_execution__test_execution__simulator_agent",
                     "call_execution__test_execution__agent_definition",
+                    "call_execution__test_execution__agent_version",
+                    "call_execution__agent_version",
                 )
 
                 for snapshot in snapshots:
@@ -2598,6 +2605,7 @@ class TestExecutionDetailView(APIView):
             # Get call executions for this test execution
             call_executions = (
                 CallExecution.objects.filter(test_execution=test_execution)
+                .annotate(result_provider=call_agent_provider_expression())
                 .select_related(
                     "scenario",
                     "test_execution",
@@ -3076,8 +3084,8 @@ class TestExecutionDetailView(APIView):
             response_data["error_messages"] = error_messages
             response_data["status"] = test_execution.status
             response_data["provider"] = (
-                test_execution.agent_definition.provider
-                if test_execution.agent_definition
+                execution_agent_provider(test_execution)
+                if test_execution.agent_definition_id or test_execution.agent_version_id
                 else "prompt"
             )
             response_data["agent_type"] = agent_type

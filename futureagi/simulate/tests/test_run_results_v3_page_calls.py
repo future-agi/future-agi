@@ -1,5 +1,6 @@
 """A page's slim call load renders the same rows as loading whole calls."""
 
+import csv
 import json
 import uuid
 from collections import defaultdict
@@ -17,6 +18,7 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     AgentDefinition,
+    AgentVersion,
     CallExecution,
     RunTest,
     Scenarios,
@@ -28,6 +30,7 @@ from simulate.models.hosted_harness import (
     HostedHarnessJob,
     HostedHarnessScenario,
 )
+from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.services.run_results_v3 import (
     CALL_ROW_METADATA_KEYS,
@@ -36,6 +39,11 @@ from simulate.services.run_results_v3 import (
     build_evaluation_catalog,
 )
 from simulate.services.run_results_v3_page import page_calls
+from simulate.services.run_results_v3_queries import (
+    _breakdown_run_calls,
+    run_calls_queryset,
+)
+from simulate.views.run_results_v3 import _csv_rows_from_queryset
 
 DIMENSION_COLUMNS = (
     "persona",
@@ -442,7 +450,7 @@ def test_slim_page_renders_the_same_rows_and_columns(run, goals):
     assert len(old_rows) == len(calls)
     by_id = {row["id"]: row for row in new_rows}
     assert by_id[str(calls[0].id)]["provider"] == "vapi"
-    assert by_id[str(calls[4].id)]["provider"] == "retell"
+    assert by_id[str(calls[4].id)]["provider"] == "vapi"
     assert by_id[str(calls[2].id)]["provider"] == "vapi"
     assert by_id[str(calls[1].id)]["goal"] == goals.get(1, "Row-data goal")
     # Dataset cells fill what call metadata leaves out.
@@ -456,6 +464,48 @@ def test_slim_page_renders_the_same_rows_and_columns(run, goals):
     }
     assert by_id[str(calls[0].id)]["conversation_branch"] == "Own branch"
     assert by_id[str(calls[1].id)]["conversation_branch"] == "Environment branch"
+
+
+@pytest.mark.django_db
+def test_provider_tracks_the_called_version_across_results_analytics_and_csv(run):
+    execution, calls, _, _ = run
+    agent = execution.agent_definition
+
+    def version(provider):
+        return AgentVersion.objects.create(
+            agent_definition=agent,
+            organization=agent.organization,
+            workspace=agent.workspace,
+            configuration_snapshot={"provider": provider},
+        )
+
+    # The first two calls used the run's pinned Vapi agent, despite different
+    # transport artifacts. The third call was rerun against another version.
+    execution.agent_version = version("vapi")
+    execution.save(update_fields=["agent_version"])
+    agent.provider = "retell"
+    agent.save(update_fields=["provider"])
+    calls = calls[:3]
+    calls[2].agent_version = version("livekit")
+    for call, transport in zip(calls, ["livekit", "vapi", "vapi"], strict=True):
+        call.provider_call_data = {transport: {"id": "artifact"}}
+        call.save(update_fields=["provider_call_data", "agent_version"])
+
+    expected = dict(
+        zip((str(c.id) for c in calls), ["vapi", "vapi", "livekit"], strict=True)
+    )
+    query = run_calls_queryset(execution).filter(pk__in=expected)
+    rows, _ = build_call_rows(execution, page_calls(_page(calls), execution))
+    assert {r["id"]: r["provider"] for r in rows} == expected
+    detail = CallExecutionDetailSerializer()
+    assert {str(c.id): detail.get_provider(c) for c in calls} == expected
+    assert {
+        r["call_id"]: r["provider"]
+        for r in csv.DictReader(_csv_rows_from_queryset(execution, query))
+    } == expected
+    assert {
+        r["provider"]: r["total"] for r in _breakdown_run_calls(query, "provider")
+    } == {"vapi": 2, "livekit": 1}
 
 
 @pytest.mark.django_db
