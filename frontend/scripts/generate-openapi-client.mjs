@@ -607,6 +607,7 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
       "EvalRollupSpanApiValue",
       "EvalRollupEvalApiChoicesMap",
       "EvalRollupEvalApiAggregate",
+      "EvidenceLabelApiValue",
       "ModelListEntryApiBestFor",
       "ModelListEntryApiUseCase",
       "ModelListEntryApiCutoff",
@@ -1215,6 +1216,15 @@ export type ${jsonAlias} = JsonValueApi;`,
       ["ConversationTurnApi", "start"],
       ["ConversationTurnApi", "end"],
       ["ConversationTurnApi", "at"],
+      // An evidence case's times and fingerprint are null when the source is
+      // gone; an import from outside Observe has no project or agent version.
+      ["EvidenceTurnApi", "at"],
+      ["EvidenceImportCaseApi", "changed_since_import"],
+      ["EvidenceImportCaseApi", "started_at"],
+      ["EvidenceImportCaseApi", "ended_at"],
+      ["EvidenceImportApi", "project_id"],
+      ["EvidenceImportApi", "agent_version_id"],
+      ["EvidenceDraftRefApi", "id"],
     ]) {
       schemas = assertReplaceRegexInNamedBlock(
         schemas,
@@ -1663,7 +1673,8 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
     );
 
-    const modelListResponse = "export const ModelHubApiModelsListListResponse = zod.object({";
+    const modelListResponse =
+      "export const ModelHubApiModelsListListResponse = zod.object({";
     for (const [field, schema] of [
       ["next", "zod.string()"],
       ["previous", "zod.string()"],
@@ -1729,6 +1740,47 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         `conversation evidence ${label} nullable`,
       );
     }
+
+    // An evidence import (alone, or inside Add's answer) has label values of any
+    // JSON, and case times, fingerprint, project and agent version that can be
+    // null. A case's turns come before its tool calls, so the first "at" in the
+    // block is the turn's.
+    for (const evidenceImportResponse of [
+      "export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({",
+      "export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse = zod.object({",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        evidenceImportResponse,
+        /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+        "jsonValueSchema",
+        "evidence label values → recursive JSON value",
+      );
+      for (const [anchor, label] of [
+        [/("project_id": zod\.string\(\)\.uuid\(\))/, "project_id"],
+        [/("agent_version_id": zod\.string\(\)\.uuid\(\))/, "agent_version_id"],
+        [/("changed_since_import": zod\.boolean\(\))/, "changed_since_import"],
+        [/("started_at": zod\.string\(\)\.datetime\([^)]*\))/, "started_at"],
+        [/("ended_at": zod\.string\(\)\.datetime\([^)]*\))/, "ended_at"],
+        [/("at": zod\.string\(\)\.datetime\([^)]*\))/, "turn at"],
+      ]) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          evidenceImportResponse,
+          anchor,
+          "$1.nullable()",
+          `evidence import ${label} nullable`,
+        );
+      }
+    }
+    // Add sends a null draft id for a piece with no open draft.
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBody = zod.object({",
+      /("id": zod\.string\(\)\.uuid\(\))/g,
+      "$1.nullable()",
+      "evidence Add draft ids nullable",
+    );
 
     for (const responseName of [
       "ModelHubDevelopsGetDatasetTableListResponse",
