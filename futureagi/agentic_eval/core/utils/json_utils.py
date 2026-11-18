@@ -5,12 +5,20 @@ from typing import Any
 from agentic_eval.core_evals.fi_utils.json import JsonHelper
 
 
-def _recover_escaped_indentation(text: str) -> str:
-    """Treat literal \\t and \\r between tokens as spaces, never as part of a token."""
-    chars = list(text)
+# Skip prose placeholders: a supported object begins with a quoted key or is empty.
+_OBJECT_START = re.compile(r"""\{(?=(?:\s|\\[tr])*["'}])""")
+
+
+def _recover_object(text: str, start: int) -> tuple[str, int]:
+    """Isolate one brace-delimited candidate and normalize only unquoted indentation."""
+    depth = 0
     quote = None
     escaped = False
-    for i, char in enumerate(text):
+    parts = []
+    mark = start
+    end = len(text)
+    for i in range(start, end):
+        char = text[i]
         if quote is not None:
             if escaped:
                 escaped = False
@@ -20,41 +28,60 @@ def _recover_escaped_indentation(text: str) -> str:
                 quote = None
         elif char in ('"', "'"):
             quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
         elif char == "\\" and text[i + 1 : i + 2] in ("t", "r"):
-            chars[i : i + 2] = "  "
-    return "".join(chars)
+            parts.extend((text[mark:i], " "))
+            mark = i + 2
+    parts.append(text[mark:end])
+    return "".join(parts), end
 
 
 def extract_dict_from_string(input_str: str) -> dict[str, Any]:
     """Extract the first JSON object from text and return it as a dictionary."""
-    match = re.search(r"\{.*\}", input_str, re.DOTALL)
-    if not match:
+    first = input_str.find("{")
+    last = input_str.rfind("}")
+    if first == -1 or last < first:
         raise ValueError(
             "Unable to generate a response at this time. Please check your input for accuracy."
         )
 
     json_str = (
-        match.group(0).strip().replace("\n", "").replace("\r", "").replace("\t", "")
+        input_str[first : last + 1]
+        .replace("\n", "")
+        .replace("\r", "")
+        .replace("\t", "")
     )
 
-    try:
-        value = json.loads(json_str)
-    except json.JSONDecodeError:
-        recovered = _recover_escaped_indentation(json_str)
-        for candidate in (recovered, recovered.replace("'", '"')):
-            if candidate == json_str:
-                continue  # Already tried above.
-            try:
-                value = json.loads(candidate)
-                break
-            except json.JSONDecodeError:
-                continue
-        else:
-            value = JsonHelper.extract_json_from_text(recovered)
-
-    if not isinstance(value, dict):
-        raise ValueError("Extracted string is not valid Response.")
-    return value
+    decoder = json.JSONDecoder()
+    end = 0
+    while match := _OBJECT_START.search(json_str, end):
+        start = match.start()
+        try:
+            # Trailing commentary (even another object) cannot invalidate a good reply.
+            value, _ = decoder.raw_decode(json_str, start)
+        except json.JSONDecodeError:
+            recovered, end = _recover_object(json_str, start)
+            for candidate in (recovered, recovered.replace("'", '"')):
+                try:
+                    value = json.loads(candidate)
+                    break
+                except json.JSONDecodeError:
+                    continue
+            else:
+                try:
+                    value = JsonHelper.extract_json_from_text(recovered)
+                except ValueError:
+                    continue  # Try the next object, not the intervening prose.
+        if not isinstance(value, dict):
+            raise ValueError("Extracted string is not valid Response.")
+        return value
+    raise ValueError("Failed to load JSON from text")
 
 
 _CODE_FENCE_RE = re.compile(r"^```[ \t]*[a-zA-Z0-9_-]*[ \t]*\n?(.*?)\n?```$", re.DOTALL)
