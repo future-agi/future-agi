@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import pytest
 import requests
+from django.core.cache import cache
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
@@ -36,6 +37,7 @@ from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
 )
+from tracer.utils.otel import calculate_cost_from_tokens
 
 # Base URL prefix for model_hub endpoints
 BASE_URL = "/model-hub"
@@ -1616,6 +1618,91 @@ class TestDeleteCustomModelView(CustomModelsAPITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 0)
+
+
+class TestCustomModelPricingCacheInvalidation(CustomModelsAPITestCase):
+    """Pricing cached at span ingest must follow model writes (issue #2635)."""
+
+    def cost(self, model_name):
+        # 1000 prompt tokens costs exactly input_token_cost per 1K tokens.
+        return calculate_cost_from_tokens(
+            prompt_tokens=1000,
+            completion_tokens=0,
+            model=model_name,
+            organization_id=str(self.organization.id),
+        )
+
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+
+    def test_creating_model_clears_cached_not_found(self):
+        self.assertEqual(self.cost("pricing-cache-model"), 0)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            self.create_custom_model(
+                user_model_id="pricing-cache-model", input_token_cost=0.5
+            )
+
+        self.assertEqual(self.cost("pricing-cache-model"), 0.5)
+
+    def test_updating_cost_clears_cached_pricing(self):
+        model = self.create_custom_model(
+            user_model_id="pricing-cache-model", input_token_cost=0.5
+        )
+        self.assertEqual(self.cost("pricing-cache-model"), 0.5)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                f"{BASE_URL}/custom-models/{model.id}/",
+                {"input_token_cost": 0.75},
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.assertEqual(self.cost("pricing-cache-model"), 0.75)
+
+    def test_renaming_model_clears_pricing_under_old_name(self):
+        model = self.create_custom_model(
+            user_model_id="pricing-cache-model", input_token_cost=0.5
+        )
+        self.assertEqual(self.cost("pricing-cache-model"), 0.5)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                f"{BASE_URL}/custom-models/{model.id}/",
+                {"model_name": "pricing-cache-renamed"},
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.assertEqual(self.cost("pricing-cache-model"), 0)
+        self.assertEqual(self.cost("pricing-cache-renamed"), 0.5)
+
+    def test_cache_outage_does_not_fail_a_committed_save(self):
+        with (
+            patch.object(cache, "delete_many", side_effect=ConnectionError),
+            self.captureOnCommitCallbacks(execute=True),
+        ):
+            model = self.create_custom_model(user_model_id="pricing-cache-model")
+
+        self.assertTrue(CustomAIModel.objects.filter(id=model.id).exists())
+
+    def test_deleting_model_clears_cached_pricing(self):
+        model = self.create_custom_model(
+            user_model_id="pricing-cache-model", input_token_cost=0.5
+        )
+        self.assertEqual(self.cost("pricing-cache-model"), 0.5)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.delete(
+                f"{BASE_URL}/custom_models/delete/",
+                {"ids": [str(model.id)]},
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.assertEqual(self.cost("pricing-cache-model"), 0)
 
 
 # =============================================================================

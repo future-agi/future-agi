@@ -17,7 +17,10 @@ from agentic_eval.core_evals.run_prompt.available_models import (
     vertex_model_requires_sdk,
 )
 from model_hub.models.api_key import ApiKey
-from model_hub.models.custom_models import CustomAIModel
+from model_hub.models.custom_models import (
+    CustomAIModel,
+    invalidate_custom_model_pricing_cache,
+)
 from model_hub.models.metric import Metric
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
@@ -556,9 +559,16 @@ class DeleteCustomAIModelView(APIView):
         try:
             for model_id in ai_model_ids:
                 # SECURITY: Only delete models belonging to user's organization
-                _custom_ai_model_queryset(request).filter(
-                    id=model_id,
-                ).update(deleted=True, user_model_id=self._gm.generate_random_text())
+                models_qs = _custom_ai_model_queryset(request).filter(id=model_id)
+                old_names = list(
+                    models_qs.values_list("organization_id", "user_model_id")
+                )
+                models_qs.update(
+                    deleted=True, user_model_id=self._gm.generate_random_text()
+                )
+                # .update() skips save(), so invalidate cached pricing here.
+                for org_id, name in old_names:
+                    invalidate_custom_model_pricing_cache(org_id, name)
 
             return self._gm.success_response("AI model deleted successfully")
 

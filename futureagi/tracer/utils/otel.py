@@ -25,7 +25,10 @@ logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from model_hub.models.ai_model import AIModel
 from model_hub.models.choices import StatusType
-from model_hub.models.custom_models import CustomAIModel
+from model_hub.models.custom_models import (
+    CustomAIModel,
+    custom_model_pricing_cache_key,
+)
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.eval_mapping import require_mapping_paths
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
@@ -1824,7 +1827,7 @@ def calculate_cost_from_tokens(
             cost = prompt_tokens_cost_usd_dollar + completion_tokens_cost_usd_dollar
         else:
             if organization_id is not None:
-                cache_key = f"custom_model_pricing:{organization_id}:{model}"
+                cache_key = custom_model_pricing_cache_key(organization_id, model)
                 custom_pricing = cache.get(cache_key)
                 if custom_pricing is None:
                     try:
