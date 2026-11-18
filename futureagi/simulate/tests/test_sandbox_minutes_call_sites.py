@@ -1876,7 +1876,11 @@ def test_fix_release_finds_an_engine_that_died_unseen(
             lambda _fix_run_id: True,
         )
         clock.now = t0 + timedelta(minutes=41)
-        assert sweep_lost_fix_runs() == {"checked": 1, "closed": 1}
+        assert sweep_lost_fix_runs() == {
+            "checked": 1,
+            "closed": 1,
+            "variation_rows_left": 0,
+        }
         fix_run.refresh_from_db()
         assert fix_run.failure["code"] == "fix_deadline"
     elif ended_by == "ready":
@@ -1898,7 +1902,11 @@ def test_fix_release_finds_an_engine_that_died_unseen(
                 lambda _fix_run_id: True,
             )
             clock.now = t0 + timedelta(minutes=41)
-            assert sweep_lost_fix_runs() == {"checked": 1, "closed": 1}
+            assert sweep_lost_fix_runs() == {
+                "checked": 1,
+                "closed": 1,
+                "variation_rows_left": 0,
+            }
         else:
             # A late release: the runner was out, or the provider's delete was retried.
             clock.now = t0 + timedelta(minutes=31)
@@ -2905,6 +2913,9 @@ def test_every_run_workflow_start_is_checked():
 
 def test_every_chat_runtime_start_is_known():
     assert _callers("schedule_conversation_runtime") == {
+        "services/agent_fix_variations.py::_ask_builder",
+        "services/agent_fix_variations.py::_hand_back",
+        "services/evidence_drafts.py::start_drafting",
         "services/harness_provider.py::send_message",
         "services/harness_provider.py::_extend_in_chat",
         "services/harness_versioning/rebuild.py::_start_runtime",
