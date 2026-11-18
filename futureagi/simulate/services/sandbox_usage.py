@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 from uuid import UUID, uuid5
 
 import structlog
@@ -229,9 +230,10 @@ def _lease_of(provider_ref: str):
 def _billed_end(row: HostedSandboxLifetime):
     """Where a sandbox's time stops being the customer's: its confirmed end, or the moment
     the platform asked for its deletion when that came first."""
-    if row.delete_requested_at is None:
-        return row.ended_at
-    return min(row.ended_at, row.delete_requested_at)
+    ended = row.ended_at
+    if ended is None or row.delete_requested_at is None:
+        return ended
+    return min(ended, row.delete_requested_at)
 
 
 def _decide_minutes(row: HostedSandboxLifetime, now):
@@ -240,8 +242,12 @@ def _decide_minutes(row: HostedSandboxLifetime, now):
     free."""
     from simulate.services.harness_versioning import rebuild
 
+    ended = row.ended_at
+    if ended is None:
+        raise ValueError("an open sandbox lifetime is not sealed")
     billed_end = _billed_end(row)
-    domains, excluded = [row.failure_domain or None], ()
+    domains = [row.failure_domain or None]
+    excluded: Any = ()
     if row.kind == HostedSandboxLifetime.Kind.PLATFORM_CHECK:
         # Started by the platform to check its own build, not asked for by the customer.
         domains.append("infrastructure")
@@ -253,10 +259,10 @@ def _decide_minutes(row: HostedSandboxLifetime, now):
             # Decided from the real end, not the billed one: a delete asked for before
             # the limit stops the minutes, not the sandbox's life.
             cut_off_at=(
-                row.lifetime_ends_at if row.ended_at >= row.lifetime_ends_at else None
+                row.lifetime_ends_at if ended >= row.lifetime_ends_at else None
             ),
         )
-        if turns.pending and row.ended_at > now - TURN_WAIT:
+        if turns.pending and ended > now - TURN_WAIT:
             # Moves the row behind the others in the sweep's queue.
             row.save(update_fields=["updated_at"])
             return None

@@ -4998,7 +4998,7 @@ class HostedHarnessGateway:
 
         provider_ref = str(lease.provider_ref or "")
         absent = not provider_ref or provider_ref.startswith("pending:")
-        ending = {}
+        ending: dict[str, Any] = {}
         if not absent:
             try:
                 sandbox = self.client.get(

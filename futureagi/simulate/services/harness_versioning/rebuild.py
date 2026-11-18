@@ -790,7 +790,8 @@ def failed_turn_intervals(
         .values_list("job_id", flat=True)
         .first()
     )
-    intervals, pending, failed_at = [], False, None
+    intervals: list[tuple[Any, Any]] = []
+    pending, failed_at = False, None
     if job_id is None:
         return FailedTurns(intervals, pending, failed_at)
     for usage in HarnessNudge._base_manager.filter(
@@ -1229,7 +1230,7 @@ def _note_turn_sandbox(
     for that sandbox."""
     ref = (
         HostedHarnessConversationLease.no_workspace_objects.filter(
-            conversation_id=conversation_id, attempt__isnull=True
+            conversation__id=conversation_id, attempt__isnull=True
         )
         .values_list("provider_ref", flat=True)
         .first()
@@ -1299,7 +1300,8 @@ def on_turn_event(
                     updated_at=timezone.now(),
                 )
             start_nudge_turn(nudge.id, message_id=command.id, started_at=at)
-            _note_turn_sandbox(nudge.id, conversation_id, command.id)
+            if command is not None:
+                _note_turn_sandbox(nudge.id, conversation_id, command.id)
         elif nudge is not None and kind == "turn_interrupted":
             HarnessNudge.no_workspace_objects.filter(
                 id=nudge.id, state__in=OPEN

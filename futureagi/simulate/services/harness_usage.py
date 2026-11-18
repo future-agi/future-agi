@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
+from typing import Any, cast
 from uuid import UUID, uuid5
 
 from django.core.serializers.json import DjangoJSONEncoder
@@ -133,7 +134,7 @@ def require_sandbox_start(organization_id: str) -> None:
         refusal = usage_limit_error(exc)
         if refusal is None:
             raise
-        result = exc.check_result
+        result = cast(Any, exc).check_result
         refusal.details = {
             "error_code": result.error_code,
             "dimension": result.dimension,
@@ -854,7 +855,11 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
     ):
         return None
 
-    consumption = {"text_sim_tokens": 0, "voice_sim_minutes": 0, "ai_credits": 0}
+    consumption: dict[str, Any] = {
+        "text_sim_tokens": 0,
+        "voice_sim_minutes": 0,
+        "ai_credits": 0,
+    }
     for attempt_id, report in reports.items():
         attempt = attempts[attempt_id]
         for item in _billable_records(attempt, report):
@@ -944,7 +949,8 @@ def record_sandbox_runtime(
             # Billing stops at the ask to delete, when there was one: a delete that did
             # not complete is not billed past it.
             asked = observation.get("delete_requested_at")
-            ended = min(now, parse_datetime(asked)) if asked else now
+            asked_at = parse_datetime(asked) if asked else None
+            ended = min(now, asked_at) if asked_at else now
             observation["ended_at"] = ended.isoformat()
             if retried:
                 # The platform will run the job again: an expiry of this attempt is free.
@@ -1034,6 +1040,8 @@ def billable_sandbox_minutes(
 
 def _aware(value: str):
     moment = parse_datetime(value)
+    if moment is None:
+        raise ValueError(f"not a datetime: {value!r}")
     return timezone.make_aware(moment) if timezone.is_naive(moment) else moment
 
 
@@ -1071,8 +1079,9 @@ def _run_sandbox_domains(
     if attempt.attempt_number == job.current_attempt_number:
         domains.append((job.failure or {}).get("domain"))
         # A check run cancelled because the fix it checks failed on our side.
-        if job.cancel_reason == "fix_ended" and job.fix_run_id is not None:
-            if (job.fix_run.failure or {}).get("code") in OUR_FIX_FAILURES:
+        fix_run = job.fix_run if job.fix_run_id is not None else None
+        if job.cancel_reason == "fix_ended" and fix_run is not None:
+            if (fix_run.failure or {}).get("code", "") in OUR_FIX_FAILURES:
                 domains.append("infrastructure")
     return domains
 
