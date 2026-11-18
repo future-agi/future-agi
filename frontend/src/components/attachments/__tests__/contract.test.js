@@ -35,7 +35,11 @@ describe("attachment read contract", () => {
     );
   });
   it("uses explicit channel mapping, not left equals customer", () => {
-    expect(recordingRequests(occurrenceId, parent, stereoManifest)).toEqual([
+    const requests = recordingRequests(occurrenceId, parent, stereoManifest);
+    // Each track's channel derivative of EVERY segment, never the anchor's
+    // channels stretched over the whole call.
+    expect(requests).toHaveLength(stereoManifest.segments.length * 2);
+    expect(requests.slice(0, 2)).toEqual([
       {
         occurrence_id: occurrenceId,
         parent,
@@ -49,6 +53,9 @@ describe("attachment read contract", () => {
         channel: 1,
       },
     ]);
+    expect(requests.slice(-2).map((item) => item.occurrence_id)).toEqual(
+      Array(2).fill(stereoManifest.segments[239].occurrence_id),
+    );
     expect(stereoManifest.tracks[0].role).toBe("assistant");
   });
   it.each([

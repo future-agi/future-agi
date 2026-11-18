@@ -354,6 +354,27 @@ urlpatterns = [
     # path("v1/traces", OTLPTraceView.as_view(), name="otlp-traces"),
     # path("v1/traces/", OTLPTraceView.as_view(), name="otlp-traces-slash"),
     path("v1/health", OTLPHealthView.as_view(), name="otlp-health"),
+    # Original-identity source controls; F01/session-v2 payloads are unchanged.
+    path(
+        "v1/projects/<str:project_id>/attachments/provider-recordings",
+        attachments.AttachmentProviderRegistrationView.as_view(),
+        name="attachment-provider-register",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/provider-recordings/<str:registered_output_id>",
+        attachments.AttachmentProviderLookupView.as_view(),
+        name="attachment-provider-lookup",
+    ),
+    path(
+        "v1/projects/<str:project_id>/attachments/source-envelopes",
+        attachments.AttachmentSourceEnvelopeView.as_view(),
+        name="attachment-source-envelope",
+    ),
+    path(
+        "v1/attachments/providers/livekit/events",
+        attachments.AttachmentLiveKitEventView.as_view(),
+        name="attachment-livekit-event",
+    ),
     # F01 attachment contract (dark unless FI_ATTACHMENTS_ENABLED).
     path(
         "v1/attachment-sessions",

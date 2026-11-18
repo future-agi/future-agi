@@ -22,9 +22,11 @@ from django.utils.crypto import salted_hmac
 
 from accounts.models import User
 from tracer.models.attachment import (
+    Attachment,
     AttachmentOccurrence,
     AttachmentScope,
     AttachmentState,
+    CaptureSession,
 )
 from tracer.models.project import Project
 from tracer.services.attachments.bootstrap import session_policy
@@ -319,20 +321,47 @@ def list_occurrences(
     # A cursor must refer only to an authorized item, never the last denied child.
     items: list[dict[str, Any]]
     items, last = [], None
-    candidates = list(query.order_by("id")[:501])
-    for candidate in candidates[:500]:
-        try:
-            row, current_scope, expiry = get_occurrence(
-                viewer,
-                authority,
-                candidate.client_id,
-                Parent(candidate.trace_id, candidate.span_id),
+    candidates = list(
+        query.select_related("attachment", "capture_session", "recording").order_by(
+            "id"
+        )[:501]
+    )
+    from tracer.services.attachments.authority import LiveAuthority, clickhouse_span
+    from tracer.services.attachments.control_plane import (
+        Retention,
+        _BatchSources,
+        _MemoAuthority,
+        _read_source_spans,
+        read_spans,
+    )
+
+    if type(authority) is LiveAuthority and authority.span_reader is clickhouse_span:
+        spans = (
+            _read_source_spans(
+                read_spans,
+                scope.project_id,
+                {row.span_id for row in candidates[:500]},
+                trace_ids={row.trace_id for row in candidates[:500]},
             )
+            if candidates
+            else {}
+        )
+        authority = _BatchSources(_MemoAuthority(authority), spans, Retention())
+    else:
+        authority = _MemoAuthority(authority)
+    now = timezone.now()
+    for row in candidates[:500]:
+        try:
+            state = source_for(
+                viewer, authority, scope, Parent(row.trace_id, row.span_id)
+            )
+            check_readable(row, scope, state, now)
         except AttachmentError:
             continue
         if len(items) == limit:
             return {"items": items, "next_cursor": encode_cursor(binding, last)}
-        items.append(metadata(row, current_scope, expiry))
+        expiry = min(row.expires_at, row.source_expires_at, state.expires_at)
+        items.append(metadata(row, scope, expiry))
         last = row.id
     if len(candidates) > 500:
         # Never silently report an exhausted collection when the bounded scan
@@ -343,67 +372,85 @@ def list_occurrences(
     return {"items": items, "next_cursor": None}
 
 
-@transaction.atomic
 def link(viewer, authority, body):
-    """F01 ``linkAttachmentOccurrence``: a new occurrence of readable bytes.
-
-    Requires ordinary scoped authority over BOTH the readable source occurrence
-    and the writable target parent. The new occurrence inherits the source's
-    attachment, session and direction, and is bound to the target's retained
-    source state; it never extends the source's expiry.
-    """
+    """Link only readable bytes to an authorized parent, under the asset fence."""
     source_parent = Parent.parse(body["source_parent"])
     target_parent = Parent.parse(body["target_parent"])
     row, scope, source_expiry = get_occurrence(
         viewer, authority, body["source_occurrence_id"], source_parent
     )
-    scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
-    if (
-        body["policy_version"] != str(scope.policy_version)
-        or body["deletion_generation"] != scope.deletion_generation
-    ):
-        raise AttachmentError("expired", 409)
     scope_for(viewer, authority, write=True)
     target = source_for(viewer, authority, scope, target_parent, write=True)
     occurrence_id = UUID(body["occurrence_id"])
-    existing = AttachmentOccurrence.objects.filter(
-        scope=scope, client_id=occurrence_id
-    ).first()
-    if existing is not None:
+    # Network authorization is complete before taking the mutation chain. The
+    # scope/asset/occurrence rereads serialize with the irreversible erase fence.
+    with transaction.atomic():
+        scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
+        session = CaptureSession.objects.select_for_update().get(
+            pk=row.capture_session_id, scope=scope
+        )
+        asset = Attachment.objects.select_for_update().get(
+            pk=row.attachment_id, scope=scope
+        )
+        row = AttachmentOccurrence.objects.select_for_update().get(
+            pk=row.pk, scope=scope
+        )
+        now = timezone.now()
         if (
-            existing.attachment_id != row.attachment_id
-            or (existing.trace_id, existing.span_id)
-            != (target_parent.trace_id, target_parent.span_id)
-            or existing.deleted_at
+            not scope.enabled
+            or session.revoked_at
+            or asset.deleted_at
+            or asset.state == AttachmentState.DELETED
+            or row.deleted_at
+            or row.expires_at <= now
+            or row.source_expires_at is None
+            or row.source_expires_at <= now
+            or source_expiry <= now
+            or target.expires_at <= now
+            or body["policy_version"] != str(scope.policy_version)
+            or body["deletion_generation"] != scope.deletion_generation
+            or row.policy_version != scope.policy_version
+            or row.deletion_generation != scope.deletion_generation
+            or asset.policy_version != scope.policy_version
+            or asset.deletion_generation != scope.deletion_generation
         ):
-            raise AttachmentError("idempotency_conflict", 409)
-        created = existing
-    else:
-        try:
-            with transaction.atomic():
-                created = AttachmentOccurrence.objects.create(
-                    scope=scope,
-                    client_id=occurrence_id,
-                    attachment=row.attachment,
-                    capture_session=row.capture_session,
-                    trace_id=target_parent.trace_id,
-                    span_id=target_parent.span_id,
-                    direction=row.direction,
-                    purpose=row.purpose,
-                    # LinkRequest carries no placement: the new occurrence is the
-                    # same content in the same role, so it inherits the source's.
-                    **{name: getattr(row, name) for name in PLACEMENT_FIELDS},
-                    policy_version=scope.policy_version,
-                    deletion_generation=scope.deletion_generation,
-                    bound_at=timezone.now(),
-                    source_started_at=target.started_at,
-                    source_expires_at=target.expires_at,
-                    source_generation=target.generation,
-                    expires_at=min(source_expiry, target.expires_at),
-                    capture_complete=row.capture_complete,
-                )
-        except IntegrityError:
-            raise AttachmentError("idempotency_conflict", 409) from None
+            raise AttachmentError("expired", 409)
+        existing = AttachmentOccurrence.objects.filter(
+            scope=scope, client_id=occurrence_id
+        ).first()
+        if existing is not None:
+            if (
+                existing.attachment_id != row.attachment_id
+                or (existing.trace_id, existing.span_id)
+                != (target_parent.trace_id, target_parent.span_id)
+                or existing.deleted_at
+            ):
+                raise AttachmentError("idempotency_conflict", 409)
+            created = existing
+        else:
+            try:
+                with transaction.atomic():
+                    created = AttachmentOccurrence.objects.create(
+                        scope=scope,
+                        client_id=occurrence_id,
+                        attachment=asset,
+                        capture_session=session,
+                        trace_id=target_parent.trace_id,
+                        span_id=target_parent.span_id,
+                        direction=row.direction,
+                        purpose=row.purpose,
+                        **{name: getattr(row, name) for name in PLACEMENT_FIELDS},
+                        policy_version=scope.policy_version,
+                        deletion_generation=scope.deletion_generation,
+                        bound_at=now,
+                        source_started_at=target.started_at,
+                        source_expires_at=target.expires_at,
+                        source_generation=target.generation,
+                        expires_at=min(source_expiry, target.expires_at),
+                        capture_complete=row.capture_complete,
+                    )
+            except IntegrityError:
+                raise AttachmentError("idempotency_conflict", 409) from None
     linked, current_scope, expiry = get_occurrence(
         viewer, authority, created.client_id, target_parent
     )

@@ -354,77 +354,121 @@ export const recordingProjectionSchema = z.union([
 
 /**
  * How a ready recording plays, from its manifest alone (throws when unsafe).
- * - `channels`: stereo/separate tracks play simultaneously from server channel
- *   derivatives of the anchor occurrence.
+ * Every layout becomes one or more LANES on the recording's global timeline;
+ * each lane plays its own parts (segments, plus gaps kept as silent time) on
+ * one media element, and lanes play simultaneously.
  * - `file`: every timeline tile names the anchor, with no gaps. A standalone
- *   file longer than 30 s is tiled in the manifest but is still ONE file.
- * - `sequence`: distinct segment occurrences of one logical recording play one
- *   after another at their own `start_ms`, with gaps kept as silent time.
- *   F01 order is required as given (index = position, unique identities,
- *   start order); a malformed timeline is refused, never sorted into shape.
+ *   mixed file longer than 30 s is tiled in the manifest but is still ONE file.
+ * - `sequence`: distinct mixed segment occurrences play one after another at
+ *   their own `start_ms` on one lane.
+ * - `channels`: stereo. Every segment occurrence is one two-channel file; each
+ *   track is a lane playing that segment's server channel derivative.
+ * - `tracks`: separate tracks. Each track is a lane of its own (mono) segment
+ *   occurrences and gaps, so simultaneous segments overlap in time.
+ * F01 order is required as given (index = position, start order, unique
+ * identities); a malformed timeline is refused, never sorted into shape.
+ * `requests` lists every resolve item the plan can authorize, in timeline
+ * order; playback authorizes them lazily, never all at once.
  */
 export function recordingPlan(occurrenceId, parent, manifest) {
   uuid.parse(occurrenceId);
   parentSchema.parse(parent);
   const m = manifestSchema.parse(manifest);
-  const playable = (occurrence_id) => ({
-    occurrence_id,
-    parent,
-    representation: "playable",
-  });
-  if (m.layout !== "mixed")
-    return {
-      mode: "channels",
-      requests: m.tracks.map((track) => ({
-        occurrence_id: occurrenceId,
-        parent,
-        representation: "channel",
-        channel: track.channels[0],
-      })),
-    };
   if (!m.segments.length) throw new Error("No recorded segment");
+  const item = (occurrence_id, channel) =>
+    channel === undefined
+      ? { occurrence_id, parent, representation: "playable" }
+      : { occurrence_id, parent, representation: "channel", channel };
+  // The projection anchors on its first timeline segment; anything else
+  // belongs to a different recording.
+  if (m.segments[0].occurrence_id !== occurrenceId)
+    throw new Error("Anchor is not the first segment");
   if (
+    m.layout === "mixed" &&
     !m.gaps.length &&
     m.segments.every((segment) => segment.occurrence_id === occurrenceId)
   )
-    return { mode: "file", requests: [playable(occurrenceId)] };
+    return { mode: "file", requests: [item(occurrenceId)] };
   const seen = new Set();
   m.segments.forEach((segment, index) => {
     if (
       segment.index !== index ||
-      (index > 0 && segment.start_ms <= m.segments[index - 1].start_ms) ||
+      (index > 0 && segment.start_ms < m.segments[index - 1].start_ms) ||
       seen.has(segment.occurrence_id)
     )
       throw new Error("Unordered or repeated segment");
     seen.add(segment.occurrence_id);
   });
-  // The projection anchors on its first timeline segment; anything else
-  // belongs to a different recording.
-  if (m.segments[0].occurrence_id !== occurrenceId)
-    throw new Error("Anchor is not the first segment");
-  const parts = [
-    ...m.segments.map(({ occurrence_id, start_ms, duration_ms }) => ({
-      kind: "segment",
-      occurrence_id,
-      start_ms,
-      duration_ms,
-      request: playable(occurrence_id),
-    })),
-    ...m.gaps.map(({ start_ms, duration_ms }) => ({
-      kind: "gap",
-      start_ms,
-      duration_ms,
-    })),
-  ].sort((a, b) => a.start_ms - b.start_ms);
+  // A stereo/separate-track timeline keeps one channel per track (schema), so
+  // a stereo lane names that channel's derivative and a separate track its own
+  // playable occurrence: a mono track never asks for a nonexistent split.
+  const stereo = m.layout === "stereo";
+  const laneOf = (track) => {
+    const own = (part) =>
+      m.layout !== "separate_tracks" || part.track_id === track.track_id;
+    const channel = stereo ? track.channels[0] : undefined;
+    const parts = [
+      ...m.segments
+        .filter(own)
+        .map(({ occurrence_id, start_ms, duration_ms }) => ({
+          kind: "segment",
+          occurrence_id,
+          start_ms,
+          duration_ms,
+          request: item(occurrence_id, channel),
+        })),
+      ...m.gaps.filter(own).map(({ start_ms, duration_ms, reason }) => ({
+        kind: "gap",
+        start_ms,
+        duration_ms,
+        reason,
+      })),
+    ].sort((a, b) => a.start_ms - b.start_ms);
+    return { track, parts };
+  };
+  if (m.layout === "mixed")
+    return {
+      mode: "sequence",
+      parts: laneOf(m.tracks[0]).parts,
+      requests: m.segments.map((segment) => item(segment.occurrence_id)),
+    };
   return {
-    mode: "sequence",
-    parts,
-    requests: m.segments.map((segment) => playable(segment.occurrence_id)),
+    mode: stereo ? "channels" : "tracks",
+    lanes: m.tracks.map(laneOf),
+    requests: m.segments.flatMap((segment) =>
+      stereo
+        ? m.tracks.map((track) =>
+            item(segment.occurrence_id, track.channels[0]),
+          )
+        : [item(segment.occurrence_id)],
+    ),
   };
 }
 
 export function recordingRequests(occurrenceId, parent, manifest) {
   return recordingPlan(occurrenceId, parent, manifest).requests;
+}
+
+/**
+ * The plan as playback lanes on the recording's global timeline. A lane is
+ * `{track?, parts}`; a part is a `segment` (with its resolve `request`) or a
+ * `gap`, and each lane's parts cover the whole duration without overlap.
+ */
+export function recordingLanes(plan, durationMs) {
+  if (plan.mode === "file")
+    return plan.requests.map((request) => ({
+      parts: [
+        {
+          kind: "segment",
+          occurrence_id: request.occurrence_id,
+          start_ms: 0,
+          duration_ms: durationMs,
+          request,
+        },
+      ],
+    }));
+  if (plan.mode === "sequence") return [{ parts: plan.parts }];
+  return plan.lanes;
 }
 
 export function occurrenceFromUri(value) {

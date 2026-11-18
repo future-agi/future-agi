@@ -24,17 +24,17 @@ No adapter fetches media, follows a URL or trusts an OTLP timestamp.
 """
 
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import timedelta
 from types import SimpleNamespace
 from uuid import UUID
 
+import structlog
 from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 
 from tracer.models.attachment import (
-    AttachmentBlob,
     AttachmentOccurrence,
     AttachmentScope,
     AttachmentState,
@@ -42,9 +42,8 @@ from tracer.models.attachment import (
 from tracer.models.project import Project
 from tracer.services.attachments import manifests, occurrences, principal, retention
 from tracer.services.attachments.authority import (
-    SOURCE_GENERATION,
     LiveAuthority,
-    _aware,
+    authorize_parent_batch,
     retention_for,
 )
 from tracer.services.attachments.binding import (
@@ -66,9 +65,17 @@ from tracer.services.attachments.references import (
     InvalidReference,
     parse_references,
 )
-from tracer.services.attachments.uploads import lock_all_budgets
 
-SPAN_COLUMNS = ["id", "trace_id", "project_id", "start_time", "is_deleted"]
+logger = structlog.get_logger(__name__)
+
+SPAN_COLUMNS = [
+    "id",
+    "trace_id",
+    "project_id",
+    "trace_session_id",
+    "start_time",
+    "is_deleted",
+]
 # A worker tick walks at most this many claim batches before yielding.
 MAX_TICK_BATCHES = 8
 # One scope gets at most this many claims per tick, so a backlog in one
@@ -136,37 +143,13 @@ class Retention:
         return None if window is None else started_at + window
 
 
-def source_state(scope, parent, span, *, retention=retention_for):
-    """The backend ``SourceState`` for a live span, or None.
-
-    Mirrors ``LiveAuthority.source`` field for field (minus the viewer-only
-    ``writable``): the bound row must equal what every later read derives.
-    """
-    if span is None or getattr(span, "is_deleted", True):
-        return None
+def _read_source_spans(span_reader, project_id, span_ids, **kwargs):
+    """An unavailable parent proves nothing, for reads and binding alike."""
     try:
-        trace = UUID(str(span.trace_id))
-        started_at = _aware(span.start_time)
-    except (ValueError, TypeError, AttributeError):
-        return None
-    if (
-        str(span.project_id) != str(scope.project_id)
-        or str(span.id) != parent.span_id
-        or trace != parent.trace_id
-        or not isinstance(started_at, datetime)
-    ):
-        return None
-    expires_at = retention(scope.organization_id, started_at)
-    if expires_at is None:
-        return None
-    return occurrences.SourceState(
-        scope_id=scope.id,
-        parent=parent,
-        generation=SOURCE_GENERATION,
-        started_at=started_at,
-        expires_at=expires_at,
-        readable=True,
-    )
+        return span_reader(project_id, span_ids, **kwargs)
+    except Exception:  # noqa: BLE001 - ClickHouse boundary; fail closed
+        logger.warning("attachment_source_unavailable", project_id=str(project_id))
+        return {}
 
 
 def _references(span):
@@ -322,20 +305,15 @@ class OccurrenceBindingStore:
 
     @transaction.atomic
     def _tombstone(self, link, *, only_if_fenced=False):
-        # Same lock order as retention.expire_occurrences: budgets, scope, row.
-        scope = AttachmentScope.objects.get(pk=link.scope_id)
-        lock_all_budgets(scope)
+        # No capacity release during metadata deletion. The retention helper
+        # locks asset before occurrence and leaves physical cleanup queued.
         scope = AttachmentScope.objects.select_for_update().get(pk=link.scope_id)
-        row = (
-            AttachmentOccurrence.objects.select_for_update()
-            .filter(
-                pk=link.internal_id,
-                scope=scope,
-                bound_at__isnull=True,
-                deleted_at__isnull=True,
-            )
-            .first()
-        )
+        row = AttachmentOccurrence.objects.filter(
+            pk=link.internal_id,
+            scope=scope,
+            bound_at__isnull=True,
+            deleted_at__isnull=True,
+        ).first()
         if row is None:
             return False
         if only_if_fenced and not _permanently_fenced(row, scope, timezone.now()):
@@ -369,7 +347,8 @@ class ClickHouseParentReader:
             if scope is None:
                 continue
             created = [link.created_at for link in group]
-            spans = self.span_reader(
+            spans = _read_source_spans(
+                self.span_reader,
                 project_id,
                 {link.parent.span_id for link in group},
                 with_attributes=True,
@@ -379,26 +358,40 @@ class ClickHouseParentReader:
                     max(created) + BIND_CLOCK_SLACK,
                 ),
             )
+            sources = authorize_parent_batch(
+                scope=scope,
+                parents=tuple(
+                    occurrences.Parent(UUID(link.parent.trace_id), link.parent.span_id)
+                    for link in group
+                ),
+                spans=spans,
+                retention=retention,
+            )
             for link in group:
                 key = (link.scope, link.parent)
                 span = spans.get(link.parent.span_id)
                 if key in result or span is None:
                     continue
+                try:
+                    parent = occurrences.Parent(
+                        UUID(link.parent.trace_id), link.parent.span_id
+                    )
+                    same_parent = (
+                        UUID(str(span.trace_id)) == parent.trace_id
+                        and str(span.project_id) == str(project_id)
+                        and str(span.project_id) == str(scope.project_id)
+                        and str(span.id) == parent.span_id
+                    )
+                except (ValueError, TypeError, AttributeError):
+                    continue  # A malformed stored identity proves nothing.
+                if not same_parent:
+                    continue  # A foreign span cannot bind OR expire this parent.
                 if getattr(span, "is_deleted", 1):
                     result[key] = ParentState(
                         link.scope, link.parent, False, {}, None, None
                     )
                     continue
-                try:
-                    parent = occurrences.Parent(
-                        UUID(link.parent.trace_id), link.parent.span_id
-                    )
-                    same_trace = UUID(str(span.trace_id)) == parent.trace_id
-                except (ValueError, TypeError, AttributeError):
-                    continue  # A malformed stored trace id proves nothing.
-                if not same_trace or str(span.project_id) != str(project_id):
-                    continue  # Another trace's span id is never this parent.
-                state = source_state(scope, parent, span, retention=retention)
+                state = sources[(parent.trace_id, parent.span_id)]
                 result[key] = ParentState(
                     link.scope,
                     link.parent,
@@ -439,17 +432,25 @@ def _audio_facts(row):
         or attachment.state != AttachmentState.READY
     ):
         return None
-    try:
-        blob = attachment.attachmentblob
-    except AttachmentBlob.DoesNotExist:
-        return None
-    if blob is None or blob.mime_type != attachment.mime_type:
+    if (
+        attachment.verified_blob_id is None
+        or attachment.storage_binding_id is None
+        or attachment.verified_mime_type != attachment.mime_type
+        or any(
+            type(value) is not int or value <= 0
+            for value in (
+                attachment.verified_sample_rate,
+                attachment.verified_channels,
+                attachment.verified_frame_count,
+            )
+        )
+    ):
         return None
     return {
-        "mime_type": blob.mime_type,
-        "sample_rate": blob.sample_rate,
-        "channels": blob.channels,
-        "frame_count": blob.frame_count,
+        "mime_type": attachment.verified_mime_type,
+        "sample_rate": attachment.verified_sample_rate,
+        "channels": attachment.verified_channels,
+        "frame_count": attachment.verified_frame_count,
     }
 
 
@@ -463,14 +464,28 @@ class _BatchSources:
 
     def __init__(self, authority, spans, retention):
         self.authority, self.spans, self.retention = authority, spans, retention
+        self.sources = {}
 
     def session_is_live(self, viewer):
         return self.authority.session_is_live(viewer)
 
     def source(self, viewer, scope, parent):
-        return source_state(
-            scope, parent, self.spans.get(parent.span_id), retention=self.retention
-        )
+        if scope.id not in self.sources:
+            parents = {parent}
+            for span in self.spans.values():
+                try:
+                    parents.add(
+                        occurrences.Parent(UUID(str(span.trace_id)), str(span.id))
+                    )
+                except (ValueError, TypeError, AttributeError):
+                    continue
+            self.sources[scope.id] = authorize_parent_batch(
+                scope=scope,
+                parents=tuple(parents),
+                spans=self.spans,
+                retention=self.retention,
+            )
+        return self.sources[scope.id].get((parent.trace_id, parent.span_id))
 
 
 class _MemoAuthority:
@@ -516,10 +531,14 @@ class ControlPlaneReader:
             return None
 
     def _authority(self, viewer, span_ids, *, trace_ids=(), started=()):
-        spans = self.span_reader(
-            viewer.project_id, span_ids, trace_ids=trace_ids, started=started
+        spans = _read_source_spans(
+            self.span_reader,
+            viewer.project_id,
+            span_ids,
+            trace_ids=trace_ids,
+            started=started,
         )
-        return self._memo(spans)
+        return _BatchSources(self._memo(spans), spans, Retention())
 
     def _memo(self, spans):
         """The live authority over ``spans`` (a dict filled by one batch read)."""
@@ -588,7 +607,8 @@ class ControlPlaneReader:
             budget -= len(rows)
             started = [row.source_started_at for row in rows if row.source_started_at]
             spans.update(
-                self.span_reader(
+                _read_source_spans(
+                    self.span_reader,
                     app_viewer.project_id,
                     {row.span_id for row in rows},
                     trace_ids={row.trace_id for row in rows},

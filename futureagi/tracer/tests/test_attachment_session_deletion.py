@@ -20,6 +20,7 @@ from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession, TraceSessionOverlay
 from tracer.services.attachments import lifecycle, occurrences, playback, retention
 from tracer.services.attachments.authority import LiveAuthority
+from tracer.services.attachments.interfaces import ObjectIdentity
 from tracer.services.attachments.session_deletion import sweep_deleted_sessions
 from tracer.tests import test_attachment_core as core
 from tracer.tests import test_attachment_lifecycle as life
@@ -78,6 +79,7 @@ def collector_recording(setup, user, monkeypatch, parser_probe):
     reader.list_by_ids.return_value = [
         {
             "id": row.span_id,
+            "project_id": str(scope.project_id),
             "trace_id": str(row.trace_id),
             "trace_session_id": str(session_id),
         }
@@ -100,6 +102,15 @@ def collector_recording(setup, user, monkeypatch, parser_probe):
             }
         },
     )
+    asset = upload.attachment
+    asset.refresh_from_db()
+    assert asset.verified_blob_id is not None
+    identity = ObjectIdentity(
+        asset.storage_binding_id,
+        "serving",
+        asset.verified_storage_key,
+        asset.verified_storage_version,
+    )
     return SimpleNamespace(
         scope=scope,
         upload=upload,
@@ -115,7 +126,7 @@ def collector_recording(setup, user, monkeypatch, parser_probe):
         grant=grant,
         reader=reader,
         writer=writer,
-        store=media.RangeStoreDouble(core.wav_bytes()),
+        store=media.RangeStoreDouble(core.wav_bytes(), identity),
         objects=store,
     )
 

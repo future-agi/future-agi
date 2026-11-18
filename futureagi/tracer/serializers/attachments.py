@@ -8,6 +8,8 @@ with ``tracer/services/attachments/f01/contract.schema.json``.
 
 from rest_framework import serializers
 
+from tracer.services.attachments import wire as _attachment_wire
+
 REASONS = (
     "queued",
     "disabled",
@@ -366,3 +368,272 @@ class AttachmentRecordingManifestSerializer(serializers.Serializer):
     playout = AttachmentPlayoutSerializer(many=True)
     capture_complete = serializers.BooleanField()
     duration_ms = serializers.IntegerField()
+
+
+# Product control requests are documentation-only. Their validators remain in
+# the views/provider service; do not apply these serializers to signed bytes.
+# These describe the existing controls, not the pending additive SDK seam.
+_CONTROL_F01 = _attachment_wire._schema()["$defs"]
+
+
+class AttachmentControlUUIDField(serializers.UUIDField):
+    class Meta:
+        swagger_schema_fields = _CONTROL_F01["UUID"]
+
+
+class AttachmentControlParentSerializer(AttachmentParentSerializer):
+    class Meta:
+        swagger_schema_fields = {
+            "additionalProperties": False,
+            "properties": {
+                "trace_id": {
+                    "type": "string",
+                    "maxLength": _CONTROL_F01["UUID"]["maxLength"],
+                    "pattern": "|".join(
+                        f"(?:{variant['pattern']})"
+                        for variant in (
+                            _CONTROL_F01["TraceInput"]["oneOf"][0],
+                            _CONTROL_F01["UUID"],
+                        )
+                    ),
+                    # Preserve the canonical alternatives for extension-aware
+                    # tools; the plain Swagger pattern also accepts both forms.
+                    "x-oneOf": [
+                        {"type": "string", **_CONTROL_F01["TraceInput"]["oneOf"][0]},
+                        _CONTROL_F01["UUID"],
+                    ],
+                },
+                "span_id": _CONTROL_F01["SpanID"],
+            },
+        }
+
+
+class AttachmentControlAssociationSerializer(AttachmentAssociationSerializer):
+    capture_session_id = AttachmentControlUUIDField()
+    correlation_nonce = AttachmentControlUUIDField()
+    parent = AttachmentControlParentSerializer()
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class AttachmentProviderRegistrationRequestSerializer(serializers.Serializer):
+    """Register an existing egress; never start one or accept a source URL."""
+
+    connection_id = serializers.UUIDField()
+    egress_id = serializers.RegexField(r"^EG_[A-Za-z0-9]{1,61}$")
+    room_name = serializers.CharField(
+        min_length=1, max_length=256, trim_whitespace=False
+    )
+    recording_id = AttachmentControlUUIDField()
+    association = AttachmentControlAssociationSerializer()
+    direction = serializers.ChoiceField(choices=DIRECTIONS)
+    dispatch_mode = serializers.ChoiceField(
+        choices=("auto", "sdk_explicit"), default="auto", required=False
+    )
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class AttachmentProviderFileSerializer(serializers.Serializer):
+    """The opaque ProviderFile branch of F01 ImportSource, not a locator."""
+
+    kind = serializers.ChoiceField(choices=("ProviderFile",))
+    connection_id = AttachmentControlUUIDField()
+    registered_output_id = AttachmentControlUUIDField()
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+def _control_f01_schema(name):
+    """Inline only local vendored refs; never fetch a schema URL."""
+
+    def expand(value):
+        if isinstance(value, list):
+            return [expand(item) for item in value]
+        if isinstance(value, dict):
+            if "$ref" in value:
+                reference = value["$ref"]
+                if not reference.startswith("#/$defs/"):
+                    raise ValueError("nonlocal attachment schema reference")
+                return expand(_CONTROL_F01[reference.removeprefix("#/$defs/")])
+            return {key: expand(item) for key, item in value.items()}
+        return value
+
+    return expand(_CONTROL_F01[name])
+
+
+class AttachmentControlImportSourceField(serializers.JSONField):
+    class Meta:
+        swagger_schema_fields = {
+            "type": "object",
+            "x-oneOf": _control_f01_schema("ImportSource")["oneOf"],
+        }
+
+
+class AttachmentControlRecordingImportField(serializers.JSONField):
+    class Meta:
+        swagger_schema_fields = _control_f01_schema("RecordingImportRequest")
+
+
+class AttachmentProviderBindingSerializer(serializers.Serializer):
+    provider = serializers.ChoiceField(choices=("livekit",))
+    egress_id = serializers.RegexField(r"^EG_[A-Za-z0-9]{1,61}$")
+    room_digest = serializers.RegexField(r"^[0-9a-f]{64}$")
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class AttachmentProviderRegistrationResponseSerializer(serializers.Serializer):
+    state = serializers.ChoiceField(
+        choices=(
+            "registered",
+            "active",
+            "ending",
+            "complete",
+            "failed",
+            "aborted",
+            "limit_reached",
+        )
+    )
+    dispatch_mode = serializers.ChoiceField(choices=("auto", "sdk_explicit"))
+    binding = AttachmentProviderBindingSerializer()
+    import_request = AttachmentControlRecordingImportField(required=False)
+    job_id = AttachmentControlUUIDField(required=False)
+
+    def get_fields(self):
+        fields = super().get_fields()
+        fields["source"] = AttachmentProviderFileSerializer()
+        return fields
+
+    class Meta:
+        swagger_schema_fields = {
+            "additionalProperties": False,
+            "x-allOf": [
+                {
+                    "if": {"properties": {"state": {"const": "complete"}}},
+                    "then": {"required": ["import_request"]},
+                    "else": {
+                        "not": {
+                            "anyOf": [
+                                {"required": ["import_request"]},
+                                {"required": ["job_id"]},
+                            ]
+                        }
+                    },
+                }
+            ],
+        }
+
+
+class AttachmentOpaqueEnvelopeSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=("RemoteUrlEnvelope",))
+    envelope_id = AttachmentControlUUIDField()
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class AttachmentSourceEnvelopeResponseSerializer(serializers.Serializer):
+    registration = AttachmentProviderRegistrationResponseSerializer(
+        required=False, allow_null=True
+    )
+
+    def get_fields(self):
+        fields = super().get_fields()
+        fields["source"] = AttachmentOpaqueEnvelopeSerializer()
+        return fields
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class AttachmentSourceEnvelopeRequestSerializer(serializers.Serializer):
+    """Resolve a provider reference or inspect an opaque envelope; never a URL."""
+
+    def get_fields(self):
+        # As in AttachmentImportRequestSerializer, do not shadow Field.source.
+        return {"source": AttachmentControlImportSourceField()}
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class AttachmentLiveKitIntegerField(serializers.JSONField):
+    """Documentation of protobuf JSON integers consumed by the provider reader."""
+
+    class Meta:
+        swagger_schema_fields = {
+            "type": "integer",
+            "x-anyOf": [
+                {"type": "integer"},
+                {"type": "string", "pattern": "^[0-9]+$", "maxLength": 20},
+            ],
+        }
+
+
+class AttachmentLiveKitStatusField(serializers.JSONField):
+    class Meta:
+        swagger_schema_fields = {
+            "type": "string",
+            "x-anyOf": [{"type": "string"}, {"type": "integer"}],
+            "description": "LiveKit EGRESS_* enum name or numeric enum value (0 through 6); unknown states do not advance a registration.",
+        }
+
+
+class AttachmentLiveKitFileResultSerializer(serializers.Serializer):
+    location = serializers.CharField(
+        required=False,
+        help_text="Only a signed completion can select this locator; host approval and metadata/revision checks still apply.",
+    )
+    size = AttachmentLiveKitIntegerField(
+        required=False, help_text="Bytes; completion requires 1 through 1073741824."
+    )
+    duration = AttachmentLiveKitIntegerField(
+        required=False,
+        help_text="Nanoseconds; completion requires 1 through 7200000000000.",
+    )
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": True}
+
+
+class AttachmentLiveKitEgressInfoSerializer(serializers.Serializer):
+    egressId = serializers.CharField(required=False)
+    roomName = serializers.CharField(required=False)
+    status = AttachmentLiveKitStatusField(required=False)
+    updatedAt = AttachmentLiveKitIntegerField(required=False)
+    endedAt = AttachmentLiveKitIntegerField(required=False)
+    fileResults = AttachmentLiveKitFileResultSerializer(
+        many=True,
+        required=False,
+        help_text="Completion requires exactly one result; other shapes do not publish an output.",
+    )
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": True}
+
+
+class AttachmentLiveKitEventRequestSerializer(serializers.Serializer):
+    """Signed provider JSON, verified as original bytes before strict JSON decode.
+
+    Additional provider fields are permitted, not trusted for authorization.
+    Non-egress events and incomplete event shapes are acknowledged without
+    processing; id/event/egressInfo are therefore not globally required.
+    """
+
+    id = serializers.CharField(
+        required=False,
+        help_text="Processing requires a nonempty event ID of at most 64 characters.",
+    )
+    event = serializers.CharField(
+        required=False,
+        help_text="Only egress_started, egress_updated and egress_ended are processed; other signed events are acknowledged.",
+    )
+    egressInfo = AttachmentLiveKitEgressInfoSerializer(required=False)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": True}

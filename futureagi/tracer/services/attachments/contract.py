@@ -86,14 +86,9 @@ class CapturePolicy:
 UPLOAD_SOURCES = ("Bytes", "Blob", "OwnedRecordingFile")
 # Server-internal kinds written by trusted server paths, never by a client body.
 INTERNAL_SOURCES = ("imported_recording",)
-# Import source kinds that a DEPLOYED route can actually create: "RemoteUrl"
-# needs a mounted trusted resolver that seals envelopes (``envelopes.seal``);
-# "ProviderFile" needs a mounted provider registration and webhook intake
-# (``provider_recordings.register``/``verify_livekit_webhook``) and, in
-# addition, a qualified output reader. The route that mounts such a path adds
-# its kind here. Empty today: nothing deployed calls either, so advertising a
-# kind would promise an import that no client can start.
-IMPORT_SOURCE_PRODUCERS: set[str] = set()
+# Original-identity registration/lookup and signed completion routes are mounted.
+# Both kinds use the sealed, pinned reader; neither accepts a caller URL/header.
+IMPORT_SOURCE_PRODUCERS = frozenset({"RemoteUrl", "ProviderFile"})
 # Only types whose bytes the validation worker can settle are accepted, and only
 # their modalities are advertised. Accepting a type nothing can validate would
 # strand uploads in validating. ``probe.py`` sniffs each of these; any other
@@ -192,7 +187,14 @@ def admit_audio(
         raise AttachmentError("invalid_direction")
     if source_kind not in UPLOAD_SOURCES + INTERNAL_SOURCES:
         raise AttachmentError("source_unavailable", 403)
-    if creates_recording and (modality != "audio" or not policy.record_audio):
+    # Completed imports have their own opt-in at import admission. A recording
+    # must still be audio, and only the trusted import path uses the internal kind.
+    if creates_recording and (
+        modality != "audio" or not (
+            scope.allow_import and policy.allow_import
+            if source_kind == "imported_recording" else policy.record_audio
+        )
+    ):
         raise AttachmentError("recording_disabled", 403)
     if (
         (

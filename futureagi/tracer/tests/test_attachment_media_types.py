@@ -20,7 +20,7 @@ from django.test import RequestFactory
 from django.utils import timezone
 from PIL import Image
 
-from tracer.models.attachment import AttachmentBlob, AttachmentState, AttachmentUpload
+from tracer.models.attachment import Attachment, AttachmentState, AttachmentUpload
 from tracer.services.attachments import (
     occurrences,
     playback,
@@ -502,8 +502,35 @@ def test_policy_advertises_only_validated_modalities(setup):
     ],
 )
 def test_only_validated_types_are_servable(mime, representation, length, ok):
-    blob = SimpleNamespace(mime_type=mime, byte_length=length, storage_version="v1")
+    from tracer.services.attachments.interfaces import ObjectIdentity, RepresentationSelection
+
+    # Keep the requested wire representation unchanged, including unsupported
+    # requests. The verified source selector itself must always be constructible.
+    selected = representation if representation in {"original", "playable"} else "original"
+    blob = RepresentationSelection(
+        representation=selected,
+        identity=ObjectIdentity(uuid.uuid4(), "serving", "original/fixture", "v1"),
+        byte_length=length,
+        mime_type=mime,
+        sha256="0" * 64,
+        derivative_id=None,
+    )
     assert (playback.servable(blob, representation) is not None) is ok
+
+
+def test_octet_stream_peaks_cannot_be_served_as_original():
+    from tracer.services.attachments.interfaces import ObjectIdentity, RepresentationSelection
+
+    peaks = RepresentationSelection(
+        representation="peaks",
+        identity=ObjectIdentity(uuid.uuid4(), "serving", "peaks/fixture", "v1"),
+        byte_length=10,
+        mime_type="application/octet-stream",
+        sha256="0" * 64,
+        derivative_id=uuid.uuid4(),
+    )
+    assert playback.servable(peaks, "peaks") is not None
+    assert playback.servable(peaks, "original") is None
 
 
 def _stored(setup, payload, mime, modality):
@@ -541,7 +568,10 @@ def test_type_mismatch_is_rejected_not_relabelled(
     with pytest.raises(AttachmentError):
         validation.validate(upload.id, scope_id=upload.scope_id, storage=store)
     assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.REJECTED
-    assert store.promotions == [] and not AttachmentBlob.objects.exists()
+    assert (
+        store.promotions == []
+        and not Attachment.objects.filter(verified_blob_id__isnull=False).exists()
+    )
 
 
 def test_oversize_image_is_refused_before_bytes(setup):
@@ -656,12 +686,12 @@ def _readable(setup, user, monkeypatch, payload, mime, modality, representation)
     )
     return SimpleNamespace(
         row=row,
-        blob=blob,
+        facts=blob,
         result=result,
         session=session,
         cookie=cookie,
         authority=authority,
-        store=RangeStoreDouble(payload),
+        store=RangeStoreDouble(payload, blob.object.identity),
     )
 
 
@@ -772,7 +802,7 @@ def test_gateway_serves_the_validated_type(
 ):
     payload = make()
     r = _readable(setup, user, monkeypatch, payload, mime, modality, "original")
-    assert r.blob.mime_type == mime and r.result["status"] == "ready"
+    assert r.facts.mime_type == mime and r.result["status"] == "ready"
     reply = _get(r)
     assert reply.status_code == 200
     assert b"".join(reply.streaming_content) == payload

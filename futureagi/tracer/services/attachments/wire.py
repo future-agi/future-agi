@@ -56,6 +56,8 @@ PUBLIC = {
     "binding_fenced": (409, "conflict"),
     "segment_conflict": (409, "conflict"),
     "manifest_conflict": (409, "conflict"),
+    "snapshot_changed": (409, "conflict"),
+    "cleanup_fenced": (409, "conflict"),
     # Completed-recording import (imports.py) codes.
     "conflict": (409, "conflict"),
     "deleted": (409, "deleted"),
@@ -69,6 +71,9 @@ PUBLIC = {
     "transfer_failed": (503, "incomplete"),
     "metadata_unavailable": (503, "incomplete"),
     "validation_unavailable": (503, "incomplete"),
+    "storage_unverified": (503, "incomplete"),
+    "media_unavailable": (503, "incomplete"),
+    "cleanup_unavailable": (503, "incomplete"),
 }
 
 # The public ``source_unavailable`` refusal for imports keeps its own F01 code:

@@ -3,9 +3,9 @@
 Only bounded blobs whose type the validation probe established are served, and
 only under that validated type (``SERVED``), never the client's declaration.
 ``original`` resolves for every served type; ``playable`` only for audio and
-video, whose original is already browser-playable. Channel, peaks and
-thumbnail representations resolve to ``not_found`` until server-produced
-derivatives are bound. A grant never substitutes for a current source
+video, whose original is already browser-playable. Channel and peaks select
+asset-owned, published derivatives using the canonical channel+index request.
+Unavailable representations resolve to ``not_found``, never another version. A grant never substitutes for a current source
 permission: every gateway request re-runs the full occurrence authorization.
 
 A media session belongs to one viewer, organization and original access row.
@@ -24,7 +24,6 @@ from django.db import transaction
 from django.utils import timezone
 
 from tracer.models.attachment import (
-    AttachmentBlob,
     AttachmentMediaSession,
     AttachmentPlaybackGrant,
     AttachmentState,
@@ -32,6 +31,10 @@ from tracer.models.attachment import (
 from tracer.services.attachments.accounting import audit
 from tracer.services.attachments.bootstrap import LIMITS
 from tracer.services.attachments.contract import AttachmentError
+from tracer.services.attachments.interfaces import (
+    ObjectIdentity,
+    RepresentationSelection,
+)
 from tracer.services.attachments.occurrences import (
     Parent,
     Viewer,
@@ -50,7 +53,7 @@ EXPIRY_HEADER = "X-Attachment-Media-Expires-At"
 EXCHANGES_PER_MINUTE = 60
 SESSION_SECONDS = 300
 GRANT_SECONDS = 60
-SERVED_REPRESENTATIONS = ("original", "playable")
+SERVED_REPRESENTATIONS = ("original", "playable", "channel", "peaks")
 MAX_SERVED_BYTES = LIMITS["max_upload_bytes"]
 
 
@@ -80,21 +83,88 @@ SERVED = {
     "image/jpeg": Served("image.jpg"),
     "image/webp": Served("image.webp"),
     "application/pdf": Served("document.pdf", inline=False),
+    "application/octet-stream": Served("attachment.bin", inline=False),
 }
 
 
-def servable(blob, representation):
-    """The blob's serving rule, or None when it may not be served this way."""
-    served = SERVED.get(blob.mime_type) if blob is not None else None
+def servable(selection, representation):
+    """Serving policy for a verified, immutable selection; never declared MIME."""
+    if not isinstance(selection, RepresentationSelection):
+        return None
+    served = SERVED.get(selection.mime_type)
+    expected = (
+        "channel"
+        if selection.representation in {"channel-0", "channel-1"}
+        else selection.representation
+    )
     if (
         served is None
         or representation not in SERVED_REPRESENTATIONS
-        or (representation == "playable" and not served.media)
-        or not blob.storage_version
-        or not 0 < blob.byte_length <= MAX_SERVED_BYTES
+        or representation != expected
+        or (selection.mime_type == "application/octet-stream" and representation != "peaks")
+        or (representation in {"playable", "channel"} and not served.media)
+        or not 0 < selection.byte_length <= MAX_SERVED_BYTES
     ):
         return None
     return served
+
+
+def resolve_representation(*, occurrence, representation, channel=None):
+    """Metadata only. Caller MUST authorize this exact occurrence first.
+
+    Public channel+index encoding is unchanged. Physical selectors never enter
+    the request, and an unavailable derivative never falls back to the original.
+    """
+    if (
+        representation not in SERVED_REPRESENTATIONS
+        or (
+            representation == "channel"
+            and (type(channel) is not int or channel not in (0, 1))
+        )
+        or (representation != "channel" and channel is not None)
+    ):
+        raise not_found()
+    asset = occurrence.attachment
+    if (
+        asset.scope_id != occurrence.scope_id
+        or asset.state != AttachmentState.READY
+        or asset.deleted_at
+        or not asset.verified_blob_id
+        or not asset.verified_at
+        or not asset.storage_binding_id
+    ):
+        raise not_found()
+    try:
+        if representation in {"channel", "peaks"} or (
+            representation == "playable" and asset.verified_mime_type not in SERVED
+        ):
+            from tracer.services.attachments.derivatives import identity_for
+
+            selection = identity_for(
+                attachment_id=asset.id,
+                representation=f"channel-{channel}"
+                if representation == "channel"
+                else representation,
+            )
+        else:
+            selection = RepresentationSelection(
+                representation=representation,
+                identity=ObjectIdentity(
+                    asset.storage_binding_id,
+                    "serving",
+                    asset.verified_storage_key,
+                    asset.verified_storage_version,
+                ),
+                byte_length=asset.verified_byte_length,
+                mime_type=asset.verified_mime_type,
+                sha256=asset.verified_sha256,
+                derivative_id=None,
+            )
+    except (ValueError, TypeError):
+        raise not_found() from None
+    if servable(selection, representation) is None:
+        raise not_found()
+    return selection
 
 
 NOT_READY = {
@@ -175,7 +245,17 @@ def revoke_application_session(*, user_id, application_session_id):
 
 
 @transaction.atomic
-def issue(viewer, authority, *, media_session, row, scope, expiry, representation):
+def issue(
+    viewer,
+    authority,
+    *,
+    media_session,
+    row,
+    scope,
+    expiry,
+    representation,
+    channel=None,
+):
     media_session = bound_media_session(viewer, authority, str(media_session.id))
     if representation not in SERVED_REPRESENTATIONS:
         raise not_found()
@@ -185,9 +265,14 @@ def issue(viewer, authority, *, media_session, row, scope, expiry, representatio
         or media_session.organization_id != scope.organization_id
     ):
         raise not_found()
-    blob = AttachmentBlob.objects.filter(attachment=row.attachment, scope=scope).first()
-    if servable(blob, representation) is None:
-        raise not_found()
+    # Do not trust a caller's prefetched row/expiry as ongoing authorization.
+    row, scope, current_expiry = get_occurrence(
+        viewer, authority, row.client_id, Parent(row.trace_id, row.span_id), ready=True
+    )
+    selection = resolve_representation(
+        occurrence=row, representation=representation, channel=channel
+    )
+    expiry = min(expiry, current_expiry)
     token = secrets.token_urlsafe(32)
     expiry = min(
         expiry,
@@ -200,6 +285,8 @@ def issue(viewer, authority, *, media_session, row, scope, expiry, representatio
         occurrence=row,
         token_digest=digest(token),
         representation=representation,
+        selected_channel=channel,
+        selected_derivative_id=selection.derivative_id,
         policy_version=scope.policy_version,
         deletion_generation=scope.deletion_generation,
         source_generation=row.source_generation,
@@ -257,6 +344,7 @@ def resolve(viewer, authority, items, *, media_session_id):
                     scope=scope,
                     expiry=expiry,
                     representation=item["representation"],
+                    channel=item.get("channel"),
                 )
             )
         except AttachmentError:
@@ -312,7 +400,13 @@ def authorize(cookie, grant_token, occurrence_id, authority, *, media_session_id
         or grant.representation not in SERVED_REPRESENTATIONS
     ):
         raise not_found()
-    blob = AttachmentBlob.objects.filter(scope=scope, attachment=row.attachment).first()
-    if servable(blob, grant.representation) is None:
+    if row.id != grant.occurrence_id or row.scope_id != grant.scope_id:
         raise not_found()
-    return grant, blob, viewer
+    selection = resolve_representation(
+        occurrence=row,
+        representation=grant.representation,
+        channel=grant.selected_channel,
+    )
+    if selection.derivative_id != grant.selected_derivative_id:
+        raise not_found()
+    return grant, selection, viewer

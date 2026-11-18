@@ -51,13 +51,6 @@ PURGE_LIMIT = 1000
 ORPHAN_LIMIT = 200
 
 
-def storage_from_settings():
-    """The deployment's private media storage; raises AttachmentError if unset."""
-    from tracer.services.attachments.storage import from_settings
-
-    return from_settings(settings)
-
-
 def _consume_validate(pk, storage):
     # Claims, leases and backs off on its own; settles the upload when done.
     return validation.consume_validation(pk, storage=storage)
@@ -82,7 +75,6 @@ CONSUMERS = {
     "settled": _consume_settled,
     "admitted": _consume_admitted,
 }
-NEEDS_STORAGE = frozenset({"validate", "erase"})
 
 
 def _push_back(pk, seconds):
@@ -103,19 +95,19 @@ def _due(event, limit):
 
 def drain_outbox(*, storage=None, limits=None):
     """Run every due outbox row once, per kind, within ``limits``. Returns counts."""
+    if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
+        return {}
     limits = {**DRAIN_LIMITS, **(limits or {})}
+    if any(
+        type(value) is not int or not 0 <= value <= DRAIN_LIMITS.get(kind, -1)
+        for kind, value in limits.items()
+    ):
+        raise AttachmentError("invalid_request")
     counts: defaultdict[str, int] = defaultdict(int)
-    storage_error = None
     for event, consumer in CONSUMERS.items():
-        if event in NEEDS_STORAGE and storage is None and storage_error is None:
-            try:
-                storage = storage_from_settings()
-            except AttachmentError as exc:
-                storage_error = exc.code
-        if event in NEEDS_STORAGE and storage is None:
-            # Never validate or erase without the real storage: rows stay queued.
-            counts[f"{event}_skipped_{storage_error}"] += 1
-            continue
+        # Durable work is selected first. The consumer loads its owner and
+        # resolves ONLY that binding, never the deployment's current default.
+        # An injected adapter is also checked against the owner by the consumer.
         for pk in _due(event, limits[event]):
             try:
                 finished = consumer(pk, storage)
@@ -177,6 +169,8 @@ def audit_retention():
 
 def sweep(*, now=None):
     """One bounded pass of every time-based cleanup. Returns counts."""
+    if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
+        return {}
     now = now or timezone.now()
     counts: defaultdict[str, int] = defaultdict(int)
     _isolated(counts, "reservations_expired", accounting.expire_reservations)

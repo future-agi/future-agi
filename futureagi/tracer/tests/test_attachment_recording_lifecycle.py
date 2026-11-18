@@ -30,6 +30,7 @@ from tracer.models.attachment_recording import (
 )
 from tracer.services.attachments import bootstrap as broker
 from tracer.services.attachments import (
+    capacity_db,
     contract,
     control_plane,
     derivatives,
@@ -50,16 +51,20 @@ from tracer.tests.test_attachment_recording_imports import (
     Store,
     body,
     budgets,
+    cleanup_import_job,
+    configure_recording_sources,
     drive,
     envelope,
     livekit,
     session,
     set_allow_import,
+    submit_job,
+    sweep_imports,
     wav_bytes,
 )
 
 pytestmark = [
-    pytest.mark.django_db,
+    pytest.mark.django_db(transaction=True),
     pytest.mark.unit,
     pytest.mark.skipif(not sys.platform.startswith("linux"), reason="seccomp"),
 ]
@@ -78,11 +83,12 @@ def unlimited_retention(monkeypatch):
 
 
 @pytest.fixture
-def rec(api, settings, tmp_path):  # noqa: F811
+def rec(api, settings, tmp_path, monkeypatch):  # noqa: F811
     settings.FI_ATTACHMENTS_ENVELOPE_KEYS = f"k1:{KEY}"
     settings.FI_ATTACHMENTS_IMPORT_HOSTS = ("media.example.com",)
     settings.FI_ATTACHMENTS_WORK_DIR = str(tmp_path)
     scope = api.scope
+    configure_recording_sources(scope, settings, monkeypatch)
     writer = broker.Writer(
         "user", api.user.pk, scope.organization_id, scope.workspace_id
     )
@@ -93,10 +99,12 @@ def rec(api, settings, tmp_path):  # noqa: F811
 def imported(rec, *, seconds=35, channels=2, generate=True):
     data = wav_bytes(seconds=seconds, channels=channels)
     current = session(rec.env)
-    _, job = imports.submit(
+    _, job = submit_job(
         rec.env[2],
         scope_id=rec.scope.id,
-        body=body(current, data=data, envelope_id=envelope(rec.env, data)),
+        body=body(
+            current, data=data, envelope_id=envelope(rec.env, data, current=current)
+        ),
     )
     assert drive(job, rec.store, data) == "ready"
     segments = list(
@@ -235,7 +243,7 @@ def _scheduled_ticks(rec):
     control_plane.reconcile_tick(span_reader=parent_spans(rec))
     swept = lifecycle.sweep()
     purged = derivatives.purge(limit=1000)
-    imports.sweep(storage=rec.store)
+    sweep_imports(rec.store)
     AttachmentOutbox.objects.filter(processed_at__isnull=True).update(
         available_at=timezone.now() - timedelta(seconds=1)
     )
@@ -378,83 +386,107 @@ def test_a_derivative_fenced_mid_production_is_not_left_in_storage(rec, monkeypa
 
 
 def test_a_failed_release_after_publication_is_retried_not_leaked(rec, monkeypatch):
-    real = imports._release
-    calls = {"n": 0}
+    real, calls = capacity_db.release_locked, {"n": 0}
 
-    def flaky(job):
-        calls["n"] += 1
-        if calls["n"] <= 2:
-            raise RuntimeError("transient db error")
-        return real(job)
+    def flaky(*args, **kwargs):
+        if kwargs["owner"].kind == "import":
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise RuntimeError("transient db error")
+        return real(*args, **kwargs)
 
-    monkeypatch.setattr(imports, "_release", flaky)
+    monkeypatch.setattr(capacity_db, "release_locked", flaky)
     data = wav_bytes(seconds=35)
     current = session(rec.env)
-    _, job = imports.submit(
+    _, job = submit_job(
         rec.env[2],
         scope_id=rec.scope.id,
-        body=body(current, data=data, envelope_id=envelope(rec.env, data)),
+        body=body(
+            current, data=data, envelope_id=envelope(rec.env, data, current=current)
+        ),
     )
-    # The release after publication fails, and so does run()'s own retry.
     assert drive(job, rec.store, data) == "ready"
     job.refresh_from_db()
-    assert (job.state, job.reason, job.released_at) == ("ready", "ready", None)
+    assert (job.state, job.reason, job.reservation_settled_at) == (
+        "ready",
+        "ready",
+        None,
+    )
     assert set(budgets().values()) != {IDLE}
-    # The sweep picks it up; the public status still says ready.
-    assert imports.sweep(storage=rec.store) == 1
+    # Release is owned by post-horizon cleanup, not run()'s publication path.
+    assert cleanup_import_job(job, rec.store, monkeypatch) == {
+        "expired": 0,
+        "released": 0,
+        "deferred": 1,
+    }
+    assert sweep_imports(rec.store) == {"expired": 0, "released": 0, "deferred": 1}
+    assert sweep_imports(rec.store) == {"expired": 0, "released": 1, "deferred": 0}
     job.refresh_from_db()
-    assert job.released_at is not None
+    assert job.reservation_settled_at is not None
     assert set(budgets().values()) == {IDLE}
     assert imports.status(rec.env[2], scope_id=rec.scope.id, job_id=job.id) == {
         "job_id": str(job.id),
         "state": "ready",
         "reason": "ready",
     }
-    assert imports.sweep(storage=rec.store) == 0  # exactly once
+    assert sweep_imports(rec.store) == {"expired": 0, "released": 0, "deferred": 0}
 
 
 def test_a_single_failed_release_is_retried_inside_the_run(rec, monkeypatch):
-    real = imports._release
-    calls = {"n": 0}
+    """Historical ID retained; the current retry owner is the cleanup sweep."""
+    real, calls = capacity_db.release_locked, {"n": 0}
 
-    def flaky(job):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise RuntimeError("transient db error")
-        return real(job)
+    def flaky(*args, **kwargs):
+        if kwargs["owner"].kind == "import":
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient db error")
+        return real(*args, **kwargs)
 
-    monkeypatch.setattr(imports, "_release", flaky)
+    monkeypatch.setattr(capacity_db, "release_locked", flaky)
     data = wav_bytes(seconds=35)
     current = session(rec.env)
-    _, job = imports.submit(
+    _, job = submit_job(
         rec.env[2],
         scope_id=rec.scope.id,
-        body=body(current, data=data, envelope_id=envelope(rec.env, data)),
+        body=body(
+            current, data=data, envelope_id=envelope(rec.env, data, current=current)
+        ),
     )
     assert drive(job, rec.store, data) == "ready"
     job.refresh_from_db()
-    assert job.released_at is not None and set(budgets().values()) == {IDLE}
+    assert job.reservation_settled_at is None and set(budgets().values()) != {IDLE}
+    assert cleanup_import_job(job, rec.store, monkeypatch) == {
+        "expired": 0,
+        "released": 0,
+        "deferred": 1,
+    }
+    assert sweep_imports(rec.store) == {"expired": 0, "released": 1, "deferred": 0}
+    job.refresh_from_db()
+    assert job.reservation_settled_at is not None and set(budgets().values()) == {IDLE}
 
 
 def test_staged_segments_reserve_an_object_and_a_link_each(rec, monkeypatch):
     seen = {}
-    real = imports._publish
+    real = imports.publish
 
-    def observe(job, *args, **kwargs):
+    def observe(*args, **kwargs):
         seen.update(budgets())
-        return real(job, *args, **kwargs)
+        return real(*args, **kwargs)
 
-    monkeypatch.setattr(imports, "_publish", observe)
+    monkeypatch.setattr(imports, "publish", observe)
     data = wav_bytes(seconds=65)  # three segments
     current = session(rec.env)
-    _, job = imports.submit(
+    _, job = submit_job(
         rec.env[2],
         scope_id=rec.scope.id,
-        body=body(current, data=data, envelope_id=envelope(rec.env, data)),
+        body=body(
+            current, data=data, envelope_id=envelope(rec.env, data, current=current)
+        ),
     )
     assert drive(job, rec.store, data) == "ready"
     job.refresh_from_db()
-    assert job.reserved_segments == 3
+    assert job.reservation_part_count == 3
     charged = {key: value for key, value in seen.items() if value != IDLE}
     # Imports use the deployment import row, never an upload shard.
     assert set(charged) == {
@@ -465,7 +497,13 @@ def test_staged_segments_reserve_an_object_and_a_link_each(rec, monkeypatch):
     for value in charged.values():
         _, transfers, recordings, validation_jobs, objects, links = value
         assert (transfers, recordings, validation_jobs) == (1, 1, 1)
-        assert (objects, links) == (2 + 3, 1 + 3)
+        assert (objects, links) == (2 + 3 * 3, 1 + 3)
+    assert job.reservation_settled_at is None
+    assert cleanup_import_job(job, rec.store, monkeypatch) == {
+        "expired": 0,
+        "released": 1,
+        "deferred": 0,
+    }
     assert set(budgets().values()) == {IDLE}
 
 

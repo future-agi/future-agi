@@ -1,312 +1,186 @@
-"""Dedicated, private, version-addressed storage. No legacy storage helpers.
+"""Private binding-addressed storage; never resolves historical owners by default.
 
-Only the native S3 backend is implemented here. MinIO/GCS interoperability must
-remain disabled until their privacy/capability checks are independently qualified.
-The deployment owns bucket provisioning; the application never creates a bucket
-or changes policy, ACL, CORS, lifecycle or public-access settings.
+Provider IO is outside transactions. Bindings contain observed resource identity,
+not credentials or authorization. Caller-owned publication/lease/cleanup fencing
+is still required; an empty enumeration is NOT proof of a stopped writer.
 """
 
-import contextlib
-import hashlib
-import json
-from dataclasses import dataclass
-from uuid import UUID
+from __future__ import annotations
 
-from botocore.exceptions import ClientError
+from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
 
+from django.db import connections
+
+from tfc.utils.storage_config import (
+    materialize_attachment_binding_config,
+    resolve_attachment_binding_config,
+    resolve_attachment_posture_credentials,
+    resolve_attachment_storage_config,
+)
 from tracer.services.attachments.contract import AttachmentError
+from tracer.services.attachments.interfaces import (
+    ObjectIdentity,
+    PrivateMediaStorage,
+    StorageOperation,
+)
+
+if TYPE_CHECKING:
+    from tfc.utils.storage_config import BindingAccessConfig
+
+__all__ = ["ObjectIdentity", "PrivateMediaStorage", "bind_for_admission", "for_binding"]
 
 
-@dataclass(frozen=True)
-class ObjectIdentity:
-    key: str
-    version: str
+def outside_transaction():
+    """Refuse IO if this thread holds any Django transaction, including aliases."""
+    if any(connection.in_atomic_block for connection in connections.all()):
+        raise AttachmentError("storage_unverified", 503)
 
 
-class PrivateMediaStorage:
-    """Two dedicated clients, with no presign or public URL interface."""
+def _schema():
+    from tracer.models.attachment_storage import (
+        BINDING_IDENTITY_FIELDS,
+        AttachmentStorageBinding,
+        binding_identity_sha256,
+    )
 
-    direct_upload_enabled = False
+    return AttachmentStorageBinding, BINDING_IDENTITY_FIELDS, binding_identity_sha256
 
-    def __init__(
-        self, *, quarantine_client, serving_client, quarantine_bucket, serving_bucket
-    ):
-        if (
-            not quarantine_bucket
-            or not serving_bucket
-            or quarantine_bucket == serving_bucket
+
+def _provider(provider):
+    if provider == "s3":
+        from tracer.services.attachments.storage_s3 import S3PrivateMediaStorage
+
+        return S3PrivateMediaStorage
+    if provider == "minio":
+        from tracer.services.attachments.storage_minio import MinIOPrivateMediaStorage
+
+        return MinIOPrivateMediaStorage
+    if provider == "gcs":
+        from tracer.services.attachments.storage_gcs import GCSPrivateMediaStorage
+
+        return GCSPrivateMediaStorage
+    raise AttachmentError("storage_unverified", 503)
+
+
+def _posture_type(provider):
+    if provider == "gcs":
+        from google.auth.credentials import Credentials
+
+        return Credentials
+    if provider == "minio":
+        from tracer.services.attachments.storage_minio import MinIOPostureCredentials
+
+        return MinIOPostureCredentials
+    from tracer.services.attachments.storage_s3 import S3PostureCredentials
+
+    return S3PostureCredentials
+
+
+def _settings(supplied):
+    if supplied is None:
+        from django.conf import settings
+
+        return settings
+    return supplied
+
+
+def _posture(access: BindingAccessConfig, settings, provider, *, operation):
+    # Identity/incarnation verification can need read-only provider metadata even
+    # for historical erasure. It never needs decoder/source/default credentials.
+    return resolve_attachment_posture_credentials(
+        access,
+        supplied=getattr(settings, "FI_ATTACHMENTS_POSTURE_CREDENTIALS", {}),
+        expected_type=_posture_type(provider),
+        required=not (provider == "gcs" and operation == "erase"),
+    )
+
+
+def for_binding(
+    binding_id: UUID, *, operation: StorageOperation, settings: object | None = None
+) -> PrivateMediaStorage:
+    """Resolve only the persisted tuple and its explicit credential references."""
+    try:
+        outside_transaction()
+        if not isinstance(binding_id, UUID) or operation not in (
+            "admit",
+            "write",
+            "read",
+            "erase",
         ):
-            raise AttachmentError("storage_unverified", 503)
-        self.quarantine = quarantine_client
-        self.serving = serving_client
-        self.quarantine_bucket = quarantine_bucket
-        self.serving_bucket = serving_bucket
+            raise ValueError
+        settings = _settings(settings)
+        model, _, _ = _schema()
+        binding = model.objects.get(pk=binding_id)
+        access = resolve_attachment_binding_config(
+            binding_id, operation=operation, settings=settings
+        )
+        config = materialize_attachment_binding_config(binding=binding, config=access)
+        adapter = _provider(binding.provider)(
+            binding=binding,
+            config=config,
+            posture_credentials=_posture(
+                access, settings, binding.provider, operation=operation
+            ),
+        )
+        adapter.verify_identity(operation=operation)
+        if operation in ("admit", "write"):
+            adapter.verify_readiness()
+        return adapter
+    except Exception:
+        # Provider/configuration exceptions may carry secrets or locators.
+        raise AttachmentError("storage_unverified", 503) from None
 
-    def verify_readiness(self):
-        try:
-            for client, bucket in (
-                (self.quarantine, self.quarantine_bucket),
-                (self.serving, self.serving_bucket),
-            ):
-                self._verify_bucket(client, bucket)
-        except Exception:  # noqa: BLE001 - object storage boundary; fails closed
-            # Storage exceptions may contain endpoint/key/signature details.
-            raise AttachmentError("storage_unverified", 503) from None
 
-    @staticmethod
-    def _verify_bucket(client, bucket):
-        block = client.get_public_access_block(Bucket=bucket)[
-            "PublicAccessBlockConfiguration"
-        ]
-        if not all(
-            block.get(flag) is True
-            for flag in (
-                "BlockPublicAcls",
-                "IgnorePublicAcls",
-                "BlockPublicPolicy",
-                "RestrictPublicBuckets",
-            )
+def bind_for_admission(*, settings: object) -> UUID:
+    """Observe current resources, verify posture, then persist the immutable tuple.
+
+    Observation and readiness happen BEFORE the short get-or-create transaction.
+    The resulting historical access mapping must already exist in configuration;
+    creating a binding does not mint credentials or authorize resource changes.
+    """
+    try:
+        outside_transaction()
+        if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
+            raise AttachmentError("disabled", 503)
+        model, fields, digest = _schema()
+        config = resolve_attachment_storage_config(settings.FI_ATTACHMENTS_STORAGE)
+        provider = _provider(config.storage.backend)
+        # New admissions use an explicit runtime reference, not ambient discovery.
+        reference = settings.FI_ATTACHMENTS_STORAGE.get("posture_credential_ref")
+        supplied = getattr(settings, "FI_ATTACHMENTS_POSTURE_CREDENTIALS", {})
+        posture = supplied.get(reference) if reference is not None else None
+        if posture is not None and not isinstance(
+            posture, _posture_type(config.storage.backend)
         ):
-            raise ValueError("public access")
-        if client.get_bucket_versioning(Bucket=bucket).get("Status") != "Enabled":
-            raise ValueError("versioning")
-        ownership = client.get_bucket_ownership_controls(Bucket=bucket)[
-            "OwnershipControls"
-        ]["Rules"]
-        if ownership != [{"ObjectOwnership": "BucketOwnerEnforced"}]:
-            raise ValueError("ACL enabled")
-        acl = client.get_bucket_acl(Bucket=bucket)
-        owner = acl["Owner"]["ID"]
-        if any(g["Grantee"].get("ID") != owner for g in acl["Grants"]):
-            raise ValueError("foreign ACL")
-        encryption = client.get_bucket_encryption(Bucket=bucket)[
-            "ServerSideEncryptionConfiguration"
-        ]["Rules"]
-        if not encryption or any(
-            r.get("ApplyServerSideEncryptionByDefault", {}).get("SSEAlgorithm")
-            not in {"AES256", "aws:kms"}
-            for r in encryption
-        ):
-            raise ValueError("encryption")
-        # Any CORS is unnecessary for authenticated gateway-only storage.
-        try:
-            cors = client.get_bucket_cors(Bucket=bucket)
-        except ClientError as exc:
-            if exc.response["Error"]["Code"] != "NoSuchCORSConfiguration":
-                raise
-        else:
-            if cors.get("CORSRules"):
-                raise ValueError("storage CORS")
-        try:
-            policy = json.loads(client.get_bucket_policy(Bucket=bucket)["Policy"])
-        except ClientError as exc:
-            if exc.response["Error"]["Code"] != "NoSuchBucketPolicy":
-                raise
-        else:
-            # Conservative: even conditional public Allows are not accepted.
-            if any(s.get("Effect") == "Allow" for s in policy.get("Statement", [])):
-                raise ValueError("bucket policy allow")
-        rules = client.get_bucket_lifecycle_configuration(Bucket=bucket).get(
-            "Rules", []
+            raise ValueError
+        values = provider.discover_identity(config=config, posture_credentials=posture)
+        if set(values) != set(fields):
+            raise ValueError
+        fingerprint = digest(values)
+        candidate = model(id=uuid4(), identity_sha256=fingerprint, **values)
+        adapter = provider(
+            binding=candidate, config=config, posture_credentials=posture
         )
-        if not any(
-            r.get("Status") == "Enabled"
-            and r.get("Filter", {}) in ({}, {"Prefix": ""})
-            and r.get("AbortIncompleteMultipartUpload", {}).get(
-                "DaysAfterInitiation", 999
-            )
-            <= 1
-            and r.get("NoncurrentVersionExpiration", {}).get("NoncurrentDays", 999) <= 1
-            for r in rules
-        ):
-            raise ValueError("version cleanup")
-
-    @staticmethod
-    def _put(client, bucket, key, stream, length):
-        result = client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=stream,
-            ContentLength=length,
-            ContentType="application/octet-stream",
-            IfNoneMatch="*",
-            ServerSideEncryption="AES256",
+        adapter.verify_readiness()
+        binding, _ = model.objects.get_or_create(
+            identity_sha256=fingerprint, defaults=values
         )
-        version = result.get("VersionId")
-        if not version or version == "null":
-            raise AttachmentError("storage_unverified", 503)
-        return ObjectIdentity(key, version)
-
-    def put_quarantine(self, upload_id, stream, length):
-        self.verify_readiness()
-        return self._put(
-            self.quarantine,
-            self.quarantine_bucket,
-            f"quarantine/{upload_id}",
-            stream,
-            length,
+        if any(getattr(binding, name) != values[name] for name in fields):
+            raise ValueError
+        # Check that owners created now will actually be resolvable historically.
+        # No fallback to the current config if the deployment omitted references.
+        access = resolve_attachment_binding_config(
+            binding.id, operation="admit", settings=settings
         )
-
-    def snapshot(self, identity, output, *, expected_length):
-        """Bounded read of an exact version; never fall back to mutable latest."""
-        self.verify_readiness()
-        if not identity.version or identity.version == "null":
-            raise AttachmentError("storage_unverified", 503)
-        result = self.quarantine.get_object(
-            Bucket=self.quarantine_bucket, Key=identity.key, VersionId=identity.version
-        )
-        body = result["Body"]
-        try:
-            if (
-                result.get("VersionId") != identity.version
-                or result["ContentLength"] != expected_length
-            ):
-                raise AttachmentError("snapshot_changed", 409)
-            digest, size = hashlib.sha256(), 0
-            while True:
-                chunk = body.read(min(256 * 1024, expected_length - size + 1))
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > expected_length:
-                    raise AttachmentError("length_mismatch")
-                digest.update(chunk)
-                output.write(chunk)
-            if size != expected_length:
-                raise AttachmentError("length_mismatch")
-            return digest.hexdigest()
-        finally:
-            body.close()
-
-    def open_range(self, identity, *, start, end, expected_length):
-        """Exact immutable serving version; caller closes the bounded body."""
-        body = None
-        try:
-            self.verify_readiness()
-            if (
-                not identity.version
-                or identity.version == "null"
-                or not 0 <= start <= end < expected_length
-            ):
-                raise ValueError
-            result = self.serving.get_object(
-                Bucket=self.serving_bucket,
-                Key=identity.key,
-                VersionId=identity.version,
-                Range=f"bytes={start}-{end}",
-            )
-            body = result["Body"]
-            if (
-                result.get("VersionId") != identity.version
-                or result.get("ContentLength") != end - start + 1
-                or result.get("ContentRange")
-                != f"bytes {start}-{end}/{expected_length}"
-            ):
-                raise ValueError
-            return body
-        except Exception:  # noqa: BLE001 - object storage boundary; fails closed
-            if body is not None:
-                # Best effort: the read already fails closed below.
-                with contextlib.suppress(Exception):
-                    body.close()
-            raise AttachmentError("media_unavailable", 503) from None
-
-    def erase_upload(self, upload_id):
-        """Remove exact server-owned keys, every version and incomplete part.
-
-        No prefix-wide deletion, source URLs, or user-provided storage identities.
-        Repeated sweeps through capability expiry handle writes racing enumeration.
-        Future derivative namespaces must extend this before they can be enabled.
-        """
-        upload_id = UUID(str(upload_id))
-        try:
-            for client, bucket, key in (
-                (self.quarantine, self.quarantine_bucket, f"quarantine/{upload_id}"),
-                (self.serving, self.serving_bucket, f"original/{upload_id}"),
-            ):
-                pages = client.get_paginator("list_object_versions").paginate(
-                    Bucket=bucket, Prefix=key, PaginationConfig={"PageSize": 100}
-                )
-                for index, page in enumerate(pages):
-                    if index >= 100:
-                        raise ValueError
-                    for item in page.get("Versions", []) + page.get(
-                        "DeleteMarkers", []
-                    ):
-                        if item["Key"] == key:
-                            client.delete_object(
-                                Bucket=bucket, Key=key, VersionId=item["VersionId"]
-                            )
-                pages = client.get_paginator("list_multipart_uploads").paginate(
-                    Bucket=bucket, Prefix=key, PaginationConfig={"PageSize": 100}
-                )
-                for index, page in enumerate(pages):
-                    if index >= 100:
-                        raise ValueError
-                    for item in page.get("Uploads", []):
-                        if item["Key"] == key:
-                            client.abort_multipart_upload(
-                                Bucket=bucket, Key=key, UploadId=item["UploadId"]
-                            )
-        except Exception:  # noqa: BLE001 - object storage boundary; fails closed
-            raise AttachmentError("cleanup_unavailable", 503) from None
-
-    def promote(self, snapshot, *, upload_id, expected_length, expected_sha256):
-        self.verify_readiness()
-        snapshot.seek(0)
-        digest, size = hashlib.sha256(), 0
-        for chunk in iter(lambda: snapshot.read(256 * 1024), b""):
-            size += len(chunk)
-            if size > expected_length:
-                raise AttachmentError("snapshot_changed", 409)
-            digest.update(chunk)
-        if size != expected_length or digest.hexdigest() != expected_sha256:
-            raise AttachmentError("snapshot_changed", 409)
-        snapshot.seek(0)
-        # Deterministic server identity lets the deletion outbox find an object
-        # even if the DB transaction dies after PUT but before blob publication.
-        key = f"original/{UUID(str(upload_id))}"
-        return self._put(self.serving, self.serving_bucket, key, snapshot, size)
+        materialize_attachment_binding_config(binding=binding, config=access)
+        return binding.id
+    except AttachmentError:
+        raise
+    except Exception:
+        raise AttachmentError("storage_unverified", 503) from None
 
 
 def from_settings(settings):
-    """Explicit credentials only: never the ambient workload identity chain."""
-    import boto3
-    from botocore.config import Config
-
-    config = getattr(settings, "FI_ATTACHMENTS_STORAGE", {})
-    if config.get("backend") != "s3":
-        raise AttachmentError("storage_backend_unqualified", 503)
-    required = (
-        "region",
-        "quarantine_bucket",
-        "serving_bucket",
-        "quarantine_access_key",
-        "quarantine_secret_key",
-        "serving_access_key",
-        "serving_secret_key",
-    )
-    if any(not config.get(k) for k in required):
-        raise AttachmentError("storage_unverified", 503)
-
-    # No endpoint override: GCS/MinIO cannot masquerade as qualified native S3.
-    def client(prefix):
-        return boto3.client(
-            "s3",
-            region_name=config["region"],
-            aws_access_key_id=config[f"{prefix}_access_key"],
-            aws_secret_access_key=config[f"{prefix}_secret_key"],
-            config=Config(
-                connect_timeout=3,
-                read_timeout=10,
-                retries={"max_attempts": 0},
-                proxies={},
-            ),
-        )
-
-    return PrivateMediaStorage(
-        quarantine_client=client("quarantine"),
-        serving_client=client("serving"),
-        quarantine_bucket=config["quarantine_bucket"],
-        serving_bucket=config["serving_bucket"],
-    )
+    """Fail closed for old key-only callers until their binding migration lands."""
+    raise AttachmentError("storage_unverified", 503)

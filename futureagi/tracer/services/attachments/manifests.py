@@ -9,8 +9,8 @@ occurrences. Manifests are prefix-monotonic. The same key with the same body
 replays as success; the same key with a different body conflicts (BR-5).
 
 Read (F01 ``readRecordingManifest``): the viewer must be able to read the
-recording's exact parent. A segment whose occurrence was deleted is reported
-as an ``incomplete`` gap, so a deleted link is never served.
+recording's exact parent and EVERY referenced occurrence. A denied/missing
+segment denies the whole manifest; only persisted capture gaps are returned.
 """
 
 from uuid import UUID
@@ -25,15 +25,16 @@ from tracer.models.attachment import (
     AttachmentScope,
     AttachmentState,
     AttachmentUpload,
+    CaptureSession,
 )
 from tracer.services.attachments.bootstrap import authorize, check_session
 from tracer.services.attachments.contract import (
-    INTERNAL_SOURCES,
     AttachmentError,
     fingerprint,
 )
 from tracer.services.attachments.occurrences import (
     Parent,
+    check_readable,
     not_found,
     scope_for,
     source_for,
@@ -80,6 +81,7 @@ def put_manifest(token, *, scope_id, recording_id, body, key):
     digest = fingerprint(body)
     with transaction.atomic():
         scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
+        session = CaptureSession.objects.select_for_update().get(pk=session.id)
         check_session(session)
         recording = (
             AttachmentRecording.objects.select_for_update()
@@ -94,7 +96,8 @@ def put_manifest(token, *, scope_id, recording_id, body, key):
         if recording is None:
             raise AttachmentError("not_found", 404)
         owner = (
-            AttachmentUpload.objects.select_related("occurrence")
+            AttachmentUpload.objects.select_for_update()
+            .select_related("occurrence")
             .filter(
                 pk=UUID(claims["upload_id"]),
                 scope=scope,
@@ -105,6 +108,7 @@ def put_manifest(token, *, scope_id, recording_id, body, key):
         )
         if (
             owner is None
+            or owner.producer_kind != "authenticated_stream"
             or owner.state not in MANIFEST_UPLOAD_STATES
             or owner.occurrence.deleted_at
             or owner.deletion_generation != scope.deletion_generation
@@ -168,7 +172,7 @@ def put_manifest(token, *, scope_id, recording_id, body, key):
 def read_manifest(viewer, authority, *, recording_id, parent):
     scope = scope_for(viewer, authority)
     parent = Parent.parse(parent)
-    source_for(viewer, authority, scope, parent)
+    source = source_for(viewer, authority, scope, parent)
     try:
         recording_id = UUID(str(recording_id))
     except (ValueError, TypeError, AttributeError):
@@ -185,47 +189,27 @@ def read_manifest(viewer, authority, *, recording_id, parent):
     if recording is None or recording.manifest is None:
         raise not_found()
     manifest = dict(recording.manifest)
+    # The manifest is a complete authorization unit, not the 64-item metadata
+    # page. Fetch its exact recording/parent occurrences in one bounded query;
+    # the persisted F01 manifest bounds the requested IDs. Never repair an
+    # authorization failure by dropping/reindexing segments or inventing gaps.
+    try:
+        ids = [UUID(segment["occurrence_id"]) for segment in manifest["segments"]]
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise not_found() from None
+    rows = {
+        row.client_id: row
+        for row in AttachmentOccurrence.objects.select_related(
+            "attachment", "capture_session"
+        ).filter(
+            scope=scope,
+            recording=recording,
+            trace_id=parent.trace_id,
+            span_id=parent.span_id,
+            client_id__in=ids,
+        )
+    }
     now = timezone.now()
-    live = {
-        str(value)
-        for value in AttachmentUpload.objects.filter(
-            scope=scope,
-            recording=recording,
-            state__in=MANIFEST_UPLOAD_STATES,
-            occurrence__deleted_at__isnull=True,
-            occurrence__expires_at__gt=now,
-        ).values_list("occurrence__client_id", flat=True)
-    }
-    # Completed-recording imports publish server-made segment occurrences with
-    # no upload row; the same deletion and expiry fences apply to them.
-    live |= {
-        str(value)
-        for value in AttachmentOccurrence.objects.filter(
-            scope=scope,
-            recording=recording,
-            attachment__source_kind__in=INTERNAL_SOURCES,
-            attachment__state=AttachmentState.READY,
-            attachment__deleted_at__isnull=True,
-            deleted_at__isnull=True,
-            expires_at__gt=now,
-        ).values_list("client_id", flat=True)
-    }
-    segments, gaps = [], list(manifest["gaps"])
-    for segment in manifest["segments"]:
-        if segment["occurrence_id"] in live:
-            segments.append(dict(segment))
-            continue
-        gap = {
-            "start_ms": segment["start_ms"],
-            "duration_ms": segment["duration_ms"],
-            "reason": "incomplete",
-        }
-        if "track_id" in segment:
-            gap["track_id"] = segment["track_id"]
-        gaps.append(gap)
-    if len(segments) != len(manifest["segments"]):
-        for index, segment in enumerate(segments):
-            segment["index"] = index
-        manifest["capture_complete"] = False
-    manifest["segments"], manifest["gaps"] = segments, gaps
+    for occurrence_id in ids:
+        check_readable(rows.get(occurrence_id), scope, source, now, ready=True)
     return manifest

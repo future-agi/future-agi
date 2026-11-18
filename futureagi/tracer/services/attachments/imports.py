@@ -1,30 +1,15 @@
-"""F01 completed-recording import: admission, bounded transfer and publication.
+"""F01 imports on the shared allocation, source and capacity contracts.
 
-Flow (README "Completed-recording import"):
-
-1. ``submit`` authenticates nothing itself: it receives an already
-   authenticated, explicitly eligible ORIGINAL identity (never a write-only
-   upload capability), resolves the trusted source facts, applies deny-wins
-   policy, and atomically reserves the whole declared source PLUS one output
-   window under global, organization and project budgets before any fetch.
-2. ``run`` (worker) rechecks fences, reads the exact immutable source version
-   through sequential bounded ranges into private worker scratch, probes it in
-   the seccomp sandbox, produces independently valid bounded segments in the
-   sandbox, validates each segment again, stages it privately and finally
-   publishes every segment occurrence and the manifest atomically.
-3. Failure, expiry, deletion or tightening fences late work, erases staged
-   segments and releases reservations exactly once, and only after every
-   staged segment object is erased. A segment row is allocated before its
-   object is written, so an erase never misses an object; an erase that fails
-   leaves the row ``staged`` and ``sweep`` retries it before releasing.
-
-Durable rows keep only opaque references and F01 Reason codes.
+A job owns its lease and scratch, not the lifetime of its published media.
+Allocation keys precede PUT. Only a current epoch may record a returned version;
+an unrecorded retired version is NEVER adopted. Consequently a stale writer can
+safely erase its exact unreferenced result without holding a DB lock during IO.
 """
 
 import hashlib
 import os
-import tempfile
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -36,88 +21,63 @@ from django.utils import timezone
 
 from tracer.models.attachment import (
     Attachment,
-    AttachmentBlob,
+    AttachmentManifestRevision,
     AttachmentOccurrence,
     AttachmentScope,
     AttachmentState,
+    AttachmentUpload,
+    AttachmentWriteGrant,
     CaptureSession,
 )
 from tracer.models.attachment_recording import (
     TERMINAL_RECORDING_STATES,
     AttachmentImportJob,
+    AttachmentProviderRecording,
     AttachmentRecording,
     AttachmentRecordingSegment,
     RecordingSegmentState,
     RecordingState,
 )
-from tracer.services.attachments import envelopes, recordings, sandbox
+from tracer.services.attachments import capacity, recordings, sandbox
 from tracer.services.attachments.bootstrap import check_session, session_policy
 from tracer.services.attachments.contract import (
     AttachmentError,
     admit_audio,
     fingerprint,
-    span_id,
-    trace_uuid,
 )
-from tracer.services.attachments.uploads import BUDGETS as UPLOAD_BUDGETS
-from tracer.services.attachments.uploads import _lock_budgets
+from tracer.services.attachments.interfaces import (
+    DecoderRequirements,
+    LeaseFence,
+    ObjectIdentity,
+    ObjectLocator,
+    PutPermit,
+    ReservationOwner,
+    ResourceVector,
+    SourceFacts,
+    SourceRef,
+    StoredObject,
+    VerifiedAssetFacts,
+)
 
 logger = structlog.get_logger(__name__)
-
 MAX_ATTEMPTS = 3
-# One worker owns a job at a time. The lease is renewed at every staged segment
-# and checked again under the job row lock before publication, so a worker that
-# lost its lease (crash, pause, overlapping tick) can never publish or finish.
-LEASE_SECONDS = 15 * 60
+LEASE_SECONDS = 900
+PUT_SECONDS = 30
+DRAIN_SECONDS = 15
+BUFFER_BYTES = 256 * 1024
+WINDOW_BYTES = 8 * 1024 * 1024
 IMPORTED_SOURCE_KIND = "imported_recording"
-JOB_HOURS = 3
-IMPORT_MIME_TYPES = {
-    "audio/wav",
-    "audio/ogg",
-    "audio/mpeg",
-    "audio/mp4",
-    "audio/webm",
-    "audio/flac",
-    "audio/L16",
-}
-# Only canonical PCM WAV has a qualified sandboxed segmenter today.
-SEGMENTABLE_MIME_TYPES = {"audio/wav"}
-# Finite in-flight bounds per (deployment, organization, project); not
-# editions. The deployment column is the reference the ``global:imports`` row
-# takes its configured share of (``import_budgets``): the upload deployment
-# caps where uploads have the same resource (bytes, transfers, validation
-# jobs), and an import-only bound for recordings, objects and links.
-_UPLOAD_TRANSFERS, _UPLOAD_BYTES, _UPLOAD_VALIDATION_JOBS, _ = UPLOAD_BUDGETS[0]
-IMPORT_BUDGETS = {
-    "bytes": (_UPLOAD_BYTES, 2 * 1024**3, 1024**3),
-    "transfers": (_UPLOAD_TRANSFERS, 32, 16),
-    "recordings": (64, 8, 4),
-    "validation_jobs": (_UPLOAD_VALIDATION_JOBS, 2048, 1024),
-    "objects": (65536, 16384, 8192),
-    "links": (65536, 16384, 8192),
-}
-_ROW_FIELDS = {
-    "bytes": "reserved_bytes",
-    "transfers": "active_transfers",
-    "recordings": "active_recordings",
-    "validation_jobs": "validation_jobs",
-    "objects": "object_count",
-    "links": "link_count",
-}
-# Each job holds one transfer, one recording, one validation slot, two objects
-# (staged source snapshot + one output window) and one link from admission on.
-# On top of that floor every staged segment adds its own object and link
-# (``SEGMENT_UNITS``, counted in ``AttachmentImportJob.reserved_segments``), so
-# a long recording's staged parts are bounded by the object and link budgets.
-JOB_UNITS = {
-    "transfers": 1,
-    "recordings": 1,
-    "validation_jobs": 1,
-    "objects": 2,
-    "links": 1,
-}
-
-# Internal codes -> F01 Reason. The HTTP layer must reuse this one table.
+IMPORT_MIME_TYPES = frozenset(
+    {
+        "audio/wav",
+        "audio/ogg",
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/webm",
+        "audio/flac",
+        "audio/L16",
+    }
+)
 PUBLIC_REASONS = {
     "too_large": "too_large",
     "throttled": "throttled",
@@ -148,488 +108,449 @@ PUBLIC_REASONS = {
     "invalid_policy": "policy_denied",
     "capability_expired": "expired",
     "permission_denied": "credential_scope_unsupported",
+    "cleanup_unavailable": "incomplete",
 }
-
-
-# F01 ``Reason`` values a stored job may carry as-is ("queued" while waiting).
 STATUS_REASONS = frozenset(PUBLIC_REASONS.values()) | {"queued", "ready"}
 
 
-SEGMENT_UNITS = {"objects": 1, "links": 1}
-# ``uploads._budget_keys`` names it ``global:imports``; see ``_lock_import_budgets``.
-IMPORT_SHARD = "imports"
+@dataclass(frozen=True)
+class Importer:
+    kind: str
+    id: uuid.UUID
+
+
+class LeaseLost(Exception):
+    """Internal fence refusal; never a new public reason."""
 
 
 def public_reason(code):
     return PUBLIC_REASONS.get(code, "validation_failed")
 
 
-def import_budgets():
-    """Caps per resource for (``global:imports``, organization, project).
-
-    Read at call time. The organization and project caps are the per-scope
-    caps. The ``global:imports`` row is kept apart from the upload shards, so
-    a long import never throttles the uploads hashed to a shard, and it holds
-    only ``FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT`` (default 50) of the
-    deployment column. A value outside 1-100 fails closed: every import is
-    throttled and nothing is reserved.
-    """
-    percent = getattr(settings, "FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT", 50)
-    if type(percent) is not int or not 1 <= percent <= 100:
-        raise AttachmentError("throttled", 429)
-    return {
-        resource: (max(1, deployment * percent // 100), organization, project)
-        for resource, (deployment, organization, project) in IMPORT_BUDGETS.items()
-    }
-
-
-def lifetime_need(*, declared_bytes, window, segment_bytes, segments):
-    """What one import holds at its peak, right before publication.
-
-    The source and one window from admission, plus the bytes, one object and
-    one link of every staged segment (``JOB_UNITS`` + ``SEGMENT_UNITS``).
-    """
-    return {
-        "bytes": declared_bytes + window + segment_bytes,
-        "objects": JOB_UNITS["objects"] + segments * SEGMENT_UNITS["objects"],
-        "links": JOB_UNITS["links"] + segments * SEGMENT_UNITS["links"],
-    }
-
-
-def check_import_share(need):
-    """Refuse ``too_large`` an import that could never finish, whatever the load.
-
-    The share is the smallest cap of the three rows it is charged to. An
-    import whose peak exceeds it would otherwise be admitted, then throttled
-    at a staged segment on every attempt and refetch the whole source each
-    time. A shortfall of HEADROOM (other jobs in flight) stays ``throttled``.
-    """
-    caps = import_budgets()
-    for resource, amount in need.items():
-        if amount > min(caps[resource]):
-            raise AttachmentError("too_large", 413)
-
-
 def server_limits():
-    """Server-owned negotiated limits. Never taken from the request."""
     value = getattr(settings, "FI_ATTACHMENTS_RECORDING_LIMITS", None) or {}
     return recordings.Limits(
-        max_upload_bytes=value.get("max_upload_bytes", 8 * 1024 * 1024),
-        segment_bytes=value.get("segment_bytes", 8 * 1024 * 1024),
-        segment_duration_ms=value.get("segment_duration_ms", 30000),
-        recording_bytes=value.get("recording_bytes", 1024**3),
-        recording_duration_ms=value.get("recording_duration_ms", 7_200_000),
-        reserved_bytes=value.get("reserved_bytes", 1024**3),
+        max_upload_bytes=min(value.get("max_upload_bytes", WINDOW_BYTES), WINDOW_BYTES),
+        segment_bytes=min(value.get("segment_bytes", WINDOW_BYTES), WINDOW_BYTES),
+        segment_duration_ms=min(value.get("segment_duration_ms", 30000), 30000),
+        recording_bytes=min(value.get("recording_bytes", 1024**3), 1024**3),
+        recording_duration_ms=min(
+            value.get("recording_duration_ms", 7_200_000), 7_200_000
+        ),
+        reserved_bytes=min(value.get("reserved_bytes", 1024**3), 1024**3),
     )
 
 
 def policy_token(scope):
-    """The F01 ``Policy.version`` token bootstrap issues for this scope."""
     return str(scope.policy_version)
 
 
-@dataclass(frozen=True)
-class Importer:
-    """An already authenticated ORIGINAL identity (user or eligible API key)."""
-
-    kind: str
-    id: uuid.UUID
-
-
-@dataclass(frozen=True)
-class SourceFacts:
-    """Trusted resolver observations; never client assertions."""
-
-    terminal_completed: bool
-    immutable: bool
-    bounded_ranges: bool
-    total_bytes: int
-    direction: str
-
-
-# --------------------------------------------------------------------------
-# Pure admission/completion rules shared with the F01 conformance fixtures.
-# --------------------------------------------------------------------------
-
-
-def initial_reservation(declared_bytes, limits):
-    return declared_bytes + limits.window
-
-
-def admission_check(*, recording, limits, headroom, source):
-    """Raise the F01 reason for the first failing admission rule."""
-    if (
-        recording["declared_bytes"] > limits.recording_bytes
-        or recording["declared_duration_ms"] > limits.recording_duration_ms
-    ):
-        raise AttachmentError("too_large", 413)
-    if not (source.terminal_completed and source.immutable and source.bounded_ranges):
-        raise AttachmentError("source_unavailable", 403)
-    if source.total_bytes != recording["declared_bytes"]:
-        raise AttachmentError("validation_failed", 422)
-    if recording["direction"] != "mixed" and source.direction != recording["direction"]:
-        # A client label can never understate trusted source ancestry.
-        raise AttachmentError("policy_denied", 403)
-    reservation = initial_reservation(recording["declared_bytes"], limits)
-    if reservation > limits.reserved_bytes:
-        raise AttachmentError("too_large", 413)
-    required = {"bytes": reservation, **JOB_UNITS}
-    if set(headroom) != {"project", "organization", "global"}:
-        raise AttachmentError("throttled", 429)
-    for available in headroom.values():
-        if set(available) != set(required):
-            raise AttachmentError("throttled", 429)
-        for resource, minimum in required.items():
-            if type(available[resource]) is not int or available[resource] < minimum:
-                raise AttachmentError("throttled", 429)
-    return reservation
-
-
-def completion_check(*, recording, limits, observation):
-    """Verify worker observations before anything is published."""
-    if (
-        observation["source_bytes"] != recording["declared_bytes"]
-        or observation["source_bytes"] > limits.recording_bytes
-        or observation["source_duration_ms"] != recording["declared_duration_ms"]
-        or observation["source_duration_ms"] > limits.recording_duration_ms
-        or observation["generation_matches"] is not True
-    ):
-        raise AttachmentError("validation_failed", 422)
-    end = 0
-    for part in observation["reads"]:
-        if (
-            part["offset"] != end
-            or type(part["bytes"]) is not int
-            or not 0 < part["bytes"] <= limits.window
-            or part["total_bytes"] != recording["declared_bytes"]
-        ):
-            raise AttachmentError("validation_failed", 422)
-        end += part["bytes"]
-    if end != recording["declared_bytes"]:
-        raise AttachmentError("validation_failed", 422)
-    manifest = recordings.validate_manifest(observation["manifest"])
-    if (
-        manifest["recording_id"] != recording["recording_id"]
-        or manifest["duration_ms"] != recording["declared_duration_ms"]
-        or not manifest["capture_complete"]
-        or not manifest["segments"]
-    ):
-        raise AttachmentError("validation_failed", 422)
-    if recording["direction"] != "mixed" and any(
-        track["direction"] != recording["direction"] for track in manifest["tracks"]
-    ):
-        raise AttachmentError("policy_denied", 403)
-    sizes = observation["segment_bytes"]
-    if len(sizes) != len(manifest["segments"]) or any(
-        type(size) is not int or not 0 < size <= limits.window for size in sizes
-    ):
-        raise AttachmentError("validation_failed", 422)
-    if sum(sizes) > limits.recording_bytes:
-        raise AttachmentError("too_large", 413)
-    if any(
-        segment["duration_ms"] > limits.segment_duration_ms
-        for segment in manifest["segments"]
-    ):
-        raise AttachmentError("validation_failed", 422)
-    return manifest
-
-
-# --------------------------------------------------------------------------
-# Request parsing (strict, no unknown members), source resolution, admission.
-# --------------------------------------------------------------------------
-
-_RECORDING_KEYS = {
-    "schema_version",
-    "association",
-    "policy_version",
-    "deletion_generation",
-    "mime_type",
-    "direction",
-    "source_kind",
-    "recording_id",
-    "modality",
-    "declared_bytes",
-    "declared_duration_ms",
-}
-
-
-def _canonical_uuid(value):
-    if not isinstance(value, str):
-        raise ValueError
-    return uuid.UUID(value)
-
-
 def parse_request(body):
-    """Normalize a RecordingImportRequest. Raises validation_failed only."""
-    try:
-        if set(body) != {"mode", "recording", "source"} or body["mode"] != (
-            "completed_recording"
-        ):
-            raise ValueError
-        recording, source = body["recording"], body["source"]
-        if set(recording) != _RECORDING_KEYS or recording["schema_version"] != 1:
-            raise ValueError
-        association = recording["association"]
-        if set(association) != {"capture_session_id", "correlation_nonce", "parent"}:
-            raise ValueError
-        parent = association["parent"]
-        if set(parent) != {"trace_id", "span_id"}:
-            raise ValueError
-        if (
-            recording["modality"] != "audio"
-            or recording["mime_type"] not in IMPORT_MIME_TYPES
-            or recording["direction"] not in {"input", "output", "mixed"}
-            or type(recording["declared_bytes"]) is not int
-            or not 1 <= recording["declared_bytes"] <= 1024**3
-            or type(recording["declared_duration_ms"]) is not int
-            or not 1 <= recording["declared_duration_ms"] <= 7_200_000
-            or type(recording["deletion_generation"]) is not int
-            or recording["deletion_generation"] < 0
-            or not isinstance(recording["policy_version"], str)
-        ):
-            raise ValueError
-        if source.get("kind") == "RemoteUrlEnvelope":
-            if set(source) != {"kind", "envelope_id"}:
-                raise ValueError
-            expected_kind = "RemoteUrl"
-            reference = {"envelope_id": _canonical_uuid(source["envelope_id"])}
-        elif source.get("kind") == "ProviderFile":
-            if set(source) != {"kind", "connection_id", "registered_output_id"}:
-                raise ValueError
-            expected_kind = "ProviderFile"
-            reference = {
-                "connection_id": _canonical_uuid(source["connection_id"]),
-                "registered_output_id": _canonical_uuid(source["registered_output_id"]),
-            }
-        else:
-            raise ValueError
-        if recording["source_kind"] != expected_kind:
-            raise ValueError
-        normalized = {
-            **{k: recording[k] for k in _RECORDING_KEYS - {"association"}},
-            "recording_id": str(_canonical_uuid(recording["recording_id"])),
-            "capture_session_id": _canonical_uuid(association["capture_session_id"]),
-            "correlation_nonce": _canonical_uuid(association["correlation_nonce"]),
-            "trace_id": trace_uuid(parent["trace_id"]),
-            "span_id": span_id(parent["span_id"]),
-        }
-        return normalized, {"kind": source["kind"], **reference}
-    except AttachmentError:
-        raise AttachmentError("validation_failed", 422) from None
-    except (TypeError, ValueError, KeyError, AttributeError):
-        raise AttachmentError("validation_failed", 422) from None
+    """Use the pinned F01 validator for BOTH wire forms, without new wire fields."""
+    from tracer.services.attachments import wire
+
+    whole = isinstance(body, dict) and body.get("mode") == "completed_recording"
+    wire.validate(
+        "RecordingImportRequest" if whole else "SingleAttachmentImportRequest", body
+    )
+    return body["recording" if whole else "upload"], body["source"]
 
 
-def _resolve_source(importer, scope, source):
-    """Return (SourceFacts, envelope_id, provider_recording)."""
+def _source_ref(scope_id, source):
     if source["kind"] == "RemoteUrlEnvelope":
-        row = envelopes.describe(scope_id=scope.id, envelope_id=source["envelope_id"])
-        if (row.creator_kind, row.creator_id) != (importer.kind, importer.id):
-            raise AttachmentError("source_unavailable", 403)
-        facts = SourceFacts(
-            terminal_completed=True,
-            immutable=True,
-            bounded_ranges=True,
-            total_bytes=row.source_bytes,
-            direction=row.direction,
-        )
-        return facts, row.id, None
-    from tracer.services.attachments import provider_recordings
-
-    registration = provider_recordings.completed_output(
-        importer,
-        scope,
+        return SourceRef(source["kind"], uuid.UUID(source["envelope_id"]))
+    row = AttachmentProviderRecording.objects.filter(
+        scope_id=scope_id,
         connection_id=source["connection_id"],
         registered_output_id=source["registered_output_id"],
-    )
-    facts = SourceFacts(
-        terminal_completed=True,
-        immutable=True,
-        bounded_ranges=provider_recordings.reader_qualified(registration),
-        total_bytes=registration.output_bytes,
-        direction=registration.direction,
-    )
-    return facts, None, registration
-
-
-def _lock_import_budgets(scope):
-    """Lock the deployment import row, then the organization and project rows.
-
-    Imports do not use the upload shards (``global:0..15``). A shard holds
-    1/16 of the deployment caps (512 MiB), less than one valid import (up to
-    1 GiB + one window, then its staged segments), and an import parked on a
-    shard for hours would also starve every upload hashed to it. Imports are
-    rare, so one ``global:imports`` row does not contend; it holds a
-    configurable share of the deployment caps (``import_budgets``, default
-    half). Lock order is unchanged: a ``global:*`` row, organization,
-    project, scope; retention takes ``global:0..15`` and never this row.
-    """
-    return _lock_budgets(scope, IMPORT_SHARD)
-
-
-def _headroom(rows):
-    """Headroom of (deployment import row, organization, project), in order."""
-    caps = import_budgets()
-    result = {}
-    for index, (name, row) in enumerate(
-        zip(("global", "organization", "project"), rows, strict=True)
-    ):
-        result[name] = {
-            resource: caps[resource][index] - getattr(row, field)
-            for resource, field in _ROW_FIELDS.items()
-        }
-    return result
-
-
-def _apply(rows, amounts, sign):
-    for row in rows:
-        for resource, amount in amounts.items():
-            field = _ROW_FIELDS[resource]
-            setattr(row, field, getattr(row, field) + sign * amount)
-            if getattr(row, field) < 0:
-                raise AttachmentError("conflict", 409)
-        row.save(update_fields=[_ROW_FIELDS[name] for name in amounts])
-
-
-def _session(scope, importer, recording):
-    """The importer's own capture session named by the request ``association``.
-
-    A capture session has no parent of its own: the recording's parent comes
-    from the request, exactly as every upload names its own parent.
-    """
-    session = CaptureSession.objects.filter(
-        scope=scope,
-        client_id=recording["capture_session_id"],
-        correlation_nonce=recording["correlation_nonce"],
-        writer_kind=importer.kind,
-        writer_id=importer.id,
     ).first()
-    if session is None:
-        raise AttachmentError("not_found", 404)
-    check_session(session)
-    return session
+    if row is None:
+        raise AttachmentError("source_unavailable", 403)
+    return SourceRef("ProviderFile", row.id)
 
 
-def _admit_policy(scope, session, direction):
+def _facts(job):
+    connection_id = None
+    if job.provider_recording_id:
+        connection_id = AttachmentProviderRecording.objects.values_list(
+            "connection_id", flat=True
+        ).get(pk=job.provider_recording_id, scope_id=job.scope_id)
+    return SourceFacts(
+        job.source_kind,
+        job.envelope_id or job.provider_recording_id,
+        job.source_creator_kind,
+        job.source_creator_id,
+        job.source_generation_kind,
+        job.source_generation,
+        job.source_byte_length,
+        job.source_mime_type,
+        job.source_duration_ms,
+        job.source_expires_at,
+        job.source_authority_generation,
+        job.source_trace_id,
+        job.source_span_id,
+        job.source_direction,
+        connection_id,
+    )
+
+
+def _revalidate(job):
+    # This frozen API is local authorization/metadata only, including under locks.
+    # open_source/read_range provide the remote generation check outside locks.
+    from tracer.services.attachments import source_providers
+
+    source_providers.revalidate(
+        facts=_facts(job),
+        scope_id=job.scope_id,
+        importer=Importer(job.importer_kind, job.importer_id),
+        capture_session_id=job.capture_session_id,
+    )
+
+
+def _lock_creator(scope, importer, *, required=True):
+    """Lock real writer and any delegated user BEFORE key/grant/session rows."""
+    from accounts.models import OrgApiKey, User
+
+    users = {importer.id} if importer.kind == "user" else set()
+    key = None
+    grants = []
+    if importer.kind == "api_key":
+        key = OrgApiKey.no_workspace_objects.filter(pk=importer.id).first()
+        if key is None:
+            if not required:
+                return
+            raise AttachmentError("permission_denied", 403)
+        users.update(value for value in (key.user_id, key.minted_by_id) if value)
+        grants = list(
+            AttachmentWriteGrant.objects.filter(scope=scope, api_key_id=key.id)
+        )
+        users.update(row.granted_by_id for row in grants if row.granted_by_id)
+    elif importer.kind != "user":
+        raise AttachmentError("permission_denied", 403)
+    list(User.objects.select_for_update().filter(pk__in=users).order_by("pk"))
+    if key is not None:
+        locked = OrgApiKey.no_workspace_objects.select_for_update().get(pk=key.id)
+        if (locked.user_id, locked.minted_by_id) != (key.user_id, key.minted_by_id):
+            raise AttachmentError("conflict", 409)
+        locked_grants = list(
+            AttachmentWriteGrant.objects.select_for_update()
+            .filter(scope=scope, api_key_id=key.id)
+            .order_by("pk")
+        )
+        if {(row.id, row.granted_by_id) for row in locked_grants} != {
+            (row.id, row.granted_by_id) for row in grants
+        }:
+            raise AttachmentError("conflict", 409)
+
+
+def _lock_source(scope_id, ref):
+    from tracer.services.attachments.source_providers import lock_source
+
+    return lock_source(scope_id=scope_id, source=ref)
+
+
+def _admit_policy(scope, session, descriptor):
     policy = session_policy(session)
-    # Both the session's snapshot and the LIVE scope switch must allow it, so
-    # turning ``allow_import`` off takes effect at once (deny wins).
     if not scope.allow_import or not getattr(policy, "allow_import", False):
-        # Import needs its own explicit source permission; recording opt-in
-        # (record_audio) is a different switch and never implies it.
         raise AttachmentError("source_unavailable", 403)
-    admit_audio(scope, policy, direction=direction, source_kind=IMPORTED_SOURCE_KIND)
+    admit_audio(
+        scope,
+        policy,
+        direction=descriptor["direction"],
+        source_kind=IMPORTED_SOURCE_KIND,
+        modality=descriptor.get("modality", "audio"),
+        creates_recording="recording_id" in descriptor,
+    )
 
 
-def submit(importer, *, scope_id, body):
-    """Admit one completed recording import; returns RecordingImportResponse."""
-    recording, source = parse_request(body)
-    scope = AttachmentScope.objects.get(pk=scope_id)
-    if not scope.allow_import:
-        # Uniform refusal before any session, envelope or provider lookup.
-        raise AttachmentError("source_unavailable", 403)
-    session = _session(scope, importer, recording)
-    digest = fingerprint(
-        {"importer": [importer.kind, importer.id], "recording": recording, **source}
+def _check_job(job, scope, session, target, asset, now):
+    if job.storage_binding_id is None or job.capture_session_id != session.id:
+        raise AttachmentError("storage_unverified", 503)
+    if job.state in TERMINAL_RECORDING_STATES:
+        raise LeaseLost
+    if now >= job.deadline:
+        raise AttachmentError("expired", 410)
+    if job.deletion_generation != scope.deletion_generation:
+        raise AttachmentError("deleted", 410)
+    if job.policy_version != scope.policy_version:
+        raise AttachmentError("policy_denied", 403)
+    if (session.writer_kind, session.writer_id) != (job.importer_kind, job.importer_id):
+        raise AttachmentError("permission_denied", 403)
+    check_session(session)
+    if job.upload_id:
+        occurrence = AttachmentOccurrence.objects.select_for_update().get(
+            pk=target.occurrence_id
+        )
+        if (
+            asset.deleted_at
+            or asset.state in {AttachmentState.DELETED, AttachmentState.EXPIRED}
+            or occurrence.deleted_at
+            or occurrence.expires_at <= now
+            or asset.storage_binding_id != job.storage_binding_id
+            or target.producer_kind != "import"
+        ):
+            raise AttachmentError("deleted", 410)
+        descriptor = {"direction": occurrence.direction, "modality": asset.modality}
+        if target.recording_id:
+            descriptor["recording_id"] = target.recording_id
+    else:
+        if target.deleted_at or target.state in TERMINAL_RECORDING_STATES:
+            raise AttachmentError("deleted", 410)
+        descriptor = {"direction": target.direction, "recording_id": target.id}
+    _admit_policy(scope, session, descriptor)
+    _revalidate(job)
+
+
+@contextmanager
+def _locked_job_rows(job_id, *, scope_id=None, require_creator=True):
+    """One lock order for claim, record, publish and stale reference checks.
+
+    The caller starts the transaction and, if needed, takes capacity locks first.
+    Cleanup deliberately takes the same locks WITHOUT requiring live source keys.
+    """
+    before = AttachmentImportJob.objects.get(
+        pk=job_id, **({"scope_id": scope_id} if scope_id else {})
     )
-    # Identical scoped replay returns the same job, even after its one-shot
-    # source envelope was consumed; a changed request conflicts.
-    replay = _replay(scope, recording, digest)
-    if replay is not None:
-        return _response(replay), replay
-    limits = server_limits()
-    facts, envelope_id, registration = _resolve_source(importer, scope, source)
-    direction = (
-        "mixed"
-        if "mixed" in {facts.direction, recording["direction"]}
-        else (facts.direction)
+    scope = AttachmentScope.objects.select_for_update().get(pk=before.scope_id)
+    _lock_creator(
+        scope, Importer(before.importer_kind, before.importer_id), required=require_creator
     )
-    # Deny-wins privacy on the trusted ancestry, before any byte is read.
-    _admit_policy(scope, session, direction)
-    if recording["policy_version"] != policy_token(scope) or (
-        recording["deletion_generation"] != scope.deletion_generation
+    session = CaptureSession.objects.select_for_update().get(
+        pk=before.capture_session_id
+    )
+    _lock_source(
+        before.scope_id,
+        SourceRef(
+            before.source_kind, before.envelope_id or before.provider_recording_id
+        ),
+    )
+    job = AttachmentImportJob.objects.select_for_update().get(pk=before.id)
+    if (
+        job.scope_id,
+        job.capture_session_id,
+        job.envelope_id,
+        job.provider_recording_id,
+    ) != (
+        before.scope_id,
+        before.capture_session_id,
+        before.envelope_id,
+        before.provider_recording_id,
     ):
         raise AttachmentError("conflict", 409)
-    if recording["mime_type"] not in SEGMENTABLE_MIME_TYPES:
-        raise AttachmentError("validation_failed", 422)
-    # Canonical WAV only (44-byte header): its segments carry all of the
-    # source's samples plus a 44-byte header each, so they total at least the
-    # declared size. Refuse before any reservation or fetch an import whose
-    # peak cannot fit; the worker repeats this exactly once it has the plan.
-    check_import_share(
-        lifetime_need(
-            declared_bytes=recording["declared_bytes"],
-            window=limits.window,
-            segment_bytes=recording["declared_bytes"],
-            segments=1,
+    asset = None
+    if job.recording_id:
+        target = AttachmentRecording.objects.select_for_update().get(
+            pk=job.recording_id
         )
-    )
-    with transaction.atomic():
-        rows = _lock_import_budgets(scope)
-        scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
-        replay = _replay(scope, recording, digest)
-        if replay is not None:
-            return _response(replay), replay
-        reservation = admission_check(
-            recording=recording,
-            limits=limits,
-            headroom=_headroom(rows),
-            source=facts,
-        )
-        _apply(rows, {"bytes": reservation, **JOB_UNITS}, +1)
-        record = AttachmentRecording.objects.create(
-            scope=scope,
-            client_id=recording["recording_id"],
-            capture_session=session,
-            trace_id=recording["trace_id"],
-            span_id=recording["span_id"],
-            capture_session_client_id=recording["capture_session_id"],
-            correlation_nonce=recording["correlation_nonce"],
-            direction=direction,
-            # The shared recording row defaults to a streamed upload's state.
-            state=RecordingState.IMPORTING,
-            policy_version=scope.policy_version,
-            deletion_generation=scope.deletion_generation,
-        )
-        deadline = timezone.now() + timedelta(hours=JOB_HOURS)
-        if registration is not None:
-            deadline = min(deadline, registration.expires_at)
-        job = AttachmentImportJob.objects.create(
-            scope=scope,
-            recording=record,
-            importer_kind=importer.kind,
-            importer_id=importer.id,
-            request_fingerprint=digest,
-            source_kind=source["kind"],
-            envelope_id=envelope_id,
-            provider_recording=registration,
-            mime_type=recording["mime_type"],
-            declared_bytes=recording["declared_bytes"],
-            declared_duration_ms=recording["declared_duration_ms"],
-            window_bytes=limits.window,
-            max_segment_ms=limits.segment_duration_ms,
-            recording_bytes=limits.recording_bytes,
-            deadline=deadline,
-            policy_version=scope.policy_version,
-            deletion_generation=scope.deletion_generation,
-            reserved_bytes=reservation,
-        )
-    return _response(job), job
-
-
-def _replay(scope, recording, digest):
-    existing = AttachmentRecording.objects.filter(
-        scope=scope, client_id=recording["recording_id"]
-    ).first()
-    if existing is None:
-        return None
-    job = AttachmentImportJob.objects.filter(scope=scope, recording=existing).first()
-    if job is None or job.request_fingerprint != digest:
+    else:
+        upload_before = AttachmentUpload.objects.get(pk=job.upload_id)
+        if upload_before.recording_id:
+            AttachmentRecording.objects.select_for_update().get(
+                pk=upload_before.recording_id
+            )
+        target = AttachmentUpload.objects.select_for_update().get(pk=job.upload_id)
+        asset = Attachment.objects.select_for_update().get(pk=target.attachment_id)
+    if target.scope_id != scope.id:
         raise AttachmentError("conflict", 409)
+    yield job, scope, session, target, asset
+
+
+@contextmanager
+def _locked_job(job_id, *, scope_id=None, authorize=True):
+    with _locked_job_rows(job_id, scope_id=scope_id, require_creator=authorize) as rows:
+        if authorize:
+            _check_job(*rows, timezone.now())
+        yield rows
+
+
+def _hold(job, fence, now, *, phases=("writing",)):
+    if (
+        fence.owner_kind != "import"
+        or fence.owner_id != job.id
+        or fence.token != job.lease_token
+        or fence.epoch != job.lease_epoch
+        or fence.expires_at != job.lease_until
+        or now >= fence.expires_at
+        or now >= job.deadline
+        or job.state in TERMINAL_RECORDING_STATES
+        or job.lease_phase not in phases
+        or job.reservation_settled_at is not None
+    ):
+        raise LeaseLost
+
+
+def _owner(job):
+    return ReservationOwner("import", job.id, job.scope_id)
+
+
+def _vector(job):
+    return ResourceVector(
+        job.reservation_charge_bytes,
+        job.reservation_transfers,
+        job.reservation_validation_jobs,
+        job.reservation_recordings,
+        job.reservation_objects,
+        job.reservation_links,
+    )
+
+
+def _reservation(now, deadline, amount, *, source_bytes, window):
+    return {
+        "reservation_id": uuid.uuid4(),
+        "reservation_created_at": now,
+        "reservation_expires_at": deadline,
+        "reservation_pool_key": capacity.IMPORT_POOL_KEY,
+        "reservation_reserved_bytes": source_bytes,
+        "reservation_decoded_bytes": window,
+        "reservation_object_count": amount.objects,
+        "reservation_part_count": 0,
+        "reservation_charge_bytes": 0,
+        "reservation_transfers": 0,
+        "reservation_validation_jobs": 0,
+        "reservation_recordings": 0,
+        "reservation_objects": 0,
+        "reservation_links": 0,
+    }
+
+
+def _replay(scope_id, descriptor, whole, digest):
+    query = (
+        {"recording__client_id": descriptor["recording_id"]}
+        if whole
+        else {"upload__attachment__client_id": descriptor["attachment_id"]}
+    )
+    existing = AttachmentImportJob.objects.filter(scope_id=scope_id, **query).first()
+    if existing is not None and existing.request_fingerprint != digest:
+        raise AttachmentError("idempotency_conflict", 409)
+    return existing
+
+
+def _independent_replay_facts(job, importer, session):
+    """Accepted whole-job metadata only; never a source-reader expiry override.
+
+    Locator expiry does not revoke an accepted response. Retained sealed capture
+    provenance, exact admitted facts and current authority are still mandatory.
+    Swept envelopes or unavailable sealing keys cannot prove that provenance.
+    """
+    from tracer.models.attachment_recording import AttachmentSourceEnvelope
+    from tracer.services.attachments import envelopes, source_providers
+
+    if (
+        job.scope_id != session.scope_id
+        or job.capture_session_id != session.id
+        or (job.importer_kind, job.importer_id) != (importer.kind, importer.id)
+        or job.recording_id is None
+        or job.upload_id is not None
+        or job.source_kind != "RemoteUrlEnvelope"
+        or job.envelope_id is None
+        or job.provider_recording_id is not None
+        or job.policy_version != session.policy_version
+        or job.deletion_generation != session.deletion_generation
+    ):
+        raise AttachmentError("conflict", 409)
+    scope, session, policy = source_providers._session(
+        job.scope_id, importer, session.id
+    )
+    row = AttachmentSourceEnvelope.objects.filter(
+        pk=job.envelope_id, scope_id=job.scope_id, revoked_at__isnull=True
+    ).first()
+    if row is None or source_providers._envelope_provider(job.scope_id, row.id) is not None:
+        raise AttachmentError("source_unavailable", 403)
+    envelopes.check_capture_session(row, session.id)
+    facts = source_providers._job_facts(job)
+    if (
+        source_providers._envelope_facts(row) != facts
+        or (facts.creator_kind, facts.creator_id) != (importer.kind, importer.id)
+        or (job.mime_type, job.declared_bytes, job.declared_duration_ms)
+        != (facts.mime_type, facts.byte_length, facts.duration_ms)
+    ):
+        raise AttachmentError("snapshot_changed", 409)
+    admit_audio(scope, policy, direction=facts.direction, source_kind=IMPORTED_SOURCE_KIND)
+    if not transaction.get_connection().in_atomic_block:
+        source_providers._parent(facts, scope, importer)
+    return facts
+
+
+def _independent_replay_locked(
+    importer, scope_id, session, ref, facts, descriptor, digest
+):
+    """Caller holds scope/creator/session/source locks, in that order."""
+    if not transaction.get_connection().in_atomic_block:
+        raise AttachmentError("conflict", 409)
+    before = _replay(scope_id, descriptor, True, digest)
+    if before is None:
+        return None
+    job = AttachmentImportJob.objects.select_for_update().filter(pk=before.id).first()
+    if (
+        job is None
+        or session.scope_id != scope_id
+        or job.request_fingerprint != digest
+        or ref.kind != "RemoteUrlEnvelope"
+        or job.envelope_id != ref.id
+        or _independent_replay_facts(job, importer, session) != facts
+    ):
+        raise AttachmentError("conflict", 409)
+    recording = (
+        AttachmentRecording.objects.select_for_update().filter(pk=job.recording_id).first()
+    )
+    association = descriptor["association"]
+    parent = association["parent"]
+    if (
+        recording is None
+        or recording.scope_id != scope_id
+        or recording.client_id != uuid.UUID(descriptor["recording_id"])
+        or recording.capture_session_id != session.id
+        or recording.capture_session_client_id != session.client_id
+        or recording.correlation_nonce != session.correlation_nonce
+        or session.client_id != uuid.UUID(association["capture_session_id"])
+        or session.correlation_nonce != uuid.UUID(association["correlation_nonce"])
+        or recording.trace_id != facts.parent_trace_id
+        or recording.span_id != facts.parent_span_id
+        or facts.parent_trace_id != uuid.UUID(parent["trace_id"])
+        or facts.parent_span_id != parent["span_id"]
+        or recording.direction != facts.direction
+        or recording.policy_version != job.policy_version
+        or recording.deletion_generation != job.deletion_generation
+    ):
+        raise AttachmentError("conflict", 409)
+    job.recording = recording
     return job
 
 
+def _independent_replay(importer, scope_id, session, ref, descriptor, digest):
+    """Recheck current parent outside locks, then exact local accepted binding."""
+    if transaction.get_connection().in_atomic_block:
+        raise AttachmentError("conflict", 409)
+    before = _replay(scope_id, descriptor, True, digest)
+    if before is None:
+        return None
+    if ref.kind != "RemoteUrlEnvelope" or before.envelope_id != ref.id:
+        raise AttachmentError("conflict", 409)
+    facts = _independent_replay_facts(before, importer, session)
+    with transaction.atomic():
+        scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
+        _lock_creator(scope, importer)
+        session = CaptureSession.objects.select_for_update().get(pk=session.id)
+        _, _, registered = _lock_source(scope_id, ref)
+        if registered is not None:
+            raise AttachmentError("conflict", 409)
+        check_session(session)
+        _admit_policy(scope, session, descriptor)
+        job = _independent_replay_locked(
+            importer, scope_id, session, ref, facts, descriptor, digest
+        )
+        if job is None or job.id != before.id:
+            raise AttachmentError("conflict", 409)
+        return job
+
+
 def _response(job):
+    if job.upload_id:
+        return {
+            "job_id": str(job.id),
+            "upload_id": str(job.upload_id),
+            "state": "importing",
+        }
     return {
         "mode": "completed_recording",
         "job_id": str(job.id),
@@ -638,8 +559,438 @@ def _response(job):
     }
 
 
+def _check_registered_descriptor(row, session, descriptor):
+    from tracer.services.attachments.contract import trace_uuid
+    from tracer.services.attachments.provider_recordings import _dispatch_body
+
+    expected = _dispatch_body(row, session)["recording"]
+    actual = {
+        **descriptor,
+        "association": {
+            **descriptor["association"],
+            "parent": {**descriptor["association"]["parent"]},
+        },
+    }
+    if actual["source_kind"] not in {"ProviderFile", "RemoteUrl"}:
+        raise AttachmentError("conflict", 409)
+    actual["source_kind"] = "ProviderFile"
+    actual["association"]["parent"]["trace_id"] = trace_uuid(
+        actual["association"]["parent"]["trace_id"]
+    ).hex
+    if actual != expected:
+        raise AttachmentError("conflict", 409)
+
+
+def _registered_job(
+    row, session, importer, descriptor, facts, *, link=True, recover_auto=False
+):
+    """Under ordered source locks: exact semantic replay, including legacy aliases.
+
+    Stored fingerprints are never rewritten. Independent sources and single
+    imports continue to use their original fingerprint comparison.
+    """
+    from tracer.services.attachments import source_providers
+
+    if recover_auto:
+        if row.dispatch_mode != "auto" or descriptor is not None or not link:
+            raise AttachmentError("conflict", 409)
+    else:
+        _check_registered_descriptor(row, session, descriptor)
+    candidates = list(
+        AttachmentImportJob.objects.select_for_update(of=("self",))
+        .filter(
+            scope_id=row.scope_id,
+        )
+        .filter(
+            Q(pk=row.import_job_id)
+            | Q(recording__client_id=row.recording_client_id)
+            | Q(provider_recording_id=row.id, recording__isnull=False)
+            | Q(envelope_id=row.output_envelope_id, recording__isnull=False)
+        )
+        .order_by("id")[:2]
+    )
+    if not candidates:
+        if row.import_job_id is not None:
+            raise AttachmentError("conflict", 409)
+        return None
+    if len(candidates) != 1:
+        raise AttachmentError("conflict", 409)
+    job = candidates[0]
+    if (
+        job.recording_id is None
+        or job.upload_id is not None
+        or (row.import_job_id is not None and row.import_job_id != job.id)
+        or (job.importer_kind, job.importer_id) != (importer.kind, importer.id)
+        or job.capture_session_id != session.id
+        or (not recover_auto and job.policy_version != session.policy_version)
+        or (not recover_auto and job.deletion_generation != session.deletion_generation)
+        or job.mime_type != facts.mime_type
+        or job.declared_bytes != facts.byte_length
+        or job.declared_duration_ms != facts.duration_ms
+        or not (
+            (
+                job.source_kind == "ProviderFile"
+                and job.provider_recording_id == row.id
+                and job.envelope_id is None
+            )
+            or (
+                job.source_kind == "RemoteUrlEnvelope"
+                and job.envelope_id == row.output_envelope_id
+                and job.provider_recording_id is None
+            )
+        )
+    ):
+        raise AttachmentError("conflict", 409)
+    recording = AttachmentRecording.objects.select_for_update().get(pk=job.recording_id)
+    if (
+        recording.scope_id != row.scope_id
+        or recording.client_id != row.recording_client_id
+        or recording.capture_session_id != session.id
+        or recording.capture_session_client_id != session.client_id
+        or recording.correlation_nonce != session.correlation_nonce
+        or recording.trace_id != row.trace_id
+        or recording.span_id != row.span_id
+        or recording.direction != row.direction
+        or recording.policy_version != job.policy_version
+        or recording.deletion_generation != job.deletion_generation
+    ):
+        raise AttachmentError("conflict", 409)
+    # Includes independent envelope/provider epochs and exact sealed generation.
+    source_providers.revalidate(
+        facts=_facts(job),
+        scope_id=row.scope_id,
+        importer=importer,
+        capture_session_id=session.id,
+    )
+    if link and row.import_job_id is None:
+        row.import_job_id, row.dispatch_due_at = job.id, None
+        row.save(update_fields=["import_job_id", "dispatch_due_at"])
+    return job
+
+
+def recover_auto_dispatch(row, importer):
+    """Recover an old, exact orphan link before constructing any renewed body.
+
+    This is not admission or policy renewal: the existing job and its immutable
+    original policy/fingerprint stay unchanged; the worker still reauthorizes.
+    No caller descriptor can request this recovery mode.
+    """
+    from tracer.services.attachments import source_providers
+    from tracer.services.attachments.provider_recordings import _registration_session
+
+    if row.dispatch_mode != "auto":
+        raise AttachmentError("conflict", 409)
+    session = _registration_session(row, importer, row.scope_id)
+    ref = SourceRef("ProviderFile", row.id)
+    facts = source_providers.resolve(
+        source=ref,
+        scope_id=row.scope_id,
+        importer=importer,
+        capture_session_id=session.id,
+    )
+    with transaction.atomic():
+        scope = AttachmentScope.objects.select_for_update().get(pk=row.scope_id)
+        _lock_creator(scope, importer)
+        session = CaptureSession.objects.select_for_update().get(pk=session.id)
+        _, _, locked = _lock_source(row.scope_id, ref)
+        check_session(session)
+        source_providers.revalidate(
+            facts=facts,
+            scope_id=row.scope_id,
+            importer=importer,
+            capture_session_id=session.id,
+        )
+        return _registered_job(
+            locked, session, importer, None, facts, recover_auto=True
+        )
+
+
+def _registered_replay(
+    importer, scope_id, session, ref, facts, original_facts, descriptor
+):
+    from tracer.services.attachments import capacity_db, source_providers
+
+    with transaction.atomic():
+        capacity_db.lock_capacity(
+            scope_id=scope_id, pool_keys=(capacity.IMPORT_POOL_KEY,)
+        )
+        scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
+        _lock_creator(scope, importer)
+        session = CaptureSession.objects.select_for_update().get(pk=session.id)
+        _, _, row = _lock_source(scope_id, ref)
+        check_session(session)
+        _admit_policy(scope, session, descriptor)
+        for current in (original_facts, facts):
+            source_providers.revalidate(
+                facts=current,
+                scope_id=scope_id,
+                importer=importer,
+                capture_session_id=session.id,
+            )
+        return _registered_job(row, session, importer, descriptor, facts)
+
+
+def submit(importer, *, scope_id, body):
+    from tracer.services.attachments import (
+        capacity_db,
+        readiness,
+        source_providers,
+        uploads,
+        validation,
+    )
+
+    descriptor, source = parse_request(body)
+    whole = body.get("mode") == "completed_recording"
+    scope = AttachmentScope.objects.get(pk=scope_id)
+    association = descriptor["association"]
+    session = CaptureSession.objects.filter(
+        scope=scope,
+        client_id=association["capture_session_id"],
+        correlation_nonce=association["correlation_nonce"],
+        writer_kind=importer.kind,
+        writer_id=importer.id,
+    ).first()
+    if session is None:
+        raise AttachmentError("not_found", 404)
+    check_session(session)
+    _admit_policy(scope, session, descriptor)
+    digest = fingerprint({"importer": [importer.kind, importer.id], "body": body})
+    if not whole:
+        replay = _replay(scope_id, descriptor, whole, digest)
+        if replay is not None:
+            return _response(replay), False
+    ref = _source_ref(scope_id, source)
+    registered = None
+    if whole:
+        registered = (
+            AttachmentProviderRecording.objects.get(pk=ref.id, scope_id=scope_id)
+            if ref.kind == "ProviderFile"
+            else source_providers._envelope_provider(scope_id, ref.id)
+        )
+        if registered is None:
+            replay = _independent_replay(
+                importer, scope_id, session, ref, descriptor, digest
+            )
+            if replay is not None:
+                return _response(replay), False
+    facts = source_providers.resolve(
+        source=ref, scope_id=scope_id, importer=importer, capture_session_id=session.id
+    )
+    original_facts = facts
+    if whole:
+        if registered is not None:
+            _check_registered_descriptor(registered, session, descriptor)
+            # All NEW registered whole jobs use the same canonical source ref.
+            # The incoming alias was authenticated above, and is rechecked below.
+            ref = SourceRef("ProviderFile", registered.id)
+            facts = source_providers.resolve(
+                source=ref,
+                scope_id=scope_id,
+                importer=importer,
+                capture_session_id=session.id,
+            )
+            replay = _registered_replay(
+                importer, scope_id, session, ref, facts, original_facts, descriptor
+            )
+        else:
+            replay = _independent_replay(
+                importer, scope_id, session, ref, descriptor, digest
+            )
+        if replay is not None:
+            return _response(replay), False
+    parent = association["parent"]
+    if (
+        facts.byte_length != descriptor["declared_bytes"]
+        or facts.mime_type != descriptor["mime_type"]
+        or facts.parent_trace_id != uuid.UUID(parent["trace_id"])
+        or facts.parent_span_id != parent["span_id"]
+        or (facts.creator_kind, facts.creator_id) != (importer.kind, importer.id)
+    ):
+        raise AttachmentError("snapshot_changed", 409)
+    if (
+        descriptor["direction"] != "mixed"
+        and descriptor["direction"] != facts.direction
+    ):
+        raise AttachmentError("policy_denied", 403)
+    # SourceFacts does not carry trusted PCM rate/channel/endianness metadata.
+    # Keep the full-format contract visible, but do not admit an unexecutable plan.
+    validation.require_supported_plan(facts.mime_type)
+    limits = server_limits()
+    now = timezone.now()
+    deadline = min(now + timedelta(hours=3), facts.expires_at, session.expires_at)
+    if deadline <= now:
+        raise AttachmentError("expired", 410)
+    if whole:
+        if (
+            facts.duration_ms != descriptor["declared_duration_ms"]
+            or facts.mime_type not in IMPORT_MIME_TYPES
+            or facts.byte_length > limits.recording_bytes
+            or not facts.duration_ms
+            or facts.duration_ms > limits.recording_duration_ms
+        ):
+            raise AttachmentError("validation_failed", 422)
+        amount = capacity.whole_import_floor(
+            source_bytes=facts.byte_length, output_scratch_bytes=limits.window
+        )
+        upload_amount = None
+    else:
+        upload_amount, job_amount = capacity.single_import_peaks(
+            source_bytes=facts.byte_length,
+            decoder_scratch_bytes=WINDOW_BYTES,
+            extra_reader_scratch_bytes=0,
+        )
+        amount = upload_amount + job_amount
+    if any(
+        not capacity.fits_within(amount, cap)
+        for cap in capacity.limits_for(
+            scope_id=scope_id, pool_key=capacity.IMPORT_POOL_KEY
+        )
+    ):
+        raise AttachmentError("too_large", 413)
+    if not capacity_db.count_attempt(
+        scope_id=scope_id, pool_key=capacity.IMPORT_POOL_KEY, now=now
+    ):
+        raise AttachmentError("throttled", 429)
+    binding_id = readiness.require_new_admission(operation="import")
+    validation.require_decoder(
+        DecoderRequirements(
+            "normalize" if whole else "validate", facts.mime_type, limits.window
+        )
+    )
+    with transaction.atomic():
+        locks = capacity_db.lock_capacity(
+            scope_id=scope_id, pool_keys=(capacity.IMPORT_POOL_KEY,)
+        )
+        scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
+        _lock_creator(scope, importer)
+        session = CaptureSession.objects.select_for_update().get(pk=session.id)
+        _, _, locked_registration = _lock_source(scope_id, ref)
+        if whole and (locked_registration.id if locked_registration is not None else None) != (registered.id if registered is not None else None):
+            raise AttachmentError("conflict", 409)
+        check_session(session)
+        _admit_policy(scope, session, descriptor)
+        source_providers.revalidate(
+            facts=facts,
+            scope_id=scope_id,
+            importer=importer,
+            capture_session_id=session.id,
+        )
+        if (
+            descriptor["policy_version"] != policy_token(scope)
+            or descriptor["deletion_generation"] != scope.deletion_generation
+        ):
+            raise AttachmentError("conflict", 409)
+        if registered is not None:
+            source_providers.revalidate(
+                facts=original_facts,
+                scope_id=scope_id,
+                importer=importer,
+                capture_session_id=session.id,
+            )
+            if locked_registration is None or locked_registration.id != registered.id:
+                raise AttachmentError("conflict", 409)
+            replay = _registered_job(
+                locked_registration, session, importer, descriptor, facts
+            )
+        elif whole:
+            # A concurrent admission may have committed since the outside pass.
+            # Its persisted facts must match the source authorized before locks.
+            replay = _independent_replay_locked(
+                importer, scope_id, session, ref, facts, descriptor, digest
+            )
+        else:
+            replay = _replay(scope_id, descriptor, whole, digest)
+        if replay is not None:
+            return _response(replay), False
+        job_id = uuid.uuid4()
+        job = AttachmentImportJob(
+            id=job_id,
+            scope=scope,
+            capture_session=session,
+            storage_binding_id=binding_id,
+            importer_kind=importer.kind,
+            importer_id=importer.id,
+            request_fingerprint=digest,
+            source_kind=ref.kind,
+            envelope_id=ref.id if ref.kind == "RemoteUrlEnvelope" else None,
+            provider_recording_id=ref.id if ref.kind == "ProviderFile" else None,
+            mime_type=facts.mime_type,
+            declared_bytes=facts.byte_length,
+            declared_duration_ms=facts.duration_ms or 0,
+            window_bytes=limits.window,
+            max_segment_ms=limits.segment_duration_ms,
+            recording_bytes=limits.recording_bytes,
+            deadline=deadline,
+            policy_version=scope.policy_version,
+            deletion_generation=scope.deletion_generation,
+            scratch_id=job_id,
+            cleanup_not_before=now,
+            source_generation_kind=facts.generation_kind,
+            source_generation=facts.generation,
+            source_byte_length=facts.byte_length,
+            source_mime_type=facts.mime_type,
+            source_duration_ms=facts.duration_ms,
+            source_expires_at=facts.expires_at,
+            source_authority_generation=facts.authority_generation,
+            source_creator_kind=facts.creator_kind,
+            source_creator_id=facts.creator_id,
+            source_trace_id=facts.parent_trace_id,
+            source_span_id=facts.parent_span_id,
+            source_direction=facts.direction,
+            **_reservation(
+                now,
+                deadline,
+                amount,
+                source_bytes=facts.byte_length,
+                window=limits.window,
+            ),
+        )
+        if whole:
+            job.recording = AttachmentRecording.objects.create(
+                scope=scope,
+                client_id=descriptor["recording_id"],
+                capture_session=session,
+                trace_id=facts.parent_trace_id,
+                span_id=facts.parent_span_id,
+                capture_session_client_id=session.client_id,
+                correlation_nonce=session.correlation_nonce,
+                direction=facts.direction,
+                state=RecordingState.IMPORTING,
+                policy_version=scope.policy_version,
+                deletion_generation=scope.deletion_generation,
+            )
+        else:
+            # Unsaved job supplies the preallocated ID and immutable admission facts.
+            # The helper creates a zero-vector Upload, not a second reservation.
+            job.upload = uploads.initialize_import_locked(
+                scope=scope,
+                capture_session=session,
+                body={**descriptor, "direction": facts.direction},
+                job=job,
+                binding_id=binding_id,
+                locks=locks,
+            )
+        job.save(force_insert=True)  # exact-one target holds even at INSERT
+        capacity_db.reserve_locked(
+            locks, owner=_owner(job), amount=amount, expires_at=deadline
+        )
+        if registered is not None:
+            locked_registration.import_job_id, locked_registration.dispatch_due_at = (
+                job.id,
+                None,
+            )
+            locked_registration.save(update_fields=["import_job_id", "dispatch_due_at"])
+        if upload_amount is not None:
+            capacity_db.transfer_locked(
+                locks,
+                from_owner=_owner(job),
+                to_owner=ReservationOwner("upload", job.upload_id, scope_id),
+                amount=upload_amount,
+            )
+    return _response(job), True
+
+
 def status(importer, *, scope_id, job_id):
-    """Content-free status, only for the original scoped importer."""
     job = AttachmentImportJob.objects.filter(
         pk=job_id,
         scope_id=scope_id,
@@ -648,707 +999,1138 @@ def status(importer, *, scope_id, job_id):
     ).first()
     if job is None:
         raise AttachmentError("not_found", 404)
-    reason = job.reason if job.reason in STATUS_REASONS else public_reason(job.reason)
-    return {"job_id": str(job.id), "state": job.state, "reason": reason}
+    # Original credentials must remain eligible; expired work is still inspectable.
+    from tracer.services.attachments.bootstrap import Writer, check_writer
+
+    scope = AttachmentScope.objects.get(pk=scope_id)
+    check_writer(
+        Writer(importer.kind, importer.id, scope.organization_id, scope.workspace_id),
+        scope,
+    )
+    return {
+        "job_id": str(job.id),
+        "state": job.state,
+        "reason": job.reason
+        if job.reason in STATUS_REASONS
+        else public_reason(job.reason),
+    }
 
 
-# --------------------------------------------------------------------------
-# Worker.
-# --------------------------------------------------------------------------
+def claim(job_id, *, scope_id, now):
+    from tracer.services.attachments import capacity_db
 
-
-class _Retry(Exception):
-    def __init__(self, code):
-        self.code = code
-
-
-class _LeaseLost(Exception):
-    """Another worker claimed this job; stop without touching shared state."""
-
-
-def _claim(job):
-    """Take the job's lease. Returns (token, None) or (None, why)."""
+    if not capacity_db.count_attempt(
+        scope_id=scope_id, pool_key=capacity.IMPORT_POOL_KEY, now=now
+    ):
+        return None
     with transaction.atomic():
-        locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
-        now = timezone.now()
-        if locked.state in TERMINAL_RECORDING_STATES:
-            return None, "terminal"
-        if locked.lease_until is not None and locked.lease_until > now:
-            return None, "busy"
-        if locked.attempts >= MAX_ATTEMPTS:
-            return None, "exhausted"
-        token = uuid.uuid4()
-        locked.attempts += 1
-        locked.lease_token = token
-        locked.lease_until = now + timedelta(seconds=LEASE_SECONDS)
-        locked.save(update_fields=["attempts", "lease_token", "lease_until"])
-        return token, None
+        locks = capacity_db.lock_capacity(
+            scope_id=scope_id, pool_keys=(capacity.IMPORT_POOL_KEY,)
+        )
+        with _locked_job_rows(job_id, scope_id=scope_id) as rows:
+            job, _, _, target, _ = rows
+            if job.state in TERMINAL_RECORDING_STATES or (job.lease_until and job.lease_until > now):
+                return None
+            try:
+                _check_job(*rows, timezone.now())
+            except AttachmentError as error:
+                # Only a permanent local revalidation denial may retire unclaimed work.
+                # Do not turn contention or unavailable evidence into a rejection.
+                if error.status >= 500 or error.status == 429 or error.code == "conflict":
+                    raise
+                _retire_locked(job, target, error.code, _terminal_denial(error.code), claim_denied=True)
+                _log_deferred(job.id, error.code)
+                return None
+            return _claim_locked(job, locks, now)
 
 
-def _hold(locked, token):
-    """Under the job row lock: fail unless ``token`` still owns the lease."""
-    if token is not None and locked.lease_token != token:
-        raise _LeaseLost()
-    locked.lease_until = timezone.now() + timedelta(seconds=LEASE_SECONDS)
+def _claim_locked(job, locks, now):
+    from tracer.services.attachments import capacity_db
+
+    if job.attempts >= MAX_ATTEMPTS or (job.lease_until and job.lease_until > now):
+        return None
+    # Save a valid replacement lease before resize updates this guarded row.
+    # Both writes belong to claim's complete-lock transaction: capacity failure
+    # rolls the replacement lease back as well as the reservation/budget writes.
+    previous_epoch = job.lease_epoch
+    job.attempts += 1
+    job.lease_epoch += 1
+    job.lease_token = uuid.uuid4()
+    job.lease_until = min(now + timedelta(seconds=LEASE_SECONDS), job.deadline)
+    job.lease_phase = "recovering"
+    job.cleanup_not_before = max(
+        job.cleanup_not_before or now,
+        job.lease_until + timedelta(seconds=DRAIN_SECONDS),
+    )
+    job.save(
+        update_fields=[
+            "attempts",
+            "lease_epoch",
+            "lease_token",
+            "lease_until",
+            "lease_phase",
+            "cleanup_not_before",
+        ]
+    )
+    if previous_epoch:
+        # A paused previous process may still hold its source/output files.
+        # Replacement scratch is new physical allocation, not a second base U.
+        extra = ResourceVector(job.source_byte_length + job.window_bytes, 1, 1, 0, 2, 0)
+        capacity_db.resize_locked(locks, owner=_owner(job), amount=_vector(job) + extra)
+    # Create the guard only after capacity succeeds, before any accepted IO.
+    sandbox.prepare_import_scratch(job.id, job.lease_epoch)
+    return LeaseFence(
+        "import", job.id, job.lease_token, job.lease_epoch, job.lease_until
+    )
 
 
-def _fence(job):
-    """Fail closed on deletion, expiry, policy change or a revoked session."""
-    scope = AttachmentScope.objects.get(pk=job.scope_id)
-    recording = AttachmentRecording.objects.get(pk=job.recording_id)
-    if recording.deleted_at or job.deletion_generation != scope.deletion_generation:
-        raise AttachmentError("deleted", 410)
-    if timezone.now() >= job.deadline:
-        raise AttachmentError("expired", 410)
-    if job.policy_version != scope.policy_version:
-        raise AttachmentError("policy_denied", 403)
-    session = CaptureSession.objects.get(pk=recording.capture_session_id)
-    check_session(session)
-    _admit_policy(scope, session, recording.direction)
-    return scope, recording
-
-
-def _reserve_segment(job, size, token=None):
-    """Cover a staged segment before producing it: its bytes, object and link."""
-    with transaction.atomic():
-        scope = AttachmentScope.objects.get(pk=job.scope_id)
-        rows = _lock_import_budgets(scope)
-        locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
-        _hold(locked, token)
-        if locked.state in TERMINAL_RECORDING_STATES or locked.released_at is not None:
+def _allocation(job, allocation_id, kind):
+    if kind == "upload":
+        if allocation_id != job.upload_id:
             raise AttachmentError("conflict", 409)
-        amounts = {"bytes": size, **SEGMENT_UNITS}
-        headroom = _headroom(rows)
-        if any(
-            level[resource] < amount
-            for level in headroom.values()
-            for resource, amount in amounts.items()
-        ):
-            raise _Retry("throttled")
-        _apply(rows, amounts, +1)
-        locked.reserved_bytes += size
-        locked.reserved_segments += 1
-        locked.save(
-            update_fields=["reserved_bytes", "reserved_segments", "lease_until"]
-        )
-        job.reserved_bytes = locked.reserved_bytes
-        job.reserved_segments = locked.reserved_segments
+        return AttachmentUpload.objects.select_for_update().get(pk=allocation_id)
+    if kind != "segment" or job.recording_id is None:
+        raise AttachmentError("conflict", 409)
+    return AttachmentRecordingSegment.objects.select_for_update().get(
+        pk=allocation_id,
+        import_job_id=job.id,
+        scope_id=job.scope_id,
+        recording_id=job.recording_id,
+        storage_binding_id=job.storage_binding_id,
+    )
 
 
-def _release(job):
-    """Release the job's whole live reservation exactly once."""
-    with transaction.atomic():
-        scope = AttachmentScope.objects.get(pk=job.scope_id)
-        rows = _lock_import_budgets(scope)
-        locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
-        if locked.released_at is not None:
-            return False
-        units = {
-            resource: JOB_UNITS.get(resource, 0)
-            + SEGMENT_UNITS.get(resource, 0) * locked.reserved_segments
-            for resource in {*JOB_UNITS, *SEGMENT_UNITS}
-        }
-        _apply(rows, {"bytes": locked.reserved_bytes, **units}, -1)
-        locked.released_at = timezone.now()
-        locked.save(update_fields=["released_at"])
+def _locator(job, row, kind, purpose):
+    if purpose == "quarantine":
+        key = row.quarantine_key
+    elif purpose == "serving":
+        key = row.storage_key if kind == "segment" else row.serving_key
+    else:
+        raise AttachmentError("conflict", 409)
+    return ObjectLocator(job.storage_binding_id, purpose, key)
+
+
+def _version_field(kind, purpose):
+    return (
+        "quarantine_version"
+        if purpose == "quarantine"
+        else ("storage_version" if kind == "segment" else "serving_version")
+    )
+
+
+def _referenced(job, row, kind, identity):
+    if identity.binding_id != job.storage_binding_id:
+        return False
+    loc = _locator(job, row, kind, identity.purpose)
+    if loc.key != identity.key:
+        return False
+    if kind == "segment" and identity.purpose == "quarantine":
+        return False
+    if getattr(row, _version_field(kind, identity.purpose)) == identity.version:
         return True
+    return Attachment.objects.filter(
+        storage_binding_id=identity.binding_id,
+        verified_storage_key=identity.key,
+        verified_storage_version=identity.version,
+    ).exists()
 
 
-def _erase_staged(job, storage):
-    """Erase every staged segment object of a finished job; True when none is left.
+def _permit_matches(job, row, kind, permit, identity):
+    if (
+        permit.allocation_kind != kind
+        or permit.allocation_id != row.id
+        or permit.fence is None
+        or permit.fence.owner_id != job.id
+        or permit.locator != _locator(job, row, kind, identity.purpose)
+        or (identity.binding_id, identity.purpose, identity.key)
+        != (permit.locator.binding_id, permit.locator.purpose, permit.locator.key)
+    ):
+        raise AttachmentError("conflict", 409)
 
-    A row without a ``storage_version`` was allocated but its object may still
-    be in flight. While the job's lease is live its writer may still be
-    uploading it, so the row is kept (and the reservation with it) until the
-    writer stops or its lease runs out. Erasing an id that has no object is a
-    no-op. A failed erase leaves the row ``staged`` for the next sweep. The
-    row is marked ``erased`` only if it is unchanged since it was read, so an
-    object version recorded in between is never lost.
-    """
-    now = timezone.now()
-    live = job.lease_until is not None and job.lease_until > now
-    left = 0
-    for segment in AttachmentRecordingSegment.objects.filter(
-        recording_id=job.recording_id, state=RecordingSegmentState.STAGED
-    ).order_by("index"):
-        if live and not segment.storage_version:
-            left += 1
-            continue
+
+def prepare_put(*, job_id, allocation_id, allocation_kind, fence, purpose, now):
+    with transaction.atomic(), _locked_job(job_id) as (job, _, _, _, _):
+        _hold(job, fence, now)
+        row = _allocation(job, allocation_id, allocation_kind)
+        if allocation_kind == "segment" and (
+            purpose != "serving" or row.state != RecordingSegmentState.STAGED
+        ):
+            raise LeaseLost
+        if allocation_kind == "upload" and row.state not in {
+            AttachmentState.PENDING,
+            AttachmentState.VALIDATING,
+        }:
+            raise LeaseLost
+        if getattr(row, _version_field(allocation_kind, purpose)) is not None:
+            raise AttachmentError("conflict", 409)
+        field = (
+            "write_attempts"
+            if allocation_kind == "segment"
+            else f"{purpose}_write_attempts"
+        )
+        if getattr(row, field) >= MAX_ATTEMPTS:
+            raise AttachmentError("source_unavailable", 403)
+        # Only this live epoch's process may dispatch; missing supervisor proof is
+        # not a license for a detached writer or an arbitrary caller to PUT.
+        sandbox.require_import_execution(job.id, fence.epoch)
+        setattr(row, field, getattr(row, field) + 1)
+        row.allocation_epoch = fence.epoch
+        row.write_deadline_at = min(
+            now + timedelta(seconds=PUT_SECONDS), fence.expires_at, job.deadline
+        )
+        row.cleanup_not_before = max(
+            row.cleanup_not_before or now,
+            fence.expires_at + timedelta(seconds=DRAIN_SECONDS),
+        )
+        row.unowned_cleanup_due_at = row.cleanup_not_before
+        row.save(
+            update_fields=[
+                field,
+                "allocation_epoch",
+                "write_deadline_at",
+                "cleanup_not_before",
+                "unowned_cleanup_due_at",
+            ]
+        )
+        job.cleanup_not_before = max(job.cleanup_not_before, row.cleanup_not_before)
+        job.save(update_fields=["cleanup_not_before"])
+        return PutPermit(
+            allocation_kind,
+            row.id,
+            _locator(job, row, allocation_kind, purpose),
+            fence,
+            getattr(row, field),
+            row.write_deadline_at,
+        )
+
+
+def record_put(*, job_id, allocation_id, allocation_kind, permit, identity, facts):
+    with (
+        transaction.atomic(),
+        _locked_job(job_id, authorize=False) as (job, scope, session, target, asset),
+    ):
+        # Ownership is checked BEFORE current-lease checks: a stale retry of an
+        # accepted exact version must not erase the replacement's reused media.
+        row = _allocation(job, allocation_id, allocation_kind)
+        _permit_matches(job, row, allocation_kind, permit, identity)
+        if _referenced(job, row, allocation_kind, identity):
+            return "already_owned"
         try:
-            storage.erase_upload(segment.attachment_client_id)
-        except AttachmentError as error:
-            logger.warning(
-                "attachment_import_erase_deferred",
-                job_id=str(job.pk),
-                reason=error.code,
-            )
-            left += 1
-            continue
-        erased = AttachmentRecordingSegment.objects.filter(
-            pk=segment.pk,
-            state=RecordingSegmentState.STAGED,
-            storage_version=segment.storage_version,
-        ).update(state=RecordingSegmentState.ERASED)
-        left += not erased
-    return left == 0
-
-
-def _cleanup(job, storage):
-    """Erase a finished job's staged objects, then release its reservation once.
-
-    The reservation is never released while a staged object may remain. Only
-    erase failures are absorbed here (the row stays ``staged``); ``sweep``
-    retries both steps. Returns True when this call released the reservation.
-    """
-    locked = AttachmentImportJob.objects.get(pk=job.pk)
-    if locked.state not in TERMINAL_RECORDING_STATES:
-        return False
-    if locked.state != RecordingState.READY and not _erase_staged(locked, storage):
-        return False
-    return _release(job)
-
-
-def _drop_lease(job, token):
-    """The lease owner stops writing: its unpromoted rows become erasable."""
-    if token is not None:
-        AttachmentImportJob.objects.filter(pk=job.pk, lease_token=token).update(
-            lease_until=None
+            _hold(job, permit.fence, timezone.now())
+        except LeaseLost:
+            return "stale_unowned"
+        if (
+            row.allocation_epoch != permit.fence.epoch
+            or row.write_deadline_at != permit.deadline_at
+            or timezone.now() >= permit.deadline_at
+        ):
+            return "stale_unowned"
+        if allocation_kind == "segment" and row.state != RecordingSegmentState.STAGED:
+            return "stale_unowned"
+        _check_job(job, scope, session, target, asset, timezone.now())
+        field = (
+            "write_attempts"
+            if allocation_kind == "segment"
+            else f"{identity.purpose}_write_attempts"
         )
+        if getattr(row, field) != permit.write_attempt:
+            return "stale_unowned"
+        version_field = _version_field(allocation_kind, identity.purpose)
+        if getattr(row, version_field) is not None:
+            return "stale_unowned"
+        if facts is None or facts.object.identity != identity:
+            # Quarantine snapshots are normally accepted by the shared Upload
+            # helper, which records hash/length/version atomically with its fence.
+            raise AttachmentError("validation_failed", 422)
+        if allocation_kind == "segment":
+            if (
+                facts.mime_type != "audio/wav"
+                or facts.object.sha256 != row.sha256
+                or facts.object.byte_length != row.byte_length
+                or facts.frame_count != row.frame_count
+                or facts.sample_rate != target.sample_rate
+                or facts.channels != target.channels
+            ):
+                raise AttachmentError("snapshot_changed", 409)
+        else:
+            if facts.object.byte_length != row.expected_bytes:
+                raise AttachmentError("snapshot_changed", 409)
+        setattr(row, version_field, identity.version)
+        fields = [version_field]
+        if allocation_kind == "upload" and identity.purpose == "quarantine":
+            row.quarantine_sha256 = facts.object.sha256
+            row.received_bytes = facts.object.byte_length
+            fields += ["quarantine_sha256", "received_bytes"]
+        row.save(update_fields=fields)
+        return "recorded"
 
 
-def _finish(job, *, state, reason, storage, token=None):
-    """Terminal transition. A worker passes its lease token; the sweep doesn't.
+def cleanup_stale_put(*, job_id, allocation_id, allocation_kind, permit, identity):
+    from tracer.services.attachments.readiness import resolve_historical
 
-    Only the lease owner clears the lease. When the sweep expires a job, a live
-    lease is the signal that a worker may still be writing a segment object,
-    so ``_erase_staged`` keeps that row (and the reservation) until it stops.
-    """
-    with transaction.atomic():
-        locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
-        already = locked.state in TERMINAL_RECORDING_STATES
-        if not already:
-            if token is not None and locked.lease_token != token:
-                return locked
-            locked.state, locked.reason = state, reason
-            locked.finished_at = timezone.now()
-            fields = ["state", "reason", "finished_at"]
-            if token is not None:
-                locked.lease_until = None
-                fields.append("lease_until")
-            locked.save(update_fields=fields)
-            if state != RecordingState.READY:
-                AttachmentRecording.objects.filter(pk=job.recording_id).exclude(
-                    state__in=TERMINAL_RECORDING_STATES
-                ).update(state=state)
-    if already:
-        # Finished elsewhere (published, swept): erase, then release.
-        _drop_lease(job, token)
-        _cleanup(job, storage)
-        return locked
-    _cleanup(job, storage)
-    if job.envelope_id:
-        envelopes.destroy(scope_id=job.scope_id, envelope_id=job.envelope_id)
-    return locked
+    with (
+        transaction.atomic(),
+        _locked_job(job_id, authorize=False) as (job, _, _, _, _),
+    ):
+        row = _allocation(job, allocation_id, allocation_kind)
+        _permit_matches(job, row, allocation_kind, permit, identity)
+        if _referenced(job, row, allocation_kind, identity):
+            return "already_owned"
+        # A still-current result must first pass record_put; no live worker may
+        # delete its own eligible-to-be-recorded object out from under publication.
+        if (
+            job.lease_token == permit.fence.token
+            and job.lease_epoch == permit.fence.epoch
+            and job.lease_phase == "writing"
+            and job.state not in TERMINAL_RECORDING_STATES
+            and job.lease_until
+            and timezone.now() < min(job.lease_until, permit.deadline_at)
+            and row.allocation_epoch == permit.fence.epoch
+        ):
+            raise AttachmentError("conflict", 409)
+        row.unowned_cleanup_due_at = timezone.now()
+        row.save(update_fields=["unowned_cleanup_due_at"])
+    # No code can subsequently adopt this unrecorded retired version. Never
+    # erase_upload/all_versions here, and never restore allocation state/version.
+    resolve_historical(identity.binding_id, operation="erase").erase_version(identity)
+    return "stale_unowned"
 
 
-def _open_source(job, limits):
-    from tracer.services.attachments import provider_recordings, safe_fetch
+def _storage(job, storage, operation):
+    if storage is None:
+        from tracer.services.attachments.readiness import resolve_historical
 
-    if job.source_kind == "RemoteUrlEnvelope":
-        url = envelopes.open_url(scope_id=job.scope_id, envelope_id=job.envelope_id)
-        destination = safe_fetch.parse_destination(
-            url,
-            approved_hosts=getattr(settings, "FI_ATTACHMENTS_IMPORT_HOSTS", ()),
-        )
-        del url
-        return safe_fetch.RangeSource(
-            destination=destination,
-            total_bytes=job.declared_bytes,
-            window=limits.window,
-            timeout_seconds=getattr(settings, "FI_ATTACHMENTS_TRANSFER_SECONDS", 120),
-            bytes_per_second=getattr(
-                settings, "FI_ATTACHMENTS_IMPORT_BYTES_PER_SECOND", 8 * 1024 * 1024
-            ),
-        )
-    return provider_recordings.open_reader(job.provider_recording, limits)
+        return resolve_historical(job.storage_binding_id, operation=operation)
+    if getattr(storage, "binding_id", None) != job.storage_binding_id:
+        raise AttachmentError("storage_unverified", 503)
+    storage.verify_identity(operation=operation)
+    return storage
 
 
-def _work_dir():
-    path = getattr(settings, "FI_ATTACHMENTS_WORK_DIR", "") or tempfile.gettempdir()
-    return path
+def _allocations(job):
+    if job.upload_id:
+        return [("upload", AttachmentUpload.objects.get(pk=job.upload_id))]
+    return [
+        ("segment", row)
+        for row in AttachmentRecordingSegment.objects.filter(
+            import_job_id=job.id
+        ).order_by("index")
+    ]
 
 
-def _fetch(job, source, snapshot, limits):
-    reads, offset = [], 0
-    while offset < job.declared_bytes:
-        length = min(limits.window, job.declared_bytes - offset)
-        source.read_range(offset, length, snapshot)
-        reads.append(
-            {"offset": offset, "bytes": length, "total_bytes": job.declared_bytes}
-        )
+def _clean_versions(job, storage, *, fence=None):
+    """Recovery/terminal enumeration, not a key-wide deletion or adoption."""
+    for kind, before in _allocations(job):
+        for purpose in ("quarantine", "serving"):
+            locator = _locator(job, before, kind, purpose)
+            cursor = None
+            for _ in range(100):
+                page = storage.list_versions(locator, cursor=cursor, limit=100)
+                for identity in (*page.versions, *page.delete_markers):
+                    if (identity.binding_id, identity.purpose, identity.key) != (
+                        locator.binding_id,
+                        locator.purpose,
+                        locator.key,
+                    ):
+                        raise AttachmentError("cleanup_unavailable", 503)
+                    with (
+                        transaction.atomic(),
+                        _locked_job(job.id, authorize=False) as (held, _, _, _, _),
+                    ):
+                        if fence is not None:
+                            _hold(held, fence, timezone.now(), phases=("recovering",))
+                        elif held.state not in TERMINAL_RECORDING_STATES:
+                            raise LeaseLost
+                        row = _allocation(held, before.id, kind)
+                        owned = _referenced(held, row, kind, identity)
+                    if not owned:
+                        storage.erase_version(identity)
+                if page.next_cursor is None:
+                    break
+                if page.next_cursor == cursor:
+                    raise AttachmentError("cleanup_unavailable", 503)
+                cursor = page.next_cursor
+            else:
+                raise AttachmentError("cleanup_unavailable", 503)
+    if fence is None:
+        with (
+            transaction.atomic(),
+            _locked_job(job.id, authorize=False) as (held, _, _, _, _),
+        ):
+            if held.state not in TERMINAL_RECORDING_STATES:
+                raise LeaseLost
+            for kind, before in _allocations(held):
+                row = _allocation(held, before.id, kind)
+                row.cleanup_checked_at = timezone.now()
+                row.unowned_cleanup_due_at = None
+                row.save(update_fields=["cleanup_checked_at", "unowned_cleanup_due_at"])
+    if fence is not None:
+        with transaction.atomic(), _locked_job(job.id) as (held, _, _, _, _):
+            _hold(held, fence, timezone.now(), phases=("recovering",))
+            held.lease_phase = "writing"
+            held.save(update_fields=["lease_phase"])
+
+
+def _fetch(job, fence, reader, snapshot):
+    if reader.facts != _facts(job):
+        raise AttachmentError("snapshot_changed", 409)
+    offset, digest = 0, hashlib.sha256()
+    while offset < job.source_byte_length:
+        with transaction.atomic(), _locked_job(job.id) as (held, _, _, _, _):
+            _hold(held, fence, timezone.now())
+        # The reader enforces generation before/after every range. Request only
+        # one transport buffer so even the returned bytes object stays bounded.
+        length = min(BUFFER_BYTES, job.source_byte_length - offset)
+        block = reader.read_range(start=offset, end=offset + length - 1)
+        if not isinstance(block, bytes) or len(block) != length:
+            raise AttachmentError("snapshot_changed", 409)
+        snapshot.write(block)
+        digest.update(block)
         offset += length
     snapshot.flush()
-    if os.fstat(snapshot.fileno()).st_size != job.declared_bytes:
-        raise AttachmentError("validation_failed", 422)
-    return reads
+    if os.fstat(snapshot.fileno()).st_size != job.source_byte_length:
+        raise AttachmentError("length_mismatch", 422)
+    return digest.hexdigest()
 
 
-def _segments(job, recording, snapshot_path, facts, limits, storage, token=None):
+def _allocate(job, fence, plan, digest):
+    from tracer.services.attachments import capacity_db
+
+    with transaction.atomic():
+        locks = capacity_db.lock_capacity(
+            scope_id=job.scope_id, pool_keys=(capacity.IMPORT_POOL_KEY,)
+        )
+        with _locked_job(job.id) as (held, _, _, target, _):
+            _hold(held, fence, timezone.now())
+            existing = (
+                AttachmentRecordingSegment.objects.select_for_update()
+                .filter(import_job_id=job.id, index=plan.index)
+                .first()
+            )
+            if existing is not None:
+                if existing.state != RecordingSegmentState.STAGED or (
+                    existing.start_frame,
+                    existing.frame_count,
+                    existing.start_ms,
+                    existing.duration_ms,
+                    existing.byte_length,
+                    existing.sha256,
+                    existing.storage_binding_id,
+                ) != (
+                    plan.start_frame,
+                    plan.frame_count,
+                    plan.start_ms,
+                    plan.duration_ms,
+                    plan.byte_length,
+                    digest,
+                    held.storage_binding_id,
+                ):
+                    raise AttachmentError("snapshot_changed", 409)
+                return existing
+            amount = _vector(held) + capacity.whole_import_segment_peak(
+                segment_bytes=plan.byte_length
+            )
+            capacity_db.resize_locked(locks, owner=_owner(held), amount=amount)
+            held.reservation_part_count += 1
+            held.save(update_fields=["reservation_part_count"])
+            identifier = uuid.uuid4()
+            return AttachmentRecordingSegment.objects.create(
+                id=identifier,
+                scope_id=held.scope_id,
+                recording=target,
+                import_job=held,
+                storage_binding_id=held.storage_binding_id,
+                storage_object_id=identifier,
+                index=plan.index,
+                attachment_client_id=uuid.uuid4(),
+                occurrence_client_id=uuid.uuid4(),
+                start_frame=plan.start_frame,
+                frame_count=plan.frame_count,
+                start_ms=plan.start_ms,
+                duration_ms=plan.duration_ms,
+                byte_length=plan.byte_length,
+                sha256=digest,
+                quarantine_key=f"quarantine/{identifier}",
+                storage_key=f"original/{identifier}",
+                allocation_epoch=fence.epoch,
+                cleanup_not_before=held.cleanup_not_before,
+            )
+
+
+def _segment_source(job, fence, snapshot, directory, storage):
+    limits = recordings.Limits(
+        job.window_bytes,
+        job.window_bytes,
+        job.max_segment_ms,
+        job.recording_bytes,
+        7_200_000,
+        1024**3,
+    )
+    facts = sandbox.run("source", snapshot.name, job.source_mime_type)
+    if (
+        facts["duration_ms"] != job.source_duration_ms
+        or facts["mime_type"] != job.source_mime_type
+    ):
+        raise AttachmentError("snapshot_changed", 409)
     plans = recordings.plan_segments(
         frame_count=facts["frame_count"],
         rate=facts["sample_rate"],
         channels=facts["channels"],
         limits=limits,
     )
-    # The exact peak, before the first segment is reserved: a plan that can
-    # never fit is rejected ``too_large`` now, not throttled on every attempt.
-    check_import_share(
-        lifetime_need(
-            declared_bytes=job.declared_bytes,
-            window=job.window_bytes,
-            segment_bytes=sum(plan.byte_length for plan in plans),
-            segments=len(plans),
-        )
+    total = sum(plan.byte_length for plan in plans)
+    if total > job.recording_bytes:
+        raise AttachmentError("too_large", 413)
+    peak = capacity.whole_import_floor(
+        source_bytes=job.source_byte_length, output_scratch_bytes=job.window_bytes
     )
-    staged = {
-        row.index: row
-        for row in AttachmentRecordingSegment.objects.filter(recording=recording)
-    }
     for plan in plans:
-        existing = staged.get(plan.index)
-        if existing is not None and existing.state != RecordingSegmentState.STAGED:
-            raise AttachmentError("conflict", 409)
-        if existing is not None and existing.storage_version:
-            continue  # Retries reuse allocations; no new occurrence identity.
-        _fence(job)
-        if existing is None:
-            _reserve_segment(job, plan.byte_length, token)
-        else:
-            # An earlier attempt allocated this part (its reservation still
-            # stands) but died before recording the object's version. Erase
-            # whatever it may have written, then write it again under the
-            # same identity (``promote`` never overwrites an existing key).
-            storage.erase_upload(existing.attachment_client_id)
-        with tempfile.NamedTemporaryFile(dir=_work_dir()) as part:
-            result = sandbox.run(
-                "segment",
-                snapshot_path,
-                plan.start_frame,
-                plan.frame_count,
-                output=part,
-                output_limit=plan.byte_length,
-            )
-            part.flush()
-            if (
-                result.get("byte_length") != plan.byte_length
-                or os.fstat(part.fileno()).st_size != plan.byte_length
-            ):
-                raise AttachmentError("validation_failed", 422)
-            # Independent validation of the produced bytes, not the producer.
-            probed = sandbox.probe(part.name)
-            if (
-                probed["sample_rate"] != facts["sample_rate"]
-                or probed["channels"] != facts["channels"]
-                or probed["frame_count"] != plan.frame_count
-            ):
-                raise AttachmentError("validation_failed", 422)
-            part.seek(0)
-            digest = hashlib.sha256()
-            for chunk in iter(lambda: part.read(256 * 1024), b""):
-                digest.update(chunk)
-            row = _allocate(job, recording, plan, digest.hexdigest(), existing, token)
-            identity = storage.promote(
-                part,
-                upload_id=row.attachment_client_id,
-                expected_length=plan.byte_length,
-                expected_sha256=digest.hexdigest(),
-            )
-        staged[plan.index] = _record_object(job, row, identity, storage)
-    return plans, [staged[plan.index] for plan in plans]
-
-
-def _allocate(job, recording, plan, sha256, existing, token):
-    """Name a segment's object in a durable ``staged`` row BEFORE writing it.
-
-    Under the job row lock, only while this worker holds the lease and the job
-    is still importing, so no row (and no object) can appear after the job
-    finished. The row has no ``storage_version`` until ``_record_object``.
-    """
-    with transaction.atomic():
-        locked = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
-        _hold(locked, token)
-        if locked.state in TERMINAL_RECORDING_STATES or locked.released_at is not None:
-            raise AttachmentError("conflict", 409)
-        locked.save(update_fields=["lease_until"])
-        if existing is not None:
-            existing.sha256 = sha256
-            existing.save(update_fields=["sha256"])
-            return existing
-        return AttachmentRecordingSegment.objects.create(
-            scope_id=job.scope_id,
-            recording=recording,
-            index=plan.index,
-            attachment_client_id=uuid.uuid4(),
-            occurrence_client_id=uuid.uuid4(),
-            start_frame=plan.start_frame,
-            frame_count=plan.frame_count,
-            start_ms=plan.start_ms,
-            duration_ms=plan.duration_ms,
-            storage_key="",
-            storage_version="",
-            sha256=sha256,
-            byte_length=plan.byte_length,
+        peak += capacity.whole_import_segment_peak(segment_bytes=plan.byte_length)
+    if any(
+        not capacity.fits_within(peak, cap)
+        for cap in capacity.limits_for(
+            scope_id=job.scope_id, pool_key=capacity.IMPORT_POOL_KEY
         )
+    ):
+        raise AttachmentError("too_large", 413)
+    with transaction.atomic(), _locked_job(job.id) as (held, _, _, target, _):
+        _hold(held, fence, timezone.now())
+        if target.sample_rate is not None and (target.sample_rate, target.channels) != (
+            facts["sample_rate"],
+            facts["channels"],
+        ):
+            raise AttachmentError("snapshot_changed", 409)
+        target.sample_rate, target.channels = facts["sample_rate"], facts["channels"]
+        target.save(update_fields=["sample_rate", "channels"])
+    rows = []
+    # One decoder, source snapshot + ONE output window, independent of call length.
+    with sandbox.pcm_stream(
+        snapshot.name, job.source_mime_type, facts, deadline=fence.expires_at
+    ) as pcm:
+        for plan in plans:
+            with sandbox.scratch_file(directory, "segment") as part:
+                sandbox.write_wav_segment(pcm, part, plan, facts)
+                probed = sandbox.probe(part.name)
+                if (
+                    probed["frame_count"],
+                    probed["sample_rate"],
+                    probed["channels"],
+                ) != (plan.frame_count, facts["sample_rate"], facts["channels"]):
+                    raise AttachmentError("validation_failed", 422)
+                digest = sandbox.hash_file(part)
+                row = _allocate(job, fence, plan, digest)
+                if row.storage_version is None:
+                    permit = prepare_put(
+                        job_id=job.id,
+                        allocation_id=row.id,
+                        allocation_kind="segment",
+                        fence=fence,
+                        purpose="serving",
+                        now=timezone.now(),
+                    )
+                    part.seek(0)
+                    identity = storage.promote(
+                        part,
+                        permit=permit,
+                        expected_length=row.byte_length,
+                        expected_sha256=row.sha256,
+                    )
+                    verified = VerifiedAssetFacts(
+                        StoredObject(identity, row.byte_length, row.sha256),
+                        "audio/wav",
+                        timezone.now(),
+                        facts["sample_rate"],
+                        facts["channels"],
+                        row.frame_count,
+                    )
+                    result = record_put(
+                        job_id=job.id,
+                        allocation_id=row.id,
+                        allocation_kind="segment",
+                        permit=permit,
+                        identity=identity,
+                        facts=verified,
+                    )
+                    if result == "stale_unowned":
+                        cleanup_stale_put(
+                            job_id=job.id,
+                            allocation_id=row.id,
+                            allocation_kind="segment",
+                            permit=permit,
+                            identity=identity,
+                        )
+                        raise LeaseLost
+                    row.refresh_from_db()
+                rows.append(row)
+    manifest = recordings.build_manifest(
+        recording_id=target.client_id,
+        rate=facts["sample_rate"],
+        channels=facts["channels"],
+        direction=target.direction,
+        track_ids=[
+            uuid.uuid5(target.client_id, f"track:{n}") for n in range(facts["channels"])
+        ],
+        segments=[
+            (row.occurrence_client_id, plan)
+            for row, plan in zip(rows, plans, strict=True)
+        ],
+        duration_ms=facts["duration_ms"],
+        capture_complete=True,
+    )
+    return rows, manifest
 
 
-def _record_object(job, row, identity, storage):
-    """Record the written object's exact version on its still-staged row.
+def _single_snapshot(job, fence, snapshot, digest, storage):
+    from tracer.services.attachments import uploads
 
-    If cleanup already erased the row (this worker lost its lease and the job
-    finished), the object it just wrote has no owner: erase it here. If that
-    erase fails, put the row back to ``staged`` with the version so the sweep
-    erases it (it looks for staged rows of finished jobs, released or not).
-    """
-    recorded = AttachmentRecordingSegment.objects.filter(
-        pk=row.pk, state=RecordingSegmentState.STAGED, storage_version=""
-    ).update(storage_key=identity.key, storage_version=identity.version)
-    if not recorded:
-        try:
-            storage.erase_upload(row.attachment_client_id)
-        except AttachmentError:
-            AttachmentRecordingSegment.objects.filter(pk=row.pk).update(
-                state=RecordingSegmentState.STAGED,
-                storage_key=identity.key,
-                storage_version=identity.version,
-            )
-        raise _LeaseLost()
-    row.storage_key, row.storage_version = identity.key, identity.version
-    return row
-
-
-def _publish(job, recording, facts, manifest, rows, token=None):
-    """Atomically create segment occurrences and the manifest under fences."""
-    with transaction.atomic():
-        scope = AttachmentScope.objects.select_for_update().get(pk=job.scope_id)
-        # Lock order everywhere: scope, job, recording (``_finish``: job, recording).
-        held = AttachmentImportJob.objects.select_for_update().get(pk=job.pk)
-        _hold(held, token)
-        locked = AttachmentRecording.objects.select_for_update().get(pk=recording.pk)
-        if locked.state in TERMINAL_RECORDING_STATES:
+    with transaction.atomic(), _locked_job(job.id) as (held, _, _, upload, asset):
+        _hold(held, fence, timezone.now())
+        if held.upload_id is None or upload.id != job.upload_id:
             raise AttachmentError("conflict", 409)
-        job.refresh_from_db()
-        _fence(job)
+        if upload.quarantine_version is not None:
+            if (
+                upload.quarantine_sha256 != digest
+                or upload.received_bytes != held.source_byte_length
+                or upload.expected_bytes != held.source_byte_length
+                or upload.state != AttachmentState.VALIDATING
+                or upload.reservation_settled_at is not None
+                or asset.verified_blob_id is not None
+                or upload.allocation_epoch > fence.epoch
+            ):
+                raise AttachmentError("snapshot_changed", 409)
+            # Adopt only the already-recorded snapshot (and serving revision, if
+            # recorded). No enumeration result, PUT, or new base reservation is
+            # accepted here. Current source/creator authority was checked above.
+            if upload.allocation_epoch != fence.epoch:
+                upload.allocation_epoch = fence.epoch
+                upload.save(update_fields=["allocation_epoch"])
+            return
+    permit = prepare_put(
+        job_id=job.id,
+        allocation_id=upload.id,
+        allocation_kind="upload",
+        fence=fence,
+        purpose="quarantine",
+        now=timezone.now(),
+    )
+    snapshot.seek(0)
+    identity = storage.put_quarantine(permit, snapshot, job.source_byte_length)
+    try:
+        uploads.accept_import_snapshot(
+            upload_id=upload.id,
+            scope_id=job.scope_id,
+            identity=identity,
+            sha256=digest,
+            byte_length=job.source_byte_length,
+            fence=fence,
+        )
+    except Exception:
+        # Ownership helper fences accepted snapshots. Retire our epoch before
+        # exact cleanup, so this version can never later be adopted.
+        _retire(job.id, fence, reason="source_unavailable")
+        try:
+            cleanup_stale_put(
+                job_id=job.id,
+                allocation_id=upload.id,
+                allocation_kind="upload",
+                permit=permit,
+                identity=identity,
+            )
+        except AttachmentError:
+            # Current-epoch ambiguity or cleanup failure remains discoverable
+            # from the pre-PUT key and is retried by fenced recovery/sweep.
+            pass
+        raise
+
+
+def _remote_recheck(job, fence):
+    from tracer.services.attachments import readiness, source_providers
+
+    readiness.require_source_keys(
+        source=SourceRef(job.source_kind, job.envelope_id or job.provider_recording_id)
+    )
+    with source_providers.open_source(job_id=job.id, fence=fence) as reader:
+        if (
+            reader.facts != _facts(job)
+            or len(
+                reader.read_range(
+                    start=job.source_byte_length - 1, end=job.source_byte_length - 1
+                )
+            )
+            != 1
+        ):
+            raise AttachmentError("snapshot_changed", 409)
+
+
+def publish(*, job_id, fence, segment_ids, manifest):
+    """Remote checks outside locks; local authority and ALL publication in one txn."""
+    from tracer.services.attachments import derivatives, publication, validation
+
+    before = AttachmentImportJob.objects.get(pk=job_id)
+    with transaction.atomic(), _locked_job(job_id) as (held, _, _, _, _):
+        _hold(held, fence, timezone.now())
+    _remote_recheck(before, fence)
+    verified = None
+    if before.upload_id:
+        if segment_ids or manifest is not None:
+            raise AttachmentError("conflict", 409)
+        # Shared bounded validation owns the serving PUT and calls this module's
+        # prepare_put/record_put with the same job fence; never publish there.
+        verified = validation.validate_import_snapshot(
+            upload_id=before.upload_id, scope_id=before.scope_id, fence=fence
+        )
+        _remote_recheck(before, fence)
+    else:
+        recordings.validate_manifest(manifest)
+    with (
+        transaction.atomic(),
+        _locked_job(job_id) as (job, scope, session, target, asset),
+    ):
         now = timezone.now()
-        common = {
-            "scope": scope,
-            "policy_version": scope.policy_version,
-            "deletion_generation": scope.deletion_generation,
-        }
-        session = CaptureSession.objects.get(pk=locked.capture_session_id)
-        for row in rows:
-            attachment = Attachment.objects.create(
-                **common,
-                client_id=row.attachment_client_id,
-                # The read path re-admits with this value (occurrences.py).
-                source_kind=IMPORTED_SOURCE_KIND,
-            )
-            Attachment.objects.filter(pk=attachment.pk).update(
-                state=AttachmentState.VALIDATING
-            )
-            AttachmentBlob.objects.create(
+        _hold(job, fence, now)
+        job.lease_phase = "publishing"
+        job.state = RecordingState.VALIDATING
+        job.save(update_fields=["lease_phase", "state"])
+        if job.recording_id:
+            target.state = RecordingState.VALIDATING
+            target.save(update_fields=["state"])
+        if job.upload_id:
+            publication.publish_verified_locked(
+                attachment=asset,
+                facts=verified,
+                expected_binding_id=job.storage_binding_id,
                 scope=scope,
-                attachment=attachment,
-                storage_key=row.storage_key,
-                storage_version=row.storage_version,
-                sha256=row.sha256,
-                byte_length=row.byte_length,
-                mime_type="audio/wav",
-                validated_at=now,
-                sample_rate=facts["sample_rate"],
-                channels=facts["channels"],
-                frame_count=row.frame_count,
+                fence=fence,
+                allocation=target,
             )
-            Attachment.objects.filter(pk=attachment.pk).update(
-                state=AttachmentState.READY, completed_at=now
+            target.state = AttachmentState.READY
+            target.save(update_fields=["state"])
+            from tracer.services.attachments import accounting
+
+            accounting.receipt_locked(
+                target, attachment=asset, outcome=AttachmentState.READY
             )
-            AttachmentOccurrence.objects.create(
-                **common,
-                client_id=row.occurrence_client_id,
-                attachment=attachment,
-                capture_session=session,
-                trace_id=locked.trace_id,
-                span_id=locked.span_id,
-                direction=locked.direction,
-                recording=locked,
-                purpose="conversation_recording",
-                # Unbound deadline: ingestion must observe the parent within
-                # 24 h; bind_retention then replaces it with the source's expiry.
-                expires_at=now + timedelta(hours=24),
-                capture_complete=True,
+            derivatives.enqueue_for_asset_locked(asset)
+        else:
+            rows = list(
+                AttachmentRecordingSegment.objects.select_for_update()
+                .filter(import_job=job, pk__in=segment_ids)
+                .order_by("pk")
             )
-        AttachmentRecordingSegment.objects.filter(
-            pk__in=[row.pk for row in rows]
-        ).update(state=RecordingSegmentState.PUBLISHED)
-        locked.state = RecordingState.READY
-        locked.manifest = manifest
-        locked.sample_rate = facts["sample_rate"]
-        locked.channels = facts["channels"]
-        locked.duration_ms = manifest["duration_ms"]
-        locked.capture_complete = manifest["capture_complete"]
-        locked.published_at = now
-        locked.save(
+            rows.sort(key=lambda row: row.index)
+            entries = manifest["segments"]
+            if (
+                len(rows) != len(segment_ids)
+                or len(set(segment_ids)) != len(rows)
+                or len(rows) != len(entries)
+                or not rows
+                or AttachmentRecordingSegment.objects.filter(import_job=job).count()
+                != len(rows)
+                or manifest["recording_id"] != str(target.client_id)
+                or manifest["sample_rate_hz"] != target.sample_rate
+                or manifest["channels"] != target.channels
+                or manifest["duration_ms"] != job.source_duration_ms
+                or not manifest["capture_complete"]
+                or any(
+                    track["direction"] != target.direction
+                    for track in manifest["tracks"]
+                )
+            ):
+                raise AttachmentError("validation_failed", 422)
+            for row, entry in zip(rows, entries, strict=True):
+                if (
+                    row.state != RecordingSegmentState.STAGED
+                    or row.storage_version is None
+                    or row.storage_binding_id != job.storage_binding_id
+                    or row.erased_at is not None
+                    or (
+                        entry["occurrence_id"],
+                        entry["index"],
+                        entry["start_ms"],
+                        entry["duration_ms"],
+                    )
+                    != (
+                        str(row.occurrence_client_id),
+                        row.index,
+                        row.start_ms,
+                        row.duration_ms,
+                    )
+                ):
+                    raise AttachmentError("validation_failed", 422)
+                asset = Attachment.objects.create(
+                    scope=scope,
+                    client_id=row.attachment_client_id,
+                    source_kind=IMPORTED_SOURCE_KIND,
+                    storage_binding_id=job.storage_binding_id,
+                    state=AttachmentState.PENDING,
+                    policy_version=scope.policy_version,
+                    deletion_generation=scope.deletion_generation,
+                )
+                asset.state = AttachmentState.VALIDATING
+                asset.save(update_fields=["state"])
+                # Link the allocation before publishing verified facts; DB fences
+                # compare its immutable key/version and current job epoch.
+                row.attachment = asset
+                row.allocation_epoch = fence.epoch
+                row.save(update_fields=["attachment", "allocation_epoch"])
+                facts = VerifiedAssetFacts(
+                    StoredObject(
+                        ObjectIdentity(
+                            job.storage_binding_id,
+                            "serving",
+                            row.storage_key,
+                            row.storage_version,
+                        ),
+                        row.byte_length,
+                        row.sha256,
+                    ),
+                    "audio/wav",
+                    now,
+                    target.sample_rate,
+                    target.channels,
+                    row.frame_count,
+                )
+                publication.publish_verified_locked(
+                    attachment=asset,
+                    facts=facts,
+                    expected_binding_id=job.storage_binding_id,
+                    scope=scope,
+                    fence=fence,
+                    allocation=row,
+                )
+                AttachmentOccurrence.objects.create(
+                    scope=scope,
+                    client_id=row.occurrence_client_id,
+                    attachment=asset,
+                    capture_session=session,
+                    trace_id=target.trace_id,
+                    span_id=target.span_id,
+                    direction=target.direction,
+                    recording=target,
+                    purpose="conversation_recording",
+                    expires_at=min(now + timedelta(hours=24), job.source_expires_at),
+                    capture_complete=True,
+                    policy_version=scope.policy_version,
+                    deletion_generation=scope.deletion_generation,
+                )
+                row.state = RecordingSegmentState.PUBLISHED
+                row.save(update_fields=["state"])
+                derivatives.enqueue_for_asset_locked(asset)
+            # Keep current manifest AND the immutable old idempotency receipt.
+            revision = target.manifest_revision + 1
+            AttachmentManifestRevision.objects.create(
+                scope=scope,
+                recording=target,
+                idempotency_key=f"import:{job.id}",
+                fingerprint=fingerprint(manifest),
+                revision=revision,
+            )
+            target.manifest, target.manifest_revision = manifest, revision
+            target.duration_ms, target.capture_complete = manifest["duration_ms"], True
+            target.state, target.published_at = RecordingState.READY, now
+            target.save(
+                update_fields=[
+                    "manifest",
+                    "manifest_revision",
+                    "duration_ms",
+                    "capture_complete",
+                    "state",
+                    "published_at",
+                ]
+            )
+        job.state, job.reason, job.finished_at = RecordingState.READY, "ready", now
+        job.lease_phase, job.lease_token, job.lease_until = "terminal", None, None
+        job.save(
             update_fields=[
                 "state",
-                "manifest",
-                "sample_rate",
-                "channels",
-                "duration_ms",
-                "capture_complete",
-                "published_at",
+                "reason",
+                "finished_at",
+                "lease_phase",
+                "lease_token",
+                "lease_until",
             ]
         )
-        AttachmentImportJob.objects.filter(pk=job.pk).update(
-            state=RecordingState.READY,
-            reason="ready",
-            finished_at=now,
-            lease_until=None,
-        )
 
 
-def run(job_id, *, scope_id, storage, source_factory=None):
-    """Advance one job. Safe to call repeatedly; terminal jobs are no-ops."""
-    job = AttachmentImportJob.objects.select_related("recording").get(
-        pk=job_id, scope_id=scope_id
+def _retire(job_id, fence, *, reason, terminal=None):
+    with (
+        transaction.atomic(),
+        _locked_job(job_id, authorize=False) as (job, _, _, target, _),
+    ):
+        if (job.lease_token, job.lease_epoch) != (
+            fence.token,
+            fence.epoch,
+        ) or job.state in TERMINAL_RECORDING_STATES:
+            return
+        _retire_locked(job, target, reason, terminal)
+
+
+def _terminal_denial(code):
+    return {"expired": RecordingState.EXPIRED, "deleted": RecordingState.DELETED}.get(
+        code, RecordingState.REJECTED
     )
+
+
+def _log_deferred(job_id, code):
+    logger.warning(
+        "attachment_import_attempt_deferred", job_id=str(job_id), reason=public_reason(code)
+    )
+
+
+def _retire_locked(job, target, reason, terminal, *, claim_denied=False):
+    job.reason = public_reason(reason)
+    # The schema deliberately forbids writing->idle. A transient attempt
+    # leaves the old lease to expire; only a new epoch may enter recovery.
+    # No capability is issued after this execution has left its guard.
+    fields = ["reason"]
+    if claim_denied and job.attempts < MAX_ATTEMPTS:
+        # Revalidation consumed this attempt without issuing a worker lease.
+        job.attempts += 1
+        fields.append("attempts")
+    if terminal is None and (
+        not job.lease_until or job.lease_until <= timezone.now()
+    ):
+        return
+    if terminal:
+        job.lease_phase = "terminal"
+        job.lease_token, job.lease_until = None, None
+        fields += ["lease_phase", "lease_token", "lease_until"]
+        job.state, job.finished_at = terminal, timezone.now()
+        fields += ["state", "finished_at"]
+        if target.state not in TERMINAL_RECORDING_STATES:
+            target.state = terminal
+            target.save(update_fields=["state"])
+    job.save(update_fields=fields)
+
+
+def run(job_id, *, scope_id, storage=None, source_factory=None):
+    from tracer.services.attachments import readiness, source_providers, validation
+
+    job = AttachmentImportJob.objects.get(pk=job_id, scope_id=scope_id)
     if job.state in TERMINAL_RECORDING_STATES:
         return job.state
-    limits = recordings.Limits(
-        max_upload_bytes=job.window_bytes,
-        segment_bytes=job.window_bytes,
-        segment_duration_ms=job.max_segment_ms,
-        recording_bytes=job.recording_bytes,
-        recording_duration_ms=7_200_000,
-        reserved_bytes=job.reserved_bytes,
-    )
-    token, why = _claim(job)
-    if why == "terminal":
-        job.refresh_from_db()
-        return job.state
-    if why == "busy":
-        return RecordingState.IMPORTING
-    if why == "exhausted":
-        return _finish(
-            job,
-            state=RecordingState.FAILED,
-            reason="source_unavailable",
-            storage=storage,
-        ).state
+    fence = claim(job_id, scope_id=scope_id, now=timezone.now())
+    if fence is None:
+        return AttachmentImportJob.objects.values_list("state", flat=True).get(pk=job_id)
     try:
-        _, recording = _fence(job)
-        source = (source_factory or _open_source)(job, limits)
-        with tempfile.NamedTemporaryFile(dir=_work_dir()) as snapshot:
-            reads = _fetch(job, source, snapshot, limits)
-            facts = sandbox.run("source", snapshot.name)
-            if (
-                facts.get("mime_type") != "audio/wav"
-                or facts.get("duration_ms") != job.declared_duration_ms
+        with sandbox.import_execution(job.id, fence.epoch) as directory:
+            job.refresh_from_db()
+            storage = _storage(job, storage, "write")
+            _clean_versions(job, storage, fence=fence)
+            validation.require_decoder(
+                DecoderRequirements(
+                    "normalize" if job.recording_id else "validate",
+                    job.source_mime_type,
+                    job.window_bytes,
+                )
+            )
+            readiness.require_source_keys(
+                source=SourceRef(
+                    job.source_kind, job.envelope_id or job.provider_recording_id
+                )
+            )
+            with (source_factory or source_providers.open_source)(
+                job_id=job.id, fence=fence
+            ) as reader:
+                with sandbox.scratch_file(directory, "source") as snapshot:
+                    digest = _fetch(job, fence, reader, snapshot)
+                    if job.upload_id:
+                        _single_snapshot(job, fence, snapshot, digest, storage)
+                        publish(
+                            job_id=job.id, fence=fence, segment_ids=(), manifest=None
+                        )
+                    else:
+                        rows, manifest = _segment_source(
+                            job, fence, snapshot, directory, storage
+                        )
+                        publish(
+                            job_id=job.id,
+                            fence=fence,
+                            segment_ids=tuple(row.id for row in rows),
+                            manifest=manifest,
+                        )
+    except LeaseLost:
+        pass
+    except Exception as error:  # noqa: BLE001 - durable bounded job boundary
+        code = (
+            error.code if isinstance(error, AttachmentError) else "source_unavailable"
+        )
+        transient = not isinstance(error, AttachmentError) or error.status in {429, 503}
+        terminal = None
+        if not transient or job.attempts >= MAX_ATTEMPTS:
+            terminal = RecordingState.FAILED if transient else _terminal_denial(code)
+        _retire(job.id, fence, reason=code, terminal=terminal)
+        _log_deferred(job.id, code)
+    return AttachmentImportJob.objects.values_list("state", flat=True).get(pk=job_id)
+
+
+def _expire(job_id, now):
+    with (
+        transaction.atomic(),
+        _locked_job(job_id, authorize=False) as (job, _, _, target, _),
+    ):
+        if job.state in TERMINAL_RECORDING_STATES:
+            return False
+        if job.deadline > now and not (
+            job.attempts >= MAX_ATTEMPTS
+            and (not job.lease_until or job.lease_until <= now)
+        ):
+            return False
+        job.state = (
+            RecordingState.EXPIRED if job.deadline <= now else RecordingState.FAILED
+        )
+        job.reason = "expired" if job.deadline <= now else "source_unavailable"
+        job.finished_at, job.lease_phase = now, "terminal"
+        job.lease_token, job.lease_until = None, None
+        job.save(
+            update_fields=[
+                "state",
+                "reason",
+                "finished_at",
+                "lease_phase",
+                "lease_token",
+                "lease_until",
+            ]
+        )
+        if target.state not in TERMINAL_RECORDING_STATES:
+            target.state = job.state
+            target.save(update_fields=["state"])
+        return True
+
+
+def _cleanup(job, now):
+    from tracer.services.attachments import capacity_db, readiness, uploads, validation
+
+    if (
+        job.state not in TERMINAL_RECORDING_STATES
+        or job.cleanup_not_before is None
+        or now < job.cleanup_not_before
+    ):
+        return False
+    # Local process locks prove accepted operations have stopped; time alone is
+    # NOT proof. Missing epoch guards/shared scratch keep capacity charged.
+    if not sandbox.cleanup_import_scratch(job.id, job.lease_epoch):
+        return False
+    storage = readiness.resolve_historical(job.storage_binding_id, operation="erase")
+    if job.upload_id:
+        # Upload owns base cleanup, receipt and asset survivor fencing. J cannot
+        # settle until that cleanup has reconciled unknown quarantine/serving PUTs.
+        upload = AttachmentUpload.objects.get(pk=job.upload_id, scope_id=job.scope_id)
+        if upload.state == AttachmentState.READY:
+            # Shared reconciliation retains the published serving identity and
+            # proves temporary/unknown absence before releasing U, then J.
+            if not validation.reconcile_ready_upload(upload, storage):
+                return False
+        else:
+            uploads.settle(job.upload_id, scope_id=job.scope_id, outcome=job.state)
+        upload = AttachmentUpload.objects.get(pk=job.upload_id, scope_id=job.scope_id)
+        if upload.reservation_settled_at is None:
+            return False
+        _clean_versions(job, storage)
+    elif job.state == RecordingState.READY:
+        _clean_versions(job, storage)
+    else:
+        for kind, before in _allocations(job):
+            with (
+                transaction.atomic(),
+                _locked_job(job.id, authorize=False) as (held, _, _, _, _),
             ):
-                # Reject a duration mismatch before producing any segment.
-                raise AttachmentError("validation_failed", 422)
-            plans, rows = _segments(
-                job, recording, snapshot.name, facts, limits, storage, token
+                if (
+                    held.state == RecordingState.READY
+                    or held.state not in TERMINAL_RECORDING_STATES
+                ):
+                    return False
+                row = _allocation(held, before.id, kind)
+                # Published assets are exclusively erased by unified retention.
+                if row.attachment_id or row.state == RecordingSegmentState.PUBLISHED:
+                    return False
+            for purpose in ("quarantine", "serving"):
+                result = storage.erase_all_versions(
+                    _locator(job, before, kind, purpose)
+                )
+                if (
+                    not result.empty
+                    or result.retryable
+                    or result.checked_at < job.cleanup_not_before
+                ):
+                    return False
+            with (
+                transaction.atomic(),
+                _locked_job(job.id, authorize=False) as (held, _, _, _, _),
+            ):
+                row = _allocation(held, before.id, kind)
+                if row.attachment_id or held.state == RecordingState.READY:
+                    return False
+                row.state, row.erased_at, row.cleanup_checked_at = (
+                    RecordingSegmentState.ERASED,
+                    row.erased_at or now,
+                    now,
+                )
+                row.unowned_cleanup_due_at = None
+                row.save(
+                    update_fields=[
+                        "state",
+                        "erased_at",
+                        "cleanup_checked_at",
+                        "unowned_cleanup_due_at",
+                    ]
+                )
+    with transaction.atomic():
+        locks = capacity_db.lock_capacity(
+            scope_id=job.scope_id, pool_keys=(capacity.IMPORT_POOL_KEY,)
+        )
+        with _locked_job(job.id, authorize=False) as (held, _, _, _, _):
+            if (
+                held.state not in TERMINAL_RECORDING_STATES
+                or held.cleanup_not_before > now
+            ):
+                return False
+            held.cleanup_checked_at = now
+            held.save(update_fields=["cleanup_checked_at"])
+            return capacity_db.release_locked(
+                locks, owner=_owner(held), cleanup_complete=True, now=now
             )
-        track_ids = [
-            uuid.uuid5(recording.client_id, f"track:{index}")
-            for index in range(facts["channels"])
-        ]
-        manifest = recordings.build_manifest(
-            recording_id=recording.client_id,
-            rate=facts["sample_rate"],
-            channels=facts["channels"],
-            direction=recording.direction,
-            track_ids=track_ids,
-            segments=[
-                (row.occurrence_client_id, plan)
-                for row, plan in zip(rows, plans, strict=True)
-            ],
-            duration_ms=facts["duration_ms"],
-            capture_complete=True,
-        )
-        completion_check(
-            recording={
-                "recording_id": str(recording.client_id),
-                "declared_bytes": job.declared_bytes,
-                "declared_duration_ms": job.declared_duration_ms,
-                "direction": recording.direction,
-            },
-            limits=limits,
-            observation={
-                "source_bytes": sum(part["bytes"] for part in reads),
-                "source_duration_ms": facts["duration_ms"],
-                "generation_matches": True,
-                "reads": reads,
-                "manifest": manifest,
-                "segment_bytes": [row.byte_length for row in rows],
-            },
-        )
-        _publish(job, recording, facts, manifest, rows, token)
-        _release(job)
-        if job.envelope_id:
-            envelopes.destroy(scope_id=job.scope_id, envelope_id=job.envelope_id)
-        return RecordingState.READY
-    except _LeaseLost:
-        return RecordingState.IMPORTING
-    except _Retry as retry:
+
+
+def sweep(*, limit=100):
+    now = timezone.now()
+    counts = {"expired": 0, "released": 0, "deferred": 0}
+    orphan_jobs = AttachmentRecordingSegment.objects.filter(
+        unowned_cleanup_due_at__lte=now
+    ).values("import_job_id")
+    due = list(
         AttachmentImportJob.objects.filter(
-            pk=job.pk, lease_token=token, state=RecordingState.IMPORTING
-        ).update(reason=retry.code, lease_until=None)
-        return _settled(job, storage, token)
-    except AttachmentError as error:
-        transient = error.status in {429, 503} and error.code in {
-            "source_unavailable",
-            "throttled",
-            "validation_unavailable",
-        }
-        job.refresh_from_db()
-        if job.state in TERMINAL_RECORDING_STATES:
-            return _settled(job, storage, token)
-        if transient and job.attempts < MAX_ATTEMPTS:
-            AttachmentImportJob.objects.filter(
-                pk=job.pk, lease_token=token, state=RecordingState.IMPORTING
-            ).update(reason=public_reason(error.code), lease_until=None)
-            return _settled(job, storage, token)
-        state = {
-            "expired": RecordingState.EXPIRED,
-            "deleted": RecordingState.DELETED,
-        }.get(
-            error.code,
-            RecordingState.FAILED if transient else RecordingState.REJECTED,
+            Q(state__in=(RecordingState.IMPORTING, RecordingState.VALIDATING))
+            & (Q(deadline__lte=now) | Q(attempts__gte=MAX_ATTEMPTS))
+            | Q(
+                state__in=TERMINAL_RECORDING_STATES, reservation_settled_at__isnull=True
+            )
+            | Q(pk__in=orphan_jobs)
         )
-        return _finish(
-            job,
-            state=state,
-            reason=public_reason(error.code),
-            storage=storage,
-            token=token,
-        ).state
-    except Exception as error:  # noqa: BLE001 - job boundary; fails closed, retried up to MAX_ATTEMPTS
-        # Never persist or log exception text (it may contain a URL or a path).
-        logger.warning(
-            "attachment_import_attempt_failed",
-            job_id=str(job.pk),
-            error=type(error).__name__,
-        )
-        job.refresh_from_db()
-        if job.state in TERMINAL_RECORDING_STATES:
-            # Failed after publication (the release, the envelope destroy):
-            # the job is READY; never relabel it, and retry the release.
-            return _settled(job, storage, token)
-        if job.attempts < MAX_ATTEMPTS:
-            AttachmentImportJob.objects.filter(
-                pk=job.pk, lease_token=token, state=RecordingState.IMPORTING
-            ).update(reason="source_unavailable", lease_until=None)
-            return _settled(job, storage, token)
-        return _finish(
-            job,
-            state=RecordingState.FAILED,
-            reason="source_unavailable",
-            storage=storage,
-            token=token,
-        ).state
-
-
-def _settled(job, storage, token=None):
-    """The job's state after a failed step.
-
-    A finished job (expired by the sweep, fenced, published) has its staged
-    objects erased and then its reservation released; the worker gives up its
-    lease first, so the parts it allocated are erasable at once.
-    """
-    job.refresh_from_db()
-    if job.state in TERMINAL_RECORDING_STATES:
+        .order_by("deadline", "id")
+        .values_list("id", flat=True)
+        .distinct()[:limit]
+    )
+    for job_id in due:
         try:
-            _drop_lease(job, token)
-            _cleanup(job, storage)
-            if job.envelope_id:
-                envelopes.destroy(scope_id=job.scope_id, envelope_id=job.envelope_id)
-        except Exception:  # noqa: BLE001 - ``sweep`` erases and releases; envelopes expire
-            logger.warning("attachment_import_release_deferred", job_id=str(job.pk))
-        return job.state
-    return RecordingState.IMPORTING
-
-
-def sweep(*, storage, limit=100):
-    """Expire jobs past their deadline; erase staged parts; release once.
-
-    Also revisits every finished job whose reservation is still held or that
-    still has a ``staged`` segment row (an erase or a release that failed, a
-    worker that was still writing when the job expired): its staged objects
-    are erased first and its reservation is released only once none is left,
-    so a transient error can never leak budget or bytes for good. One job's
-    failure never stops the sweep.
-    """
-    count = 0
-    for job in AttachmentImportJob.objects.filter(
-        state=RecordingState.IMPORTING, deadline__lte=timezone.now()
-    )[:limit]:
-        try:
-            _finish(
-                job, state=RecordingState.EXPIRED, reason="expired", storage=storage
-            )
-        except Exception as error:  # noqa: BLE001 - per-job boundary; the next sweep retries
-            logger.warning(
-                "attachment_import_sweep_failed",
-                job_id=str(job.pk),
-                error=type(error).__name__,
-            )
-            continue
-        count += 1
-    staged = AttachmentRecordingSegment.objects.filter(
-        state=RecordingSegmentState.STAGED
-    ).values("recording_id")
-    for job in AttachmentImportJob.objects.filter(
-        Q(released_at__isnull=True)
-        | (Q(recording_id__in=staged) & ~Q(state=RecordingState.READY)),
-        state__in=TERMINAL_RECORDING_STATES,
-    ).order_by("finished_at", "pk")[:limit]:
-        try:
-            count += bool(_cleanup(job, storage))
-        except Exception as error:  # noqa: BLE001 - per-job boundary; the next sweep retries
-            logger.warning(
-                "attachment_import_sweep_failed",
-                job_id=str(job.pk),
-                error=type(error).__name__,
-            )
-    return count
+            counts["expired"] += int(_expire(job_id, now))
+            job = AttachmentImportJob.objects.get(pk=job_id)
+            counts["released"] += int(_cleanup(job, now))
+        except Exception:  # noqa: BLE001 - one unavailable binding never blocks the next
+            counts["deferred"] += 1
+            logger.warning("attachment_import_cleanup_deferred", job_id=str(job_id))
+    return counts
 
 
 def pending(*, limit=100):
-    """Job ids a dispatcher should (re)run; ids and scopes only."""
     now = timezone.now()
     return list(
         AttachmentImportJob.objects.filter(
             Q(lease_until__isnull=True) | Q(lease_until__lte=now),
-            state=RecordingState.IMPORTING,
+            state__in=(RecordingState.IMPORTING, RecordingState.VALIDATING),
             deadline__gt=now,
-        ).values_list("pk", "scope_id")[:limit]
+            attempts__lt=MAX_ATTEMPTS,
+        )
+        .order_by("deadline", "id")
+        .values_list("id", "scope_id")[:limit]
     )
-
-
-__all__ = [
-    "Importer",
-    "PUBLIC_REASONS",
-    "admission_check",
-    "check_import_share",
-    "completion_check",
-    "import_budgets",
-    "lifetime_need",
-    "parse_request",
-    "pending",
-    "public_reason",
-    "run",
-    "server_limits",
-    "status",
-    "submit",
-    "sweep",
-]

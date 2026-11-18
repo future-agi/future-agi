@@ -18,7 +18,8 @@ from django.utils import timezone
 from accounts.models import OrgApiKey
 from accounts.models.workspace import Workspace
 from tracer.models.attachment import (
-    AttachmentBlob,
+    Attachment,
+    AttachmentAuditEvent,
     AttachmentBudget,
     AttachmentOccurrence,
     AttachmentOutbox,
@@ -27,7 +28,6 @@ from tracer.models.attachment import (
     AttachmentUpload,
     AttachmentWriteGrant,
     CaptureSession,
-    UploadReservation,
 )
 from tracer.models.project import Project
 from tracer.services.attachments import bootstrap as broker
@@ -40,7 +40,11 @@ from tracer.services.attachments.contract import (
     trace_uuid,
 )
 from tracer.services.attachments.probe import probe
-from tracer.services.attachments.storage import ObjectIdentity
+from tracer.tests.attachment_fixtures import (
+    MemoryObjectStore,
+    configure_component_storage,
+    erase_terminal_upload,
+)
 
 pytestmark = [pytest.mark.django_db, pytest.mark.unit]
 
@@ -55,38 +59,14 @@ def wav_bytes():
     return stream.getvalue()
 
 
-class ImmutableStore:
-    def __init__(self):
-        self.objects = {}
-        self.promotions = []
-
-    def put_quarantine(self, upload_id, stream, length):
-        key = f"quarantine/{upload_id}"
-        if key in self.objects:
-            raise AttachmentError("already_exists", 409)
-        self.objects[key] = stream.read()
-        assert len(self.objects[key]) == length
-        return ObjectIdentity(key, "version-1")
-
-    def snapshot(self, identity, output, *, expected_length):
-        assert identity.version == "version-1"
-        data = self.objects[identity.key]
-        assert len(data) == expected_length
-        output.write(data)
-        return hashlib.sha256(data).hexdigest()
-
-    def promote(self, snapshot, *, upload_id, expected_length, expected_sha256):
-        snapshot.seek(0)
-        data = snapshot.read()
-        assert len(data) == expected_length
-        assert hashlib.sha256(data).hexdigest() == expected_sha256
-        self.promotions.append(data)
-        return ObjectIdentity(f"original/{uuid.uuid4()}", "immutable-v1")
+class ImmutableStore(MemoryObjectStore):
+    """Component storage only; preserves the original fixed version expectations."""
 
 
 @pytest.fixture
-def setup(project, user, settings):
+def setup(project, user, settings, monkeypatch, tmp_path):
     settings.FI_ATTACHMENTS_ENABLED = True
+    configure_component_storage(monkeypatch, settings, tmp_path, ImmutableStore())
     scope = AttachmentScope.objects.create(
         project=project,
         workspace=project.workspace,
@@ -254,6 +234,23 @@ def test_pii_requires_separate_server_and_client_choices():
         admit_audio(scope, policy, direction="input", source_kind="Bytes")
 
 
+def test_import_opt_in_does_not_enable_live_recording(setup):
+    from tracer.services.attachments.imports import _admit_policy
+
+    scope, _ = setup
+    scope.allow_import = True
+    current, _ = session(setup)
+    current.capture_policy = dict(current.capture_policy, allow_import=True, record_audio=False)
+    _admit_policy(scope, current, {"direction": "input", "recording_id": str(uuid.uuid4())})
+    with pytest.raises(AttachmentError) as error:
+        admit_audio(scope, CapturePolicy(**current.capture_policy), direction="input",
+                    source_kind="Bytes", creates_recording=True)
+    assert (error.value.code, error.value.status) == ("recording_disabled", 403)
+    scope.allow_import = False
+    with pytest.raises(AttachmentError, match="source_unavailable"):
+        _admit_policy(scope, current, {"direction": "input", "recording_id": str(uuid.uuid4())})
+
+
 def test_recording_separate_from_import():
     scope = SimpleNamespace(
         enabled=True,
@@ -277,6 +274,29 @@ def test_default_off_creates_nothing(setup, settings):
     with pytest.raises(AttachmentError, match="disabled"):
         session(setup)
     assert not broker.CaptureSession.objects.exists()
+
+
+@pytest.mark.parametrize("change", ["writer", "origin", "too_long", "expired", "revoked"])
+def test_database_rejects_invalid_capture_renewal(setup, change):
+    current, _ = session(setup)
+    rows = CaptureSession.objects.filter(pk=current.pk)
+    now = timezone.now()
+    rows.update(expires_at=now + timedelta(minutes=1))
+    if change == "expired":
+        rows.update(expires_at=now - timedelta(seconds=1))
+    elif change == "revoked":
+        rows.update(revoked_at=now)
+    fields = {"expires_at": now + timedelta(minutes=30)}
+    if change == "writer":
+        fields["writer_id"] = uuid.uuid4()
+    elif change == "origin":
+        fields["origin"] = "different"
+    elif change == "too_long":
+        fields["expires_at"] = now + timedelta(hours=2)
+    # QuerySet.update issues SQL directly; no application admission path runs.
+    with pytest.raises(IntegrityError) as error, transaction.atomic():
+        rows.update(**fields)
+    assert error.value.__cause__.sqlstate == "23514"
 
 
 def test_session_renewal_and_exact_binding(setup, user):
@@ -471,7 +491,7 @@ def test_upload_idempotency_and_conflict(setup):
     )
     assert first.id == second.id and renewed != token
     assert expires_at >= args["expires_at"]
-    assert UploadReservation.objects.count() == 1
+    assert AttachmentUpload.objects.filter(reservation_id__isnull=False).count() == 1
     broker.authorize(renewed, operation="status", scope_id=scope.id, upload_id=first.id)
     with pytest.raises(AttachmentError, match="idempotency_conflict"):
         uploads.initialize(
@@ -488,9 +508,9 @@ def test_upload_idempotency_and_conflict(setup):
 def test_upload_lifetime_is_separate_from_its_capability(setup):
     """BR-1 after expiry needs a job that outlives its 300 s capability."""
     upload, _, _, args = initialized(setup)
-    reservation = UploadReservation.objects.get(upload=upload)
+    reservation = AttachmentUpload.objects.get(pk=upload.pk)
     capability_expiry = args["expires_at"]
-    assert upload.expires_at == reservation.expires_at
+    assert upload.expires_at == reservation.reservation_expires_at
     assert capability_expiry < upload.expires_at <= upload.occurrence.expires_at
     now = timezone.now()
     capability_left = (capability_expiry - now).total_seconds()
@@ -504,7 +524,7 @@ def test_upload_lifetime_is_separate_from_its_capability(setup):
     )
     reservation.refresh_from_db()
     upload.refresh_from_db()
-    assert renewed < upload.expires_at == reservation.expires_at
+    assert renewed < upload.expires_at == reservation.reservation_expires_at
 
 
 @pytest.mark.parametrize(
@@ -540,12 +560,14 @@ def test_malformed_transfer_is_discarded_and_replayable(setup, chunks, code):
     assert len(storage.objects) == 1
 
 
-def test_abandoned_reservation_is_released_once(setup):
+@pytest.mark.django_db(transaction=True)
+def test_abandoned_reservation_is_released_once(setup, monkeypatch):
     upload, token, _, _ = initialized(setup)
     uploads.abort(token, scope_id=upload.scope_id, upload_id=upload.id)
     assert not uploads.settle(
         upload.id, scope_id=upload.scope_id, outcome=AttachmentState.FAILED
     )
+    erase_terminal_upload(upload, ImmutableStore(), monkeypatch)
     assert all(
         row.reserved_bytes == row.active_transfers == row.validation_jobs == 0
         for row in AttachmentBudget.objects.all()
@@ -565,7 +587,7 @@ def test_complete_is_validation_not_readiness(setup):
     second = uploads.complete(token, scope_id=upload.scope_id, upload_id=upload.id)
     assert first.state == second.state == "validating"
     assert AttachmentOutbox.objects.filter(event="validate").count() == 1
-    assert not AttachmentBlob.objects.exists()
+    assert not Attachment.objects.filter(verified_blob_id__isnull=False).exists()
     assert AttachmentOccurrence.objects.get(pk=upload.occurrence_id).bound_at is None
 
 
@@ -588,14 +610,14 @@ def test_replay_and_delete_do_not_resurrect(setup):
         uploads.complete(token, scope_id=upload.scope_id, upload_id=upload.id)
     with pytest.raises(AttachmentError, match="transfer_conflict"):
         uploads.transfer(token, chunks=[wav_bytes()], **args)
-    assert not AttachmentBlob.objects.exists()
+    assert not Attachment.objects.filter(verified_blob_id__isnull=False).exists()
 
 
 @pytest.mark.parametrize(
     "index,field,maximum",
     [
-        (0, "active_transfers", 128 // uploads.GLOBAL_SHARDS),
-        (0, "initialization_attempts", 960 // uploads.GLOBAL_SHARDS),
+        (0, "active_transfers", 4),
+        (0, "initialization_attempts", 30),
         (1, "reserved_bytes", 2 * 1024**3),
         (2, "active_transfers", 16),
         (2, "validation_jobs", 1024),
@@ -607,7 +629,14 @@ def test_finite_aggregate_admission(setup, index, field, maximum):
     # The deployment budget (index 0) is sharded and the upload's shard comes
     # from an id allocated inside initialize, so every shard is filled.
     shards = range(uploads.GLOBAL_SHARDS) if index == 0 else [0]
-    for key in {uploads._budget_keys(scope, shard)[index] for shard in shards}:
+    for key in {
+        (
+            f"global:{shard}",
+            f"org:{scope.organization_id}",
+            f"project:{scope.project_id}",
+        )[index]
+        for shard in shards
+    }:
         AttachmentBudget.objects.create(
             key=key, window_started_at=timezone.now(), **{field: maximum}
         )
@@ -636,8 +665,8 @@ def test_validated_bytes_are_immutable_snapshot_and_unbound(setup, monkeypatch):
     monkeypatch.setattr(validation, "sandbox_probe", probing)
     blob = validation.validate(upload.id, scope_id=upload.scope_id, storage=storage)
     assert storage.promotions == [wav_bytes()]
-    assert blob.storage_version == "immutable-v1"
-    assert blob.sha256 == hashlib.sha256(wav_bytes()).hexdigest()
+    assert blob.object.identity.version == "immutable-v1"
+    assert blob.object.sha256 == hashlib.sha256(wav_bytes()).hexdigest()
     assert AttachmentOccurrence.objects.get(pk=upload.occurrence_id).bound_at is None
     assert not uploads.settle(
         upload.id, scope_id=upload.scope_id, outcome=AttachmentState.REJECTED
@@ -663,7 +692,10 @@ def test_policy_or_delete_during_probe_fences_promotion(setup, monkeypatch):
     monkeypatch.setattr(validation, "sandbox_probe", probing)
     with pytest.raises(AttachmentError, match="capability_expired"):
         validation.validate(upload.id, scope_id=upload.scope_id, storage=storage)
-    assert storage.promotions == [] and not AttachmentBlob.objects.exists()
+    assert (
+        storage.promotions == []
+        and not Attachment.objects.filter(verified_blob_id__isnull=False).exists()
+    )
 
 
 @pytest.mark.parametrize(
@@ -765,8 +797,8 @@ def test_revocation_after_session_lookup_admits_nothing(setup, monkeypatch, repl
         return (
             AttachmentOccurrence.objects.count(),
             AttachmentUpload.objects.count(),
-            UploadReservation.objects.count(),
-            AttachmentOutbox.objects.filter(event="admitted").count(),
+            AttachmentUpload.objects.filter(reservation_id__isnull=False).count(),
+            AttachmentAuditEvent.objects.filter(event="admission").count(),
         )
 
     before = counts()
@@ -832,30 +864,40 @@ def test_reservation_sweep_uses_the_unsettled_partial_index(setup):
     with connection.cursor() as cursor:
         cursor.execute(
             "SELECT indexdef FROM pg_indexes WHERE indexname = %s",
-            ["attachment_reservation_due_idx"],
+            ["att_upload_reservation_due"],
         )
         (definition,) = cursor.fetchone()
         cursor.execute("SET LOCAL enable_seqscan = off")
         plan = (
-            UploadReservation.objects.filter(
-                settled_at__isnull=True, expires_at__lte=timezone.now()
+            AttachmentUpload.objects.filter(
+                reservation_settled_at__isnull=True,
+                reservation_expires_at__lte=timezone.now(),
             )
-            .order_by("expires_at")[:100]
+            .order_by("reservation_expires_at", "id")[:100]
             .explain()
         )
-    assert "(expires_at) WHERE (settled_at IS NULL)" in definition
-    assert "attachment_reservation_due_idx" in plan
+    assert (
+        "(reservation_expires_at, id) WHERE (reservation_settled_at IS NULL)"
+        in definition
+    )
+    assert "att_upload_reservation_due" in plan
 
 
-def _upload_ids(monkeypatch, *shards):
+def _upload_ids(monkeypatch, *shards, rejected=()):
     """Make initialize allocate upload ids that land on the given shards."""
     ids = iter(
-        uuid.UUID(int=index * uploads.GLOBAL_SHARDS + shard)
-        for index, shard in enumerate(shards, start=1)
+        value
+        for index, shard in enumerate(shards)
+        for value in (
+            (uuid.UUID(int=(index + 1) * 16 + shard),)
+            if index in rejected
+            else (uuid.UUID(int=(index + 1) * 16 + shard), uuid.uuid4())
+        )
     )
     monkeypatch.setattr(uploads, "uuid4", lambda: next(ids))
 
 
+@pytest.mark.django_db(transaction=True)
 def test_admission_and_settle_use_the_same_global_shard(setup, monkeypatch):
     """An upload is charged to one ``global:<shard>`` row named by its id, and
     settling it releases that same row. No single 'global' row exists."""
@@ -866,8 +908,9 @@ def test_admission_and_settle_use_the_same_global_shard(setup, monkeypatch):
         row.key: (row.active_transfers, row.validation_jobs, row.reserved_bytes)
         for row in AttachmentBudget.objects.filter(key__startswith="global")
     }
-    assert charged == {"global:5": (1, 1, upload.expected_bytes)}
+    assert charged == {"global:5": (1, 1, 3 * len(wav_bytes()) + 8 * 1024**2)}
     uploads.abort(token, scope_id=upload.scope_id, upload_id=upload.id)
+    erase_terminal_upload(upload, ImmutableStore(), monkeypatch)
     row = AttachmentBudget.objects.get(key="global:5")
     assert (row.active_transfers, row.validation_jobs, row.reserved_bytes) == (0, 0, 0)
     assert AttachmentBudget.objects.filter(key__startswith="global").count() == 1
@@ -876,11 +919,11 @@ def test_admission_and_settle_use_the_same_global_shard(setup, monkeypatch):
 def test_a_full_global_shard_refuses_only_its_own_uploads(setup, monkeypatch):
     """Each shard holds 1/GLOBAL_SHARDS of the deployment caps."""
     scope, _ = setup
-    cap = uploads.BUDGETS[0][0] // uploads.GLOBAL_SHARDS
+    cap = 4
     AttachmentBudget.objects.create(
         key="global:3", window_started_at=timezone.now(), active_transfers=cap
     )
-    _upload_ids(monkeypatch, 3, 4)
+    _upload_ids(monkeypatch, 3, 4, rejected=(0,))
     with pytest.raises(AttachmentError, match="throttled"):
         initialized(setup)
     upload, _, _, _ = initialized(setup)
@@ -890,11 +933,11 @@ def test_a_full_global_shard_refuses_only_its_own_uploads(setup, monkeypatch):
 
 def test_project_cap_stays_exact_across_global_shards(setup, monkeypatch):
     """Per-scope budgets stay authoritative: a project admits exactly its own
-    cap of transfers spread over every shard (each shard's cap is half the
+    cap of transfers spread over every shard (each shard's cap is a quarter of the
     project's), and the next one is refused by the project row, not a shard."""
     scope, _ = setup
-    project_cap = uploads.BUDGETS[2][0]
-    assert project_cap > uploads.BUDGETS[0][0] // uploads.GLOBAL_SHARDS
+    project_cap = 16
+    assert project_cap > 4
     shards = [index % uploads.GLOBAL_SHARDS for index in range(project_cap + 1)]
     _upload_ids(monkeypatch, *shards)
     current, _ = session(setup)
@@ -910,9 +953,10 @@ def test_project_cap_stays_exact_across_global_shards(setup, monkeypatch):
         )
     )
     assert sum(by_shard.values()) == project_cap
-    assert max(by_shard.values()) < uploads.BUDGETS[0][0] // uploads.GLOBAL_SHARDS
+    assert max(by_shard.values()) < 4
 
 
+@pytest.mark.django_db(transaction=True)
 def test_deletion_releases_the_shard_its_upload_was_charged_to(setup, monkeypatch):
     """Deletion batches lock every shard first (they may settle any of them),
     and the tombstone releases the upload's own shard."""
@@ -922,13 +966,18 @@ def test_deletion_releases_the_shard_its_upload_was_charged_to(setup, monkeypatc
     occurrence = upload.occurrence
     parent = SimpleNamespace(trace_id=occurrence.trace_id, span_id=occurrence.span_id)
     retention.tombstone_parent(scope_id=scope.id, parent=parent, source_generation=0)
+    erase_terminal_upload(upload, ImmutableStore(), monkeypatch)
     rows = dict(
         AttachmentBudget.objects.filter(key__startswith="global:").values_list(
             "key", "active_transfers"
         )
     )
-    assert rows == {f"global:{shard}": 0 for shard in range(uploads.GLOBAL_SHARDS)}
-    assert UploadReservation.objects.get(upload=upload).settled_at is not None
+    assert rows == {
+        **{f"global:{shard}": 0 for shard in range(16)},
+        "global:imports": 0,
+        "global:derivatives": 0,
+    }
+    assert AttachmentUpload.objects.get(pk=upload.pk).reservation_settled_at is not None
 
 
 def test_sweep_takes_no_budget_locks_when_a_scope_has_nothing_due(setup):

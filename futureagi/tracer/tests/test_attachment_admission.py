@@ -38,7 +38,9 @@ api = http.api
 def redis_config():
     return {
         "BACKEND": REDIS_BACKEND,
-        "LOCATION": "redis://127.0.0.1:16379/15",
+        # Test settings default to the test-compose sidecar; managed runners
+        # override REDIS_URL with their own test Redis, without a second stack.
+        "LOCATION": os.environ.get("REDIS_URL", "redis://127.0.0.1:16379/15"),
         "KEY_PREFIX": f"attachment-admission-test-{uuid.uuid4().hex}",
         "OPTIONS": {
             "CLIENT_CLASS": REDIS_CLIENT,
@@ -46,6 +48,22 @@ def redis_config():
             "SOCKET_TIMEOUT": 1,
         },
     }
+
+
+@pytest.mark.unit
+def test_shared_redis_fixture_uses_configured_test_endpoint(monkeypatch):
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:26379/15")
+    first, second = redis_config(), redis_config()
+    assert first["LOCATION"] == "redis://127.0.0.1:26379/15"
+    assert first["KEY_PREFIX"] != second["KEY_PREFIX"]
+    assert first["BACKEND"] == REDIS_BACKEND
+    assert first["OPTIONS"]["CLIENT_CLASS"] == REDIS_CLIENT
+
+
+@pytest.mark.unit
+def test_shared_redis_fixture_preserves_sidecar_fallback(monkeypatch):
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    assert redis_config()["LOCATION"] == "redis://127.0.0.1:16379/15"
 
 
 @pytest.mark.unit
@@ -67,7 +85,7 @@ def test_enabled_startup_rejects_unqualified_backend_before_storage(
     settings.FI_ATTACHMENTS_ENABLED = True
     settings.CACHES = {"default": {"BACKEND": backend, "LOCATION": "fixture"}}
     factory = Mock()
-    monkeypatch.setattr(storage, "from_settings", factory)
+    monkeypatch.setattr(storage, "bind_for_admission", factory)
     with pytest.raises(ImproperlyConfigured, match="shared atomic admission cache"):
         SdkConfig("tracer", tracer).ready()
     factory.assert_not_called()
@@ -82,7 +100,7 @@ def test_disabled_locmem_startup_does_not_inspect_cache_or_storage(
         "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}
     }
     factory = Mock()
-    monkeypatch.setattr(storage, "from_settings", factory)
+    monkeypatch.setattr(storage, "bind_for_admission", factory)
     with patch(
         "tracer.services.attachments.cache_config.verify_admission_cache"
     ) as check:
@@ -96,22 +114,39 @@ def test_disabled_locmem_startup_does_not_inspect_cache_or_storage(
 @pytest.mark.unit
 @pytest.mark.parametrize("scheme", ["redis", "rediss"])
 def test_standard_redis_startup_permits_storage_readiness_without_cache_io(
-    settings, monkeypatch, scheme
+    settings, monkeypatch, scheme, tmp_path
 ):
     settings.FI_ATTACHMENTS_ENABLED = True
     config = redis_config()
     config["LOCATION"] = f"{scheme}://fixture.invalid:6379/0"
     settings.CACHES = {"default": config}
     factory = Mock()
-    monkeypatch.setattr(storage, "from_settings", factory)
+    monkeypatch.setattr(storage, "bind_for_admission", factory)
     with patch(
         "django_redis.cache.RedisCache.__init__",
         side_effect=AssertionError("no cache I/O at startup"),
     ):
         SdkConfig("tracer", tracer).ready()
-    factory.assert_called_once_with(django_settings)
+    # B4: valid shared Redis is a startup prerequisite, default storage is not.
+    # No default admission/decoder IO may block historical binding work.
+    factory.assert_not_called()
     assert django_settings.CACHES["default"] == config
-    factory.return_value.verify_readiness.assert_called_once_with()
+    factory.return_value.verify_readiness.assert_not_called()
+    from tracer.services.attachments import readiness, sandbox
+    from tracer.tests.attachment_fixtures import BINDING_ID
+
+    settings.FI_ATTACHMENTS_WORK_DIR = str(tmp_path)
+    monkeypatch.setattr(sandbox, "self_test", lambda: None)
+    factory.side_effect = AttachmentError("storage_unverified", 503)
+    with pytest.raises(AttachmentError, match="^storage_unverified$"):
+        readiness.require_new_admission(operation="upload", settings=settings)
+    factory.assert_called_once_with(settings=settings)
+    historical = Mock()
+    resolver = Mock(return_value=historical)
+    monkeypatch.setattr(storage, "for_binding", resolver)
+    assert readiness.resolve_historical(BINDING_ID, operation="read") is historical
+    resolver.assert_called_once_with(BINDING_ID, operation="read")
+    assert factory.call_count == 1  # Historical A never asks about invalid default B.
 
 
 @pytest.mark.unit

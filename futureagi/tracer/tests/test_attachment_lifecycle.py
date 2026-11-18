@@ -1,12 +1,11 @@
 """Lifecycle: outbox consumers, schedules, sweeps, deletion hooks, schema decisions.
 
-Real PostgreSQL with the 0137 fences. Storage and the ClickHouse span read are
+Real PostgreSQL with the current attachment value fences. Storage and the ClickHouse span read are
 explicit doubles, and ``probe`` stands in for the bubblewrap sandbox (the
 sandbox itself is qualified by test_attachment_sandbox.py), so these prove the
 drain/sweep wiring and the database rules, not S3 or ClickHouse.
 """
 
-import hashlib
 import uuid
 from datetime import timedelta
 from types import SimpleNamespace
@@ -27,7 +26,6 @@ from tracer.models.attachment import (
     AttachmentScope,
     AttachmentState,
     AttachmentUpload,
-    AttachmentUsageReceipt,
     AttachmentWriteGrant,
 )
 from tracer.models.trace import Trace
@@ -36,12 +34,12 @@ from tracer.services.attachments import (
     occurrences,
     playback,
     retention,
+    storage,
     uploads,
     validation,
 )
 from tracer.services.attachments.contract import PLACEMENT_FIELDS, AttachmentError
 from tracer.services.attachments.probe import probe
-from tracer.services.attachments.storage import ObjectIdentity
 from tracer.tests import test_attachment_core as core
 from tracer.tests import test_attachment_playback as playback_tests
 from tracer.tests.test_attachment_core import TRACE, initialized, wav_bytes
@@ -59,17 +57,12 @@ class ErasableStore(core.ImmutableStore):
         super().__init__()
         self.erased = []
 
-    def promote(self, snapshot, *, upload_id, expected_length, expected_sha256):
-        snapshot.seek(0)
-        data = snapshot.read()
-        assert hashlib.sha256(data).hexdigest() == expected_sha256
-        self.objects[f"original/{upload_id}"] = data
-        return ObjectIdentity(f"original/{upload_id}", "immutable-v1")
-
-    def erase_upload(self, upload_id):
-        self.erased.append(upload_id)
-        for key in (f"quarantine/{upload_id}", f"original/{upload_id}"):
-            self.objects.pop(key, None)
+    def erase_all_versions(self, locator):
+        # The legacy observer counts original objects, not their quarantine keys.
+        # Both exact locators are still erased by the real retention caller.
+        if locator.purpose == "serving":
+            self.erased.append(uuid.UUID(locator.key.rsplit("/", 1)[1]))
+        return super().erase_all_versions(locator)
 
 
 @pytest.fixture
@@ -166,28 +159,50 @@ def test_streamed_upload_reaches_ready_through_the_scheduled_drain(
     from tracer.tasks import attachment_lifecycle as tasks
 
     store = ErasableStore()
-    monkeypatch.setattr(lifecycle, "storage_from_settings", lambda: store)
+
+    def for_binding(binding_id, *, operation, settings=None):
+        assert binding_id == store.binding_id
+        store.verify_identity(operation=operation)
+        return store
+
+    monkeypatch.setattr(storage, "for_binding", for_binding)
     upload, _ = streamed(setup, store)
     assert not budgets_released()
     counts = tasks.drain_attachment_outbox._original_func()
     upload.refresh_from_db()
     assert upload.state == AttachmentState.READY
-    assert counts["validate_done"] == 1 and counts["admitted_done"] == 1
-    assert counts["settled_done"] == 1
+    # Publication writes the receipt synchronously, while capacity waits for
+    # reconciliation through the accepted-write horizon.
+    assert counts["validate_retrying"] == 1
+    assert not AttachmentOutbox.objects.filter(
+        event__in=["admitted", "settled"]
+    ).exists()
+    assert not budgets_released()
+    after = upload.cleanup_not_before + timedelta(seconds=1)
+    monkeypatch.setattr(timezone, "now", lambda after=after: after)
+    counts = tasks.drain_attachment_outbox._original_func()
+    assert counts["validate_done"] == 1
     assert budgets_released()
-    receipt = AttachmentUsageReceipt.objects.get(upload=upload)
-    assert receipt.outcome == AttachmentState.READY
+    receipt = AttachmentUpload.objects.get(pk=upload.pk)
+    assert receipt.usage_outcome == AttachmentState.READY
     assert AttachmentAuditEvent.objects.filter(event="admission").count() == 1
     assert not AttachmentOutbox.objects.filter(processed_at__isnull=True).exists()
     # A second tick finds nothing due and writes nothing.
     assert tasks.drain_attachment_outbox._original_func() == {}
 
 
-def test_drain_never_validates_without_configured_storage(setup, parser_probe):
+def test_drain_never_validates_without_configured_storage(
+    setup, parser_probe, monkeypatch
+):
     store = ErasableStore()
     upload, _ = streamed(setup, store)
+
+    def unavailable(*args, **kwargs):
+        raise AttachmentError("storage_unverified", 503)
+
+    monkeypatch.setattr(storage, "for_binding", unavailable)
     counts = lifecycle.drain_outbox()
-    assert counts["validate_skipped_storage_backend_unqualified"] == 1
+    assert counts["validate_retrying"] == 1
     upload.refresh_from_db()
     assert upload.state == AttachmentState.VALIDATING
     assert AttachmentOutbox.objects.filter(
@@ -199,24 +214,38 @@ def test_without_the_drain_the_project_budget_throttles(setup):
     """Negative control for the next test: undrained uploads hold their slots."""
     store = ErasableStore()
     current, _ = core.session(setup)
-    for _ in range(uploads.BUDGETS[2][0]):
+    for _ in range(16):
         streamed(setup, store, current=current)
     with pytest.raises(AttachmentError, match="throttled"):
         initialized(setup, current=current)
 
 
-def test_300_sequential_uploads_never_throttle_after_settle(setup, parser_probe):
+def test_300_sequential_uploads_never_throttle_after_settle(
+    setup, parser_probe, monkeypatch
+):
     """Fable P1-1: slots must come back. The per-minute initialization limiter
     (120/min per project) is a separate rate limit, so the window is advanced
     by one minute every 100 uploads; the slot check is never relaxed."""
     store = ErasableStore()
     current, _ = core.session(setup)
     for index in range(300):
+        if index:
+            current, _ = core.session(
+                setup,
+                capture_session_id=str(current.client_id),
+                correlation_nonce=str(current.correlation_nonce),
+            )
         if index and index % 100 == 0:
             AttachmentBudget.objects.update(
                 window_started_at=timezone.now() - timedelta(minutes=1, seconds=1)
             )
         upload, _ = streamed(setup, store, current=current)
+        counts = lifecycle.drain_outbox(storage=store)
+        assert counts.get("validate_retrying") == 1, (index, counts)
+        assert not budgets_released(), index
+        upload.refresh_from_db()
+        after = upload.cleanup_not_before + timedelta(seconds=1)
+        monkeypatch.setattr(timezone, "now", lambda after=after: after)
         counts = lifecycle.drain_outbox(storage=store)
         assert counts.get("validate_done") == 1, (index, counts)
         assert budgets_released(), index
@@ -227,6 +256,17 @@ def test_failing_row_is_pushed_back_and_does_not_stall_the_batch(setup, monkeypa
     scope, _ = setup
     first, _, _, _ = initialized(setup)
     second, _, _, _ = initialized(setup)
+    # Explicit retained historical events, not new asynchronous admission work.
+    for upload in (first, second):
+        AttachmentOutbox.objects.create(
+            id=upload.admission_event_id,
+            scope=scope,
+            upload=upload,
+            attachment_id=upload.attachment_id,
+            event="admitted",
+            generation=upload.deletion_generation,
+            available_at=timezone.now(),
+        )
     rows = list(
         AttachmentOutbox.objects.filter(event="admitted").order_by("available_at", "id")
     )
@@ -368,64 +408,112 @@ def test_second_tombstone_of_one_attachment_does_not_wedge_the_sweep(recording):
     assert AttachmentOutbox.objects.filter(event="erase").count() == 1
 
 
+@pytest.mark.django_db(transaction=True)
 def test_upload_less_tombstone_queues_attachment_keyed_erase_and_erases_it(
-    setup, monkeypatch
+    setup, user, settings, monkeypatch
 ):
+    from tracer.models.attachment_recording import AttachmentRecordingSegment
+    from tracer.services.attachments import bootstrap, imports
+    from tracer.tests import test_attachment_recording_imports as recording_tests
+
     scope, _ = setup
-    upload, _, _, _ = initialized(setup)
-    orphan = Attachment.objects.create(
-        scope=scope,
-        client_id=uuid.uuid4(),
-        source_kind="Bytes",
-        policy_version=scope.policy_version,
-        deletion_generation=scope.deletion_generation,
+    env = (
+        scope,
+        bootstrap.Writer("user", user.pk, scope.organization_id, scope.workspace_id),
+        imports.Importer("user", user.pk),
+        user,
     )
-    row = AttachmentOccurrence.objects.create(
-        scope=scope,
-        client_id=uuid.uuid4(),
-        attachment=orphan,
-        capture_session_id=upload.capture_session_id,
-        trace_id=upload.occurrence.trace_id,
-        span_id=upload.occurrence.span_id,
-        direction="mixed",
-        policy_version=scope.policy_version,
-        deletion_generation=scope.deletion_generation,
-        expires_at=timezone.now() - timedelta(seconds=1),
+    settings.FI_ATTACHMENTS_ENVELOPE_KEYS = f"k1:{recording_tests.KEY}"
+    settings.FI_ATTACHMENTS_IMPORT_HOSTS = ("media.example.com",)
+    recording_tests.configure_recording_sources(scope, settings, monkeypatch)
+    current = recording_tests.session(env)
+    data = recording_tests.wav_bytes(seconds=2, channels=1)
+    _, job = recording_tests.submit_job(
+        env[2],
+        scope_id=scope.id,
+        body=recording_tests.body(
+            current,
+            data=data,
+            envelope_id=recording_tests.envelope(env, data, current=current),
+        ),
+    )
+    store = ErasableStore()
+    assert recording_tests.drive(job, store, data) == "ready"
+    segment = AttachmentRecordingSegment.objects.get(import_job=job)
+    orphan = Attachment.objects.get(pk=segment.attachment_id)
+    row = AttachmentOccurrence.objects.get(
+        scope=scope, client_id=segment.occurrence_client_id
+    )
+    # A real imported original has a durable segment allocation, not a guessed
+    # key from client_id and not a fabricated upload-less ORM shell.
+    assert not AttachmentUpload.objects.filter(attachment=orphan).exists()
+    assert segment.storage_key == orphan.verified_storage_key
+    assert segment.storage_version == orphan.verified_storage_version
+    assert segment.storage_binding_id == orphan.storage_binding_id
+    assert segment.cleanup_not_before is not None
+    scope.refresh_from_db()
+    upload, _, _, _ = initialized(setup)
+    AttachmentOccurrence.objects.filter(pk=row.pk).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
     )
     assert retention.expire_occurrences(scope_id=scope.id) == 1
     row.refresh_from_db()
     assert row.deleted_at is not None
     erase = AttachmentOutbox.objects.get(event="erase", upload__isnull=True)
     assert erase.attachment_id == orphan.id
-    # An upload-keyed erase row in the same tick is still processed.
     uploads.settle(upload.id, scope_id=scope.id, outcome=AttachmentState.EXPIRED)
-    AttachmentOutbox.objects.filter(event="erase").update(
-        available_at=timezone.now() - timedelta(seconds=1)
-    )
     AttachmentOccurrence.objects.filter(pk=upload.occurrence_id).update(
         deleted_at=timezone.now()
     )
-    store = ErasableStore()
-    counts = lifecycle.drain_outbox(storage=store)
-    # Both rows are erased in one tick: the attachment-keyed one by its own key.
-    assert counts["erase_done"] == 2
-    assert sorted(map(str, store.erased)) == sorted(
-        [str(upload.id), str(orphan.client_id)]
-    )
+    AttachmentOutbox.objects.filter(event="erase").update(available_at=timezone.now())
+    with recording_tests.routed_store(store):
+        counts = lifecycle.drain_outbox(storage=store)
+    assert counts["erase_done"] == 0  # Early emptiness cannot complete either row.
     erase.refresh_from_db()
     orphan.refresh_from_db()
-    # Repeated once after the horizon (a derivative may still be in flight).
     assert erase.processed_at is None
-    assert erase.available_at == orphan.deleted_at + retention.ATTACHMENT_ERASE_HORIZON
+    assert erase.available_at > timezone.now()
+    upload.refresh_from_db()
+    assert upload.reservation_settled_at is None
+
+    # Keep the original assertion that upload-keyed and attachment-keyed work
+    # both complete in one tick, but only after actual writer retirement/horizon.
+    job.refresh_from_db()
+    after = max(
+        job.cleanup_not_before,
+        segment.cleanup_not_before,
+        upload.cleanup_not_before,
+        upload.expires_at + retention.TRANSFER_DRAIN,
+        orphan.deleted_at + retention.ATTACHMENT_ERASE_HORIZON,
+    ) + timedelta(seconds=1)
+    monkeypatch.setattr(timezone, "now", lambda: after)
+    store.erased.clear()
+    with recording_tests.routed_store(store):
+        counts = lifecycle.drain_outbox(storage=store)
+    assert counts["erase_done"] == 2
+    assert {upload.serving_key, segment.storage_key} <= {
+        f"original/{identifier}" for identifier in store.erased
+    }
+    assert store.objects == {}
+    erase.refresh_from_db()
+    orphan.refresh_from_db()
+    assert erase.processed_at == after
+    assert orphan.state == AttachmentState.DELETED
+    assert (
+        AttachmentOutbox.objects.filter(event="erase", processed_at=None).count() == 0
+    )
 
 
 # --- Sweeps --------------------------------------------------------------------
 
 
-def _bound_long_ago(row, *, hours=48):
-    AttachmentOccurrence.objects.filter(pk=row.pk).update(
-        bound_at=timezone.now() - timedelta(hours=hours)
-    )
+def _bound_long_ago(row, monkeypatch, *, hours=48):
+    # bound_at is immutable once set (0142 binding-identity guard), so keep the
+    # occurrence's real binding and run the sweep clock that long after it.
+    row.refresh_from_db()
+    assert row.bound_at is not None
+    later = row.bound_at + timedelta(hours=hours)
+    monkeypatch.setattr(timezone, "now", lambda: later)
 
 
 def _gone(project_id, span_ids):
@@ -436,9 +524,9 @@ def _no_pg(project_id, rows):
     return set(), set()
 
 
-def test_orphan_sweep_tombstones_only_on_a_successful_read(recording):
+def test_orphan_sweep_tombstones_only_on_a_successful_read(recording, monkeypatch):
     r = recording
-    _bound_long_ago(r.row)
+    _bound_long_ago(r.row, monkeypatch)
     reads = []
 
     def failing(project_id, span_ids):
@@ -475,12 +563,12 @@ def test_orphan_sweep_tombstones_only_on_a_successful_read(recording):
     assert lifecycle.sweep_orphans(span_reader=_gone, pg_reader=_no_pg) == {}
 
 
-def test_one_empty_read_followed_by_a_live_read_never_tombstones(recording):
+def test_one_empty_read_followed_by_a_live_read_never_tombstones(recording, monkeypatch):
     """Review P1 (c7): a lagging or partially restored replica returns one
     successful-but-empty read. The next live read must clear it, so a later
     empty read starts the grace again instead of erasing live media."""
     r = recording
-    _bound_long_ago(r.row)
+    _bound_long_ago(r.row, monkeypatch)
     erase_before = AttachmentOutbox.objects.filter(event="erase").count()
 
     def live(project_id, span_ids):
@@ -504,10 +592,10 @@ def test_one_empty_read_followed_by_a_live_read_never_tombstones(recording):
     assert AttachmentOutbox.objects.filter(event="erase").count() == erase_before
 
 
-def test_two_misses_inside_the_grace_never_tombstone(recording, settings):
+def test_two_misses_inside_the_grace_never_tombstone(recording, settings, monkeypatch):
     r = recording
     settings.FI_ATTACHMENTS_ORPHAN_GRACE_HOURS = 6
-    _bound_long_ago(r.row)
+    _bound_long_ago(r.row, monkeypatch)
     assert lifecycle.orphan_grace() == timedelta(hours=6)
     lifecycle.sweep_orphans(span_reader=_gone, pg_reader=_no_pg)
     soon = timezone.now() + timedelta(hours=5)
@@ -521,11 +609,11 @@ def test_two_misses_inside_the_grace_never_tombstone(recording, settings):
     assert lifecycle.orphan_grace() == timedelta(hours=1)
 
 
-def test_tombstone_refuses_a_row_whose_miss_was_cleared(recording):
+def test_tombstone_refuses_a_row_whose_miss_was_cleared(recording, monkeypatch):
     """The tombstone re-checks ``source_missing_since`` under the scope lock,
     so a live read between the sweep's read and its tombstone always wins."""
     r = recording
-    _bound_long_ago(r.row)
+    _bound_long_ago(r.row, monkeypatch)
     AttachmentOccurrence.objects.filter(pk=r.row.pk).update(source_missing_since=None)
     assert (
         retention.tombstone_occurrences(
@@ -553,11 +641,11 @@ def test_freshly_bound_occurrences_are_not_checked(recording):
     assert r.row.source_checked_at is None and r.row.deleted_at is None
 
 
-def test_a_live_postgres_trace_blocks_the_tombstone(recording):
+def test_a_live_postgres_trace_blocks_the_tombstone(recording, monkeypatch):
     """ClickHouse may lag or be restored partially; PostgreSQL still holding the
     trace as not deleted means the parent was never deleted."""
     r = recording
-    _bound_long_ago(r.row)
+    _bound_long_ago(r.row, monkeypatch)
     trace = Trace.objects.create(id=r.row.trace_id, project=r.scope.project, name="t")
     later = timezone.now() + lifecycle.orphan_grace() + timedelta(minutes=1)
     for now in (timezone.now(), later, later + lifecycle.orphan_grace() * 2):
@@ -581,9 +669,9 @@ def test_a_live_postgres_trace_blocks_the_tombstone(recording):
     assert r.row.deleted_at is not None
 
 
-def test_a_failed_postgres_check_never_tombstones(recording):
+def test_a_failed_postgres_check_never_tombstones(recording, monkeypatch):
     r = recording
-    _bound_long_ago(r.row)
+    _bound_long_ago(r.row, monkeypatch)
     AttachmentOccurrence.objects.filter(pk=r.row.pk).update(
         source_missing_since=timezone.now() - timedelta(days=30)
     )
@@ -755,6 +843,7 @@ def test_attachment_keyed_erase_rows_are_unique(setup):
     # The outbox attachment is identity: it cannot be re-pointed later.
     other = Attachment.objects.create(
         scope=scope,
+        storage_binding_id=upload.attachment.storage_binding_id,
         client_id=uuid.uuid4(),
         source_kind="Bytes",
         policy_version=scope.policy_version,
@@ -767,8 +856,8 @@ def test_attachment_keyed_erase_rows_are_unique(setup):
 
 
 def test_upload_outbox_rows_carry_their_attachment(setup):
-    upload, _, _, _ = initialized(setup)
-    row = AttachmentOutbox.objects.get(upload=upload, event="admitted")
+    upload, _ = streamed(setup, ErasableStore())
+    row = AttachmentOutbox.objects.get(upload=upload, event="validate")
     assert row.attachment_id == upload.attachment_id
 
 

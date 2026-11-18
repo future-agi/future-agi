@@ -49,7 +49,7 @@ class Limits:
     @property
     def window(self):
         """One output segment window: min(max_upload_bytes, segment_bytes)."""
-        return min(self.max_upload_bytes, self.segment_bytes)
+        return min(self.max_upload_bytes, self.segment_bytes, 8 * 1024 * 1024)
 
 
 @dataclass(frozen=True)
@@ -72,9 +72,20 @@ def segment_frames(*, rate, channels, limits):
     Rounded down to a whole-millisecond frame count when possible, so every
     internal boundary is exact and only the final one is rounded up.
     """
+    if (
+        type(rate) is not int
+        or not 8000 <= rate <= 96000
+        or type(channels) is not int
+        or channels not in (1, 2)
+        or type(limits.window) is not int
+        or limits.window <= HEADER_BYTES
+        or type(limits.segment_duration_ms) is not int
+        or limits.segment_duration_ms <= 0
+    ):
+        raise AttachmentError("validation_failed", 422)
     align = channels * 2
     by_bytes = (limits.window - HEADER_BYTES) // align
-    by_time = rate * limits.segment_duration_ms // 1000
+    by_time = rate * min(limits.segment_duration_ms, 30000) // 1000
     frames = min(by_bytes, by_time)
     unit = rate // math.gcd(rate, 1000)
     if frames >= unit:
@@ -86,7 +97,7 @@ def segment_frames(*, rate, channels, limits):
 
 
 def plan_segments(*, frame_count, rate, channels, limits):
-    if frame_count < 1:
+    if type(frame_count) is not int or frame_count < 1:
         raise AttachmentError("validation_failed", 422)
     per = segment_frames(rate=rate, channels=channels, limits=limits)
     count = math.ceil(frame_count / per)

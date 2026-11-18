@@ -188,9 +188,11 @@ describe("framework recording component", () => {
       onInstance.mock.calls.every(([value]) => value.multitrack === null),
     ).toBe(true);
   });
-  it("renews in place without resetting the transcript seek", async () => {
+  // Renewal is lazy: a paused recording holds no renewal timer, so an idle
+  // drawer stops resolving; Play re-authorizes at the kept position.
+  it("renews in place while playing without resetting the transcript seek", async () => {
     vi.useFakeTimers();
-    resolveAttachments.mockResolvedValue([
+    resolveAttachments.mockImplementation(async () => [
       { ...grant, expires_at: new Date(Date.now() + 20000).toISOString() },
     ]);
     const onInstance = vi.fn();
@@ -207,7 +209,15 @@ describe("framework recording component", () => {
     await act(async () => {
       vi.advanceTimersByTime(10000);
     });
+    expect(resolveAttachments).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      void player.play();
+    });
     expect(resolveAttachments).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      vi.advanceTimersByTime(10000);
+    });
+    expect(resolveAttachments).toHaveBeenCalledTimes(3);
     expect(player.getCurrentTime()).toBe(60);
     expect(onInstance).toHaveBeenCalledTimes(1);
   });
@@ -215,7 +225,7 @@ describe("framework recording component", () => {
     vi.useFakeTimers();
     resolveAttachments
       .mockResolvedValueOnce([
-        { ...grant, expires_at: new Date(Date.now() + 20000).toISOString() },
+        { ...grant, expires_at: new Date(Date.now() + 45000).toISOString() },
       ])
       .mockResolvedValueOnce([
         { occurrence_id: occurrenceId, status: "not_found" },
@@ -229,11 +239,17 @@ describe("framework recording component", () => {
       />,
     );
     await act(async () => {});
+    const audio = container.querySelector("audio");
     await act(async () => {
-      vi.advanceTimersByTime(10000);
+      void onInstance.mock.calls[0][0].multitrack.play();
+    });
+    expect(audio.getAttribute("src")).toBe(grant.gateway_path);
+    await act(async () => {
+      vi.advanceTimersByTime(40000);
     });
     expect(screen.getByText("Recording unavailable")).toBeInTheDocument();
-    expect(container.querySelector("audio").getAttribute("src")).toBeNull();
+    expect(audio.getAttribute("src")).toBeNull();
+    expect(container.querySelector("audio")).toBeNull();
     expect(onInstance).toHaveBeenLastCalledWith({
       multitrack: null,
       wavesurfers: [],

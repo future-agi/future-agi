@@ -11,6 +11,7 @@ of the generic import body; the import request can only name an envelope id.
 """
 
 import base64
+import json
 import os
 import uuid
 from datetime import timedelta
@@ -23,6 +24,11 @@ from django.utils import timezone
 
 from tracer.models.attachment_recording import AttachmentSourceEnvelope
 from tracer.services.attachments.contract import AttachmentError
+from tracer.services.attachments.interfaces import SourceFacts
+from tracer.services.attachments.safe_fetch import (
+    parse_destination,
+    validate_revision_query,
+)
 
 ENVELOPE_SECONDS = 600
 
@@ -81,25 +87,67 @@ def seal(
     creator_id,
     direction,
     source_bytes,
-    source_expires_at=None,
+    source_expires_at,
+    generation_kind,
+    generation,
+    mime_type,
+    duration_ms,
+    trace_id,
+    span_id,
+    capture_session_id,
+    authority_generation=0,
 ):
-    """Trusted resolver only. Returns the opaque envelope id.
+    """Trusted producer only: exact metadata and original ancestry are mandatory.
 
-    The resolver asserts the source is a terminal, immutable, range-capable
-    object of exactly ``source_bytes``; the importer re-verifies every byte.
+    HTTP routes cannot supply a URL or assert these observations. The provider
+    intake seals only after signature verification and metadata-only inspection.
+    The encrypted document binds the locator to the same pinned revision.
     """
-    if not isinstance(url, str) or not url.startswith("https://") or len(url) > 4096:
+    if not isinstance(capture_session_id, uuid.UUID):
         raise AttachmentError("source_unavailable", 403)
-    if type(source_bytes) is not int or not 0 < source_bytes <= 1024**3:
-        raise AttachmentError("too_large", 413)
+    destination = parse_destination(
+        url, approved_hosts=getattr(settings, "FI_ATTACHMENTS_IMPORT_HOSTS", ())
+    )
+    validate_revision_query(destination, generation_kind, generation)
     now = timezone.now()
-    expires_at = now + timedelta(seconds=ENVELOPE_SECONDS)
-    if source_expires_at is not None:
-        expires_at = min(expires_at, source_expires_at)
+    envelope_id = uuid.uuid4()
+    try:
+        expires_at = min(now + timedelta(seconds=ENVELOPE_SECONDS), source_expires_at)
+        facts = SourceFacts(
+            source_kind="RemoteUrlEnvelope",
+            source_id=envelope_id,
+            creator_kind=creator_kind,
+            creator_id=creator_id,
+            generation_kind=generation_kind,
+            generation=generation,
+            byte_length=source_bytes,
+            mime_type=mime_type,
+            duration_ms=duration_ms,
+            expires_at=expires_at,
+            authority_generation=authority_generation,
+            parent_trace_id=trace_id,
+            parent_span_id=span_id,
+            direction=direction,
+            connection_id=None,
+        )
+    except (TypeError, ValueError):
+        raise AttachmentError("source_unavailable", 403) from None
+    if facts.byte_length > 1024**3:
+        raise AttachmentError("too_large", 413)
     if expires_at <= now:
         raise AttachmentError("expired", 410)
-    envelope_id = uuid.uuid4()
-    key_id, nonce, ciphertext = seal_bytes(url.encode(), _aad(scope.id, envelope_id))
+    document = json.dumps(
+        {
+            "url": url,
+            "generation_kind": generation_kind,
+            "generation": generation,
+            "capture_session_id": str(capture_session_id),
+        },
+        separators=(",", ":"),
+    ).encode()
+    if len(document) > 4184:
+        raise AttachmentError("source_unavailable", 403)
+    key_id, nonce, ciphertext = seal_bytes(document, _aad(scope.id, envelope_id))
     AttachmentSourceEnvelope.objects.create(
         id=envelope_id,
         scope=scope,
@@ -111,6 +159,14 @@ def seal(
         nonce=nonce,
         ciphertext=ciphertext,
         expires_at=expires_at,
+        source_expires_at=source_expires_at,
+        generation_kind=generation_kind,
+        generation=generation,
+        mime_type=mime_type,
+        duration_ms=duration_ms,
+        trace_id=trace_id,
+        span_id=span_id,
+        authority_generation=authority_generation,
     )
     return envelope_id
 
@@ -118,19 +174,55 @@ def seal(
 def describe(*, scope_id, envelope_id):
     """Non-secret facts for admission: owner, direction and expiry only."""
     row = AttachmentSourceEnvelope.objects.filter(
-        pk=envelope_id, scope_id=scope_id, expires_at__gt=timezone.now()
+        pk=envelope_id,
+        scope_id=scope_id,
+        expires_at__gt=timezone.now(),
+        source_expires_at__gt=timezone.now(),
+        revoked_at__isnull=True,
     ).first()
     if row is None:
         raise AttachmentError("source_unavailable", 403)
     return row
 
 
+def _document(row):
+    try:
+        document = json.loads(
+            open_bytes(
+                row.key_id, row.nonce, row.ciphertext, _aad(row.scope_id, row.id)
+            ).decode()
+        )
+        if (
+            set(document)
+            != {"url", "generation_kind", "generation", "capture_session_id"}
+            or document["generation_kind"] != row.generation_kind
+            or document["generation"] != row.generation
+            or str(uuid.UUID(document["capture_session_id"]))
+            != document["capture_session_id"]
+        ):
+            raise ValueError
+        destination = parse_destination(
+            document["url"],
+            approved_hosts=getattr(settings, "FI_ATTACHMENTS_IMPORT_HOSTS", ()),
+        )
+        validate_revision_query(destination, row.generation_kind, row.generation)
+        return document
+    except (ValueError, TypeError, KeyError, AttributeError, UnicodeError):
+        raise AttachmentError("source_unavailable", 403) from None
+
+
+def check_capture_session(row, capture_session_id):
+    """Local sealed provenance check only; performs no source HTTP request."""
+    if _document(row)["capture_session_id"] != str(capture_session_id):
+        raise AttachmentError("source_unavailable", 403)
+
+
 def open_url(*, scope_id, envelope_id):
-    """Importer only. The plaintext must not be stored, logged or raised."""
+    """Reserved importer only. Plaintext must never be stored/logged/raised."""
     row = describe(scope_id=scope_id, envelope_id=envelope_id)
-    return open_bytes(
-        row.key_id, row.nonce, row.ciphertext, _aad(scope_id, envelope_id)
-    ).decode()
+    if row.scope_id != scope_id or row.id != envelope_id:
+        raise AttachmentError("source_unavailable", 403)
+    return _document(row)["url"]
 
 
 def destroy(*, scope_id, envelope_id):

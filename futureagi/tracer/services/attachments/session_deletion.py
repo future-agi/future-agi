@@ -69,8 +69,7 @@ def sweep_deleted_sessions(*, project_id, occurrence_ids=None):
     read from CH can select an occurrence for erasure. A failed CH read leaves
     the batch unmodified for the next scheduled sweep.
     """
-    from tracer.services.attachments.retention import _tombstone
-    from tracer.services.attachments.uploads import lock_all_budgets
+    from tracer.services.attachments.retention import _tombstone_rows
     from tracer.services.clickhouse.v2 import get_reader
 
     overlays, sessions = deleted_sessions(project_id)
@@ -96,11 +95,12 @@ def sweep_deleted_sessions(*, project_id, occurrence_ids=None):
         [row.span_id for row in rows],
         include_heavy=False,
         project_id=str(project_id),
-        columns=["id", "trace_id", "trace_session_id"],
+        columns=["id", "project_id", "trace_id", "trace_session_id"],
     )
     parents = {
         (str(span["trace_id"]), str(span["id"])): span.get("trace_session_id")
         for span in spans
+        if str(span.get("project_id")) == str(project_id)
     }
     session_ids = {value for value in parents.values() if value}
     deleted = deleted_session_ids(project_id, session_ids, reader)
@@ -110,14 +110,22 @@ def sweep_deleted_sessions(*, project_id, occurrence_ids=None):
         if str(parents.get((str(row.trace_id), row.span_id))) in deleted
     ]
     with transaction.atomic():
-        lock_all_budgets(scope)
         scope = AttachmentScope.objects.select_for_update().get(pk=scope.pk)
-        AttachmentOccurrence.objects.filter(
-            scope=scope, pk__in=[row.pk for row in rows], deleted_at__isnull=True
-        ).update(source_checked_at=timezone.now())
-        return sum(
-            _tombstone(row, scope, reason="requested")
-            for row in AttachmentOccurrence.objects.filter(
-                scope=scope, pk__in=selected, deleted_at__isnull=True
-            )
+        # Tombstones take asset-before-occurrence locks; stamp the scan cursor
+        # only afterward, never acquire an asset lock below a cursor row lock.
+        changed = _tombstone_rows(
+            scope,
+            list(
+                AttachmentOccurrence.objects.filter(
+                    scope=scope, pk__in=selected, deleted_at__isnull=True
+                )
+            ),
+            reason="requested",
         )
+        checked_ids, checked_at = [row.pk for row in rows], timezone.now()
+        transaction.on_commit(
+            lambda: AttachmentOccurrence.objects.filter(
+                scope_id=scope.pk, pk__in=checked_ids, deleted_at__isnull=True
+            ).update(source_checked_at=checked_at)
+        )
+        return changed

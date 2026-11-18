@@ -2790,12 +2790,12 @@
 
 **Backend state verified:**
 
-- PG: each seeded occurrence is bound to its exact trace/span, not deleted, with its placement, its attachment ready and its blob sha256 equal to the uploaded bytes
-- CH spans FINAL: each parent span carries exactly the seeded fi.attachment.refs, and both voice roots (the untyped LiveKit job_entrypoint and the Pipecat root) are stored as parentless conversation roots
+- PG: exactly the five seeded occurrences have their own scope, capture binding, trace/span and placement, ready Attachment-owned verified MIME/length/sha256 equal to the pre-upload ledger, and complete immutable version and storage binding
+- CH spans FINAL: each parent carries exactly the seeded refs, both voice roots remain parentless conversation roots, and stored input plus trace-detail input retain image/PDF fi-attachment occurrence URIs independently of placement and carrier construction
 - API: voice detail projects each call's recording as ready on its own parent span with a 200 ms mixed Ogg/Opus manifest, and the trace detail projects exactly the seeded attachments as ready
-- API: with the viewer's media session the gateway serves the whole recording byte-identical (sha256), answers Range with 206 and HEAD with the full length, and a renewed grant continues the same bytes; without the session it is denied and resolve without credentials answers 401
+- API: the viewer gateway serves all five originals with fixture length/MIME/sha256, recording Range/HEAD and renewal preserve exact bytes, anonymous media is denied and resolve without credentials is 401; a known authorized attachment UUID used as an occurrence is not_found
 - API: every media request the page made went through the gateway for exactly the three loaded audio occurrences (zero legacy requests)
-- API and PG: deleting the CH-only LiveKit session returns 204, immediately denies resolve and the previously working Range and HEAD grant, and tombstones its occurrence; the Pipecat session stays playable. Physical erasure is checked separately by component/storage qualification
+- API and PG: deleting the CH-only LiveKit session returns 204, immediately denies the unchanged unexpired cookie/grant and tombstones its occurrence while complete immutable facts survive; Pipecat remains playable with unchanged bytes. Physical erasure is separate storage qualification
 
 ## prompts
 

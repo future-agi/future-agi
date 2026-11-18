@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Slider, Stack, Typography } from "@mui/material";
-import { recordingPlan, recordingProjectionSchema, uuid } from "./contract";
+import {
+  recordingLanes,
+  recordingPlan,
+  recordingProjectionSchema,
+  uuid,
+} from "./contract";
 import { resolveAttachments } from "./client";
 import SequentialPlayback from "./SequentialPlayback";
-import StreamingPlayback from "./StreamingPlayback";
 import AttachmentStatus from "./AttachmentStatus";
 
 const timeLabel = (seconds) =>
@@ -15,6 +19,57 @@ const trackLabels = {
   mixed: "Mixed recording",
   unknown: "Unassigned track",
 };
+const layoutLabels = {
+  mixed: "Mixed recording",
+  stereo: "Stereo recording",
+  separate_tracks: "Separate recording tracks",
+};
+// Why the manifest says no audio exists at a position, in the viewer's words.
+const gapLabels = {
+  truncated: "truncated",
+  policy_denied: "withheld by policy",
+  queue_full: "dropped during capture",
+  bootstrap_pending: "not yet captured",
+  source_unavailable: "source unavailable",
+  incomplete: "upload incomplete",
+};
+// What the producer could prove about agent audio at a position.
+const playoutLabels = {
+  played: "Played to the participant at this position",
+  generated: "Generated at this position; playout not confirmed",
+  truncated: "Playout was cut off at this position",
+  unknown: "Playout unknown at this position",
+};
+const playoutWords = {
+  played: "played",
+  truncated: "cut off",
+  unknown: "unknown",
+};
+const covers = (interval, ms) =>
+  ms >= interval.start_ms && ms < interval.start_ms + interval.duration_ms;
+// Playout text at a position from EVERY manifest interval covering it.
+// Intervals may overlap and their order means nothing, so the evidence is a
+// set read in one fixed order. "generated" only says audio was produced, so
+// any other evidence there (an explicit "played", "truncated" or "unknown")
+// says more and replaces it. Differing evidence is never resolved by picking
+// one: it is shown together as unconfirmed, so "played" is never shown alone
+// where the manifest also says playout was cut off or unknown.
+function playoutAt(playout, ms) {
+  const found = new Set(
+    playout
+      .filter((interval) => covers(interval, ms))
+      .map((interval) => interval.evidence),
+  );
+  if (found.size > 1) found.delete("generated");
+  const evidence = ["played", "truncated", "unknown", "generated"].filter(
+    (value) => found.has(value),
+  );
+  if (evidence.length < 2)
+    return evidence.length ? playoutLabels[evidence[0]] : null;
+  const words = evidence.map((value) => playoutWords[value]);
+  const last = words.pop();
+  return `Playout not confirmed at this position (evidence: ${words.join(", ")} and ${last})`;
+}
 
 // data.recording_attachment is an authorized read projection, NOT an SDK span
 // attribute. Its presence always takes precedence over the legacy URL renderer.
@@ -74,167 +129,87 @@ function ReadyRecording({ projectId, plan, manifest, onInstance }) {
   const [buffering, setBuffering] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [retryable, setRetryable] = useState(false);
-  const duration = manifest.duration_ms / 1000;
+  const durationMs = manifest.duration_ms;
+  const duration = durationMs / 1000;
   const planKey = JSON.stringify(plan);
 
   useEffect(() => {
-    const current = JSON.parse(planKey);
-    if (current.mode === "sequence") {
-      // Distinct segment occurrences, one live grant and source at a time.
-      let released = false;
+    // One engine for every layout: each lane (the mix, a stereo channel or a
+    // separate track) gets one hidden element, authorized only as it plays.
+    const lanes = recordingLanes(JSON.parse(planKey), durationMs);
+    let released = false;
+    const elements = lanes.map(() => {
       const element = document.createElement("audio");
       element.preload = "none";
       element.setAttribute("aria-hidden", "true");
       container.current.appendChild(element);
-      const sequence = new SequentialPlayback(
-        element,
-        current.parts,
-        duration,
-        async (part, signal, options) => {
-          const [result] = await resolveAttachments(
-            projectId,
-            [part.request],
-            signal,
-            options,
-          );
-          return result;
-        },
-      );
-      const release = () => {
-        released = true;
-        sequence.destroy();
-        playerRef.current = null;
-        onInstance?.({ multitrack: null, wavesurfers: [] });
-      };
-      sequence.on("timeupdate", setTime);
-      sequence.on("intent", setPlaying);
-      sequence.on("buffering", setBuffering);
-      sequence.on("ready", () => {
-        if (released) return;
-        playerRef.current = sequence;
-        setStatus("ready");
-        onInstance?.({ multitrack: sequence, wavesurfers: [sequence] });
-      });
-      sequence.on("unavailable", ({ status: next, retryable: retry }) => {
-        if (released) return;
-        release();
-        setPlaying(false);
-        setBuffering(false);
-        setRetryable(retry);
-        setStatus(next);
-      });
-      // A retried sequence starts again at 0; never show the old position.
-      setTime(0);
-      setStatus("loading");
-      setRetryable(false);
-      sequence.prepare();
-      return () => {
-        release();
-        element.remove();
-      };
-    }
-    const controller = new AbortController();
-    let renewal;
-    let stopped = false;
-    let player;
-    let refreshing = false;
-    let recoveryUsed = false;
-    const stop = (next) => {
-      stopped = true;
-      clearTimeout(renewal);
-      controller.abort();
-      player?.destroy();
+      return element;
+    });
+    const playback = new SequentialPlayback(
+      elements,
+      lanes,
+      durationMs / 1000,
+      (parts, signal, options) =>
+        resolveAttachments(
+          projectId,
+          parts.map((part) => part.request),
+          signal,
+          options,
+        ),
+    );
+    const release = () => {
+      released = true;
+      playback.destroy();
       playerRef.current = null;
       onInstance?.({ multitrack: null, wavesurfers: [] });
+    };
+    // A refused recording keeps no element, source or bytes behind.
+    const remove = () => elements.forEach((element) => element.remove());
+    playback.on("timeupdate", setTime);
+    playback.on("intent", setPlaying);
+    playback.on("buffering", setBuffering);
+    playback.on("ready", () => {
+      if (released) return;
+      playerRef.current = playback;
+      setStatus("ready");
+      onInstance?.({ multitrack: playback, wavesurfers: [playback] });
+    });
+    playback.on("unavailable", ({ status: next, retryable: retry }) => {
+      if (released) return;
+      release();
+      remove();
       setPlaying(false);
+      setBuffering(false);
+      setRetryable(retry);
       setStatus(next);
-    };
-    const refresh = async ({ fresh = false } = {}) => {
-      if (stopped || refreshing) return;
-      refreshing = true;
-      clearTimeout(renewal);
-      try {
-        const results = await resolveAttachments(
-          projectId,
-          current.requests,
-          controller.signal,
-          { fresh },
-        );
-        if (stopped) return;
-        // Do not play an allowed half of a denied mix, or reconstruct directions.
-        const unavailable = results.find((item) => item.status !== "ready");
-        if (unavailable) {
-          stop(unavailable.status);
-          return;
-        }
-        if (!player) {
-          const elements = results.map(() => {
-            const element = document.createElement("audio");
-            element.preload = "none";
-            element.setAttribute("aria-hidden", "true");
-            container.current.appendChild(element);
-            return element;
-          });
-          player = new StreamingPlayback(elements, duration);
-          playerRef.current = player;
-          player.on("timeupdate", setTime);
-          player.on("intent", setPlaying);
-          player.on("buffering", setBuffering);
-          player.on("error", () => {
-            // One bounded reauthorization attempt, never a provider URL retry,
-            // on a new media session in case the refused one lost its cookie.
-            if (recoveryUsed) {
-              setRetryable(true);
-              stop("not_found");
-              return;
-            }
-            recoveryUsed = true;
-            void refresh({ fresh: true });
-          });
-          player.replaceSources(results.map((item) => item.gateway_path));
-          onInstance?.({ multitrack: player, wavesurfers: [player] });
-        } else player.replaceSources(results.map((item) => item.gateway_path));
-        setStatus("ready");
-        const expiry = Math.min(
-          ...results.map((item) => Date.parse(item.expires_at)),
-        );
-        // Never spin on a near-expired grant. Backend must issue usable leases.
-        if (expiry - Date.now() < 2000) {
-          stop("not_found");
-          return;
-        }
-        renewal = setTimeout(
-          refresh,
-          Math.min(2147483647, Math.max(1000, expiry - Date.now() - 10000)),
-        );
-      } catch {
-        if (!stopped) {
-          setRetryable(true);
-          stop("not_found");
-        }
-      } finally {
-        refreshing = false;
-      }
-    };
+    });
+    // A retried recording starts again at 0; never show the old position.
+    setTime(0);
     setStatus("loading");
     setRetryable(false);
-    void refresh();
+    playback.prepare();
     return () => {
-      stopped = true;
-      clearTimeout(renewal);
-      controller.abort();
-      player?.destroy();
-      player?.elements.forEach((element) => element.remove());
-      playerRef.current = null;
-      onInstance?.({ multitrack: null, wavesurfers: [] });
+      release();
+      remove();
     };
-  }, [projectId, planKey, duration, onInstance, attempt]);
+  }, [projectId, planKey, durationMs, onInstance, attempt]);
 
-  const currentGap = manifest.gaps.find(
-    (gap) =>
-      time * 1000 >= gap.start_ms &&
-      time * 1000 < gap.start_ms + gap.duration_ms,
-  );
+  const at = time * 1000;
+  const separate = manifest.layout === "separate_tracks";
+  // Gaps are the manifest's own intervals: per track for separate tracks,
+  // otherwise one shared timeline. Nothing is inferred from playback.
+  const missing = manifest.gaps.filter((gap) => covers(gap, at));
+  const missingText = separate
+    ? missing
+        .map((gap) => {
+          const track = manifest.tracks.find(
+            (candidate) => candidate.track_id === gap.track_id,
+          );
+          return `${trackLabels[track?.role] || trackLabels.unknown} track: ${gapLabels[gap.reason]}`;
+        })
+        .join("; ")
+    : missing[0] && gapLabels[missing[0].reason];
+  const playout = playoutAt(manifest.playout, at);
   return (
     <Stack spacing={1.5} sx={{ p: 2 }} aria-label="Attachment recording">
       <Box ref={container} sx={{ display: "none" }} />
@@ -260,9 +235,7 @@ function ReadyRecording({ projectId, plan, manifest, onInstance }) {
             spacing={2}
           >
             <Typography variant="body2" fontWeight="fontWeightMedium">
-              {manifest.layout === "mixed"
-                ? "Mixed recording"
-                : "Separate recording tracks"}
+              {layoutLabels[manifest.layout]}
             </Typography>
           </Stack>
           <Stack direction="row" alignItems="center" spacing={2}>
@@ -308,10 +281,7 @@ function ReadyRecording({ projectId, plan, manifest, onInstance }) {
           {(!manifest.capture_complete || manifest.gaps.length > 0) && (
             <Typography variant="caption" color="warning.main">
               Partial recording — some audio is missing
-              {currentGap
-                ? ` (${currentGap.reason === "truncated" ? "truncated" : "gap"} at this position)`
-                : ""}
-              .
+              {missingText ? ` (${missingText} at this position)` : ""}.
             </Typography>
           )}
           <Typography variant="caption" color="text.secondary">
@@ -320,6 +290,11 @@ function ReadyRecording({ projectId, plan, manifest, onInstance }) {
               ? "Playout confirmed for recorded intervals"
               : "Recording does not confirm what participants heard"}
           </Typography>
+          {playout && (
+            <Typography variant="caption" color="text.secondary">
+              {playout}
+            </Typography>
+          )}
         </>
       )}
     </Stack>

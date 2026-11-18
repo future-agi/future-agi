@@ -14,6 +14,7 @@ occurrences to spans must take its ``SourceState`` from this same function so
 binding and reading can never disagree.
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -61,6 +62,132 @@ def clickhouse_span(project_id, span_id):
     from tracer.services.clickhouse.v2 import get_reader
 
     return get_reader().get(span_id, project_id=str(project_id))
+
+
+def source_state(scope, parent, span, *, retention=retention_for, session_check=None):
+    """One source rule for live reads, metadata batches and late binding.
+
+    Only the dependencies may be batched. Gateway calls use the live marker
+    check on every invocation, including the checks around each storage read.
+    """
+    if span is None or getattr(span, "is_deleted", True):
+        return None
+    try:
+        trace = UUID(str(span.trace_id))
+        started_at = _aware(span.start_time)
+        if (
+            str(span.project_id) != str(scope.project_id)
+            or str(span.id) != parent.span_id
+            or trace != parent.trace_id
+            or not isinstance(started_at, datetime)
+        ):
+            return None
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if session_check is None:
+        from tracer.services.attachments.session_deletion import session_deleted
+
+        session_check = session_deleted
+    # The durable marker wins even when a collector has no PG Trace and its
+    # CH span is still live because asynchronous cleanup has not succeeded.
+    try:
+        if session_check(scope.project_id, getattr(span, "trace_session_id", None)):
+            return None
+    except Exception:  # noqa: BLE001 - marker/remap boundary; fail closed
+        logger.warning("attachment_session_deletion_unavailable")
+        return None
+    try:
+        expires_at = retention(scope.organization_id, started_at)
+    except Exception:  # noqa: BLE001 - unknown retention never grants authority
+        return None
+    if (
+        not isinstance(expires_at, datetime)
+        or timezone.is_naive(expires_at)
+        or expires_at <= started_at
+    ):
+        return None
+    return SourceState(
+        scope_id=scope.id,
+        parent=parent,
+        generation=SOURCE_GENERATION,
+        started_at=started_at,
+        expires_at=expires_at,
+        readable=True,
+    )
+
+
+class BatchSessionDeletion:
+    """Project-batched marker/remap checks, valid for ONE metadata/bind batch.
+
+    A failed lookup denies every session-bearing source in this batch. Never
+    keep this snapshot on LiveAuthority: gateway chunk rechecks must be fresh.
+    No PG-only row proves a parent exists; callers still need the exact CH span.
+    """
+
+    def __init__(self, project_id, spans):
+        self.project_id = str(project_id)
+        self.session_ids = set()
+        self.loaded, self.deleted = False, None
+        for span in spans:
+            if str(getattr(span, "project_id", None)) != self.project_id:
+                continue
+            value = getattr(span, "trace_session_id", None)
+            if value:
+                try:
+                    self.session_ids.add(str(UUID(str(value))))
+                except (ValueError, TypeError):
+                    pass  # Deny this malformed identity without poisoning others.
+
+    def __call__(self, project_id, session_id):
+        if str(project_id) != self.project_id:
+            return True
+        if not session_id:
+            return False
+        try:
+            key = str(UUID(str(session_id)))
+        except (ValueError, TypeError):
+            return True
+        if key not in self.session_ids:
+            return True
+        if not self.loaded:
+            self.loaded = True
+            try:
+                from tracer.services.attachments.session_deletion import (
+                    deleted_session_ids,
+                    deleted_sessions,
+                )
+                from tracer.services.clickhouse.v2 import get_reader
+
+                overlays, sessions = deleted_sessions(self.project_id)
+                # Like the single-read rule, do not ask CH for remaps when
+                # this project has no deletion markers at all.
+                self.deleted = (
+                    deleted_session_ids(self.project_id, self.session_ids, get_reader())
+                    if overlays.exists() or sessions.exists()
+                    else set()
+                )
+            except Exception:  # noqa: BLE001 - marker/remap boundary; fail closed
+                logger.warning("attachment_session_deletion_unavailable")
+        return self.deleted is None or key in self.deleted
+
+
+def authorize_parent_batch(*, scope, parents, spans, retention):
+    """Authorize exact parents from one project read and one marker/remap batch.
+
+    The map is local to this operation. A denied or unavailable parent remains
+    None even when another parent with the same span id is authorized.
+    """
+    session_check = BatchSessionDeletion(scope.project_id, spans.values())
+    return {
+        (parent.trace_id, parent.span_id): source_state(
+            scope,
+            parent,
+            spans.get(parent.span_id),
+            retention=retention,
+            session_check=session_check,
+        )
+        for parent in dict.fromkeys(parents)
+    }
 
 
 class LiveAuthority:
@@ -126,43 +253,9 @@ class LiveAuthority:
                 "attachment_source_unavailable", project_id=str(scope.project_id)
             )
             return None
-        if span is None or getattr(span, "is_deleted", True):
-            return None
-        try:
-            trace = UUID(str(span.trace_id))
-            started_at = _aware(span.start_time)
-        except (ValueError, TypeError, AttributeError):
-            return None
-        if (
-            str(span.project_id) != str(scope.project_id)
-            or str(span.id) != parent.span_id
-            or trace != parent.trace_id
-            or not isinstance(started_at, datetime)
-        ):
-            return None
-        from tracer.services.attachments.session_deletion import session_deleted
-
-        # Collector sessions have no PG Trace row. Their durable session-delete
-        # marker must deny media even while CH still returns the live span.
-        try:
-            if session_deleted(
-                scope.project_id, getattr(span, "trace_session_id", None)
-            ):
-                return None
-        except Exception:  # noqa: BLE001 - source/marker read boundary; fail closed
-            logger.warning("attachment_session_deletion_unavailable")
-            return None
-        expires_at = retention_for(scope.organization_id, started_at)
-        if expires_at is None:
+        state = source_state(scope, parent, span, retention=retention_for)
+        if state is None:
             return None
         user = User.objects.filter(pk=viewer.user_id, is_active=True).first()
         writable = bool(user and user.can_write_to_workspace(scope.workspace))
-        return SourceState(
-            scope_id=scope.id,
-            parent=parent,
-            generation=SOURCE_GENERATION,
-            started_at=started_at,
-            expires_at=expires_at,
-            readable=True,
-            writable=writable,
-        )
+        return replace(state, writable=writable)

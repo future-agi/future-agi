@@ -15,6 +15,7 @@ import structlog
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.exceptions import APIException, MethodNotAllowed
 from rest_framework.negotiation import BaseContentNegotiation
 from rest_framework.parsers import BaseParser
@@ -22,7 +23,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
 from tfc.utils.api_contracts import validated_request
-from tracer.models.attachment import AttachmentScope
+from tracer.models.attachment import AttachmentScope, AttachmentUpload
 from tracer.serializers.attachments import (
     AttachmentBootstrapRequestSerializer,
     AttachmentBootstrapResponseSerializer,
@@ -32,11 +33,16 @@ from tracer.serializers.attachments import (
     AttachmentImportRequestSerializer,
     AttachmentImportStatusResponseSerializer,
     AttachmentLinkRequestSerializer,
+    AttachmentLiveKitEventRequestSerializer,
     AttachmentOccurrencePageSerializer,
     AttachmentOccurrenceSerializer,
+    AttachmentProviderRegistrationRequestSerializer,
+    AttachmentProviderRegistrationResponseSerializer,
     AttachmentRecordingManifestSerializer,
     AttachmentResolveRequestSerializer,
     AttachmentResolveResponseSerializer,
+    AttachmentSourceEnvelopeRequestSerializer,
+    AttachmentSourceEnvelopeResponseSerializer,
     AttachmentStatusResponseSerializer,
     AttachmentUploadRequestSerializer,
     AttachmentUploadResponseSerializer,
@@ -132,10 +138,34 @@ def authority():
     return LiveAuthority()
 
 
-def storage():
-    from tracer.services.attachments.storage import from_settings
+def admission_binding(*, operation):
+    from tracer.services.attachments.readiness import require_new_admission
 
-    return from_settings(settings)
+    return require_new_admission(operation=operation, settings=settings)
+
+
+def storage_for_upload(upload_id, *, scope_id, operation):
+    """Existing content always resolves its protected historical binding.
+
+    Call only after request authorization. Status/metadata never call this.
+    New-owner selection belongs inside initialize/submit after replay lookup.
+    """
+    from tracer.services.attachments.storage import for_binding
+
+    upload = (
+        AttachmentUpload.objects.select_related("attachment")
+        .filter(pk=upload_id, scope_id=scope_id)
+        .first()
+    )
+    if upload is None:
+        raise AttachmentError("not_found", 404)
+    if operation == "write" and upload.producer_kind != "authenticated_stream":
+        raise AttachmentError("not_found", 404)
+    if upload.attachment.storage_binding_id is None:
+        raise AttachmentError("storage_unverified", 503)
+    return for_binding(
+        upload.attachment.storage_binding_id, operation=operation, settings=settings
+    )
 
 
 def media_origin():
@@ -314,7 +344,7 @@ class AttachmentUploadView(AttachmentView):
         writer, scope = self.writer(request, project_id)
         body = self.body(request, "UploadRequest")
         upload, token, expires_at = uploads.initialize(
-            writer, scope_id=scope.id, body=body, key=key
+            writer, scope_id=scope.id, body=body, key=key, binding_id=None
         )
         return json_response(
             uploads.upload_response(upload, token, expires_at), status=201
@@ -368,12 +398,17 @@ class AttachmentContentView(AttachmentView):
             if stream.read(1):
                 raise AttachmentError("too_large", 413)
 
+        broker.authorize(
+            token, operation="upload", scope_id=scope.id, upload_id=_uuid(upload_id)
+        )
         document = uploads.transfer(
             token,
             scope_id=scope.id,
             upload_id=_uuid(upload_id),
             chunks=chunks(),
-            storage=storage(),
+            storage=storage_for_upload(
+                _uuid(upload_id), scope_id=scope.id, operation="write"
+            ),
             content_length=int(length),
         )
         return json_response(document)
@@ -455,16 +490,14 @@ class AttachmentImportView(AttachmentView):
         privacy, exact policy and deletion generation, atomic reservations)
         runs before any byte is read; the worker does the transfer.
 
-        A single-attachment import has no trusted resolver deployed and is
-        refused identically for every well-formed request.
+        Both canonical forms use metadata-only source resolution before owner
+        capacity reservation. They share the same original-identity checks.
         """
         self.enabled()
         self.key(request)
         writer, scope = self.writer(request, project_id)
         body = self.body(request, "ImportRequest")
         broker.check_writer(writer, scope)
-        if body.get("mode") != "completed_recording":
-            raise AttachmentError("source_unavailable", 403)
         document, _ = imports.submit(
             imports.Importer(writer.kind, writer.id), scope_id=scope.id, body=body
         )
@@ -715,10 +748,158 @@ class AttachmentMediaView(AttachmentView):
             occurrence_id=occurrence_id,
             grant_token=grant_id,
             authority=authority(),
-            storage=storage(),
+            storage=None,  # media_response resolves the authorized asset's binding
             origin=origin,
         )
 
     def handle_exception(self, exc):
         logger.warning("attachment_media_failed", error_type=type(exc).__name__)
         return attachment_media.private(HttpResponse(status=404))
+
+
+class AttachmentProviderRegistrationView(AttachmentView):
+    """Product control route; not an addition to F01 import payloads."""
+
+    # Documentation only: preserve authorization and raw-body parsing order.
+    @swagger_auto_schema(
+        request_body=AttachmentProviderRegistrationRequestSerializer,
+        responses={201: AttachmentProviderRegistrationResponseSerializer},
+    )
+    def post(self, request, project_id):
+        from tracer.services.attachments import provider_recordings
+
+        writer, scope = self.writer(request, project_id)
+        broker.check_writer(writer, scope)
+        body = request.data
+        required = {
+            "connection_id",
+            "egress_id",
+            "room_name",
+            "recording_id",
+            "association",
+            "direction",
+        }
+        if (
+            not isinstance(body, dict)
+            or not required <= set(body)
+            or set(body) - required - {"dispatch_mode"}
+        ):
+            raise AttachmentError("invalid_request")
+        row = provider_recordings.register(
+            writer,
+            scope_id=scope.id,
+            connection_id=_uuid(body["connection_id"]),
+            egress_id=body["egress_id"],
+            room_name=body["room_name"],
+            recording_id=body["recording_id"],
+            association=body["association"],
+            direction=body["direction"],
+            dispatch_mode=body.get("dispatch_mode", "auto"),
+        )
+        return json_response(
+            provider_recordings.registration_document(
+                row, registrar=writer, scope_id=scope.id
+            ),
+            status=201,
+        )
+
+
+class AttachmentProviderLookupView(AttachmentView):
+    @swagger_auto_schema(
+        responses={200: AttachmentProviderRegistrationResponseSerializer}
+    )
+    def get(self, request, project_id, registered_output_id):
+        from tracer.services.attachments import provider_recordings
+
+        writer, scope = self.writer(request, project_id)
+        broker.check_writer(writer, scope)
+        row = provider_recordings.lookup(
+            writer, scope_id=scope.id, registered_output_id=_uuid(registered_output_id)
+        )
+        return json_response(
+            provider_recordings.registration_document(
+                row, registrar=writer, scope_id=scope.id
+            )
+        )
+
+
+class AttachmentSourceEnvelopeView(AttachmentView):
+    """Resolve a registered source to its sealed reference; never accept a URL."""
+
+    # Documentation only: preserve authorization and raw-body parsing order.
+    @swagger_auto_schema(
+        request_body=AttachmentSourceEnvelopeRequestSerializer,
+        responses={200: AttachmentSourceEnvelopeResponseSerializer},
+    )
+    def post(self, request, project_id):
+        from tracer.models.attachment import CaptureSession
+        from tracer.services.attachments import provider_recordings, source_providers
+        from tracer.services.attachments.interfaces import SourceRef
+
+        writer, scope = self.writer(request, project_id)
+        broker.check_writer(writer, scope)
+        body = request.data
+        if not isinstance(body, dict) or set(body) != {"source"}:
+            raise AttachmentError("invalid_request")
+        source = wire.validate("ImportSource", body["source"])
+        if source["kind"] == "RemoteUrlEnvelope":
+            return json_response(
+                provider_recordings.inspect_envelope(
+                    writer, scope_id=scope.id, envelope_id=_uuid(source["envelope_id"])
+                )
+            )
+        row = provider_recordings.completed_output(
+            writer,
+            scope,
+            connection_id=_uuid(source["connection_id"]),
+            registered_output_id=_uuid(source["registered_output_id"]),
+        )
+        session = CaptureSession.objects.filter(
+            scope_id=scope.id,
+            client_id=row.capture_session_client_id,
+            correlation_nonce=row.correlation_nonce,
+            writer_kind=writer.kind,
+            writer_id=writer.id,
+        ).first()
+        if session is None:
+            raise AttachmentError("source_unavailable", 403)
+        source_providers.resolve(
+            source=SourceRef("ProviderFile", row.id),
+            scope_id=scope.id,
+            importer=writer,
+            capture_session_id=session.id,
+        )
+        return json_response(
+            {
+                "source": {
+                    "kind": "RemoteUrlEnvelope",
+                    "envelope_id": str(row.output_envelope_id),
+                }
+            }
+        )
+
+
+class AttachmentLiveKitEventView(AttachmentView):
+    parser_classes = (OctetStreamParser,)
+
+    # Documentation only: preserve authorization and raw-body parsing order.
+    @swagger_auto_schema(
+        request_body=AttachmentLiveKitEventRequestSerializer,
+        responses={204: ""},  # Do not infer a response from the request schema.
+        operation_description=(
+            "Signed LiveKit provider JSON (at most 65536 original bytes). "
+            "The Authorization JWT signature and SHA-256 body claim are verified "
+            "before strict JSON decoding; never normalize or reserialize the body. "
+            "Only matching registered egress events advance recording state."
+        ),
+    )
+    def post(self, request):
+        from tracer.services.attachments import provider_recordings
+
+        # Do not touch request.data: signature binds the exact original bytes.
+        body = request._request.read(provider_recordings.WEBHOOK_MAX_BYTES + 1)
+        connection, event = provider_recordings.verify_livekit_webhook(
+            body, request.headers.get("Authorization")
+        )
+        provider_recordings.process_livekit_event(connection, event)
+        return empty_response(204)

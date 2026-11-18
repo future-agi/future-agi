@@ -45,9 +45,9 @@ class SdkConfig(AppConfig):
 
         if getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
             from tracer.services.attachments.cache_config import verify_admission_cache
-            from tracer.services.attachments.storage import from_settings
 
-            # Reject process-local/non-atomic admission before storage/network I/O.
+            # Shared admission is a process prerequisite, storage is not. Each new
+            # admission calls require_new_admission; historical work resolves its
+            # persisted binding only after selecting its owner. Invalid default B
+            # must not prevent an enabled worker from erasing historical binding A.
             verify_admission_cache(settings)
-            # Fail closed on unverifiable/private-storage policy drift.
-            from_settings(settings).verify_readiness()

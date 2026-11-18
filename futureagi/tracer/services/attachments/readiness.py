@@ -1,29 +1,86 @@
-"""Fail-closed readiness for attachment media workers (DPL02).
+"""Independent admission, decoder, source-key and historical storage gates.
 
-Run at worker start (and by the dispatcher before each tick) when attachments
-are enabled. Any missing capability raises a content-free AttachmentError, so
-a misconfigured worker never processes media.
+Workers select durable owners first. Invalid current storage, decoder setup or
+source keys never become an implicit prerequisite for historical read/erasure.
 """
 
-from django.conf import settings
+import os
+import stat
 
-from tracer.services.attachments import envelopes, sandbox
+from django.conf import settings as django_settings
+
 from tracer.services.attachments.contract import AttachmentError
-from tracer.services.attachments.storage import from_settings
+from tracer.services.attachments.interfaces import DecoderRequirements, SourceRef
+
+
+def require_new_admission(*, operation, settings=None):
+    from tracer.services.attachments.storage import bind_for_admission
+
+    settings = django_settings if settings is None else settings
+    if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
+        raise AttachmentError("disabled", 503)
+    if operation not in ("upload", "import"):
+        raise AttachmentError("storage_unverified", 503)
+    # Format-specific decoder and source readiness are separately requested by
+    # the producer once its immutable plan/source is known. They cannot be
+    # guessed from 'import' (ProviderFile need not use a URL envelope).
+    from tracer.services.attachments import sandbox
+
+    sandbox.self_test()
+    _scratch(settings, 0)
+    return bind_for_admission(settings=settings)
+
+
+def _scratch(settings, required):
+    fd = None
+    try:
+        path = getattr(settings, "FI_ATTACHMENTS_WORK_DIR", "")
+        if not isinstance(path, str) or not os.path.isabs(path):
+            raise ValueError
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        info = os.fstat(fd)
+        if not stat.S_ISDIR(info.st_mode) or info.st_mode & stat.S_IWOTH:
+            raise ValueError
+        space = os.fstatvfs(fd)
+        if space.f_bavail * space.f_frsize < required or not os.access(
+            path, os.W_OK | os.X_OK
+        ):
+            raise ValueError
+    except Exception:
+        raise AttachmentError("validation_unavailable", 503) from None
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def require_decoder(requirements: DecoderRequirements) -> None:
+    from tracer.services.attachments import sandbox
+
+    if not isinstance(requirements, DecoderRequirements):
+        raise AttachmentError("validation_unavailable", 503)
+    _scratch(django_settings, requirements.scratch_bytes)
+    sandbox.self_test()
+
+
+def require_source_keys(*, source: SourceRef) -> None:
+    if not isinstance(source, SourceRef):
+        raise AttachmentError("source_unavailable", 503)
+    if source.kind == "RemoteUrlEnvelope":
+        from tracer.services.attachments import envelopes
+
+        envelopes._keys()
+    # ProviderFile credentials belong to the selected provider connection and
+    # must be resolved by that source reader, not by a global envelope gate.
+
+
+def resolve_historical(binding_id, *, operation):
+    from tracer.services.attachments.storage import for_binding
+
+    if operation not in ("read", "write", "erase"):
+        raise AttachmentError("storage_unverified", 503)
+    return for_binding(binding_id, operation=operation)
 
 
 def check(*, storage=None):
-    """Return the verified storage. Raises when any requirement is missing."""
-    if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
-        raise AttachmentError("disabled", 503)
-    # 1. The decoder boundary is actually active in THIS runtime.
-    sandbox.self_test()
-    # 2. A dedicated envelope key exists (never SECRET_KEY, never plaintext).
-    envelopes._keys()
-    # 3. Private storage passes its policy/ACL/CORS/versioning checks.
-    storage = storage or from_settings(settings)
-    storage.verify_readiness()
-    # 4. Bounded scratch space for one source snapshot plus one window.
-    if not getattr(settings, "FI_ATTACHMENTS_WORK_DIR", ""):
-        raise AttachmentError("storage_unverified", 503)
-    return storage
+    """Old monolithic callers must migrate; never silently choose a default."""
+    raise AttachmentError("storage_unverified", 503)

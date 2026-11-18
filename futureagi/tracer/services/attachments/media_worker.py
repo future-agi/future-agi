@@ -1,6 +1,7 @@
 """Credential-free media worker. Runs only as ``python -I -S media_worker.py``.
 
-Standard library only: no Django, settings, application code or site-packages.
+No Django, settings or application code. Normalization preloads the pinned PyAV
+decoder BEFORE confinement; no media byte is read until the filter is installed.
 The parent passes an already-open read-only input descriptor and, for producing
 operations, one already-open output descriptor. Before the first untrusted byte
 is read this process sets its own resource limits and installs a seccomp-bpf
@@ -13,6 +14,7 @@ permissive fallback). Nothing derived from the input is written to stderr.
 """
 
 import ctypes
+import io
 import json
 import math
 import os
@@ -44,6 +46,7 @@ _SYSCALLS = {
             "fstat": 5,
             "lseek": 8,
             "mmap": 9,
+            "mprotect": 10,
             "munmap": 11,
             "brk": 12,
             "rt_sigaction": 13,
@@ -53,6 +56,7 @@ _SYSCALLS = {
             "mremap": 25,
             "madvise": 28,
             "getpid": 39,
+            "sched_getaffinity": 204,
             "exit": 60,
             "sigaltstack": 131,
             "gettid": 186,
@@ -71,6 +75,7 @@ _SYSCALLS = {
             "fstat": 80,
             "lseek": 62,
             "mmap": 222,
+            "mprotect": 226,
             "munmap": 215,
             "brk": 214,
             "rt_sigaction": 134,
@@ -80,6 +85,7 @@ _SYSCALLS = {
             "mremap": 216,
             "madvise": 233,
             "getpid": 172,
+            "sched_getaffinity": 123,
             "exit": 93,
             "sigaltstack": 132,
             "gettid": 178,
@@ -146,12 +152,12 @@ def filter_program(machine):
     return program
 
 
-def confine(output_limit):
+def confine(output_limit, *, decoding=False):
     """Resource limits, then no_new_privs, then the seccomp allowlist."""
     try:
         limits = (
             (resource.RLIMIT_AS, 512 * 1024 * 1024),
-            (resource.RLIMIT_CPU, 30),
+            (resource.RLIMIT_CPU, 600 if decoding else 30),
             (resource.RLIMIT_FSIZE, output_limit),
             (resource.RLIMIT_NOFILE, 16),
             (resource.RLIMIT_CORE, 0),
@@ -279,12 +285,208 @@ def op_probe(fd_in, _fd_out, _args):
     return read_wav(fd_in, max_bytes=SEGMENT_MAX_BYTES, max_seconds=SEGMENT_MAX_SECONDS)
 
 
-def op_source(fd_in, _fd_out, _args):
-    facts = read_wav(
-        fd_in, max_bytes=SOURCE_MAX_BYTES, max_seconds=SOURCE_MAX_FRAMES_SECONDS
-    )
+# Fixed demuxers prevent protocol/playlist auto-selection. All IO still goes
+# through an already-open descriptor; seccomp denies files/sockets/exec/fork.
+FORMATS = {
+    "audio/wav": (
+        "wav",
+        {
+            "pcm_s16le",
+            "pcm_s24le",
+            "pcm_s32le",
+            "pcm_f32le",
+            "pcm_f64le",
+            "pcm_u8",
+            "pcm_mulaw",
+            "pcm_alaw",
+        },
+    ),
+    "audio/ogg": ("ogg", {"opus", "vorbis", "flac"}),
+    "audio/mpeg": ("mp3", {"mp3", "mp3float"}),
+    "audio/mp4": ("mov", {"aac", "alac", "opus"}),
+    "audio/webm": ("matroska", {"opus", "vorbis"}),
+    "audio/flac": ("flac", {"flac"}),
+}
+AV = None
+
+
+class DescriptorReader(io.RawIOBase):
+    def __init__(self, fd):
+        self.fd, self.position = fd, 0
+        self.length = os.fstat(fd).st_size
+        if not 0 < self.length <= SOURCE_MAX_BYTES:
+            raise Rejected
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def read(self, size=-1):
+        # FFmpeg receives short reads rather than an unbounded source buffer.
+        if size < 0:
+            size = BUFFER_BYTES
+        data = os.pread(self.fd, min(size, BUFFER_BYTES), self.position)
+        self.position += len(data)
+        return data
+
+    def seek(self, offset, whence=0):
+        position = offset + (
+            self.position if whence == 1 else self.length if whence == 2 else 0
+        )
+        if not 0 <= position <= self.length:
+            raise Rejected
+        self.position = position
+        return position
+
+    def tell(self):
+        return self.position
+
+
+def _pcm_chunks(frame):
+    """Pack decoded samples to s16 without a threaded libavfilter graph.
+
+    Rate and channel layout are unchanged: this is sample-format conversion,
+    never resampling or downmixing. PyAV 14's AudioResampler creates a default
+    multi-thread filter graph for planar/float input, which seccomp correctly
+    kills. Keep that prohibition and convert bounded blocks here instead.
+    """
+    formats = {
+        "u8": ("B", 8),
+        "s16": ("h", 16),
+        "s32": ("i", 32),
+        "s64": ("q", 64),
+        "flt": ("f", 0),
+        "dbl": ("d", 0),
+    }
+    name = frame.format.name
+    planar = name.endswith("p")
+    kind = name[:-1] if planar else name
+    if kind not in formats or sys.byteorder != "little":
+        raise Rejected
+    code, bits = formats[kind]
+    channels = len(frame.layout.channels)
+    if channels not in (1, 2) or frame.samples < 1:
+        raise Rejected
+    needed = channels if planar else 1
+    if len(frame.planes) != needed:
+        raise Rejected
+    planes = [memoryview(plane).cast(code) for plane in frame.planes]
+    if any(
+        len(plane) < frame.samples * (1 if planar else channels) for plane in planes
+    ):
+        raise Rejected
+    if kind == "s16" and not planar:
+        view = memoryview(frame.planes[0])[: frame.samples * channels * 2]
+        for start in range(0, len(view), BUFFER_BYTES):
+            yield view[start : start + BUFFER_BYTES]
+        return
+    block_frames = BUFFER_BYTES // (channels * 2)
+    for start in range(0, frame.samples, block_frames):
+        count = min(block_frames, frame.samples - start)
+        output = bytearray(count * channels * 2)
+        for index in range(count):
+            for channel in range(channels):
+                value = (
+                    planes[channel][start + index]
+                    if planar
+                    else planes[0][(start + index) * channels + channel]
+                )
+                if kind == "u8":
+                    value = (value - 128) << 8
+                elif bits:
+                    value >>= bits - 16
+                else:
+                    if not math.isfinite(value):
+                        raise Rejected
+                    value = round(max(-1.0, min(1.0, value)) * 32768)
+                struct.pack_into(
+                    "<h",
+                    output,
+                    (index * channels + channel) * 2,
+                    max(-32768, min(32767, value)),
+                )
+        yield output
+
+
+def decoded(fd, mime):
+    if AV is None or mime not in FORMATS:
+        # L16 is not self-describing. The frozen SourceFacts has no trusted
+        # rate/channels/endianness parameters: do not guess them from a URL.
+        raise Rejected
+    demuxer, codecs = FORMATS[mime]
+    with AV.open(
+        DescriptorReader(fd),
+        mode="r",
+        format=demuxer,
+        buffer_size=BUFFER_BYTES,
+        options={"threads": "1"},
+    ) as container:
+        streams = list(container.streams.audio)
+        if len(streams) != 1:
+            raise Rejected
+        stream = streams[0]
+        stream.codec_context.thread_count = 1
+        if stream.codec_context.name not in codecs:
+            raise Rejected
+        expected, count = None, 0
+        for frame in container.decode(stream):
+            rate, channels = frame.sample_rate, len(frame.layout.channels)
+            if not 8000 <= rate <= 96000 or channels not in (1, 2):
+                raise Rejected
+            if expected is None:
+                expected = rate, channels
+            if expected != (rate, channels):
+                raise Rejected
+            count += frame.samples
+            if (
+                count > rate * SOURCE_MAX_FRAMES_SECONDS
+                or count * channels * 2 > SOURCE_MAX_BYTES
+            ):
+                raise Rejected
+            for chunk in _pcm_chunks(frame):
+                yield rate, channels, chunk
+        if not count:
+            raise Rejected
+
+
+def op_source(fd_in, _fd_out, args):
+    mime = args[0] if args else "audio/wav"
+    if not args:
+        facts = read_wav(
+            fd_in, max_bytes=SOURCE_MAX_BYTES, max_seconds=SOURCE_MAX_FRAMES_SECONDS
+        )
+    else:
+        size, rate, channels = 0, None, None
+        for observed_rate, observed_channels, chunk in decoded(fd_in, mime):
+            rate, channels = observed_rate, observed_channels
+            size += len(chunk)
+        if not size:
+            raise Rejected
+        facts = {
+            "mime_type": mime,
+            "sample_rate": rate,
+            "channels": channels,
+            "frame_count": size // (channels * 2),
+        }
     facts["duration_ms"] = -(-facts["frame_count"] * 1000 // facts["sample_rate"])
     return facts
+
+
+def op_pcm(fd_in, fd_out, args):
+    mime, rate, channels, frames = args[0], *(int(value) for value in args[1:])
+    count = 0
+    for observed_rate, observed_channels, chunk in decoded(fd_in, mime):
+        if (observed_rate, observed_channels) != (rate, channels):
+            raise Rejected
+        count += len(chunk)
+        if count > frames * channels * 2:
+            raise Rejected
+        _write_all(fd_out, chunk)
+    if count != frames * channels * 2:
+        raise Rejected
+    return {}
 
 
 def op_segment(fd_in, fd_out, args):
@@ -423,6 +625,7 @@ def _deny_exec(_fd_in, _fd_out, _args):
 OPERATIONS = {
     "probe": op_probe,
     "source": op_source,
+    "pcm": op_pcm,
     "segment": op_segment,
     "split": op_split,
     "peaks": op_peaks,
@@ -439,7 +642,14 @@ def main(argv):
         fd_in, fd_out, output_limit = int(argv[2]), int(argv[3]), int(argv[4])
         if operation is _deny_socket:
             import socket  # noqa: F401, PLC0415 - load the module before the filter
-        confine(output_limit)
+        decoding = operation is op_pcm or (operation is op_source and len(argv) > 5)
+        if decoding:
+            global AV
+            import av
+
+            av.logging.set_level(av.logging.PANIC)
+            AV = av
+        confine(output_limit, decoding=decoding)
     except Exception:  # noqa: BLE001 - child entry point (no logging); fails closed as unavailable
         return 3
     try:
@@ -448,6 +658,8 @@ def main(argv):
         return 2
     except Exception:  # noqa: BLE001 - untrusted-media parser boundary; any failure rejects the input
         return 2
+    if operation is op_pcm:
+        return 0
     sys.stdout.write(json.dumps(result, separators=(",", ":")))
     sys.stdout.flush()
     return 0

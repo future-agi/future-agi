@@ -9,6 +9,7 @@ after every bounded read. Bytes are charged to the viewer's egress budget first.
 """
 
 import contextlib
+import json
 import re
 import time
 from urllib.parse import urlsplit
@@ -21,10 +22,11 @@ from rest_framework.exceptions import PermissionDenied
 from tracer.services.attachments import egress, playback
 from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.occurrences import not_found
-from tracer.services.attachments.storage import ObjectIdentity
+from tracer.services.attachments.storage import for_binding
 
 CHUNK_BYTES = 64 * 1024
 MAX_RESPONSE_SECONDS = 30
+MAX_RECHECK_SECONDS = 5
 
 
 CSP = "default-src 'none'; frame-ancestors 'none'"
@@ -143,7 +145,9 @@ class RevocableBody:
 
     def check(self):
         # Every bounded read is bracketed by a full live re-authorization.
-        self.authorize()
+        _, current, _ = self.authorize()
+        if current != self.blob:
+            raise not_found()
 
     def __iter__(self):
         return self
@@ -153,10 +157,11 @@ class RevocableBody:
             self.close()
             raise StopIteration
         try:
+            started = time.monotonic()
             self.check()
             if self.body is None:
                 self.body = self.storage.open_range(
-                    ObjectIdentity(self.blob.storage_key, self.blob.storage_version),
+                    self.blob.identity,
                     start=self.start,
                     end=self.end,
                     expected_length=self.blob.byte_length,
@@ -168,6 +173,7 @@ class RevocableBody:
             self.check()
             if (
                 time.monotonic() >= self.deadline
+                or time.monotonic() - started >= MAX_RECHECK_SECONDS
                 or not isinstance(chunk, bytes)
                 or not chunk
                 or len(chunk) > min(CHUNK_BYTES, self.remaining)
@@ -195,7 +201,14 @@ class RevocableBody:
 
 
 def media_response(
-    request, *, media_session_id, occurrence_id, grant_token, authority, storage, origin
+    request,
+    *,
+    media_session_id,
+    occurrence_id,
+    grant_token,
+    authority,
+    origin,
+    storage=None,
 ):
     if request.method not in {"GET", "HEAD"}:
         return private(HttpResponse(status=405))
@@ -227,6 +240,19 @@ def media_response(
     served = playback.servable(blob, grant.representation)
     if served is None:
         return private(HttpResponse(status=404))
+    # Resolve only the selected historical binding AFTER occurrence authorization.
+    # Injected adapters are not a shortcut to today's default or a foreign store.
+    try:
+        if storage is None:
+            storage = for_binding(blob.identity.binding_id, operation="read")
+        if storage.binding_id != blob.identity.binding_id:
+            raise not_found()
+        storage.verify_identity(operation="read")
+        _, current, _ = check()
+        if current != blob:
+            raise not_found()
+    except (AttachmentError, AttributeError):
+        return private(HttpResponse(status=404))
     principal = str(viewer.user_id)
     try:
         egress.admit(principal)
@@ -235,9 +261,17 @@ def media_response(
         response["Retry-After"] = str(denied.retry_after)
         return response
     # Not the object hash: opaque ETag varies by grant and immutable blob identity.
+    identity = blob.identity
     etag = (
         '"'
-        + salted_hmac("fi.attachment.etag", f"{grant.id}:{blob.id}").hexdigest()
+        + salted_hmac(
+            "fi.attachment.etag",
+            json.dumps(
+                [str(grant.id), str(identity.binding_id), identity.purpose, identity.key,
+                 identity.version, blob.sha256, str(blob.derivative_id), blob.representation],
+                separators=(",", ":"),
+            ),
+        ).hexdigest()
         + '"'
     )
     conditional = request.headers.get("If-None-Match", "")

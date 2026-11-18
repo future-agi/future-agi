@@ -1,26 +1,35 @@
-"""Private attachment settings, independent of legacy/public media storage.
+"""Private attachment settings using existing provider/configuration delivery.
 
-The feature remains off until its deployment passes qualification. Native S3 is
-an implementation candidate, not a support claim. Self-hosted MinIO and GCS stay
-unqualified; there is intentionally no ambient/default credential fallback.
+Private buckets and purpose credentials remain explicit. Provider configuration
+is shared, not public-media clients/URLs/policies. Resolution is lazy while the
+feature is disabled; enabling resolves configuration, not native qualification.
 """
 
 import os
+
+from django.utils.functional import SimpleLazyObject
+
+from tfc.utils.storage_config import (
+    attachment_binding_access_settings,
+    attachment_storage_settings,
+)
 
 FI_ATTACHMENTS_ENABLED = os.getenv("FI_ATTACHMENTS_ENABLED", "false").lower() == "true"
 # Exact https origin of the app that proxies /tracer/v1/attachment-media/*.
 # Empty keeps the media-session exchange and gateway dark (404).
 FI_ATTACHMENTS_MEDIA_ORIGIN = os.getenv("FI_ATTACHMENTS_MEDIA_ORIGIN", "")
-FI_ATTACHMENTS_STORAGE = {
-    "backend": os.getenv("FI_ATTACHMENTS_STORAGE_BACKEND", "disabled"),
-    "region": os.getenv("FI_ATTACHMENTS_STORAGE_REGION", ""),
-    "quarantine_bucket": os.getenv("FI_ATTACHMENTS_QUARANTINE_BUCKET", ""),
-    "serving_bucket": os.getenv("FI_ATTACHMENTS_SERVING_BUCKET", ""),
-    "quarantine_access_key": os.getenv("FI_ATTACHMENTS_QUARANTINE_ACCESS_KEY", ""),
-    "quarantine_secret_key": os.getenv("FI_ATTACHMENTS_QUARANTINE_SECRET_KEY", ""),
-    "serving_access_key": os.getenv("FI_ATTACHMENTS_SERVING_ACCESS_KEY", ""),
-    "serving_secret_key": os.getenv("FI_ATTACHMENTS_SERVING_SECRET_KEY", ""),
-}
+# A bad current default must not prevent historical A from starting/cleaning up.
+# New-admission callers still activate the existing strict default resolver.
+FI_ATTACHMENTS_STORAGE = SimpleLazyObject(
+    lambda: attachment_storage_settings(enabled=FI_ATTACHMENTS_ENABLED)
+)
+# Explicit JSON reference delivery, keyed by immutable binding fingerprint.
+# Neither default endpoints nor historical mappings are parsed at import time.
+FI_ATTACHMENTS_BINDING_ACCESS = SimpleLazyObject(attachment_binding_access_settings)
+# The standard storage bridge carries FI_ATTACHMENTS_POSTURE_CREDENTIAL_REF as
+# a validated symbolic name. Deployment Python settings may supply already-
+# constructed typed objects here; never parse tokens/paths or invoke ADC.
+FI_ATTACHMENTS_POSTURE_CREDENTIALS = {}
 
 # Completed-recording imports (B07/B08/B10/B11). All inert while disabled.
 # "id:base64url(32 bytes)[,id:key...]"; the first key seals. Never SECRET_KEY.

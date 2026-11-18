@@ -2,15 +2,18 @@
 
 import copy
 import json
+import io
 import os
 import struct
 import sys
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 
-from tracer.services.attachments import imports, recordings, sandbox
+from tracer.services.attachments import capacity, imports, recordings, sandbox
 from tracer.services.attachments.contract import AttachmentError
 
 pytestmark = [pytest.mark.unit]
@@ -40,10 +43,113 @@ def facts(source):
     )
 
 
+def valid_recording_request(request):
+    try:
+        return imports.parse_request(request)
+    except AttachmentError as error:
+        raise AssertionError("fixture failed before the gate under test") from error
+
+
+def reserve_with_headroom(recording, limits, headroom):
+    """Replay the F01 budget-only variations at the current reservation boundary.
+
+    Use nonempty synthetic counters so shortage exercises the aggregate check,
+    not an impossible absolute cap. Only fetching and saving rows is doubled;
+    the production floor, per-scope checks and counter arithmetic run unchanged.
+    """
+    from tracer.services.attachments import capacity_db
+    from tracer.services.attachments.interfaces import ResourceVector
+
+    amount = capacity.whole_import_floor(
+        source_bytes=recording["declared_bytes"], output_scratch_bytes=limits.window
+    )
+    scopes = ("global", "organization", "project")
+    caps = tuple(amount + ResourceVector(**headroom[scope]) for scope in scopes)
+    budgets = [
+        SimpleNamespace(
+            **dict(zip(capacity_db.BUDGET_FIELDS, capacity_db._values(amount), strict=True)),
+            save=Mock(),
+        )
+        for _ in scopes
+    ]
+    job = SimpleNamespace(
+        **dict.fromkeys(capacity_db.OWNER_FIELDS, 0),
+        reservation_pool_key=capacity.IMPORT_POOL_KEY, save=Mock(),
+    )
+    with (
+        patch.object(capacity_db, "limits_for", return_value=caps),
+        patch.object(capacity_db, "_rows", return_value=budgets),
+    ):
+        try:
+            capacity_db._change(SimpleNamespace(scope_id=uuid.uuid4()), job, amount)
+        except AttachmentError as denied:
+            assert (denied.code, denied.status) == ("throttled", 429)
+            raise
+    assert capacity_db.owner_vector(job) == amount
+    assert all(capacity_db._budget_vector(row) == amount + amount for row in budgets)
+
+
+def replay_range_responses(scenario):
+    """Feed recorded HTTP replies to the production pinned range reader.
+
+    The recording's declared size determines requests, never the recorded reply.
+    Only the HTTP connection is synthetic; no network endpoint is contacted.
+    """
+    from tracer.services.attachments import safe_fetch
+
+    recording, _ = valid_recording_request(scenario["request"])
+    total = recording["declared_bytes"]
+    window = recordings.Limits.from_wire(scenario["limits"]).window
+    source = safe_fetch.RangeSource(
+        safe_fetch.Destination("media.example.test", 443, "/audio"),
+        total, window, 30, 8 * 1024**2, generation='"fixture-v1"',
+    )
+    observed = scenario["observation"]
+    revision = '"fixture-v1"' if observed["generation_matches"] else '"fixture-v2"'
+    reads = iter(observed["reads"])
+    sink = Mock(spec=["write"])
+    # A mock's call history would retain the full hour of PCM in memory.
+    sink.write = lambda chunk: len(chunk)
+    consumed = 0
+    while consumed < total:
+        length = min(window, total - consumed)
+        part = next(reads, None)
+        conn = Mock()
+        if part is None:
+            reply = SimpleNamespace(status=416)
+        else:
+            start, size = part["offset"], part["bytes"]
+            headers = {"ETag": revision, "Content-Length": str(size),
+                       "Content-Range": f"bytes {start}-{start + size - 1}/{part['total_bytes']}"}
+            # An ignored range has no bounded body to consume. read_range must
+            # reject it before reading; successful responses need at most W.
+            reply = SimpleNamespace(status=200 if size > window else 206,
+                                    getheader=headers.get,
+                                    read=io.BytesIO(bytes(min(size, window))).read)
+        conn.getresponse.return_value = reply
+        with patch.object(source, "_connection", return_value=conn):
+            consumed += source.read_range(consumed, length, sink)
+    assert next(reads, None) is None
+    return consumed
+
+
+def test_f01_range_transcript_reads_the_declared_source():
+    assert replay_range_responses(TABLE["base"]) == TABLE["base"]["request"]["recording"]["declared_bytes"]
+
+
 def run_case(case):
     scenario = override(TABLE["base"], case["overrides"])
     recording = scenario["request"]["recording"]
     limits = recordings.Limits.from_wire(scenario["limits"])
+    if case["stage"] == "completion" and set(case["overrides"].get("observation", {})) in (
+        {"reads"}, {"generation_matches"},
+    ):
+        return replay_range_responses(scenario)
+    if case["stage"] == "admission" and set(case["overrides"]) == {"headroom"}:
+        # Every other input is the pinned happy-path case. No fixture ID or
+        # expected verdict is used to manufacture a rejection.
+        valid_recording_request(scenario["request"])
+        return reserve_with_headroom(recording, limits, scenario["headroom"])
     if case["stage"] == "admission":
         source = dict(scenario["source"], declared_bytes=recording["declared_bytes"])
         imports.admission_check(
@@ -74,7 +180,12 @@ def test_fixture_table_is_the_pinned_contract():
 
 def test_initial_reservation_is_source_plus_one_window():
     limits = recordings.Limits.from_wire(TABLE["base"]["limits"])
-    assert imports.initial_reservation(172_800_044, limits) == 181_188_652
+    assert (
+        capacity.whole_import_floor(
+            source_bytes=172_800_044, output_scratch_bytes=limits.window
+        ).bytes
+        == 181_188_652
+    )
 
 
 LIMITS = recordings.Limits(
@@ -221,7 +332,11 @@ def test_manifest_size_bound():
 def test_strict_import_request_parsing():
     body = copy.deepcopy(TABLE["base"]["request"])
     recording, source = imports.parse_request(body)
-    assert recording["trace_id"] == uuid.UUID("0123456789abcdef0123456789abcdef")
+    # The shared wire validator preserves the descriptor; it no longer
+    # manufactures a second flattened association with different field types.
+    assert recording["association"]["parent"]["trace_id"] == (
+        "0123456789abcdef0123456789abcdef"
+    )
     assert source["kind"] == "ProviderFile"
     for broken in (
         {**body, "url": "https://example.test/a"},
@@ -232,8 +347,9 @@ def test_strict_import_request_parsing():
         },  # source_kind mismatch
         {**body, "recording": {**body["recording"], "declared_bytes": 0}},
     ):
-        with pytest.raises(AttachmentError, match="validation_failed"):
+        with pytest.raises(AttachmentError, match="^invalid_request$") as error:
             imports.parse_request(broken)
+        assert error.value.status == 400
 
 
 def test_every_internal_code_maps_to_an_f01_reason():

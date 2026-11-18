@@ -13,7 +13,6 @@ body must be exactly ``{code, request_id}`` with a code allowed for its HTTP
 class (SDK design 0.5 / BR-6).
 """
 
-import io
 import uuid
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -31,7 +30,7 @@ from accounts.services.token_service import issue_tokens
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tracer.models.attachment import (
-    AttachmentBlob,
+    Attachment,
     AttachmentMediaSession,
     AttachmentOccurrence,
     AttachmentRecording,
@@ -44,7 +43,10 @@ from tracer.models.project import Project
 from tracer.services.attachments import retention, validation, wire
 from tracer.services.attachments.authority import SOURCE_GENERATION, LiveAuthority
 from tracer.services.attachments.probe import probe
-from tracer.services.attachments.storage import ObjectIdentity
+from tracer.tests.attachment_fixtures import (
+    MemoryObjectStore,
+    configure_component_storage,
+)
 from tracer.tests.test_attachment_core import wav_bytes
 from tracer.views import attachments as views
 
@@ -72,33 +74,11 @@ ALLOWED = {
 }
 
 
-class MemoryStore:
-    """Quarantine + promotion + ranged reads, in memory. Not S3 qualification."""
+class MemoryStore(MemoryObjectStore):
+    """HTTP component double, not provider qualification."""
 
     def __init__(self):
-        self.objects = {}
-
-    def put_quarantine(self, upload_id, stream, length):
-        key = f"quarantine/{upload_id}"
-        self.objects[key] = stream.read()
-        assert len(self.objects[key]) == length
-        return ObjectIdentity(key, "q-v1")
-
-    def snapshot(self, identity, output, *, expected_length):
-        import hashlib
-
-        data = self.objects[identity.key]
-        output.write(data)
-        return hashlib.sha256(data).hexdigest()
-
-    def promote(self, snapshot, *, upload_id, expected_length, expected_sha256):
-        snapshot.seek(0)
-        key = f"original/{upload_id}"
-        self.objects[key] = snapshot.read()
-        return ObjectIdentity(key, "o-v1")
-
-    def open_range(self, identity, *, start, end, expected_length):
-        return io.BytesIO(self.objects[identity.key][start : end + 1])
+        super().__init__(quarantine_version="q-v1", serving_version="o-v1")
 
 
 def span_double(state):
@@ -167,7 +147,7 @@ def member(user, organization, workspace, *, role=OrganizationRoles.OWNER):
 
 
 @pytest.fixture
-def api(project, user, settings, monkeypatch):
+def api(project, user, settings, monkeypatch, tmp_path):
     settings.FI_ATTACHMENTS_ENABLED = True
     settings.FI_ATTACHMENTS_MEDIA_ORIGIN = ORIGIN
     settings.ALLOWED_HOSTS = ["app.example.test", "testserver"]
@@ -186,7 +166,7 @@ def api(project, user, settings, monkeypatch):
     )
     store = MemoryStore()
     monkeypatch.setattr(views, "authority", lambda: LiveAuthority(span_double(state)))
-    monkeypatch.setattr(views, "storage", lambda: store)
+    configure_component_storage(monkeypatch, settings, tmp_path, store)
     monkeypatch.setattr(validation, "sandbox_probe", probe)  # parser double
     token = issue_tokens(user)["access"]
     return SimpleNamespace(
@@ -1264,7 +1244,10 @@ def test_gateway_dies_with_application_session_and_egress_limit(api, monkeypatch
     # Logout deactivates the AuthToken row: the next request is denied.
     AuthToken.objects.filter(user=api.user, auth_type="access").update(is_active=False)
     assert gateway(api, path, method="head").status_code == 404
-    assert AttachmentMediaSession.objects.exists() and AttachmentBlob.objects.exists()
+    assert (
+        AttachmentMediaSession.objects.exists()
+        and Attachment.objects.filter(verified_blob_id__isnull=False).exists()
+    )
 
 
 def test_routes_are_dark_when_disabled(api, settings):

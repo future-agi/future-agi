@@ -14,17 +14,20 @@ ever placed in an exception, log line or durable row.
 
 import http.client
 import ipaddress
+import re
 import socket
 import ssl
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from tracer.services.attachments.contract import AttachmentError
 
 BUFFER_BYTES = 256 * 1024
-USER_AGENT = "futureagi-attachment-importer/1"
+USER_AGENT = "attachment-importer/1"
+MAX_RANGE_BYTES = 8 * 1024 * 1024
 _NAT64 = (
     ipaddress.ip_network("64:ff9b::/96"),
     ipaddress.ip_network("64:ff9b:1::/48"),
@@ -89,6 +92,8 @@ def parse_destination(url, *, approved_hosts):
             or parts.password is not None
             or not host
             or "%" in host
+            or parts.fragment
+            or (parts.port is not None and parts.port != 443)
         ):
             raise ValueError
         try:
@@ -113,12 +118,33 @@ def parse_destination(url, *, approved_hosts):
         raise unavailable() from None
 
 
-def resolve(host, port, *, getaddrinfo=socket.getaddrinfo, allow=address_allowed):
-    """Return vetted addresses; ANY disallowed answer denies the destination."""
-    try:
-        answers = getaddrinfo(host, port, 0, socket.SOCK_STREAM, socket.IPPROTO_TCP)
-    except (OSError, UnicodeError):
-        raise unavailable() from None
+def resolve(
+    host,
+    port,
+    *,
+    getaddrinfo=socket.getaddrinfo,
+    allow=address_allowed,
+    timeout_seconds=3,
+):
+    """Every DNS answer must be public; a stalled resolver never stalls a lease."""
+    ready = threading.Event()
+    result = []
+
+    def lookup():
+        try:
+            result.append(
+                getaddrinfo(host, port, 0, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+            )
+        except (OSError, UnicodeError):
+            result.append(None)
+        finally:
+            ready.set()
+
+    worker = threading.Thread(target=lookup, daemon=True)
+    worker.start()
+    if not ready.wait(min(timeout_seconds, 3)) or not result or result[0] is None:
+        raise unavailable()
+    answers = result[0]
     addresses = []
     for family, _, _, _, sockaddr in answers:
         if family not in {socket.AF_INET, socket.AF_INET6}:
@@ -141,6 +167,7 @@ class _PinnedConnection(http.client.HTTPSConnection):
             self.sock = self._pinned_context.wrap_socket(
                 sock, server_hostname=self.host
             )
+            self._transport_socket = self.sock
         except Exception:
             sock.close()
             raise
@@ -184,10 +211,15 @@ class RangeSource:
     getaddrinfo: Callable = socket.getaddrinfo
     allow: Callable = address_allowed
     generation: str | None = None
+    generation_kind: str = "http_strong_etag"
     _address: str | None = None
     _bucket: TokenBucket | None = None
 
     def _connection(self):
+        if self.generation is not None:
+            validate_revision_query(
+                self.destination, self.generation_kind, self.generation
+            )
         if self._address is None:
             self._address = resolve(
                 self.destination.host,
@@ -200,7 +232,7 @@ class RangeSource:
             self.destination.port,
             address=self._address,
             context=self.context or default_context(),
-            timeout=min(self.timeout_seconds, 30),
+            timeout=min(self.timeout_seconds, 3),
         )
 
     def read_range(self, offset, length, sink):
@@ -210,11 +242,15 @@ class RangeSource:
         is encoded, short or long is rejected without draining it.
         """
         if (
-            not 0 < length <= self.window
+            type(length) is not int
+            or type(offset) is not int
+            or not 0 < length <= min(self.window, MAX_RANGE_BYTES)
             or offset < 0
             or offset + length > self.total_bytes
         ):
             raise AttachmentError("validation_failed", 422)
+        if not valid_generation(self.generation_kind, self.generation):
+            raise unavailable()
         if self._bucket is None:
             self._bucket = TokenBucket(self.bytes_per_second)
         deadline = time.monotonic() + self.timeout_seconds
@@ -228,30 +264,30 @@ class RangeSource:
             "User-Agent": USER_AGENT,
             "Connection": "close",
         }
-        if self.generation is not None:
+        if self.generation_kind == "http_strong_etag":
             headers["If-Match"] = self.generation
+        watchdog = _watchdog(connection, min(self.timeout_seconds, 30))
         try:
             connection.request(
                 "GET", self.destination.target, headers=headers, encode_chunked=False
             )
             response = connection.getresponse()
             if response.status == 412:
-                raise AttachmentError("conflict", 409)
+                raise AttachmentError("snapshot_changed", 409)
             if response.status != 206:
                 # 200 = Range ignored (whole body), 3xx = redirect: both denied.
                 raise unavailable()
-            etag = response.getheader("ETag") or ""
+            observed = response.getheader(generation_header(self.generation_kind))
+            if observed != self.generation:
+                raise AttachmentError("snapshot_changed", 409)
             if (
                 response.getheader("Content-Range")
                 != f"bytes {offset}-{end}/{self.total_bytes}"
                 or response.getheader("Content-Length") != str(length)
                 or response.getheader("Content-Encoding", "identity") != "identity"
                 or response.getheader("Transfer-Encoding") is not None
-                or not etag.startswith('"')
-                or (self.generation is not None and etag != self.generation)
             ):
                 raise AttachmentError("validation_failed", 422)
-            self.generation = etag
             received = 0
             while True:
                 if time.monotonic() > deadline:
@@ -264,6 +300,8 @@ class RangeSource:
                 if received > length:
                     raise AttachmentError("validation_failed", 422)
                 self._bucket.take(len(chunk))
+                if time.monotonic() > deadline:
+                    raise unavailable()
                 sink.write(chunk)
             if received != length:
                 raise AttachmentError("validation_failed", 422)
@@ -273,4 +311,101 @@ class RangeSource:
         except (OSError, http.client.HTTPException, ssl.SSLError, ValueError):
             raise unavailable() from None
         finally:
+            watchdog.cancel()
             connection.close()
+
+
+def valid_generation(kind, value):
+    if not isinstance(value, str) or not value or len(value) > 255:
+        return False
+    if kind == "http_strong_etag":
+        return re.fullmatch(r'"[\x21\x23-\x7e]*"', value) is not None
+    if kind == "gcs_generation":
+        return value.isascii() and value.isdigit() and int(value) > 0
+    if kind == "s3_version":
+        return value != "null" and all(0x21 <= ord(c) <= 0x7E for c in value)
+    return False
+
+
+def generation_header(kind):
+    try:
+        return {
+            "http_strong_etag": "ETag",
+            "s3_version": "x-amz-version-id",
+            "gcs_generation": "x-goog-generation",
+        }[kind]
+    except KeyError:
+        raise unavailable() from None
+
+
+def inspect_metadata(source):
+    """HEAD only, no body, redirects, custom headers or generation adoption.
+
+    The trusted producer may use the returned exact facts once when sealing;
+    workers compare them to the previously admitted facts, never update them.
+    """
+    connection = source._connection()
+    watchdog = _watchdog(connection, min(source.timeout_seconds, 30))
+    try:
+        connection.request(
+            "HEAD",
+            source.destination.target,
+            headers={
+                "Host": source.destination.host,
+                "Accept-Encoding": "identity",
+                "User-Agent": USER_AGENT,
+                "Connection": "close",
+            },
+        )
+        response = connection.getresponse()
+        length = response.getheader("Content-Length", "")
+        revision = response.getheader(generation_header(source.generation_kind))
+        mime = response.getheader("Content-Type", "").split(";", 1)[0].strip().lower()
+        if (
+            response.status != 200
+            or not length.isascii()
+            or not length.isdigit()
+            or not 0 < int(length) <= 1024**3
+            or not valid_generation(source.generation_kind, revision)
+            or response.getheader("Content-Encoding", "identity") != "identity"
+            or response.getheader("Transfer-Encoding") is not None
+        ):
+            raise unavailable()
+        return revision, int(length), mime
+    except AttachmentError:
+        raise
+    except (OSError, http.client.HTTPException, ssl.SSLError, ValueError):
+        raise unavailable() from None
+    finally:
+        watchdog.cancel()
+        connection.close()
+
+
+def validate_revision_query(destination, kind, revision):
+    if not valid_generation(kind, revision):
+        raise unavailable()
+    if kind == "http_strong_etag":
+        return
+    key = "versionId" if kind == "s3_version" else "generation"
+    query = parse_qs(urlsplit(destination.target).query, keep_blank_values=True)
+    if query.get(key) != [revision]:
+        raise unavailable()
+
+
+def _watchdog(connection, seconds):
+    # A socket inactivity timeout alone permits a peer to drip bytes forever.
+    # Shutdown interrupts HTTPResponse.read even if its requested buffer never
+    # fills; the main finally still closes the connection on every outcome.
+    def stop():
+        sock = getattr(connection, "_transport_socket", None) or connection.sock
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            sock.close()
+
+    timer = threading.Timer(seconds, stop)
+    timer.daemon = True
+    timer.start()
+    return timer

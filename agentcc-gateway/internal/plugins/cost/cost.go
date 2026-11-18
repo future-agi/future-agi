@@ -25,9 +25,40 @@ const (
 	// says nothing about whether a budget counted the request.
 	CostSourceUnpriced = "unpriced"
 
+	// CostSourceOrgCustom marks a cost priced from the org's own custom
+	// pricing, which wins over every other source.
+	CostSourceOrgCustom = "org_custom"
+
+	// CostSourceProviderReported marks a cost the vendor stated in its own
+	// response (see reported.go), recorded in place of the catalogue price.
+	CostSourceProviderReported = "provider_reported"
+
+	// CostSourceCatalogue marks a cost priced from the model database.
+	CostSourceCatalogue = "catalogue"
+
 	// maxUnpricedWarnings bounds the warn-once set so a caller cycling through
 	// model names cannot grow it without limit.
 	maxUnpricedWarnings = 1024
+
+	// maxReportedZeroWarnings bounds the suspect-zero warn-once set the same way.
+	maxReportedZeroWarnings = 1024
+)
+
+// Metadata keys the plugin writes beside "cost" and "cost_source" when a
+// vendor's stated cost is involved. Callers cannot set them: the server
+// blocks them in request metadata (isBlockedMetadataKey).
+const (
+	// MetadataReportedUnit is the unit the vendor stated the cost in.
+	MetadataReportedUnit = "cost_reported_unit"
+	// MetadataIsBYOK is "true" when OpenRouter ran the call on the caller's
+	// own provider key, which changes which of its numbers is the cost.
+	MetadataIsBYOK = "cost_is_byok"
+	// MetadataCatalogue is what the catalogue would have charged for the same
+	// usage, kept for audit when the vendor's stated cost was recorded.
+	MetadataCatalogue = "cost_catalogue"
+	// MetadataReportedZero is "true" when the vendor stated a cost of 0 for a
+	// request that used tokens the catalogue prices above 0.
+	MetadataReportedZero = "cost_reported_zero"
 )
 
 // Where an operator sets a missing price, by the unit the endpoint is billed
@@ -55,9 +86,13 @@ type Plugin struct {
 	tenantStore      *tenant.Store
 	aliasCostFactors map[string]float64 // alias prefix → cost multiplier
 	priceTables      func(orgID, providerID string) string
+	reportedVendors  func(rc *models.RequestContext) string
 
 	unpricedWarned      sync.Map     // price hint + model → struct{}: already warned about
 	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
+
+	reportedZeroWarned      sync.Map     // provider + model + streamed → struct{}
+	reportedZeroWarnedCount atomic.Int32 // size of reportedZeroWarned, for the cap
 }
 
 // New creates a new cost tracking plugin.
@@ -74,6 +109,14 @@ func New(enabled bool, modelDBGetter func() *modeldb.ModelDB, tenantStore *tenan
 // models under, as the provider that served the request states it.
 func (p *Plugin) SetPriceTables(f func(orgID, providerID string) string) {
 	p.priceTables = f
+}
+
+// SetReportedCostVendors gives the plugin, for a request, the vendor whose own
+// statement of the request's cost it may record ("openrouter", "perplexity",
+// "xai"), or "" to price the request from the catalogue. Unset, every request
+// is priced from the catalogue.
+func (p *Plugin) SetReportedCostVendors(f func(rc *models.RequestContext) string) {
+	p.reportedVendors = f
 }
 
 func (p *Plugin) Name() string               { return "cost" }
@@ -123,7 +166,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 				if orgCost, done := p.tryOrgPricing(rc, model, orgCfg.CostTracking); done {
 					if orgCost > 0 {
 						rc.Metadata["cost"] = fmt.Sprintf("%.6f", orgCost)
-						rc.Metadata["cost_source"] = "org_custom"
+						rc.Metadata["cost_source"] = CostSourceOrgCustom
 					}
 					return pipeline.ResultContinue()
 				}
@@ -141,6 +184,12 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	var cost float64
 	var ok bool
+	// source is where cost came from, when it was priced.
+	source := CostSourceCatalogue
+	// catalogue is the catalogue's price for a request whose vendor stated
+	// its own; catalogueOK says the catalogue priced it.
+	var catalogue float64
+	var catalogueOK bool
 	// billed is how much the request used, in the unit its endpoint is priced
 	// by: tokens, seconds of audio, or characters of text. A positive amount
 	// with no price is what goes unpriced.
@@ -224,19 +273,50 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		if !ok && rc.ResolvedModel != "" && rc.Model != "" {
 			cost, ok = db.CalculateCost(priceKey(db, rc.Model, rc.Provider, table), usage.PromptTokens, usage.CompletionTokens, opts)
 		}
+		// A trusted vendor's own statement of the cost wins over the
+		// catalogue, operator overrides included; org custom pricing has
+		// already won over both.
+		if vendor := p.reportedVendor(rc); vendor != "" {
+			reported, unit, byok, reportedOK := readReportedCost(vendor, usage.Extra)
+			if reportedOK && reported > MaxReportedCostUSD {
+				// Implausible for one request, and past what the micro-dollar
+				// ledgers can hold: price it from the catalogue instead.
+				p.warnReportedCeiling(rc, model, vendor, reported)
+				reportedOK = false
+			}
+			if byok {
+				rc.Metadata[MetadataIsBYOK] = "true"
+			}
+			if reportedOK {
+				catalogue, catalogueOK = cost, ok
+				cost, ok = reported, true
+				source = CostSourceProviderReported
+				rc.Metadata[MetadataReportedUnit] = unit
+				if reported == 0 && billed > 0 && catalogueOK && catalogue > 0 {
+					// Recorded as stated, since free tiers exist, but an
+					// upstream that wrongly says 0 on every call would stop
+					// budgets moving, so the row is flagged and the operator told.
+					rc.Metadata[MetadataReportedZero] = "true"
+					p.warnReportedZero(rc, model, vendor)
+				}
+			}
+		}
 	}
 
 	if ok {
 		// Apply alias-based cost factors from config.
-		if alias := rc.Metadata["model_alias"]; alias != "" && len(p.aliasCostFactors) > 0 {
-			for prefix, factor := range p.aliasCostFactors {
-				if strings.HasPrefix(alias, prefix) {
-					cost *= factor
-					break
-				}
-			}
-		}
+		factor := p.aliasCostFactor(rc)
+		cost *= factor
 		rc.Metadata["cost"] = fmt.Sprintf("%.6f", cost)
+		if source == CostSourceProviderReported && cost > 0 && rc.Metadata["cost"] == "0.000000" {
+			// Six places would round the vendor's non-zero cost to "0.000000",
+			// which every reader of "cost" takes for a vendor-stated $0.
+			rc.Metadata["cost"] = strconv.FormatFloat(cost, 'f', -1, 64)
+		}
+		rc.Metadata["cost_source"] = source
+		if catalogueOK {
+			rc.Metadata[MetadataCatalogue] = fmt.Sprintf("%.6f", catalogue*factor)
+		}
 	} else if billed > 0 {
 		// The request used something billable but there is no price for this
 		// model. Leaving this silent made the request look free in the request
@@ -247,6 +327,77 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// aliasCostFactor is the configured multiplier for rc's model alias, or 1.
+func (p *Plugin) aliasCostFactor(rc *models.RequestContext) float64 {
+	if alias := rc.Metadata["model_alias"]; alias != "" && len(p.aliasCostFactors) > 0 {
+		for prefix, factor := range p.aliasCostFactors {
+			if strings.HasPrefix(alias, prefix) {
+				return factor
+			}
+		}
+	}
+	return 1
+}
+
+// reportedVendor is the vendor whose stated cost the plugin may record for
+// rc, or "" when rc is priced from the catalogue.
+//
+// A cache hit never has one. Its response still carries the usage the vendor
+// reported for the request that filled the cache, but no vendor served this
+// one, so it is priced as cache hits were before vendor costs were read: from
+// the catalogue, on the cached usage (an exact hit skips this plugin).
+func (p *Plugin) reportedVendor(rc *models.RequestContext) string {
+	if p.reportedVendors == nil || rc.Provider == "" || servedFromCache(rc) {
+		return ""
+	}
+	return p.reportedVendors(rc)
+}
+
+// warnReportedZero logs, once per provider, model and whether the request
+// was streamed, that a vendor stated a cost of 0 for a request the catalogue
+// prices above 0. The cost stays 0; the warning names the switch that
+// prices the provider from the catalogue instead.
+func (p *Plugin) warnReportedZero(rc *models.RequestContext, model, vendor string) {
+	if p.reportedZeroWarnedCount.Load() >= maxReportedZeroWarnings {
+		return
+	}
+	key := rc.Provider + "\x00" + model + "\x00" + strconv.FormatBool(rc.IsStream)
+	if _, seen := p.reportedZeroWarned.LoadOrStore(key, struct{}{}); seen {
+		return
+	}
+	p.reportedZeroWarnedCount.Add(1)
+	slog.Warn("cost: provider reported a cost of 0 for a request the catalogue prices above 0; recording 0",
+		"provider", rc.Provider,
+		"vendor", vendor,
+		"model", model,
+		"stream", rc.IsStream,
+		"request_id", rc.RequestID,
+		"hint", "if this provider should not be trusted for cost, set ignore_provider_cost: true on it in config.yaml",
+	)
+}
+
+// warnReportedCeiling logs, once per provider, model and stream mode, that a
+// stated cost above MaxReportedCostUSD was ignored. It shares the bounded
+// warn-once set with warnReportedZero.
+func (p *Plugin) warnReportedCeiling(rc *models.RequestContext, model, vendor string, reported float64) {
+	if p.reportedZeroWarnedCount.Load() >= maxReportedZeroWarnings {
+		return
+	}
+	key := "ceiling\x00" + rc.Provider + "\x00" + model + "\x00" + strconv.FormatBool(rc.IsStream)
+	if _, seen := p.reportedZeroWarned.LoadOrStore(key, struct{}{}); seen {
+		return
+	}
+	p.reportedZeroWarnedCount.Add(1)
+	slog.Warn("cost: provider reported a cost above the per-request ceiling; using the catalogue",
+		"provider", rc.Provider,
+		"vendor", vendor,
+		"model", model,
+		"reported_usd", reported,
+		"ceiling_usd", MaxReportedCostUSD,
+		"request_id", rc.RequestID,
+	)
 }
 
 // priceKey is the key the price table lists a model under.
@@ -438,4 +589,10 @@ func decisionModelNames(rc *models.RequestContext) []string {
 		}
 	}
 	return names
+}
+
+// servedFromCache reports whether rc's response came from a cache or another
+// short-circuiting plugin rather than from a provider.
+func servedFromCache(rc *models.RequestContext) bool {
+	return rc.Flags.CacheHit || rc.Flags.ShortCircuited || strings.HasPrefix(rc.Metadata["cache_status"], "hit")
 }

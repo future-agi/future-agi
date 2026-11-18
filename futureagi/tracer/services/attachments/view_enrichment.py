@@ -103,11 +103,11 @@ def enrich_observations(*, request, project_id, observations, reader=None):
 
 RECORDING_PURPOSE = "conversation_recording"
 # I04 coarse states. A recording is projected ready only with an authorized,
-# complete mixed timeline whose segments are all bound/ready on the same parent,
-# or a standalone upload described by its validated blob facts. A multi-segment
+# complete authorized manifest (mixed, stereo, separate tracks, including
+# explicit gaps/partial captures), or validated standalone audio facts. A multi-segment
 # manifest is a playlist of unchanged occurrences, not a stitched media object;
-# consumers must play its segments in timeline order. Channel layouts still
-# require derivatives (B11).
+# consumers play its segments in timeline order. Channel layouts use exact
+# per-segment derivatives; readiness never asserts capture_complete.
 _COARSE_RECORDING_STATES = {
     "pending": "pending",
     "pending_upload": "pending_upload",
@@ -238,11 +238,7 @@ def _playable(manifest, occurrence_ids, recording_id):
         return False
     return (
         manifest["recording_id"] == recording_id
-        and manifest["layout"] == "mixed"
-        and len(manifest["tracks"]) == 1
-        and manifest["tracks"][0]["role"] == "mixed"
-        and manifest["capture_complete"] is True
-        and not manifest["gaps"]
+        and bool(manifest["segments"])
         and len(occurrence_ids) == len(set(occurrence_ids))
         and {segment["occurrence_id"] for segment in manifest["segments"]}
         == set(occurrence_ids)
@@ -299,11 +295,13 @@ def enrich_voice_detail(*, request, result, reader=None):
     items = [entry for _, entry in owned]
     occurrence_id = item["reference"]["occurrence_id"]
     statuses = [entry["status"] for entry in items]
-    status = next((value for value in statuses if value != "ready"), "ready")
+    status = next(
+        (value for value in statuses if value not in {"ready", "partial"}), "ready"
+    )
     projection = {
         "occurrence_id": occurrence_id,
         "parent": {"trace_id": parent.trace_id, "span_id": parent.span_id},
-        "state": _COARSE_RECORDING_STATES[status],
+        "state": _COARSE_RECORDING_STATES.get(status, "pending"),
     }
     scope = _request_scope(request, result.get("project_id"))
     if status == "ready" and scope is not None:
@@ -323,11 +321,19 @@ def enrich_voice_detail(*, request, result, reader=None):
                 if same_parent
                 else None
             )
+            # The authorized manifest reader must check EVERY occurrence, not
+            # only the bounded (64/parent) metadata page. A complete 120-part
+            # recording therefore remains playable, while a denied later part
+            # makes the reader return None. Never trim a manifest to this page.
             playable = manifest is not None and _playable(
                 manifest,
-                [entry["reference"]["occurrence_id"] for entry in items],
+                [segment["occurrence_id"] for segment in manifest.get("segments", ())],
                 recording_id,
             )
+            if playable:
+                playable = {entry["reference"]["occurrence_id"] for entry in items} <= {
+                    segment["occurrence_id"] for segment in manifest["segments"]
+                }
             if playable and manifest is not None:
                 # Stable anchor: database row order is not timeline order.
                 projection["occurrence_id"] = manifest["segments"][0]["occurrence_id"]

@@ -412,6 +412,8 @@ def capability(session, upload, *, expires_at):
     The claims are exactly F01 ``WriteCapabilityClaims``; a fresh mint always has
     a new ``expires_at`` and therefore a different token (BR-1).
     """
+    if upload.producer_kind != "authenticated_stream":
+        raise AttachmentError("not_found", 404)
     scope = AttachmentScope.objects.get(pk=session.scope_id)
     occurrence = upload.occurrence
     claims = {
@@ -490,6 +492,15 @@ def authorize(token, *, operation, scope_id, upload_id=None, recording_id=None):
     if expires_at <= timezone.now():
         raise AttachmentError("capability_expired", 401)
     check_session(session)
+    from tracer.models.attachment import AttachmentUpload
+
+    if not AttachmentUpload.objects.filter(
+        pk=claims["upload_id"],
+        scope=scope,
+        capture_session=session,
+        producer_kind="authenticated_stream",
+    ).exists():
+        raise AttachmentError("not_found", 404)
     return session, claims
 
 

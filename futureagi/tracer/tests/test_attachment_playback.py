@@ -61,10 +61,17 @@ class AuthorityDouble:
 
 
 class RangeStoreDouble:
-    def __init__(self, payload):
+    def __init__(self, payload, identity):
         self.payload, self.bodies, self.calls = payload, [], []
+        self.identity = identity
+        self.binding_id = identity.binding_id
+
+    def verify_identity(self, *, operation):
+        assert operation == "read"
 
     def open_range(self, identity, **kwargs):
+        assert identity == self.identity
+        assert kwargs["expected_length"] == len(self.payload)
         self.calls.append((identity, kwargs))
         body = io.BytesIO(self.payload[kwargs["start"] : kwargs["end"] + 1])
         self.bodies.append(body)
@@ -131,8 +138,9 @@ def recording(setup, user, monkeypatch):
         session=session,
         cookie=cookie,
         grant=result["gateway_path"].rsplit("/", 1)[1],
-        blob=blob,
-        store=RangeStoreDouble(wav_bytes()),
+        facts=blob,
+        write_store=store,
+        store=RangeStoreDouble(wav_bytes(), blob.object.identity),
     )
 
 
@@ -175,9 +183,9 @@ def test_own_bound_occurrence_and_safe_metadata(recording):
     assert items[0]["reference"]["mime_type"] == "audio/wav"
     encoded = json.dumps(items)
     for secret in (
-        r.blob.storage_key,
-        r.blob.sha256,
-        r.blob.storage_version,
+        r.facts.object.identity.key,
+        r.facts.object.sha256,
+        r.facts.object.identity.version,
         r.cookie,
         r.grant,
     ):
@@ -380,7 +388,7 @@ def test_range_seek_and_bounded_read(recording, range_value, start, end):
     assert reply["Content-Range"] == f"bytes {start}-{end}/{len(wav_bytes())}"
     assert b"".join(reply.streaming_content) == wav_bytes()[start : end + 1]
     assert all(body.closed for body in r.store.bodies)
-    assert r.store.calls[0][0].version == r.blob.storage_version
+    assert r.store.calls[0][0].version == r.facts.object.identity.version
     assert reply["X-Content-Type-Options"] == "nosniff"
     assert reply["Cross-Origin-Resource-Policy"] == "same-origin"
 
@@ -530,7 +538,10 @@ def test_grants_and_audits_do_not_store_capability_secrets(recording):
     assert (
         r.cookie not in payload
         and r.grant not in payload
-        and r.blob.sha256 not in payload
+        and r.facts.object.sha256 not in payload
     )
-    assert r.blob.storage_key not in payload and r.blob.storage_version not in payload
+    assert (
+        r.facts.object.identity.key not in payload
+        and r.facts.object.identity.version not in payload
+    )
     assert AttachmentMediaSession.objects.get(pk=r.session.id).token_digest != r.cookie

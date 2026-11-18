@@ -25,7 +25,9 @@ const PLAYABLE = {
  * A renewed grant swaps the source in place and keeps position and play state.
  * A grant withdrawn by an auth context change (token refresh, logout,
  * organization switch) drops its source at once; the replacement resumes
- * where the viewer was.
+ * where the viewer was. A media error (e.g. the session's cookie was evicted)
+ * gets ONE automatic reauthorization on a new media session, resuming in
+ * place; a second error waits for the viewer's Retry.
  */
 export default function AttachmentMedia({ projectId, request, item, label }) {
   const { modality, mime_type: mimeType } = item.reference;
@@ -33,6 +35,7 @@ export default function AttachmentMedia({ projectId, request, item, label }) {
   const [failed, setFailed] = useState(false);
   const elementRef = useRef(null);
   const withdrawn = useRef(null);
+  const recovered = useRef(false);
   const { status, results, retry } = useAttachmentGrants(projectId, [request], {
     enabled: requested,
     renew: true,
@@ -119,6 +122,7 @@ export default function AttachmentMedia({ projectId, request, item, label }) {
             size="small"
             color="inherit"
             onClick={() => {
+              recovered.current = false;
               setFailed(false);
               retry();
             }}
@@ -133,7 +137,22 @@ export default function AttachmentMedia({ projectId, request, item, label }) {
           controls
           preload="metadata"
           aria-label={label}
-          onError={() => setFailed(true)}
+          onError={() => {
+            const element = elementRef.current;
+            if (recovered.current || !element?.getAttribute("src")) {
+              setFailed(true);
+              return;
+            }
+            // Never retry the refused grant itself: drop it, keep the place.
+            recovered.current = true;
+            withdrawn.current = {
+              position: element.currentTime || 0,
+              resume: !element.paused,
+            };
+            element.removeAttribute("src");
+            element.load();
+            retry();
+          }}
           sx={{
             width: "100%",
             maxHeight: modality === "video" ? 320 : undefined,

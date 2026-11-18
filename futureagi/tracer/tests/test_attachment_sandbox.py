@@ -27,18 +27,19 @@ import pytest
 from django.utils import timezone
 
 from tracer.models.attachment import (
-    AttachmentBlob,
+    Attachment,
     AttachmentBudget,
     AttachmentOutbox,
     AttachmentState,
     AttachmentUpload,
-    UploadReservation,
 )
 from tracer.services.attachments import uploads, validation
 from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.probe import REJECTED_EXIT, probe
 from tracer.tests import test_attachment_core as core
+from tracer.tests.attachment_fixtures import erase_terminal_upload
 from tracer.tests.test_attachment_core import ImmutableStore, initialized
+from tracer.tests.attachment_fixtures import wait_for_db
 
 setup = core.setup
 
@@ -112,14 +113,20 @@ def test_probe_entrypoint_rejects_with_its_own_exit(tmp_path):
     assert completed.returncode == REJECTED_EXIT and completed.stdout == b""
 
 
-def _validating(setup):
+@pytest.fixture
+def short_upload(monkeypatch):
+    # Shorten the actual admission lifetime, not the drain or SQL proof horizon.
+    monkeypatch.setattr(uploads, "UPLOAD_SECONDS", 12)
+
+
+def _validating(setup, *, invalid_bytes=False):
     upload, token, _, _ = initialized(setup)
     store = ImmutableStore()
     uploads.transfer(
         token,
         scope_id=upload.scope_id,
         upload_id=upload.id,
-        chunks=[core.wav_bytes()],
+        chunks=[bytes(len(core.wav_bytes())) if invalid_bytes else core.wav_bytes()],
         storage=store,
     )
     uploads.complete(token, scope_id=upload.scope_id, upload_id=upload.id)
@@ -130,7 +137,8 @@ def _validation_jobs():
     return sorted(AttachmentBudget.objects.values_list("key", "validation_jobs"))
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("short_upload")
 def test_unavailable_sandbox_leaves_the_upload_retryable(setup, monkeypatch):
     upload, store = _validating(setup)
     jobs = _validation_jobs()
@@ -140,7 +148,7 @@ def test_unavailable_sandbox_leaves_the_upload_retryable(setup, monkeypatch):
     assert (
         AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.VALIDATING
     )
-    assert UploadReservation.objects.get(upload_id=upload.id).settled_at is None
+    assert AttachmentUpload.objects.get(pk=upload.pk).reservation_settled_at is None
     assert _validation_jobs() == jobs
     assert AttachmentOutbox.objects.filter(
         upload_id=upload.id, event="validate", processed_at=None
@@ -148,24 +156,51 @@ def test_unavailable_sandbox_leaves_the_upload_retryable(setup, monkeypatch):
     assert not AttachmentOutbox.objects.filter(
         upload_id=upload.id, event="settled"
     ).exists()
-    assert store.promotions == [] and not AttachmentBlob.objects.exists()
+    assert (
+        store.promotions == []
+        and not Attachment.objects.filter(verified_blob_id__isnull=False).exists()
+    )
 
     # The retry, once the sandbox works, publishes the same bytes.
+    _make_due(upload)
     monkeypatch.setattr(validation, "sandbox_probe", probe)
     blob = validation.validate(upload.id, scope_id=upload.scope_id, storage=store)
     assert blob.mime_type == "audio/wav"
     assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.READY
-    assert UploadReservation.objects.get(upload_id=upload.id).settled_at is not None
+    upload.refresh_from_db()
+    assert upload.usage_id is not None and upload.usage_created_at is not None
+    assert upload.usage_outcome == "ready"
+    assert upload.usage_stored_bytes == len(core.wav_bytes())
+    assert upload.reservation_settled_at is None
+    assert _validation_jobs() == jobs
+    after = upload.cleanup_not_before + timedelta(seconds=1)
+    wait_for_db(after)
+    assert validation.consume_validation(_validate_event(upload).pk, storage=store)
+    upload.refresh_from_db()
+    assert upload.reservation_settled_at is not None
+    assert _validation_jobs() == [(key, count - 1) for key, count in jobs]
+    assert store.objects == {blob.object.identity.key: core.wav_bytes()}
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_probe_rejection_still_settles_rejected(setup, monkeypatch):
-    upload, store = _validating(setup)
-    monkeypatch.setattr(validation.subprocess, "run", fake_run(REJECTED_EXIT, b""))
+    upload, store = _validating(setup, invalid_bytes=True)
     with pytest.raises(AttachmentError, match="validation_rejected"):
         validation.validate(upload.id, scope_id=upload.scope_id, storage=store)
+    # validate reports the error; its consumer owns terminal settlement.
+    _make_due(upload)
+    jobs = _validation_jobs()
+    assert validation.consume_validation(_validate_event(upload).pk, storage=store)
     assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.REJECTED
-    assert UploadReservation.objects.get(upload_id=upload.id).settled_at is not None
+    upload.refresh_from_db()
+    assert upload.usage_id is not None and upload.usage_created_at is not None
+    assert upload.usage_outcome == "rejected" and upload.usage_stored_bytes == 0
+    assert upload.reservation_settled_at is None
+    assert _validation_jobs() == jobs
+    erase_terminal_upload(upload, store, monkeypatch)
+    assert upload.reservation_settled_at is not None
+    assert _validation_jobs() == [(key, count - 1) for key, count in jobs]
+    assert store.objects == {}
 
 
 @pytest.mark.parametrize(
@@ -214,7 +249,7 @@ def _unavailable(monkeypatch):
     return calls
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_consumer_retries_unavailable_then_settles_failed(setup, monkeypatch):
     upload, store = _validating(setup)
     jobs = _validation_jobs()
@@ -241,7 +276,7 @@ def test_consumer_retries_unavailable_then_settles_failed(setup, monkeypatch):
             AttachmentUpload.objects.get(pk=upload.id).state
             == AttachmentState.VALIDATING
         )
-        assert UploadReservation.objects.get(upload_id=upload.id).settled_at is None
+        assert AttachmentUpload.objects.get(pk=upload.pk).reservation_settled_at is None
         assert not AttachmentOutbox.objects.filter(
             upload_id=upload.id, event="erase"
         ).exists()
@@ -253,15 +288,25 @@ def test_consumer_retries_unavailable_then_settles_failed(setup, monkeypatch):
     assert event.attempts == validation.MAX_VALIDATION_ATTEMPTS
     assert event.processed_at is not None
     assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.FAILED
-    assert UploadReservation.objects.get(upload_id=upload.id).settled_at is not None
-    assert _validation_jobs() == [(key, jobs_ - 1) for key, jobs_ in jobs]
+    upload.refresh_from_db()
+    assert upload.usage_id is not None and upload.usage_created_at is not None
+    assert upload.usage_outcome == "failed" and upload.usage_stored_bytes == 0
+    assert upload.reservation_settled_at is None
+    assert _validation_jobs() == jobs
     assert AttachmentOutbox.objects.filter(upload_id=upload.id, event="erase").exists()
-    assert store.promotions == [] and not AttachmentBlob.objects.exists()
+    assert (
+        store.promotions == []
+        and not Attachment.objects.filter(verified_blob_id__isnull=False).exists()
+    )
 
     # A finished job is never run again.
     _make_due(upload)
     assert not validation.consume_validation(event.pk, storage=store)
     assert len(calls) == validation.MAX_VALIDATION_ATTEMPTS
+    erase_terminal_upload(upload, store, monkeypatch)
+    assert upload.reservation_settled_at is not None
+    assert _validation_jobs() == [(key, jobs_ - 1) for key, jobs_ in jobs]
+    assert store.objects == {}
 
 
 @pytest.mark.django_db
@@ -281,28 +326,40 @@ def test_attempts_of_dead_workers_count(setup, monkeypatch):
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("short_upload")
 def test_consumer_publishes_and_finishes(setup, monkeypatch):
     upload, store = _validating(setup)
     _unavailable(monkeypatch)
     assert not validation.consume_validation(_validate_event(upload).pk, storage=store)
     _make_due(upload)
     monkeypatch.setattr(validation, "sandbox_probe", probe)
-    assert validation.consume_validation(_validate_event(upload).pk, storage=store)
+    # Publication is immediate; the consumer remains pending until cleanup.
+    assert not validation.consume_validation(_validate_event(upload).pk, storage=store)
     assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.READY
     event = _validate_event(upload)
-    assert event.processed_at is not None and event.attempts == 2
+    assert event.processed_at is None and event.attempts == 2
+    upload.refresh_from_db()
+    assert upload.usage_outcome == "ready" and upload.usage_id is not None
+    assert upload.reservation_settled_at is None
+    after = max(event.available_at, upload.cleanup_not_before) + timedelta(seconds=1)
+    wait_for_db(after)
+    assert validation.consume_validation(event.pk, storage=store)
+    event.refresh_from_db()
+    upload.refresh_from_db()
+    assert event.processed_at is not None and event.attempts == 3
+    assert upload.reservation_settled_at is not None
 
 
 @pytest.mark.django_db
 def test_consumer_finishes_rejected_bytes(setup, monkeypatch):
-    upload, store = _validating(setup)
-    monkeypatch.setattr(validation.subprocess, "run", fake_run(REJECTED_EXIT, b""))
+    upload, store = _validating(setup, invalid_bytes=True)
     assert validation.consume_validation(_validate_event(upload).pk, storage=store)
     assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.REJECTED
     assert _validate_event(upload).processed_at is not None
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("short_upload")
 def test_drain_takes_only_due_jobs(setup, monkeypatch):
     upload, store = _validating(setup)
     AttachmentOutbox.objects.filter(upload_id=upload.id, event="validate").update(
@@ -313,8 +370,16 @@ def test_drain_takes_only_due_jobs(setup, monkeypatch):
     assert calls == [] and _validate_event(upload).attempts == 0
     _make_due(upload)
     monkeypatch.setattr(validation, "sandbox_probe", probe)
-    assert validation.drain_validations(storage=store) == 1
+    assert validation.drain_validations(storage=store) == 0
     assert AttachmentUpload.objects.get(pk=upload.id).state == AttachmentState.READY
+    upload.refresh_from_db()
+    assert upload.usage_outcome == "ready" and upload.reservation_settled_at is None
+    event = _validate_event(upload)
+    after = max(event.available_at, upload.cleanup_not_before) + timedelta(seconds=1)
+    wait_for_db(after)
+    assert validation.drain_validations(storage=store) == 1
+    upload.refresh_from_db()
+    assert upload.reservation_settled_at is not None
 
 
 # --- the real sandbox -------------------------------------------------------

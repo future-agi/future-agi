@@ -10,6 +10,12 @@ import uuid
 from django.db import models
 from django.db.models.functions import Coalesce
 
+from .attachment_storage import (
+    RESERVATION_REQUIRED_FIELDS,
+    AttachmentReservationFields,
+    all_or_none,
+)
+
 
 class AttachmentState(models.TextChoices):
     PENDING = "pending_upload"
@@ -116,26 +122,47 @@ class Attachment(ScopedAttachmentRecord):
     completed_at = models.DateTimeField(null=True)
     deleted_at = models.DateTimeField(null=True)
 
+    storage_binding = models.ForeignKey(
+        "tracer.AttachmentStorageBinding", null=True, on_delete=models.PROTECT
+    )
+    verified_blob_id = models.UUIDField(null=True, unique=True)
+    verified_blob_created_at = models.DateTimeField(null=True)
+    verified_storage_key = models.CharField(max_length=255, null=True)
+    verified_storage_version = models.CharField(max_length=255, null=True)
+    verified_sha256 = models.CharField(max_length=64, null=True)
+    verified_byte_length = models.PositiveBigIntegerField(null=True)
+    verified_mime_type = models.CharField(max_length=64, null=True)
+    verified_at = models.DateTimeField(null=True)
+    verified_sample_rate = models.PositiveIntegerField(null=True)
+    verified_channels = models.PositiveSmallIntegerField(null=True)
+    verified_frame_count = models.PositiveBigIntegerField(null=True)
+
     class Meta:
         constraints = [
+            models.CheckConstraint(
+                condition=all_or_none(
+                    "verified_blob_id",
+                    "verified_blob_created_at",
+                    "verified_storage_key",
+                    "verified_storage_version",
+                    "verified_sha256",
+                    "verified_byte_length",
+                    "verified_mime_type",
+                    "verified_at",
+                ),
+                name="att_verified_value_group",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(state="ready")
+                | models.Q(
+                    storage_binding__isnull=False, verified_blob_id__isnull=False
+                ),
+                name="att_ready_verified",
+            ),
             models.UniqueConstraint(
                 fields=["scope", "client_id"], name="attachment_client_scope_unique"
-            )
+            ),
         ]
-
-
-class AttachmentBlob(ScopedAttachmentRecord):
-    attachment = models.OneToOneField(Attachment, on_delete=models.PROTECT)
-    storage_key = models.CharField(max_length=255)
-    storage_version = models.CharField(max_length=255)
-    sha256 = models.CharField(max_length=64)
-    byte_length = models.PositiveBigIntegerField()
-    mime_type = models.CharField(max_length=64)
-    validated_at = models.DateTimeField()
-    # These are server-probed facts, not application supplied metadata.
-    sample_rate = models.PositiveIntegerField()
-    channels = models.PositiveSmallIntegerField()
-    frame_count = models.PositiveBigIntegerField()
 
 
 class AttachmentOccurrence(ScopedAttachmentRecord):
@@ -222,7 +249,7 @@ class AttachmentOccurrence(ScopedAttachmentRecord):
         ]
 
 
-class AttachmentUpload(ScopedAttachmentRecord):
+class AttachmentUpload(AttachmentReservationFields, ScopedAttachmentRecord):
     """Server-allocated upload job; the public ``upload_id`` is the primary key.
 
     Idempotency is keyed on the scoped session plus the client's
@@ -244,10 +271,10 @@ class AttachmentUpload(ScopedAttachmentRecord):
     deletion_generation = models.PositiveBigIntegerField()
     policy_version = models.PositiveBigIntegerField()
     quarantine_key = models.CharField(max_length=255, default="")
-    quarantine_version = models.CharField(max_length=255, default="")
+    quarantine_version = models.CharField(max_length=255, null=True)
     # Digest of the persisted quarantine snapshot, used only to recognise a
     # byte-identical content replay (BR-3). Never exposed.
-    quarantine_sha256 = models.CharField(max_length=64, default="")
+    quarantine_sha256 = models.CharField(max_length=64, null=True)
     recording = models.ForeignKey(
         "tracer.AttachmentRecording", null=True, on_delete=models.PROTECT
     )
@@ -256,8 +283,74 @@ class AttachmentUpload(ScopedAttachmentRecord):
     transfer_started_at = models.DateTimeField(null=True)
     failure_code = models.CharField(max_length=40, default="")
 
+    producer_kind = models.CharField(
+        max_length=24,
+        choices=[
+            ("authenticated_stream", "Authenticated stream"),
+            ("import", "Import"),
+        ],
+        default="authenticated_stream",
+    )
+    storage_object_id = models.UUIDField(null=True)
+    serving_key = models.CharField(max_length=255, null=True)
+    serving_version = models.CharField(max_length=255, null=True)
+    allocation_epoch = models.PositiveBigIntegerField(default=0)
+    quarantine_write_attempts = models.PositiveSmallIntegerField(default=0)
+    serving_write_attempts = models.PositiveSmallIntegerField(default=0)
+    write_deadline_at = models.DateTimeField(null=True)
+    unowned_cleanup_due_at = models.DateTimeField(null=True)
+    cleanup_not_before = models.DateTimeField(null=True)
+    cleanup_checked_at = models.DateTimeField(null=True)
+    usage_id = models.UUIDField(null=True, unique=True)
+    usage_created_at = models.DateTimeField(null=True)
+    usage_outcome = models.CharField(
+        max_length=24,
+        null=True,
+        choices=[(v, v) for v in ("ready", "failed", "rejected", "expired", "deleted")],
+    )
+    usage_stored_bytes = models.PositiveBigIntegerField(null=True)
+    admission_event_id = models.UUIDField(null=True, unique=True)
+    settlement_event_id = models.UUIDField(null=True, unique=True)
+
     class Meta:
+        indexes = [
+            models.Index(
+                fields=["reservation_expires_at", "id"],
+                condition=models.Q(reservation_settled_at__isnull=True),
+                name="att_upload_reservation_due",
+            ),
+            models.Index(
+                fields=["unowned_cleanup_due_at", "id"],
+                condition=models.Q(unowned_cleanup_due_at__isnull=False),
+                name="att_upload_unowned_due",
+            ),
+        ]
         constraints = [
+            models.CheckConstraint(
+                condition=all_or_none(
+                    "usage_id",
+                    "usage_created_at",
+                    "usage_outcome",
+                    "usage_stored_bytes",
+                ),
+                name="att_upload_usage_group",
+            ),
+            models.CheckConstraint(
+                condition=all_or_none(*RESERVATION_REQUIRED_FIELDS),
+                name="att_upload_reservation_group",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    quarantine_write_attempts__lte=3, serving_write_attempts__lte=3
+                ),
+                name="att_upload_write_attempts",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    producer_kind__in=["authenticated_stream", "import"]
+                ),
+                name="att_upload_producer",
+            ),
             models.UniqueConstraint(
                 fields=["scope", "capture_session", "idempotency_key"],
                 name="attachment_upload_key_unique",
@@ -286,32 +379,11 @@ class AttachmentUpload(ScopedAttachmentRecord):
         ]
 
 
-class UploadReservation(ScopedAttachmentRecord):
-    upload = models.OneToOneField(AttachmentUpload, on_delete=models.PROTECT)
-    reserved_bytes = models.PositiveBigIntegerField()
-    decoded_bytes = models.PositiveBigIntegerField()
-    object_count = models.PositiveIntegerField(default=2)
-    part_count = models.PositiveIntegerField(default=1)
-    settled_at = models.DateTimeField(null=True)
-    expires_at = models.DateTimeField()
-
-    class Meta:
-        indexes = [
-            # expire_reservations: unsettled rows in expiry order. A plain
-            # (settled_at, expires_at) index could not give that order for
-            # IS NULL, so it seq-scanned a 100k-row backlog (decision 7).
-            models.Index(
-                fields=["expires_at"],
-                condition=models.Q(settled_at__isnull=True),
-                name="attachment_reservation_due_idx",
-            )
-        ]
-
-
 class AttachmentBudget(models.Model):
     """Stable lock rows: ``global:<shard>``, ``org:<id>``, ``project:<id>``.
 
-    Lock one global shard, then the organization, then the project row.
+    Lock needed global pools in numeric-shard/import/derivative order, then
+    organization rows and project rows. Totals aggregate ALL producers.
     """
 
     key = models.CharField(max_length=80, primary_key=True)
@@ -363,6 +435,20 @@ class AttachmentPlaybackGrant(ScopedAttachmentRecord):
     deletion_generation = models.PositiveBigIntegerField()
     source_generation = models.PositiveBigIntegerField()
     expires_at = models.DateTimeField()
+
+    selected_derivative = models.ForeignKey(
+        "tracer.AttachmentRecordingDerivative", null=True, on_delete=models.PROTECT
+    )
+    selected_channel = models.PositiveSmallIntegerField(null=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(selected_channel__isnull=True)
+                | models.Q(selected_channel__in=[0, 1]),
+                name="att_grant_channel",
+            )
+        ]
 
 
 class AttachmentRecording(ScopedAttachmentRecord):
@@ -433,14 +519,6 @@ class AttachmentManifestRevision(ScopedAttachmentRecord):
                 name="attachment_manifest_key_unique",
             )
         ]
-
-
-class AttachmentUsageReceipt(ScopedAttachmentRecord):
-    """One terminal receipt per upload, not an invoice or edition entitlement."""
-
-    upload = models.OneToOneField(AttachmentUpload, on_delete=models.PROTECT)
-    stored_bytes = models.PositiveBigIntegerField()
-    outcome = models.CharField(max_length=24, choices=AttachmentState.choices)
 
 
 class AttachmentAuditEvent(ScopedAttachmentRecord):

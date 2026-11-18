@@ -8,6 +8,7 @@ also exist on the previous head, so a base-control run reaches its assertions.
 # ruff: noqa: F811
 
 import sys
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -27,23 +28,29 @@ from tracer.models.attachment_recording import (
     AttachmentRecordingSegment,
 )
 from tracer.services.attachments import (
+    capacity,
     contract,
     derivatives,
     imports,
     provider_recordings,
-    uploads,
     wire,
 )
 from tracer.services.attachments.contract import AttachmentError
 from tracer.tests.test_attachment_api import api  # noqa: F401  (HTTP fixture)
 from tracer.tests.test_attachment_recording_imports import (  # noqa: F401
+    MemorySource,
     Store,
     body,
     budgets,
+    cleanup_import_job,
+    configure_recording_sources,
     env,
     envelope,
+    reader_factory,
+    routed_store,
     session,
     set_allow_import,
+    submit_job,
     wav_bytes,
 )
 from tracer.tests.test_attachment_recording_lifecycle import (  # noqa: F401
@@ -54,7 +61,7 @@ from tracer.tests.test_attachment_recording_lifecycle import (  # noqa: F401
 )
 
 pytestmark = [
-    pytest.mark.django_db,
+    pytest.mark.django_db(transaction=True),
     pytest.mark.unit,
     pytest.mark.skipif(not sys.platform.startswith("linux"), reason="seccomp"),
 ]
@@ -64,11 +71,12 @@ WINDOW = 8 * 1024 * 1024  # ``imports.server_limits().window`` by default
 HEADER = 44
 
 
-class Counting:
+class Counting(MemorySource):
     """A remote source double that counts every byte it hands out."""
 
     def __init__(self, data, window):
-        self.data, self.window, self.fetched = data, window, 0
+        super().__init__(data, window)
+        self.fetched = 0
 
     def read_range(self, offset, length, sink):
         assert 0 < length <= self.window
@@ -77,18 +85,19 @@ class Counting:
 
 
 def _project_byte_cap(monkeypatch, cap):
-    deployment, organization, _ = imports.IMPORT_BUDGETS["bytes"]
-    monkeypatch.setitem(
-        imports.IMPORT_BUDGETS, "bytes", (deployment, organization, cap)
+    # Test-only smaller bound; every producer still reads the same fixed pool
+    # and aggregate project vector, never a separate import quota dictionary.
+    monkeypatch.setattr(
+        capacity, "PROJECT_CAP", replace(capacity.PROJECT_CAP, bytes=cap)
     )
 
 
 def _submit(env, data):
     current = session(env)
-    return imports.submit(
+    return submit_job(
         env[2],
         scope_id=env[0].id,
-        body=body(current, data=data, envelope_id=envelope(env, data)),
+        body=body(current, data=data, envelope_id=envelope(env, data, current=current)),
     )
 
 
@@ -101,7 +110,7 @@ def _run_until_terminal(job, store, source):
                     job.id,
                     scope_id=job.scope_id,
                     storage=store,
-                    source_factory=lambda j, limits: source,
+                    source_factory=reader_factory(source),
                 )
             )
         )
@@ -141,9 +150,9 @@ def test_policy_advertises_no_import_source_nothing_deployed_can_create(
 
 def test_an_import_that_can_never_fit_is_refused_at_admission(env, monkeypatch):
     data = wav_bytes(seconds=65)  # 3 segments: they total len(data) + 2 * 44
-    # Admission's lower bound of the peak (source + window + segments >= source)
-    # exceeds the project cap by one byte: nothing is reserved or fetched.
-    _project_byte_cap(monkeypatch, 2 * len(data) + WINDOW - 1)
+    # Even the source + one-output-window floor exceeds the fixed project cap
+    # by one byte: nothing is reserved or fetched.
+    _project_byte_cap(monkeypatch, len(data) + WINDOW - 1)
     with pytest.raises(AttachmentError) as refused:
         _submit(env, data)
     assert (refused.value.code, refused.value.status) == ("too_large", 413)
@@ -157,15 +166,21 @@ def test_an_import_whose_exact_plan_cannot_fit_is_rejected_after_one_fetch(
     env, monkeypatch
 ):
     data = wav_bytes(seconds=65)
-    # Passes admission's lower bound, but the exact plan (3 segment headers,
-    # len(data) + 88 bytes of segments) is 38 bytes over the project cap.
-    _project_byte_cap(monkeypatch, 2 * len(data) + WINDOW + 50)
+    # Floor S+W fits. Exact peak is S+W+3*(S+88) for three WAV segments:
+    # the three possible physical versions put it 214 bytes over this cap.
+    _project_byte_cap(monkeypatch, 4 * len(data) + WINDOW + 50)
     _, job = _submit(env, data)
     store, source = Store(), Counting(data, WINDOW)
     states = _run_until_terminal(job, store, source)
     assert (job.state, job.reason) == ("rejected", "too_large"), states
     assert source.fetched == len(data)  # one pass, never refetched
-    assert job.attempts == 1 and job.released_at is not None
+    assert job.attempts == 1 and job.reservation_settled_at is None
+    assert cleanup_import_job(job, store, monkeypatch) == {
+        "expired": 0,
+        "released": 1,
+        "deferred": 0,
+    }
+    assert job.reservation_settled_at is not None
     assert not AttachmentRecordingSegment.objects.filter(
         recording_id=job.recording_id
     ).exists()
@@ -177,11 +192,18 @@ def test_an_import_whose_exact_plan_cannot_fit_is_rejected_after_one_fetch(
 
 def test_an_import_that_fits_exactly_still_publishes(env, monkeypatch):
     data = wav_bytes(seconds=65)
-    _project_byte_cap(monkeypatch, 2 * len(data) + WINDOW + 2 * HEADER)
+    _project_byte_cap(monkeypatch, 4 * len(data) + WINDOW + 6 * HEADER)
     _, job = _submit(env, data)
     store, source = Store(), Counting(data, WINDOW)
     assert _run_until_terminal(job, store, source) == ["ready"]
-    assert source.fetched == len(data) and _idle()
+    # One bounded final-byte revalidation, not a second whole-source fetch.
+    assert source.fetched == len(data) + 1 and not _idle()
+    assert cleanup_import_job(job, store, monkeypatch) == {
+        "expired": 0,
+        "released": 1,
+        "deferred": 0,
+    }
+    assert _idle()
 
 
 # ----------------------------------------- decision 5: the global import row
@@ -195,37 +217,33 @@ def _global_row(**fields):
 
 
 def test_the_global_import_row_defaults_to_half_the_upload_deployment_cap(env):
-    transfers, deployment_bytes, _, _ = uploads.BUDGETS[0]
+    """Historical case ID retained; the frozen split is now 3 GiB / 48 transfers."""
+    assert capacity.IMPORT_POOL_CAP.bytes == 3_221_225_472
+    assert capacity.IMPORT_POOL_CAP.transfers == 48
     data = wav_bytes(seconds=2)
     need = len(data) + WINDOW
-    # Bytes: half the deployment cap, not all of it.
-    _global_row(reserved_bytes=deployment_bytes // 2 - need + 1)
+    _global_row(reserved_bytes=3_221_225_472 - need + 1)
     with pytest.raises(AttachmentError, match="throttled"):
         _submit(env, data)
-    _global_row(reserved_bytes=deployment_bytes // 2 - need)
+    _global_row(reserved_bytes=3_221_225_472 - need)
     _submit(env, data)
-    # Transfers: half the deployment's concurrent transfers.
-    _global_row(reserved_bytes=0, active_transfers=transfers // 2)
+    _global_row(reserved_bytes=0, active_transfers=48)
     with pytest.raises(AttachmentError, match="throttled"):
         _submit(env, data)
     assert AttachmentImportJob.objects.count() == 1
 
 
 def test_the_global_import_cap_is_configurable_and_fails_closed(env, settings):
-    _, deployment_bytes, _, _ = uploads.BUDGETS[0]
+    """Legacy per-process percentage must never enlarge the frozen pool."""
     data = wav_bytes(seconds=2)
-    settings.FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT = 25
-    _global_row(reserved_bytes=deployment_bytes // 4 - WINDOW)
-    with pytest.raises(AttachmentError, match="throttled"):
-        _submit(env, data)
-    for invalid in (0, 101, "50"):
-        settings.FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT = invalid
-        _global_row(reserved_bytes=0)
+    need = len(data) + WINDOW
+    for obsolete in (25, 0, 101, "50", 100):
+        settings.FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT = obsolete
+        _global_row(reserved_bytes=3_221_225_472 - need + 1)
         with pytest.raises(AttachmentError, match="throttled"):
             _submit(env, data)
     assert not AttachmentImportJob.objects.exists()
-    settings.FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT = 100
-    _global_row(reserved_bytes=deployment_bytes // 2)
+    _global_row(reserved_bytes=3_221_225_472 - need)
     _, job = _submit(env, data)
     assert job.state == "importing"
 

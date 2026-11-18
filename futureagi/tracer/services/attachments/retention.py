@@ -13,28 +13,30 @@ from datetime import timedelta
 from uuid import UUID
 
 import structlog
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 
 from tracer.models.attachment import (
     Attachment,
     AttachmentAuditEvent,
-    AttachmentBlob,
     AttachmentOccurrence,
     AttachmentOutbox,
     AttachmentScope,
     AttachmentState,
     AttachmentUpload,
+    CaptureSession,
+)
+from tracer.models.attachment_recording import (
+    AttachmentImportJob,
+    AttachmentRecording,
+    AttachmentRecordingDerivative,
+    AttachmentRecordingSegment,
 )
 from tracer.services.attachments.accounting import audit
 from tracer.services.attachments.contract import AttachmentError
+from tracer.services.attachments.interfaces import EraseResult, ObjectLocator
 from tracer.services.attachments.occurrences import get_occurrence
-from tracer.services.attachments.uploads import (
-    TRANSFER_SECONDS,
-    lock_all_budgets,
-    settle,
-)
 
 logger = structlog.get_logger(__name__)
 
@@ -42,7 +44,8 @@ logger = structlog.get_logger(__name__)
 # repeated once this long after the tombstone. A derivative being produced at
 # the moment of deletion is promoted before its fenced publication fails, so a
 # single erase could miss it; the producer erases it too, but may die first.
-ATTACHMENT_ERASE_HORIZON = timedelta(minutes=15)
+ATTACHMENT_ERASE_HORIZON = timedelta(minutes=15, seconds=15)
+TRANSFER_DRAIN = timedelta(seconds=75)
 
 
 def run_deletion_hook(hook, **kwargs):
@@ -79,12 +82,24 @@ def bind_retention(*, scope_id, occurrence_id, source):
     and exact occurrence. Never expose this function as an ID-only HTTP action.
     """
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
+    snapshot = AttachmentOccurrence.objects.get(pk=occurrence_id, scope=scope)
+    session = CaptureSession.objects.select_for_update().get(
+        pk=snapshot.capture_session_id, scope=scope
+    )
+    attachment = Attachment.objects.select_for_update().get(
+        pk=snapshot.attachment_id, scope=scope
+    )
     row = AttachmentOccurrence.objects.select_for_update().get(
         pk=occurrence_id, scope=scope
     )
     now = timezone.now()
     if (
         not scope.enabled
+        or session.revoked_at
+        or attachment.deleted_at
+        or attachment.state == AttachmentState.DELETED
+        or attachment.deletion_generation != scope.deletion_generation
+        or attachment.policy_version != scope.policy_version
         or row.deleted_at
         or row.expires_at <= now
         or row.deletion_generation != scope.deletion_generation
@@ -136,100 +151,121 @@ def bind_retention(*, scope_id, occurrence_id, source):
     return row
 
 
-def _unreferenced(scope, attachment_id):
-    return not AttachmentOccurrence.objects.filter(
+def _survivors(scope, attachment_ids, now):
+    """Potential survivors, not only parents that happen to answer right now.
+
+    Unknown/missing CH authority, a remap outage, policy changes or a revoked
+    viewer are NOT proof of physical unreachability. Only committed deletion
+    generations, occurrence tombstones and the independent expiry clocks remove
+    candidates here. Orphan misses are converted to tombstones by the spaced
+    two-miss sweep, never by the eraser.
+    """
+    return AttachmentOccurrence.objects.filter(
         scope=scope,
-        attachment_id=attachment_id,
+        attachment_id__in=attachment_ids,
         deleted_at__isnull=True,
-        expires_at__gt=timezone.now(),
-    ).exists()
+        expires_at__gt=now,
+        deletion_generation__gte=scope.deletion_generation,
+    ).filter(Q(source_expires_at__isnull=True) | Q(source_expires_at__gt=now))
+
+
+def _unreferenced(scope, attachment_id):
+    return not _survivors(scope, [attachment_id], timezone.now()).exists()
+
+
+def _queue_asset_erase(scope, attachment, now):
+    # Always asset-owned, including uploaded assets. Old upload-owned events
+    # remain consumable by erase(); there are no new accounting-event hops.
+    AttachmentOutbox.objects.update_or_create(
+        scope=scope,
+        upload=None,
+        attachment=attachment,
+        event="erase",
+        generation=scope.deletion_generation,
+        defaults={"processed_at": None, "available_at": now},
+    )
+
+
+def _tombstone_rows(scope, rows, *, actor_id=None, reason, eligible=None):
+    """Scope is already locked. Lock assets before occurrences, once per batch.
+
+    No capacity changes here: the terminal receipt is independent of cleanup,
+    and capacity stays charged until its owner proves physical cleanup.
+    """
+    ids = [row.pk for row in rows]
+    assets = list(
+        Attachment.objects.select_for_update()
+        .filter(scope=scope, pk__in={row.attachment_id for row in rows})
+        .order_by("id")
+    )
+    rows = list(
+        AttachmentOccurrence.objects.select_for_update()
+        .filter(eligible or Q(), scope=scope, pk__in=ids, deleted_at__isnull=True)
+        .order_by("id")
+    )
+    now = timezone.now()
+    for row in rows:
+        row.deleted_at = now
+        row.save(update_fields=["deleted_at"])
+    survivors = set(
+        _survivors(scope, [asset.pk for asset in assets], now).values_list(
+            "attachment_id", flat=True
+        )
+    )
+    for asset in assets:
+        if asset.pk in survivors:
+            continue
+        if asset.deleted_at is None:
+            asset.deleted_at, asset.state = now, AttachmentState.DELETED
+            asset.save(update_fields=["deleted_at", "state"])
+        _queue_asset_erase(scope, asset, now)
+    for row in rows:
+        audit(
+            scope=scope,
+            actor_id=actor_id,
+            entity_id=row.id,
+            event="deletion",
+            reason=reason,
+        )
+    return len(rows)
 
 
 def _tombstone(row, scope, *, actor_id=None, reason):
-    if row.deleted_at:
-        return False
-    row.deleted_at = timezone.now()
-    row.save(update_fields=["deleted_at"])
-    audit(
-        scope=scope,
-        actor_id=actor_id,
-        entity_id=row.id,
-        event="deletion",
-        reason=reason,
-    )
-    # A second occurrence of an already tombstoned attachment (two expired
-    # ``link`` occurrences in one sweep batch) must not touch the attachment
-    # again: its tombstone is immutable (0133) and rewriting it would roll the
-    # whole batch back and wedge the sweep on the same rows forever.
-    if not Attachment.objects.filter(
-        pk=row.attachment_id, scope=scope, deleted_at__isnull=True
-    ).exists() or not _unreferenced(scope, row.attachment_id):
-        return True
-    upload = (
-        AttachmentUpload.objects.select_for_update()
-        .filter(scope=scope, attachment_id=row.attachment_id)
-        .first()
-    )
-    if upload is not None:
-        # Release unsettled reservations before marking READY storage deleted.
-        settle(upload.id, scope_id=scope.id, outcome=AttachmentState.DELETED)
-    Attachment.objects.filter(
-        pk=row.attachment_id, scope=scope, deleted_at__isnull=True
-    ).update(state=AttachmentState.DELETED, deleted_at=timezone.now())
-    if upload is None:
-        # No upload job (an imported recording segment): queue erase work keyed
-        # on the attachment; ``erase`` removes its object and derivatives.
-        AttachmentOutbox.objects.update_or_create(
-            scope=scope,
-            upload=None,
-            attachment_id=row.attachment_id,
-            event="erase",
-            generation=scope.deletion_generation,
-            defaults={"processed_at": None, "available_at": timezone.now()},
-        )
-        return True
-    AttachmentUpload.objects.filter(pk=upload.id, scope=scope).update(
-        state=AttachmentState.DELETED
-    )
-    AttachmentOutbox.objects.update_or_create(
-        scope=scope,
-        upload=upload,
-        event="erase",
-        generation=upload.deletion_generation,
-        defaults={"processed_at": None, "available_at": timezone.now()},
-        create_defaults={
-            "processed_at": None,
-            "available_at": timezone.now(),
-            "attachment_id": upload.attachment_id,
-        },
-    )
-    return True
+    return bool(_tombstone_rows(scope, [row], actor_id=actor_id, reason=reason))
 
 
-@transaction.atomic
 def delete_occurrence(viewer, authority, *, occurrence_id, parent):
+    # Remote parent/session authorization happens before locks. The locked
+    # source occurrence is checked again so a concurrent tombstone wins.
     row, scope, _ = get_occurrence(viewer, authority, occurrence_id, parent, write=True)
-    lock_all_budgets(scope)
-    scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
-    row, _, _ = get_occurrence(viewer, authority, occurrence_id, parent, write=True)
-    return _tombstone(row, scope, actor_id=viewer.user_id, reason="requested")
+    with transaction.atomic():
+        scope = AttachmentScope.objects.select_for_update().get(pk=scope.id)
+        if (
+            not scope.enabled
+            or row.policy_version != scope.policy_version
+            or row.deletion_generation != scope.deletion_generation
+        ):
+            raise AttachmentError("not_found", 404)
+        return _tombstone(row, scope, actor_id=viewer.user_id, reason="requested")
 
 
 BATCH = 100
 
 
 def _tombstone_all(scope, rows_query, *, reason):
-    """Tombstone every row of ``rows_query`` in batches of ``BATCH``.
+    """Lock the complete deletion set in order inside the caller's transaction.
 
-    Each tombstoned row drops out of the query (``deleted_at`` is set), so the
-    loop always terminates; one parent with many segments is never refused.
+    Fetch in bounded DB chunks, but do not start a second asset lock chain after
+    the first batch's occurrence/outbox locks: an outer product transaction may
+    retain all those locks even after a nested atomic savepoint exits. Scheduled
+    sweeps pass at most BATCH rows; explicit parent deletion covers every link.
     """
-    total = 0
-    while True:
-        rows = list(rows_query.filter(deleted_at__isnull=True).order_by("id")[:BATCH])
-        total += sum(_tombstone(row, scope, reason=reason) for row in rows)
-        if len(rows) < BATCH:
-            return total
+    rows = list(
+        rows_query.filter(deleted_at__isnull=True)
+        .order_by("id")
+        .iterator(chunk_size=BATCH)
+    )
+    return _tombstone_rows(scope, rows, reason=reason)
 
 
 @transaction.atomic
@@ -237,8 +273,6 @@ def tombstone_parent(*, scope_id, parent, source_generation):
     """Internal authoritative deletion hook. Stale source versions cannot erase newer bindings."""
     if type(source_generation) is not int or source_generation < 0:
         raise AttachmentError("invalid_generation")
-    scope = AttachmentScope.objects.get(pk=scope_id)
-    lock_all_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
     rows = AttachmentOccurrence.objects.filter(
         scope=scope, trace_id=parent.trace_id, span_id=parent.span_id
@@ -260,16 +294,10 @@ def tombstone_traces(*, project_id, trace_ids):
     if scope is None or not trace_ids:
         return 0
     ids = sorted({UUID(str(value)) for value in trace_ids})
-    total = 0
-    for start in range(0, len(ids), BATCH):
-        with transaction.atomic():
-            lock_all_budgets(scope)
-            locked = AttachmentScope.objects.select_for_update().get(pk=scope.pk)
-            rows = AttachmentOccurrence.objects.filter(
-                scope=locked, trace_id__in=ids[start : start + BATCH]
-            )
-            total += _tombstone_all(locked, rows, reason="requested")
-    return total
+    with transaction.atomic():
+        locked = AttachmentScope.objects.select_for_update().get(pk=scope.pk)
+        rows = AttachmentOccurrence.objects.filter(scope=locked, trace_id__in=ids)
+        return _tombstone_all(locked, rows, reason="requested")
 
 
 @transaction.atomic
@@ -280,8 +308,6 @@ def tombstone_occurrences(*, scope_id, occurrence_ids, missing_before):
     are tombstoned, so a live read that cleared ``source_missing_since`` after
     the sweep's own read always wins.
     """
-    scope = AttachmentScope.objects.get(pk=scope_id)
-    lock_all_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
     rows = AttachmentOccurrence.objects.filter(
         scope=scope,
@@ -289,7 +315,12 @@ def tombstone_occurrences(*, scope_id, occurrence_ids, missing_before):
         bound_at__isnull=False,
         source_missing_since__lte=missing_before,
     )
-    return _tombstone_all(scope, rows, reason="retention")
+    return _tombstone_rows(
+        scope,
+        list(rows),
+        reason="retention",
+        eligible=Q(bound_at__isnull=False, source_missing_since__lte=missing_before),
+    )
 
 
 def fence_projects(*, project_ids):
@@ -339,10 +370,9 @@ def tombstone_fenced(*, scope_id, limit=BATCH):
     scope = AttachmentScope.objects.get(pk=scope_id)
     if not _fenced(scope).exists():
         return 0  # Nothing to clean: skip the budget locks (sweep runs per scope).
-    lock_all_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
     rows = list(_fenced(scope).order_by("id")[:limit])
-    return sum(_tombstone(row, scope, reason="scope_deleted") for row in rows)
+    return _tombstone_rows(scope, rows, reason="scope_deleted")
 
 
 def purge_audit(*, before, limit=1000):
@@ -362,10 +392,9 @@ def expire_occurrences(*, scope_id, limit=100):
     scope = AttachmentScope.objects.get(pk=scope_id)
     if not _expired(scope).exists():
         return 0  # Nothing due: skip the budget locks (sweep runs per scope).
-    lock_all_budgets(scope)
     scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
     rows = list(_expired(scope).order_by("id")[:limit])
-    return sum(_tombstone(row, scope, reason="retention") for row in rows)
+    return _tombstone_rows(scope, rows, reason="retention")
 
 
 @transaction.atomic
@@ -386,74 +415,426 @@ def fence_scope(*, scope_id):
     return scope.deletion_generation
 
 
-@transaction.atomic
-def erase(event_id, *, storage):
-    """At-least-once erase, rescheduled through the last accepted transfer window."""
-    snapshot = AttachmentOutbox.objects.get(pk=event_id, event="erase")
-    # Scope -> event is also the order used by deletion publication.
-    scope = AttachmentScope.objects.select_for_update().get(pk=snapshot.scope_id)
-    event = AttachmentOutbox.objects.select_for_update().get(
-        pk=event_id, event="erase", scope=scope
+def _asset_allocations(scope, asset):
+    # The scoped client-id join includes prepublication staging allocations whose
+    # attachment FK is not assigned yet. It never selects a different scope.
+    return AttachmentRecordingSegment.objects.filter(scope=scope).filter(
+        Q(attachment_id=asset.pk)
+        | Q(attachment_id__isnull=True, attachment_client_id=asset.client_id)
     )
+
+
+def _lock_asset_chain(*, attachment_id, scope_id):
+    """Scope -> jobs -> recordings -> uploads -> asset -> occurrences -> allocations.
+
+    Caller owns transaction.atomic. No budgets are changed by this suffix; the
+    separate settlement/derivative/import owners acquire capacity first when
+    releasing their own reservations.
+    """
+    scope = AttachmentScope.objects.select_for_update().get(pk=scope_id)
+    snapshot = Attachment.objects.get(pk=attachment_id, scope=scope)
+    upload_ids = list(
+        AttachmentUpload.objects.filter(attachment=snapshot, scope=scope).values_list(
+            "id", flat=True
+        )
+    )
+    staged = _asset_allocations(scope, snapshot)
+    job_ids = set(staged.values_list("import_job_id", flat=True)) - {None}
+    jobs = list(
+        AttachmentImportJob.objects.select_for_update()
+        .filter(Q(pk__in=job_ids) | Q(upload_id__in=upload_ids), scope=scope)
+        .order_by("id")
+    )
+    recording_ids = set(staged.values_list("recording_id", flat=True))
+    recording_ids.update(
+        AttachmentUpload.objects.filter(pk__in=upload_ids).values_list(
+            "recording_id", flat=True
+        )
+    )
+    list(
+        AttachmentRecording.objects.select_for_update()
+        .filter(scope=scope, pk__in=recording_ids - {None})
+        .order_by("id")
+    )
+    uploads = list(
+        AttachmentUpload.objects.select_for_update()
+        .filter(scope=scope, pk__in=upload_ids)
+        .order_by("id")
+    )
+    asset = Attachment.objects.select_for_update().get(pk=attachment_id, scope=scope)
+    list(
+        AttachmentOccurrence.objects.select_for_update()
+        .filter(scope=scope, attachment=asset)
+        .order_by("id")
+    )
+    segments = list(_asset_allocations(scope, asset).select_for_update().order_by("id"))
+    derivatives = list(
+        AttachmentRecordingDerivative.objects.select_for_update()
+        .filter(scope=scope, attachment=asset)
+        .order_by("id")
+    )
+    return scope, asset, uploads, jobs, segments, derivatives
+
+
+def _unpublished_failure(asset, uploads, segments, derivatives):
+    """Terminal upload allocations, NOT media survivors or deletion authority.
+
+    Failure metadata may remain bound/readable for the source's retention. It
+    does not own published bytes. Under the ordered scope/upload/asset locks,
+    terminal upload states fence future publication; the immutable verified
+    tuple proves no original ever became readable. Any other allocation shape
+    must use whole-asset survivor-protected cleanup instead.
+    """
+    terminal = {
+        AttachmentState.FAILED,
+        AttachmentState.REJECTED,
+        AttachmentState.EXPIRED,
+        AttachmentState.DELETED,
+    }
+    return (
+        bool(uploads)
+        and not segments
+        and not derivatives
+        and asset.state in terminal
+        and asset.verified_blob_id is None
+        and asset.verified_at is None
+        and asset.verified_storage_key is None
+        and asset.verified_storage_version is None
+        and all(upload.state in terminal for upload in uploads)
+    )
+
+
+def _cleanup_plan(scope, asset, uploads, jobs, segments, derivatives):
+    """Persisted locators only; no client UUID reconstruction or default binding."""
+    if asset.storage_binding_id is None or not (uploads or segments):
+        raise AttachmentError("storage_unverified", 503)
+    locators = set()
+
+    def add(binding_id, purpose, key):
+        if binding_id != asset.storage_binding_id or not key:
+            raise AttachmentError("storage_unverified", 503)
+        locators.add(ObjectLocator(binding_id, purpose, key))
+
+    if asset.verified_storage_key is not None:
+        add(asset.storage_binding_id, "serving", asset.verified_storage_key)
+    unpublished = _unpublished_failure(asset, uploads, segments, derivatives)
+    if asset.deleted_at is None and not unpublished:
+        raise AttachmentError("cleanup_fenced", 409)
+    # A terminal unpublished allocation has its own persisted accepted-write
+    # horizon. Do not tombstone failure metadata to manufacture an asset clock.
+    horizons = [] if unpublished else [asset.deleted_at + ATTACHMENT_ERASE_HORIZON]
+    signature = [
+        (
+            scope.deletion_generation,
+            asset.pk,
+            unpublished,
+            asset.state,
+            asset.deleted_at,
+            asset.storage_binding_id,
+            asset.verified_storage_key,
+            asset.verified_storage_version,
+        )
+    ]
+    for upload in uploads:
+        add(asset.storage_binding_id, "quarantine", upload.quarantine_key)
+        add(asset.storage_binding_id, "serving", upload.serving_key)
+        if upload.cleanup_not_before is None:
+            raise AttachmentError("cleanup_unavailable", 503)
+        horizons.extend([upload.cleanup_not_before, upload.expires_at + TRANSFER_DRAIN])
+        if upload.write_deadline_at:
+            horizons.append(upload.write_deadline_at + timedelta(seconds=15))
+        signature.append(
+            (
+                upload.pk,
+                upload.state,
+                upload.allocation_epoch,
+                upload.quarantine_key,
+                upload.quarantine_version,
+                upload.serving_key,
+                upload.serving_version,
+                upload.cleanup_not_before,
+                upload.write_deadline_at,
+                upload.quarantine_write_attempts,
+                upload.serving_write_attempts,
+            )
+        )
+    for job in jobs:
+        if (
+            job.storage_binding_id != asset.storage_binding_id
+            or job.cleanup_not_before is None
+        ):
+            raise AttachmentError("storage_unverified", 503)
+        horizons.append(job.cleanup_not_before)
+        if job.lease_until:
+            horizons.append(job.lease_until + timedelta(seconds=15))
+        signature.append(
+            (
+                job.pk,
+                job.storage_binding_id,
+                job.lease_epoch,
+                job.cleanup_not_before,
+                job.lease_token,
+                job.lease_until,
+            )
+        )
+    for segment in segments:
+        add(segment.storage_binding_id, "quarantine", segment.quarantine_key)
+        add(segment.storage_binding_id, "serving", segment.storage_key)
+        if segment.cleanup_not_before is None:
+            raise AttachmentError("cleanup_unavailable", 503)
+        horizons.append(segment.cleanup_not_before)
+        if segment.write_deadline_at:
+            horizons.append(segment.write_deadline_at + timedelta(seconds=15))
+        signature.append(
+            (
+                segment.pk,
+                segment.attachment_id,
+                segment.import_job_id,
+                segment.storage_binding_id,
+                segment.allocation_epoch,
+                segment.storage_key,
+                segment.storage_version,
+                segment.quarantine_key,
+                segment.cleanup_not_before,
+                segment.write_deadline_at,
+                segment.write_attempts,
+            )
+        )
+    for derivative in derivatives:
+        # The derivative service performs its erasure, including unpublished
+        # keys and capacity release. Its locators/epochs still fence this pass.
+        if derivative.cleanup_not_before is None:
+            raise AttachmentError("cleanup_unavailable", 503)
+        horizons.append(derivative.cleanup_not_before)
+        if derivative.write_deadline_at:
+            horizons.append(derivative.write_deadline_at + timedelta(seconds=15))
+        signature.append(
+            (
+                derivative.pk,
+                derivative.lease_epoch,
+                derivative.storage_key,
+                derivative.storage_version,
+                derivative.quarantine_key,
+                derivative.cleanup_not_before,
+                derivative.write_deadline_at,
+                derivative.write_attempts,
+            )
+        )
+    return (
+        tuple(
+            sorted(
+                locators,
+                key=lambda item: (str(item.binding_id), item.purpose, item.key),
+            )
+        ),
+        max(horizons),
+        tuple(signature),
+    )
+
+
+def _writers_stopped(uploads, jobs, derivatives):
+    # A time comparison is not a process-termination receipt. Retired owner
+    # phases AND cleared in-flight handles are required; producers/supervisors
+    # clear them only after the accepted operation has stopped. A crashed or
+    # ambiguous producer keeps cleanup pending for its own recovery sweep.
+    if any(upload.transfer_started_at is not None for upload in uploads):
+        return False
+    if any(
+        job.lease_phase != "terminal"
+        or job.lease_token is not None
+        or job.lease_until is not None
+        for job in jobs
+    ):
+        return False
+    if any(
+        row.lease_token is not None or row.lease_until is not None
+        for row in derivatives
+    ):
+        return False
+    return not AttachmentOutbox.objects.filter(
+        upload_id__in=[upload.pk for upload in uploads],
+        event="validate",
+        processed_at__isnull=True,
+        attempts__gt=0,
+    ).exists()
+
+
+def _erase_originals(locators, *, storage, horizon):
+    """All calls are outside DB locks. Partial/ambiguous/early emptiness is pending."""
+    complete = True
+    for locator in locators:
+        result = storage.erase_all_versions(locator)
+        if (
+            not isinstance(result, EraseResult)
+            or not result.empty
+            or result.retryable
+            or result.reason is not None
+            or result.checked_at < horizon
+            or result.checked_at > timezone.now()
+        ):
+            complete = False
+    return complete
+
+
+def _erase_asset(*, attachment_id, scope_id, now, storage=None):
+    if connection.in_atomic_block:
+        # An inner atomic exit does not commit an outer caller's tombstone.
+        # Never do remote erasure until the irreversible fence is committed.
+        raise AttachmentError("cleanup_fenced", 409)
+    with transaction.atomic():
+        chain = _lock_asset_chain(attachment_id=attachment_id, scope_id=scope_id)
+        scope, asset, uploads, jobs, segments, derivatives = chain
+        unpublished = _unpublished_failure(asset, uploads, segments, derivatives)
+        if not unpublished and _survivors(scope, [asset.pk], now).exists():
+            return False
+        if not unpublished and asset.deleted_at is None:
+            asset.deleted_at, asset.state = now, AttachmentState.DELETED
+            asset.save(update_fields=["deleted_at", "state"])
+        # Fence further upload publication without clearing active-operation
+        # handles or pretending that cancellation stopped an in-flight PUT.
+        for upload in uploads:
+            if not unpublished and upload.state != AttachmentState.DELETED:
+                upload.state = AttachmentState.DELETED
+                upload.save(update_fields=["state"])
+        locators, horizon, signature = _cleanup_plan(*chain)
+    # The irreversible tombstone is committed before any network/storage call.
+    from tracer.services.attachments import derivatives as derivative_service
+    from tracer.services.attachments.readiness import resolve_historical
+
+    if storage is None:
+        storage = resolve_historical(asset.storage_binding_id, operation="erase")
+    if storage.binding_id != asset.storage_binding_id:
+        raise AttachmentError("storage_unverified", 503)
+    storage.verify_identity(operation="erase")
+    originals_empty = _erase_originals(locators, storage=storage, horizon=horizon)
+    derivatives_empty = unpublished or derivative_service.erase_for_asset(
+        attachment_id=attachment_id,
+        scope_id=scope_id,
+        now=now,
+    )
+    if not originals_empty or not derivatives_empty or now < horizon:
+        return False
+    with transaction.atomic():
+        current = _lock_asset_chain(attachment_id=attachment_id, scope_id=scope_id)
+        scope, asset, uploads, jobs, segments, derivatives = current
+        current_locators, current_horizon, current_signature = _cleanup_plan(*current)
+        if (
+            current_signature != signature
+            or current_locators != locators
+            or current_horizon != horizon
+            or timezone.now() < current_horizon
+            or unpublished
+            != _unpublished_failure(asset, uploads, segments, derivatives)
+            or (
+                not unpublished
+                and (
+                    asset.deleted_at is None
+                    or asset.state != AttachmentState.DELETED
+                    or _survivors(scope, [asset.pk], timezone.now()).exists()
+                )
+            )
+            or not _writers_stopped(uploads, jobs, derivatives)
+            or any(row.state != "erased" for row in derivatives)
+        ):
+            return False
+        checked = timezone.now()
+        for upload in uploads:
+            upload.cleanup_checked_at = checked
+            upload.unowned_cleanup_due_at = None
+            upload.save(update_fields=["cleanup_checked_at", "unowned_cleanup_due_at"])
+        for segment in segments:
+            segment.state = "erased"
+            segment.erased_at = segment.erased_at or checked
+            segment.cleanup_checked_at = checked
+            segment.unowned_cleanup_due_at = None
+            segment.save(
+                update_fields=[
+                    "state",
+                    "erased_at",
+                    "cleanup_checked_at",
+                    "unowned_cleanup_due_at",
+                ]
+            )
+    # No locks are held across the owner's ordered capacity/receipt transaction.
+    # ImportJob scratch and reservation remain the import sweep's responsibility.
+    from tracer.services.attachments.uploads import settle
+
+    for upload in uploads:
+        settle(upload.pk, scope_id=scope_id, outcome=upload.state)
+    return True
+
+
+def erase_asset(*, attachment_id, scope_id, now=None):
+    """Unified uploaded/imported original, staging and representation erasure."""
+    return _erase_asset(
+        attachment_id=attachment_id, scope_id=scope_id, now=now or timezone.now()
+    )
+
+
+def erase(event_id, *, storage=None):
+    """Select event and owner before historical binding resolution; no default gate.
+
+    True means terminal completion, not merely a successful attempt. Historical
+    upload-keyed events and new asset-keyed events share the same cleanup path.
+    """
+    event = AttachmentOutbox.objects.get(pk=event_id, event="erase")
     now = timezone.now()
     if event.processed_at or event.available_at > now:
         return False
-    if event.upload_id is None:
-        return _erase_attachment(event, scope, storage, now)
-    upload = AttachmentUpload.objects.select_related("capture_session").get(
-        pk=event.upload_id, scope=scope
-    )
-    if not _unreferenced(scope, upload.attachment_id):
-        return False  # Never erase separately authorized survivors.
-    if upload.state not in {
-        AttachmentState.DELETED,
-        AttachmentState.EXPIRED,
-        AttachmentState.FAILED,
-        AttachmentState.REJECTED,
-    }:
+    attachment_id = event.attachment_id
+    if event.upload_id:
+        upload = AttachmentUpload.objects.get(
+            pk=event.upload_id, scope_id=event.scope_id
+        )
+        if attachment_id is not None and upload.attachment_id != attachment_id:
+            raise AttachmentError("cleanup_fenced", 409)
+        attachment_id = upload.attachment_id
+    if attachment_id is None:
         raise AttachmentError("cleanup_fenced", 409)
-    storage.erase_upload(upload.id)
-    event.attempts = min(event.attempts + 1, 65535)
-    horizon = max(upload.expires_at, upload.capture_session.expires_at) + timedelta(
-        seconds=TRANSFER_SECONDS + 15
+    generation = AttachmentScope.objects.get(pk=event.scope_id).deletion_generation
+    finished = _erase_asset(
+        attachment_id=attachment_id, scope_id=event.scope_id, now=now, storage=storage
     )
-    if now >= horizon:
-        event.processed_at = now
-    else:
-        event.available_at = min(horizon, now + timedelta(seconds=30))
-    event.save(update_fields=["attempts", "processed_at", "available_at"])
-    return True
-
-
-def _erase_attachment(event, scope, storage, now):
-    """Attachment-keyed erase: the attachment has no upload job.
-
-    Only the layout the server itself writes for such attachments is erased
-    (an imported segment's ``original/{attachment id}`` and its derivatives);
-    anything else is refused and stays queued for an owner to look at.
-    """
-    attachment = Attachment.objects.filter(pk=event.attachment_id, scope=scope).first()
-    if attachment is None:
-        raise AttachmentError("cleanup_unsupported", 409)
-    if not _unreferenced(scope, attachment.id):
-        return False  # Never erase separately authorized survivors.
-    if attachment.state != AttachmentState.DELETED or attachment.deleted_at is None:
-        raise AttachmentError("cleanup_fenced", 409)
-    blob = AttachmentBlob.objects.filter(attachment=attachment, scope=scope).first()
-    if blob is not None and blob.storage_key != f"original/{attachment.client_id}":
-        raise AttachmentError("cleanup_unsupported", 409)
-    # Imported here so retention keeps no import-time dependency on recordings.
-    from tracer.services.attachments import derivatives
-
-    storage.erase_upload(attachment.client_id)
-    derivatives.erase_for_attachment(
-        scope_id=scope.id, attachment_client_id=attachment.client_id, storage=storage
-    )
-    event.attempts = min(event.attempts + 1, 65535)
-    horizon = attachment.deleted_at + ATTACHMENT_ERASE_HORIZON
-    if now >= horizon:
-        event.processed_at = now
-    else:
-        event.available_at = horizon
-    event.save(update_fields=["attempts", "processed_at", "available_at"])
-    return True
+    with transaction.atomic():
+        chain = _lock_asset_chain(attachment_id=attachment_id, scope_id=event.scope_id)
+        scope, asset, uploads, jobs, segments, derivatives = chain
+        current = AttachmentOutbox.objects.select_for_update().get(
+            pk=event_id, event="erase"
+        )
+        if current.processed_at:
+            return False
+        if (
+            current.scope_id,
+            current.upload_id,
+            current.attachment_id,
+            current.generation,
+        ) != (event.scope_id, event.upload_id, event.attachment_id, event.generation):
+            raise AttachmentError("cleanup_fenced", 409)
+        current.attempts = min(current.attempts + 1, 65535)
+        if finished:
+            _, horizon, _ = _cleanup_plan(*chain)
+            finished = (
+                scope.deletion_generation == generation
+                and (
+                    _unpublished_failure(asset, uploads, segments, derivatives)
+                    or (
+                        asset.state == AttachmentState.DELETED
+                        and asset.deleted_at is not None
+                        and not _survivors(scope, [asset.pk], timezone.now()).exists()
+                    )
+                )
+                and timezone.now() >= horizon
+                and _writers_stopped(uploads, jobs, derivatives)
+                and all(row.state == "erased" for row in derivatives)
+                and all(
+                    row.cleanup_checked_at is not None
+                    and row.cleanup_checked_at >= horizon
+                    for row in uploads + segments
+                )
+            )
+        if finished:
+            current.processed_at = timezone.now()
+        else:
+            current.available_at = timezone.now() + timedelta(seconds=60)
+        current.save(update_fields=["attempts", "processed_at", "available_at"])
+    return finished

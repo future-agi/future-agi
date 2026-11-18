@@ -1,4 +1,4 @@
-"""Content-free, idempotent operational receipts. No billing/edition changes."""
+"""Content-free same-transaction receipts; historical outbox compatibility only."""
 
 from uuid import UUID, uuid4
 
@@ -6,13 +6,11 @@ from django.db import transaction
 from django.utils import timezone
 
 from tracer.models.attachment import (
+    Attachment,
     AttachmentAuditEvent,
-    AttachmentBlob,
     AttachmentOutbox,
     AttachmentState,
     AttachmentUpload,
-    AttachmentUsageReceipt,
-    UploadReservation,
 )
 from tracer.services.attachments.contract import AttachmentError
 
@@ -24,6 +22,7 @@ EVENT_REASONS = {
     "settlement": {"ready", "failed", "rejected", "expired", "deleted"},
     "policy": {"changed"},
 }
+TERMINAL = frozenset(EVENT_REASONS["settlement"])
 
 
 def audit(*, scope, actor_id, entity_id, event, reason, event_id=None):
@@ -49,119 +48,144 @@ def audit(*, scope, actor_id, entity_id, event, reason, event_id=None):
     return row
 
 
-@transaction.atomic
-def consume_settlement(event_id):
-    event = AttachmentOutbox.objects.select_for_update().get(
-        pk=event_id, event="settled"
+def admit_locked(upload):
+    if (
+        not transaction.get_connection().in_atomic_block
+        or upload.admission_event_id is None
+    ):
+        raise RuntimeError("admission requires an atomic durable event identity")
+    return audit(
+        scope=upload.scope,
+        actor_id=None,
+        entity_id=upload.id,
+        event="admission",
+        reason="accepted",
+        event_id=upload.admission_event_id,
     )
-    if event.upload_id is None:  # a settlement event always names its upload
-        raise AttachmentUpload.DoesNotExist
-    upload = AttachmentUpload.objects.get(pk=event.upload_id, scope=event.scope)
-    if not UploadReservation.objects.filter(
-        upload=upload, scope=event.scope, settled_at__isnull=False
-    ).exists():
-        raise AttachmentError("unsettled_reservation", 409)
-    existing = AttachmentUsageReceipt.objects.filter(
-        upload=upload, scope=event.scope
-    ).first()
-    if existing:
-        # A replayed event: the receipt is already written. Mark it consumed so
-        # the drain does not select it again.
-        if event.processed_at is None:
-            event.processed_at = timezone.now()
-            event.save(update_fields=["processed_at"])
-        return existing
-    # A delayed consumer can observe a deleted upload. The immutable verified blob
-    # proves storage occurred even if deletion ran before accounting caught up.
-    blob = AttachmentBlob.objects.filter(
-        attachment=upload.attachment, scope=event.scope
-    ).first()
-    if upload.state not in {
-        AttachmentState.READY,
-        AttachmentState.FAILED,
-        AttachmentState.REJECTED,
-        AttachmentState.EXPIRED,
-        AttachmentState.DELETED,
-    }:
-        raise AttachmentError("unsettled_reservation", 409)
-    if upload.state == AttachmentState.READY and blob is None:
-        raise AttachmentError("not_validated", 409)
-    receipt, _ = AttachmentUsageReceipt.objects.get_or_create(
-        upload=upload,
-        defaults={
-            "scope": event.scope,
-            "stored_bytes": blob.byte_length if blob else 0,
-            "outcome": AttachmentState.READY if blob else upload.state,
-        },
-    )
+
+
+def receipt_locked(upload, *, attachment, outcome, event_id=None):
+    """First terminal outcome wins, independently of operational deletion/cleanup.
+
+    Caller holds Upload then Attachment. A complete immutable publication is
+    evidence of READY even when delayed historical accounting sees DELETED.
+    Never replace historical receipt IDs/times with this recovery's time.
+    """
+    if not transaction.get_connection().in_atomic_block or outcome not in TERMINAL:
+        raise ValueError("atomic terminal settlement required")
+    if (attachment.id, attachment.scope_id) != (upload.attachment_id, upload.scope_id):
+        raise AttachmentError("not_found", 404)
+    if event_id is not None and upload.settlement_event_id not in (None, event_id):
+        raise AttachmentError("idempotency_conflict", 409)
+    changed = upload.usage_id is None
+    if changed:
+        if attachment.verified_blob_id is not None:
+            if (
+                attachment.verified_byte_length is None
+                or attachment.verified_storage_version is None
+            ):
+                raise AttachmentError("not_validated", 409)
+            outcome, stored = AttachmentState.READY, attachment.verified_byte_length
+        elif outcome == AttachmentState.READY:
+            raise AttachmentError("not_validated", 409)
+        else:
+            stored = 0
+        upload.usage_id = uuid4()
+        upload.usage_created_at = timezone.now()
+        upload.usage_outcome = outcome
+        upload.usage_stored_bytes = stored
+        upload.settlement_event_id = upload.settlement_event_id or event_id or uuid4()
+        upload.save(
+            update_fields=[
+                "usage_id",
+                "usage_created_at",
+                "usage_outcome",
+                "usage_stored_bytes",
+                "settlement_event_id",
+            ]
+        )
+    elif upload.settlement_event_id is None:
+        upload.settlement_event_id = event_id or uuid4()
+        upload.save(update_fields=["settlement_event_id"])
     audit(
-        scope=event.scope,
+        scope=upload.scope,
         actor_id=None,
         entity_id=upload.id,
         event="settlement",
-        reason=receipt.outcome,
+        reason=upload.usage_outcome,
+        event_id=upload.settlement_event_id,
+    )
+    return changed
+
+
+@transaction.atomic
+def consume_settlement(event_id):
+    # Discovery is unlocked. Never take Outbox and then wait on Upload/deletion.
+    ref = AttachmentOutbox.objects.get(pk=event_id, event="settled")
+    if ref.upload_id is None:
+        raise AttachmentUpload.DoesNotExist
+    upload = AttachmentUpload.objects.select_for_update().get(
+        pk=ref.upload_id, scope_id=ref.scope_id
+    )
+    attachment = Attachment.objects.select_for_update().get(
+        pk=upload.attachment_id, scope_id=ref.scope_id
+    )
+    event = AttachmentOutbox.objects.select_for_update().get(
+        pk=event_id, event="settled", upload_id=upload.id, scope_id=upload.scope_id
+    )
+    if upload.state not in TERMINAL and upload.usage_id is None:
+        raise AttachmentError("unsettled_reservation", 409)
+    receipt_locked(
+        upload,
+        attachment=attachment,
+        outcome=upload.usage_outcome or upload.state,
         event_id=event.id,
     )
-    event.processed_at = timezone.now()
-    event.save(update_fields=["processed_at"])
-    return receipt
+    if event.processed_at is None:
+        event.processed_at = timezone.now()
+        event.save(update_fields=["processed_at"])
+    return upload
 
 
 @transaction.atomic
 def consume_admission(event_id):
-    """Record the admission audit row for one ``admitted`` event, exactly once.
-
-    The audit ``event_id`` is the outbox row id, so a replay after a crash finds
-    the same audit row instead of writing a second one.
-    """
-    event = (
-        AttachmentOutbox.objects.select_for_update()
-        .filter(pk=event_id, event="admitted")
-        .first()
-    )
-    if event is None or event.processed_at:
+    ref = AttachmentOutbox.objects.filter(pk=event_id, event="admitted").first()
+    if ref is None:
         return False
-    audit(
-        scope=event.scope,
-        actor_id=None,
-        entity_id=event.upload_id,
-        event="admission",
-        reason="accepted",
-        event_id=event.id,
+    upload = AttachmentUpload.objects.select_for_update().get(
+        pk=ref.upload_id, scope_id=ref.scope_id
     )
-    event.processed_at = timezone.now()
-    event.save(update_fields=["processed_at"])
-    return True
+    event = AttachmentOutbox.objects.select_for_update().get(
+        pk=event_id, event="admitted", upload_id=upload.id, scope_id=upload.scope_id
+    )
+    if upload.admission_event_id not in (None, event.id):
+        raise AttachmentError("idempotency_conflict", 409)
+    if upload.admission_event_id is None:
+        upload.admission_event_id = event.id
+        upload.save(update_fields=["admission_event_id"])
+    admit_locked(upload)
+    changed = event.processed_at is None
+    if changed:
+        event.processed_at = timezone.now()
+        event.save(update_fields=["processed_at"])
+    return changed
 
 
 def expire_reservations(*, limit=100):
-    """Bounded sweeper; caller owns scheduling, retries and crash monitoring."""
     from tracer.services.attachments.uploads import settle
 
     if type(limit) is not int or not 1 <= limit <= 100:
         raise AttachmentError("invalid_request")
     rows = list(
-        UploadReservation.objects.filter(
-            settled_at__isnull=True, expires_at__lte=timezone.now()
-        ).order_by("expires_at")[:limit]
+        AttachmentUpload.objects.filter(
+            reservation_settled_at__isnull=True,
+            reservation_expires_at__lte=timezone.now(),
+        ).order_by("reservation_expires_at", "id")[:limit]
     )
     changed = 0
-    for row in rows:
-        # READY publication may have preceded a worker crash. Reconcile verified
-        # storage rather than reporting already-stored bytes as expired/free.
-        upload = AttachmentUpload.objects.get(pk=row.upload_id, scope_id=row.scope_id)
-        outcome: str = (
-            AttachmentState.READY
-            if upload.state == AttachmentState.READY
-            else AttachmentState.EXPIRED
+    for upload in rows:
+        outcome = upload.usage_outcome or (
+            upload.state if upload.state in TERMINAL else AttachmentState.EXPIRED
         )
-        if upload.state == AttachmentState.DELETED:
-            outcome = AttachmentState.DELETED
-        elif upload.state in {
-            AttachmentState.FAILED,
-            AttachmentState.REJECTED,
-            AttachmentState.EXPIRED,
-        }:
-            outcome = upload.state
-        changed += bool(settle(upload.id, scope_id=row.scope_id, outcome=outcome))
+        changed += bool(settle(upload.id, scope_id=upload.scope_id, outcome=outcome))
     return changed
