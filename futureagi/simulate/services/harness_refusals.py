@@ -32,7 +32,7 @@ logger = structlog.get_logger(__name__)
 _SETTING = "setting"
 _PATH = "path"
 _SETTING_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
-_PATH_PART = re.compile(r"[A-Za-z0-9._@+ -]{1,128}")
+_PATH_PART = re.compile(r"[A-Za-z0-9._@+() -]{1,128}")
 _PATH_MAX = 200
 
 # A refusal the user can fix: (sentence, kind of name it carries or None). ``{name}``
@@ -220,8 +220,25 @@ _PLATFORM = frozenset(
         # Only a local sandbox reads a source path; the hosted page never sends one.
         "source_path must be an existing directory",
         "source_path is outside allowed roots",
+        # The sandbox has no token configured: our deployment, not the user's request.
+        "sandbox_token_not_configured",
     }
 )
+
+# The our-side entries that are kit phrases, not codes: the brackets show a slug instead, so no
+# kit text is shown (ADR-010, 7).
+_PLATFORM_SLUGS = {
+    "A subfolder needs a GitHub repository to read it from.": (
+        "subfolder_needs_github_repository"
+    ),
+    "A subfolder needs the generic harness, which this job didn't ask for.": (
+        "subfolder_needs_generic_harness"
+    ),
+    "one relative path is required per file": "source_path_per_file_required",
+    "source_id is invalid": "source_id_invalid",
+    "source_path must be an existing directory": "source_path_not_a_directory",
+    "source_path is outside allowed roots": "source_path_outside_allowed_roots",
+}
 
 _PLATFORM_SENTENCE = (
     "We couldn't start the check because of a problem on our side ({code}). Try again; "
@@ -252,8 +269,7 @@ def _split(message: str) -> tuple[str, str | None]:
     code, separator, rest = message.partition(": ")
     if not separator:
         return message, None
-    # The kit adds a hint in brackets after a reserved name; the sentence has its own.
-    return code, rest.split(" (", 1)[0].strip()
+    return code, rest.strip()
 
 
 def _shown_name(name: str | None, kind: str | None) -> str | None:
@@ -261,6 +277,8 @@ def _shown_name(name: str | None, kind: str | None) -> str | None:
     if not name or kind is None:
         return None
     if kind == _SETTING:
+        # The kit adds a hint in brackets after a reserved name; the sentence has its own.
+        name = name.split(" (", 1)[0].strip()
         return name if _SETTING_NAME.fullmatch(name) else None
     path = PurePosixPath(name)
     if (
@@ -281,8 +299,11 @@ def refusal_sentence(message: str) -> str:
         shown = _shown_name(name, kind)
         return template.format(name=f" {shown}" if shown else "")
     if code in _PLATFORM:
-        logger.error("harness_sandbox_refusal_on_our_side", code=code)
-        return _PLATFORM_SENTENCE.format(code=code)
+        shown = _PLATFORM_SLUGS.get(code, code)
+        logger.error(
+            "harness_sandbox_refusal_on_our_side", code=shown, kit_message=message[:500]
+        )
+        return _PLATFORM_SENTENCE.format(code=shown)
     logger.warning("harness_sandbox_refusal_unknown", kit_message=message[:500])
     shown_code = code if _CODE.fullmatch(code) else None
     return _UNKNOWN_SENTENCE.format(code=f" ({shown_code})" if shown_code else "")

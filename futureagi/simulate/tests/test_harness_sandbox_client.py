@@ -56,10 +56,8 @@ def test_other_client_errors_are_still_rejected(sandbox, status_code):
         client.get("missing")
 
     assert caught.value.status_code == status_code
-    # ADR-010: the kit's own text never reaches the page; an unknown refusal gets the
-    # generic sentence.
-    assert str(caught.value) == refusal_sentence("no such job")
-    assert "no such job" not in str(caught.value)
+    # Not the connect path: the kit's own fixed text is kept (Hawk M1 on #4184).
+    assert str(caught.value) == "no such job"
 
 
 def test_server_error_is_unavailable(sandbox):
@@ -116,10 +114,8 @@ def test_a_403_is_the_sandboxs_own_refusal_not_a_token_rejection(sandbox):
         client.list_jobs()
 
     assert caught.value.status_code == 403
-    # Only a local sandbox reads a source path; the hosted page never sends one, so
-    # this reaches the page as the platform's own refusal, with its code (TH-8978).
-    assert str(caught.value) == refusal_sentence("source_path is outside allowed roots")
-    assert "(source_path is outside allowed roots)" in str(caught.value)
+    # Not the connect path (list_jobs): the kit's own fixed text is kept (Hawk M1 on #4184).
+    assert str(caught.value) == "source_path is outside allowed roots"
 
 
 @pytest.mark.parametrize(
@@ -288,3 +284,64 @@ def test_a_500_list_without_a_configuration_entry_is_still_unavailable(sandbox):
         client.list_jobs()
 
     assert "couldn't take this right now (HTTP 500)" in str(caught.value)
+
+
+# Hawk M1 on #4184: the sentences belong to the connect path (submit, preflight and the two
+# uploads). A job's read, cancel and adjust refusals are fixed kit text, already right, and keep it.
+@pytest.mark.parametrize(
+    ("call", "status_code", "detail"),
+    [
+        (lambda client: client.get("job-1"), 404, "job not found"),
+        (lambda client: client.cancel("job-1"), 404, "job not found"),
+        (
+            lambda client: client.adjust("job-1", {}),
+            409,
+            "the run is already finalizing; start a follow-up run to change it",
+        ),
+        (
+            lambda client: client.adjust("job-1", {}),
+            409,
+            "a completed run cannot be adjusted",
+        ),
+    ],
+    ids=["get", "cancel", "adjust-finalizing", "adjust-completed"],
+)
+def test_a_refusal_off_the_connect_path_keeps_the_kits_fixed_text(
+    sandbox, call, status_code, detail
+):
+    client = sandbox(status_code, detail=detail)
+
+    with pytest.raises(HarnessSandboxRejected) as caught:
+        call(client)
+
+    assert caught.value.status_code == status_code
+    assert str(caught.value) == detail
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda client: client.submit({"source_id": "abc"}),
+        lambda client: client.preflight({"source_id": "abc"}),
+    ],
+    ids=["submit", "preflight"],
+)
+def test_a_refusal_on_the_connect_path_reads_as_the_platforms_sentence(sandbox, call):
+    client = sandbox(404, detail="uploaded source was not found")
+
+    with pytest.raises(HarnessSandboxRejected) as caught:
+        call(client)
+
+    assert str(caught.value) == refusal_sentence("uploaded source was not found")
+
+
+# Hawk L6 on #4184: a sandbox with no token configured is our configuration fault, not an
+# outage: the our-side sentence, logged as an error.
+def test_a_sandbox_without_its_token_reads_as_our_side_not_an_outage(sandbox):
+    client = sandbox(503, detail="sandbox_token_not_configured")
+
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
+        client.submit({"source_id": "abc"})
+
+    assert str(caught.value) == refusal_sentence("sandbox_token_not_configured")
+    assert "(sandbox_token_not_configured)" in str(caught.value)

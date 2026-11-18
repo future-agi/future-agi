@@ -102,6 +102,8 @@ PLATFORM_CODES = [
     "resolved_secret_forbidden: agent.secret_refs",
     "source_path must be an existing directory",
     "source_path is outside allowed roots",
+    # Hawk L6 on #4184: a sandbox with no token configured is our configuration fault.
+    "sandbox_token_not_configured",
 ]
 
 
@@ -111,7 +113,7 @@ def logged(monkeypatch):
 
     class _Log:
         def error(self, event, **fields):
-            seen.append(("error", event, fields.get("code")))
+            seen.append(("error", event, fields.get("code"), fields.get("kit_message")))
 
         def warning(self, event, **fields):
             seen.append(("warning", event, fields.get("kit_message")))
@@ -160,11 +162,15 @@ def test_a_code_only_the_platform_causes_says_so_keeps_the_code_and_is_logged(
     assert sentence.startswith(
         "We couldn't start the check because of a problem on our side"
     )
-    assert f"({_code_of(message)})" in sentence
+    # Hawk L5 on #4184: the brackets hold a code, never a kit phrase.
+    shown = re.search(r"\(([^)]*)\)", sentence).group(1)
+    assert re.fullmatch(r"[a-z][a-z0-9_]*", shown)
+    code = _code_of(message)
+    if re.fullmatch(r"[a-z][a-z0-9_]*", code):
+        assert shown == code
     assert sentence.endswith(".")
-    assert logged == [
-        ("error", "harness_sandbox_refusal_on_our_side", _code_of(message))
-    ]
+    # Hawk L3: the kit's whole message goes to the log with the code.
+    assert logged == [("error", "harness_sandbox_refusal_on_our_side", shown, message)]
 
 
 @pytest.mark.parametrize(
@@ -229,3 +235,11 @@ def test_every_code_is_classified_once():
     assert user <= harness_refusals.known_codes()
     assert platform <= harness_refusals.known_codes()
     assert harness_refusals.known_codes() == user | platform
+
+
+# Hawk L1 on #4184: the bracketed-hint split is for reserved setting names only; a path keeps
+# its brackets.
+def test_a_path_with_brackets_is_shown_whole():
+    sentence = refusal_sentence("duplicate source path: docs/Report (1).md")
+
+    assert "docs/Report (1).md" in sentence

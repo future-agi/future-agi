@@ -47,10 +47,10 @@ class HarnessSandboxClient:
         return self._request("GET", "/v1/jobs")
 
     def submit(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._request("POST", "/v1/jobs", json=payload)
+        return self._request("POST", "/v1/jobs", json=payload, connect=True)
 
     def preflight(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._request("POST", "/v1/preflight", json=payload)
+        return self._request("POST", "/v1/preflight", json=payload, connect=True)
 
     def upload_source(
         self, files: list[Any], paths: list[str], name: str
@@ -75,6 +75,7 @@ class HarnessSandboxClient:
             files=multipart,
             data=data,
             timeout=(5, 300),
+            connect=True,
         )
 
     def upload_secret_file(
@@ -98,6 +99,7 @@ class HarnessSandboxClient:
             },
             data={"environment_name": environment_name},
             timeout=(5, 60),
+            connect=True,
         )
 
     def get(self, job_id: str) -> dict[str, Any]:
@@ -118,8 +120,12 @@ class HarnessSandboxClient:
         path: str,
         *,
         authenticated: bool = True,
+        connect: bool = False,
         **kwargs: Any,
     ) -> Any:
+        """``connect`` marks the connect path (submit, preflight, the two uploads): only its
+        refusals become the platform's sentences (ADR-010). Elsewhere a job's read, cancel or
+        adjust refusal is fixed kit text that is already right, and is kept."""
         headers = dict(kwargs.pop("headers", {}))
         sends_token = bool(authenticated and self.token)
         if sends_token:
@@ -162,7 +168,13 @@ class HarnessSandboxClient:
                 detail = response.text[:500]
             if response.status_code < 500:
                 raise HarnessSandboxRejected(
-                    response.status_code, _refusal_message(detail)
+                    response.status_code,
+                    _refusal_message(detail) if connect else _kit_text(detail),
+                )
+            # The sandbox has no token configured: our deployment's fault, not an outage.
+            if str(detail or "").strip() == "sandbox_token_not_configured":
+                raise HarnessSandboxUnavailable(
+                    refusal_sentence("sandbox_token_not_configured")
                 )
             # A refusal the sandbox's own configuration causes (kit #353): our bug, not
             # an outage, so it reads as the shared our-side sentence with its code.
@@ -181,6 +193,20 @@ class HarnessSandboxClient:
                 f"(HTTP {response.status_code}). Try again in a few minutes."
             )
         return response.json()
+
+
+def _kit_text(detail: Any) -> str:
+    """The sandbox's own refusal text, for a refusal off the connect path: each message of a
+    validation list without pydantic's "Value error, " prefix, or the detail as it is."""
+    if not isinstance(detail, list):
+        return str(detail or "").strip() or "unknown error"
+    messages = []
+    for error in detail:
+        message = error.get("msg") if isinstance(error, dict) else error
+        message = str(message or "").strip().removeprefix("Value error, ").strip()
+        if message:
+            messages.append(message.rstrip("."))
+    return ". ".join(messages) + "." if messages else "unknown error"
 
 
 def _refusal_message(detail: Any) -> str:
