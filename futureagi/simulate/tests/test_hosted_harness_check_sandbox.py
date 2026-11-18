@@ -566,7 +566,14 @@ def test_chat_start_waits_for_the_checks_files(
     else:
         start.assert_called_once()
     if case == "published":
-        delete.assert_called_once_with("sandbox-check", ctx.conversation.id)
+        # The retired check sandbox's lease had expired: that is its ending.
+        delete.assert_called_once_with(
+            "sandbox-check",
+            ctx.conversation.id,
+            reason="lease_expired",
+            failure_domain="",
+            last_seen=None,
+        )
 
 
 @pytest.mark.django_db
