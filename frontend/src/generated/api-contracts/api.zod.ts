@@ -69591,6 +69591,7 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
         "",
       ])
       .nullable(),
+    can_start: zod.boolean().optional(),
     filters_applied: zod
       .object({
         project_id: zod
@@ -72659,7 +72660,9 @@ export const TracerEvalTaskUnpauseEvalTaskQueryParams = zod.object({
   eval_task_id: zod.string().uuid(),
 });
 
-export const TracerEvalTaskUnpauseEvalTaskBody = zod.object({});
+export const TracerEvalTaskUnpauseEvalTaskBody = zod.object({
+  start: zod.boolean().optional(),
+});
 
 export const tracerEvalTaskUnpauseEvalTaskResponseStatusDefault = true;
 

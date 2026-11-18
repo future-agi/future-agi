@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "808d1b694602000697421b6ebaa23f8c7f146614b0b47fe84325899077c7fd71",
+  "source_contract_sha256": "3a53835b23e794c94f387481affd8fb59407b49036c493e915ca216ce8c8a29b",
   "tool_count": 111,
   "tools": [
     {
@@ -6094,6 +6094,10 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "start": {
+            "title": "Start",
+            "type": "boolean"
+          },
           "eval_task_id": {
             "type": "string",
             "format": "uuid"
@@ -6118,7 +6122,9 @@
           "query": [
             "eval_task_id"
           ],
-          "body": []
+          "body": [
+            "start"
+          ]
         }
       },
       "response": {

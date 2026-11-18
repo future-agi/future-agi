@@ -468,6 +468,7 @@ import type {
   EvalTaskDeleteRequestApi,
   EvalTaskDetailsResponseApi,
   EvalTaskMessageResponseApi,
+  EvalTaskUnpauseRequestApi,
   EvalTaskUpdateRequestApi,
   EvalTaskUpdateResponseApi,
   EvalTaskUsageResponseApi,
@@ -74617,6 +74618,11 @@ export type tracerEvalTaskUnpauseEvalTaskResponse400 = {
   status: 400;
 };
 
+export type tracerEvalTaskUnpauseEvalTaskResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
 export type tracerEvalTaskUnpauseEvalTaskResponse500 = {
   data: ApiErrorResponseApi;
   status: 500;
@@ -74624,7 +74630,7 @@ export type tracerEvalTaskUnpauseEvalTaskResponse500 = {
 
 export type tracerEvalTaskUnpauseEvalTaskResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 409 | 500>;
 };
 
 export type tracerEvalTaskUnpauseEvalTaskResponseSuccess =
@@ -74633,6 +74639,7 @@ export type tracerEvalTaskUnpauseEvalTaskResponseSuccess =
   };
 export type tracerEvalTaskUnpauseEvalTaskResponseError = (
   | tracerEvalTaskUnpauseEvalTaskResponse400
+  | tracerEvalTaskUnpauseEvalTaskResponse409
   | tracerEvalTaskUnpauseEvalTaskResponse500
   | tracerEvalTaskUnpauseEvalTaskResponseDefault
 ) & {
@@ -74666,7 +74673,7 @@ export const getTracerEvalTaskUnpauseEvalTaskUrl = (
 };
 
 export const tracerEvalTaskUnpauseEvalTask = async (
-  emptyRequestApi: EmptyRequestApi,
+  evalTaskUnpauseRequestApi: EvalTaskUnpauseRequestApi,
   params: TracerEvalTaskUnpauseEvalTaskParams,
   options?: RequestInit,
 ): Promise<tracerEvalTaskUnpauseEvalTaskResponse> => {
@@ -74676,7 +74683,7 @@ export const tracerEvalTaskUnpauseEvalTask = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(emptyRequestApi),
+      body: JSON.stringify(evalTaskUnpauseRequestApi),
     },
   );
 };

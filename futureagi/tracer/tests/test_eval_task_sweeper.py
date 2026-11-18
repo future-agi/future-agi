@@ -91,6 +91,8 @@ def make_task(db, sweep_project, sweep_config):
             spans_limit=100,
             run_type=RunType.HISTORICAL,
             status=status,
+            # create() stamps this before attempting the initial dispatch.
+            last_run=timezone.now(),
             row_type=RowType.SPANS,
         )
         task.evals.add(sweep_config)
@@ -165,6 +167,34 @@ def temporal(monkeypatch):
 
 @pytest.mark.django_db
 class TestFindStrandedTasks:
+    @pytest.mark.parametrize("run_type", [RunType.HISTORICAL, RunType.CONTINUOUS])
+    def test_saved_pending_without_entries_or_cursor_is_not_a_candidate(
+        self, make_task, run_type
+    ):
+        task = make_task(status=EvalTaskStatus.PENDING)
+        task.run_type = run_type
+        task.save(update_fields=["run_type"])
+        assert task.last_run is not None
+        assert task.start_time is None
+        assert task.continuous_cursor is None
+
+        assert task.id not in {item.id for item in sweeper.find_stranded_tasks()}
+
+    @pytest.mark.parametrize("evidence", ["entry", "cursor"])
+    def test_null_start_time_does_not_exclude_a_pending_recovery_candidate(
+        self, make_task, make_entry, evidence
+    ):
+        task = make_task(status=EvalTaskStatus.PENDING)
+        if evidence == "entry":
+            make_entry(task)
+        else:
+            task.run_type = RunType.CONTINUOUS
+            task.continuous_cursor = timezone.now() - timedelta(hours=1)
+            task.save(update_fields=["run_type", "continuous_cursor"])
+        assert task.start_time is None
+
+        assert task.id in {item.id for item in sweeper.find_stranded_tasks()}
+
     def test_a_task_with_pending_work_is_a_candidate(self, make_task, make_entry):
         task = make_task()
         make_entry(task)
