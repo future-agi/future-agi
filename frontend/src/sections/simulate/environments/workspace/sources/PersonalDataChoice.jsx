@@ -162,7 +162,7 @@ export default function PersonalDataChoice({
             />
           ))}
         </Box>
-        {found.length > 0 && (
+        {choice !== "none" && found.length > 0 && (
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
           >

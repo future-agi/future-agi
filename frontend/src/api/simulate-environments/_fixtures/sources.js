@@ -793,7 +793,7 @@ export const proposalItemsOf = (sources) => {
     items.push({
       id: `actor-${approval.source.source_id}-${approval.passage.id}`,
       kind: "actor",
-      title: `Actor: a Supervisor who approves refunds over $${above}`,
+      title: `Actor: Supervisor approves refunds over $${above}`,
       detail:
         "Joins when the agent asks to refund more than the cap; approves or declines, and declines if no one answers in 3 minutes.",
       cite: cite(approval.source, approval.passage),
@@ -828,6 +828,7 @@ export const proposalItemsOf = (sources) => {
         ...cite(orders),
         ref: `${orders.name} · ${sample.order_id}`,
         at: sample.order_id,
+        excerpt: `${sample.order_id}, delivered ${sample.delivered_at}, ${sample.price ?? `$${(sample.amount_cents / 100).toFixed(2)}`}`,
       },
     });
   }
