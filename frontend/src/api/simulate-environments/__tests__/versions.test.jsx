@@ -1663,6 +1663,9 @@ describe("validate before save requests", () => {
       environmentVersionId: "e9",
       suiteVersionId: "s9",
     });
+  });
+});
+
 describe("useActorCheck", () => {
   it("asks on open, then once typing pauses about the latest request only, and counts only a verdict on that request", async () => {
     const verdict = {
