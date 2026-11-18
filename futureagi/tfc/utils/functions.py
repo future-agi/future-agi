@@ -669,10 +669,14 @@ def calculate_eval_average(eval_template, api_logs):
                 elif isinstance(result, dict) and eval_template.multi_choice:
                     # Choice scores override the formatter's nominal output type,
                     # including for percentage templates configured as "score".
+                    # The formatter stores {score, choices: [...]} for several
+                    # picks and {score, choice} when the evaluator returned one.
                     run_score = result.get("score")
                     picks = result.get("choices")
+                    if picks is None:
+                        picks = result.get("choice")
                     if (
-                        isinstance(picks, list)
+                        isinstance(picks, (list, str))
                         and picks
                         and isinstance(run_score, (int, float))
                         and not isinstance(run_score, bool)
@@ -701,6 +705,8 @@ def calculate_eval_average(eval_template, api_logs):
                             case _:
                                 valid_logs += 1
                     elif eval_template.multi_choice:
+                        if isinstance(result, str):
+                            result = [result]  # one unscored pick
                         if not isinstance(result, list) or not result:
                             continue
                         if choices_map:

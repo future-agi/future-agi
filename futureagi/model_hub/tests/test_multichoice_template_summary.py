@@ -110,9 +110,54 @@ def test_malformed_results_do_not_dilute_a_scored_run(choices_map):
         None,
         {"choices": ["Excellent"]},
         {"score": 1, "choices": []},
-        {"score": 1, "choice": "Excellent"},
         {"score": True, "choices": ["Excellent"]},
         {"score": "0.5", "choices": ["Average"]},
         {"score": 2, "choices": ["Excellent"]},
     ]
     assert_summary(tpl, values, 50)
+
+
+@pytest.mark.parametrize("choices_map", [MAPPING, {}], ids=["mapped", "no-legacy-map"])
+def test_every_formatted_multi_choice_shape_counts_once(choices_map):
+    tpl = template(choices_map)
+    values = [
+        formatted(tpl, ["Excellent", "Average"]),  # {score, choices}
+        formatted(tpl, "Poor"),  # one label: {score, choice}
+        formatted(tpl, {"result": "Average"}),  # dict reduced to one label
+    ]
+    assert values[1] == {"score": 0, "choice": "Poor"}
+    assert values[2] == {"score": 0.5, "choice": "Average"}
+    assert_summary(tpl, values, 41.67)
+
+
+def test_unscored_single_label_uses_the_legacy_map():
+    tpl = template(MAPPING)
+    tpl.choice_scores = None
+    values = [formatted(tpl, "Average"), formatted(tpl, ["Excellent", "Poor"])]
+    assert values == ["Average", ["Excellent", "Poor"]]
+    assert_summary(tpl, values, 50)
+
+
+@pytest.mark.django_db
+def test_saved_percentage_template_counts_single_label_runs(auth_client):
+    response = auth_client.post(
+        "/model-hub/eval-templates/create-v2/",
+        {
+            "name": "percentage-single-label",
+            "eval_type": "llm",
+            "model": "gpt-4o",
+            "instructions": "Assess {{answer}}.",
+            "output_type": "percentage",
+            "multi_choice": True,
+            "choice_scores": {"Excellent": 1, "Average": 0.5, "Poor": 0},
+        },
+        format="json",
+    )
+    assert response.status_code == 200
+    tpl = EvalTemplate.objects.get(pk=response.data["result"]["id"])
+    values = [
+        format_eval_value({"output": tpl.config["output"], "data": data}, tpl)
+        for data in (["Excellent", "Average"], ["Poor"], "Average")
+    ]
+    assert [v["score"] for v in values] == [0.75, 0, 0.5]
+    assert_summary(tpl, values, 41.67)
