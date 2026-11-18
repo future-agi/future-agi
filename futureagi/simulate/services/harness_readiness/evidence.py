@@ -41,7 +41,6 @@ from simulate.services.harness_readiness.catalogue import (
 )
 from simulate.services.harness_readiness.children import children
 from simulate.services.harness_versioning import archives, assembly
-from simulate.services.hosted_harness import HostedHarnessError
 
 logger = structlog.get_logger(__name__)
 
