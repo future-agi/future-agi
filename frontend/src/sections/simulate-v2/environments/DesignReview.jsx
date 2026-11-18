@@ -588,10 +588,7 @@ export default function DesignReview({
             <Typography
               sx={{ typography: "s1", color: "text.tertiary", mt: 0.25 }}
             >
-              Nothing is built until you approve. Approving builds the world,
-              tools, rules and scenarios and runs the five release checks. If
-              they pass, it&apos;s saved as v1; if anything differs from this
-              design, you review it first.
+              Nothing is built until you approve — a clean build saves as v1.
             </Typography>
           </Box>
           {canAdd && (
