@@ -31287,7 +31287,6 @@ export interface EvalTaskDetailsResultApi {
   project_id: string;
   project_name: string | null;
   status: EvalTaskDetailsResultApiStatus | null;
-  can_start?: boolean;
   filters_applied: EvalTaskDetailsResultApiFiltersApplied | null;
   created_at: string;
   evals_applied: EvalTaskDetailsEvalApi[];
@@ -31891,10 +31890,6 @@ export interface SamplingPreviewResultApi {
 export interface SamplingPreviewResponseApi {
   status: boolean;
   result: SamplingPreviewResultApi;
-}
-
-export interface EvalTaskUnpauseRequestApi {
-  start?: boolean;
 }
 
 /**
