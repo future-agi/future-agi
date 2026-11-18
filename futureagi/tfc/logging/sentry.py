@@ -197,6 +197,118 @@ def _scrub(value: Any, depth: int = 0) -> Any:
     return value
 
 
+# ``<sensitive name>=<value>`` or ``<sensitive name>: <value>`` inside free
+# text, with an optional quote around either side and an optional auth scheme.
+_SENSITIVE_PAIR_IN_TEXT = re.compile(
+    r"""(?P<key>[\w.\-]*(?:"""
+    + "|".join(re.escape(key) for key in SENSITIVE_KEY_SUBSTRINGS)
+    + r""")[\w.\-]*)(?P<sep>["']?\s*[:=]\s*["']?)"""
+    r"""(?P<value>(?:(?:Bearer|Basic|Token)\s+)?[^\s"',;&}\]]+)""",
+    re.IGNORECASE,
+)
+
+# LLM usage figures such as ``max_tokens=4096`` or ``token_count=12`` name a
+# count, not a credential; keep them readable.
+_TOKEN_USAGE_NAME = re.compile(
+    r"tokens$|token_(?:count|usage|limit|budget)s?$", re.IGNORECASE
+)
+
+
+def _scrub_text(value: Any) -> Any:
+    """Redact credentials in free text such as an exception or log message.
+
+    A credential document or SAML payload replaces the whole text, as
+    ``_scrub`` does for any string. Otherwise only the value of each
+    ``<sensitive name>=<value>`` pair is replaced, so the rest of the
+    diagnostic text survives.
+    """
+    if not isinstance(value, str):
+        return value
+    scrubbed = _scrub(value)
+    if scrubbed is not value:
+        return scrubbed
+
+    def redact(match: re.Match) -> str:
+        if _TOKEN_USAGE_NAME.search(match["key"]):
+            return match[0]
+        return f"{match['key']}{match['sep']}{_REDACTED}"
+
+    return _SENSITIVE_PAIR_IN_TEXT.sub(redact, value)
+
+
+def _scrub_text_deep(value: Any, depth: int = 0) -> Any:
+    """``_scrub`` a structure, then ``_scrub_text`` every string left in it."""
+    value = _scrub(value, depth)
+    if depth > 6:
+        return value
+    if isinstance(value, str):
+        return _scrub_text(value)
+    if isinstance(value, dict):
+        return {k: _scrub_text_deep(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_text_deep(v, depth + 1) for v in value]
+    return value
+
+
+def _redacted_spans(text: Any) -> list[str] | None:
+    """The values ``_scrub_text`` would redact in ``text``; None for all of it."""
+    if not isinstance(text, str):
+        return []
+    if _scrub(text) is not text:
+        return None
+    return [
+        match["value"]
+        for match in _SENSITIVE_PAIR_IN_TEXT.finditer(text)
+        if not _TOKEN_USAGE_NAME.search(match["key"])
+    ]
+
+
+def _scrub_log_params(params: Any, formatted: Any) -> Any:
+    """Redact log arguments that ``formatted`` shows as credential values.
+
+    ``logger.error("api_key=%s", key)`` passes the credential as a bare
+    argument with no name of its own, so it is matched against the redacted
+    spans of the formatted message as well as scrubbed on its own.
+    """
+    spans = _redacted_spans(formatted)
+
+    def one(param: Any) -> Any:
+        rendered = str(param)
+        if rendered and (
+            (spans is None and isinstance(param, str))
+            or any(rendered in span for span in spans or ())
+        ):
+            return _REDACTED
+        return _scrub_text_deep(param)
+
+    if isinstance(params, (list, tuple)):
+        return [one(param) for param in params]
+    if isinstance(params, dict):
+        return {
+            key: _REDACTED if _is_sensitive_key(key) else one(param)
+            for key, param in params.items()
+        }
+    return params
+
+
+def _scrub_message_fields(event: dict, values: list[dict]) -> None:
+    """Scrub exception values and the event's message/logentry text in place."""
+    for value in values:
+        if "value" in value:
+            value["value"] = _scrub_text(value["value"])
+    if "message" in event:
+        event["message"] = _scrub_text(event["message"])
+    logentry = event.get("logentry")
+    if isinstance(logentry, dict):
+        if "params" in logentry:
+            logentry["params"] = _scrub_log_params(
+                logentry["params"], logentry.get("formatted")
+            )
+        for key in ("message", "formatted"):
+            if key in logentry:
+                logentry[key] = _scrub_text(logentry[key])
+
+
 def _vertex_log_message(logger: object, message: object) -> bool:
     return (
         logger == "LiteLLM"
@@ -237,7 +349,7 @@ def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
         # from the provider logger (for example, an HTTP breadcrumb's data).
         for key in ("message", "data"):
             if key in crumb:
-                crumb[key] = _scrub(crumb[key])
+                crumb[key] = _scrub_text_deep(crumb[key])
     return crumb
 
 
@@ -299,7 +411,8 @@ def _scrub_event(event: dict, *, vertex_log: bool = False) -> None:
     else:
         for frame in frames:
             if isinstance(frame.get("vars"), dict):
-                frame["vars"] = _scrub(frame["vars"])
+                frame["vars"] = _scrub_text_deep(frame["vars"])
+        _scrub_message_fields(event, values)
 
 
 def _event_scrubber() -> Any:

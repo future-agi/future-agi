@@ -95,17 +95,40 @@ def _licensed(fn):
 
 
 NOT_IN_BUILD = "Insights isn't available in this build."
+PIPELINE_IMPORT_FAILED = "Insights couldn't load in this build."
+# The modules whose absence means the build ships no Insights pipeline at all.
+_PIPELINE_MODULES = frozenset(
+    {"ee", "ee.agenthub", "ee.agenthub.insights", "ee.agenthub.insights.pipeline"}
+)
 
 
 def _pipeline(name: str):
     """A stage of ``ee.agenthub.insights.pipeline``. A build without it (the
-    open tree) fails the stage for good instead of retrying an import."""
+    open tree) fails the stage for good instead of retrying an import.
+
+    Only a missing pipeline module is that expected refusal. When the build
+    has the pipeline but importing it raises (a broken module or one of its
+    own dependencies missing), the stage still fails for good, under a type
+    that is reported as a fault, with the original error chained.
+    """
     try:
         from ee.agenthub.insights import pipeline
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        if exc.name not in _PIPELINE_MODULES:
+            raise ApplicationError(
+                PIPELINE_IMPORT_FAILED,
+                type="InsightsPipelineImportError",
+                non_retryable=True,
+            ) from exc
         raise ApplicationError(
             NOT_IN_BUILD, type="CapabilityDenied", non_retryable=True
         ) from None
+    except Exception as exc:  # noqa: BLE001 - any import failure is a fault
+        raise ApplicationError(
+            PIPELINE_IMPORT_FAILED,
+            type="InsightsPipelineImportError",
+            non_retryable=True,
+        ) from exc
     return getattr(pipeline, name)
 
 

@@ -660,7 +660,7 @@ def test_an_insights_stage_without_ee_fails_for_good_not_on_import(monkeypatch):
 
     def no_ee(name, *args, **kwargs):
         if name.startswith("ee.agenthub.insights"):
-            raise ImportError(name)
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", no_ee)
