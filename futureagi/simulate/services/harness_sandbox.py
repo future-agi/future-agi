@@ -7,6 +7,8 @@ from typing import Any
 
 import requests
 
+from simulate.services.harness_refusals import refusal_sentence
+
 
 class HarnessSandboxUnavailable(RuntimeError):
     pass
@@ -164,31 +166,22 @@ class HarnessSandboxClient:
         return response.json()
 
 
-# The sentence the page shows for a code the ALK sandbox refuses a request with.
-KIT_REFUSALS = {
-    "github_commit_sha_required": (
-        "The GitHub source has no commit to run. Choose the branch or commit "
-        "again and resubmit."
-    ),
-}
-
-
 def _refusal_message(detail: Any) -> str:
     """The sandbox's refusal as text for the page.
 
     Its request validation answers with FastAPI's list of errors; their
     messages are read, without pydantic's "Value error, " prefix, and a known
-    code becomes its sentence. Any other detail is used as it is.
+    code becomes its sentence (``harness_refusals``). Any other detail is used
+    as it is.
     """
     if not isinstance(detail, list):
-        text = str(detail or "").strip()
-        return KIT_REFUSALS.get(text, text)
+        return refusal_sentence(str(detail or "").strip())
     sentences = []
     for error in detail:
         message = error.get("msg") if isinstance(error, dict) else error
         message = str(message or "").strip().removeprefix("Value error, ").strip()
         if message:
-            sentences.append(KIT_REFUSALS.get(message, message).rstrip("."))
+            sentences.append(refusal_sentence(message).rstrip("."))
     return ". ".join(sentences) + "." if sentences else ""
 
 

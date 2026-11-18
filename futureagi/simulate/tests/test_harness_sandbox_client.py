@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from simulate.services import harness_sandbox
+from simulate.services.harness_refusals import refusal_sentence
 from simulate.services.harness_sandbox import (
     HarnessSandboxClient,
     HarnessSandboxRejected,
@@ -104,7 +105,10 @@ def test_a_403_is_the_sandboxs_own_refusal_not_a_token_rejection(sandbox):
         client.list_jobs()
 
     assert caught.value.status_code == 403
-    assert str(caught.value) == "source_path is outside allowed roots"
+    # Only a local sandbox reads a source path; the hosted page never sends one, so
+    # this reaches the page as the platform's own refusal, with its code (TH-8978).
+    assert str(caught.value) == refusal_sentence("source_path is outside allowed roots")
+    assert "(source_path is outside allowed roots)" in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -177,23 +181,43 @@ def _validation_errors(*messages):
 
 
 def test_a_github_source_without_a_commit_is_refused_in_a_sentence(sandbox):
+    # The page resolves the commit, so a missing one is the platform's own fault:
+    # the sentence says so and keeps the code for support (TH-8978).
     client = sandbox(422, detail=_validation_errors("github_commit_sha_required"))
 
     with pytest.raises(HarnessSandboxRejected) as caught:
         client.submit({"github_repository": "acme/agent"})
 
     assert caught.value.status_code == 422
-    assert (
-        str(caught.value) == harness_sandbox.KIT_REFUSALS["github_commit_sha_required"]
-    )
-    assert "github_commit_sha_required" not in str(caught.value)
+    assert str(caught.value) == refusal_sentence("github_commit_sha_required")
+    assert str(caught.value).startswith("We couldn't start this")
+
+
+def test_a_code_the_user_can_fix_reaches_the_page_as_its_sentence(sandbox):
+    client = sandbox(422, detail=_validation_errors("environment_name_invalid: MY-KEY"))
+
+    with pytest.raises(HarnessSandboxRejected) as caught:
+        client.submit({"source_id": "abc"})
+
+    assert str(caught.value) == refusal_sentence("environment_name_invalid: MY-KEY")
+    assert "MY-KEY" in str(caught.value)
+    assert "environment_name_invalid" not in str(caught.value)
+
+
+def test_an_endpoint_refusal_string_reaches_the_page_as_its_sentence(sandbox):
+    client = sandbox(404, detail="uploaded source was not found")
+
+    with pytest.raises(HarnessSandboxRejected) as caught:
+        client.submit({"source_id": "abc"})
+
+    assert str(caught.value) == refusal_sentence("uploaded source was not found")
 
 
 def test_a_validation_list_without_a_known_code_reads_as_its_messages(sandbox):
     client = sandbox(
         422,
         detail=_validation_errors(
-            "exactly_one_source_required", "A subfolder needs a GitHub repository."
+            "a_code_the_kit_adds_later", "A subfolder needs a GitHub repository."
         ),
     )
 
@@ -202,6 +226,6 @@ def test_a_validation_list_without_a_known_code_reads_as_its_messages(sandbox):
 
     message = str(caught.value)
     assert message == (
-        "exactly_one_source_required. A subfolder needs a GitHub repository."
+        "a_code_the_kit_adds_later. A subfolder needs a GitHub repository."
     )
     assert "[{" not in message and "Value error" not in message
