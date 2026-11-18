@@ -3,6 +3,8 @@ import uuid
 
 import structlog
 
+from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_rate_limited
+
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 
@@ -16,6 +18,7 @@ from sdk.utils.helpers import (
 )
 from tracer.utils.inline_evals import trigger_inline_eval
 from tfc.constants.api_calls import APICallStatusChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -56,7 +59,9 @@ def _log_and_deduct_cost_for_standalone_eval(
     if check_usage is not None:
         usage_check = check_usage(str(user.organization.id), api_call_type)
         if not usage_check.allowed:
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
+            from ee.usage.exceptions import UsageLimitExceeded
+
+            raise UsageLimitExceeded(usage_check)
 
     if model:
         log_config.update({"model": str(model)})
@@ -76,6 +81,8 @@ def _log_and_deduct_cost_for_standalone_eval(
 
         if not api_call_log_row:
             raise ValueError("API call not allowed : Error validating the api call.")
+
+        raise_if_rate_limited(api_call_log_row)
 
         if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
             raise ValueError(f"API call not allowed: {api_call_log_row.status}")
@@ -101,9 +108,7 @@ def _run_evaluation(run_params, eval_model, eval_instance, runner):
     # partial_input warning attached to the response.
     from model_hub.utils.eval_input_validation import validate_eval_inputs
 
-    partial_input_warning, run_params = validate_eval_inputs(
-        eval_model, run_params
-    )
+    partial_input_warning, run_params = validate_eval_inputs(eval_model, run_params)
 
     result = eval_instance.run(**run_params)
     output_type = eval_model.config.get("output", "score")
@@ -174,9 +179,16 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
     # historical per-key strict behaviour.
     from model_hub.utils.eval_input_validation import validate_eval_inputs
 
-    partial_input_warning, inputs = validate_eval_inputs(
-        eval_template, dict(inputs) if inputs else {}, mapped_keys=(inputs or {}).keys()
-    )
+    try:
+        partial_input_warning, inputs = validate_eval_inputs(
+            eval_template,
+            dict(inputs) if inputs else {},
+            mapped_keys=(inputs or {}).keys(),
+        )
+    except ValueError as exc:
+        # Validation runs before metering/engine execution; expose the same
+        # typed 400 as other invalid standalone inputs, not a retryable 500.
+        raise StandaloneEvaluationError(str(exc)) from exc
 
     gt_inputs = dict(inputs) if inputs else {}
     from model_hub.services.ground_truth_service import GroundTruthService
@@ -218,15 +230,19 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
 
         logger.exception(f"Standalone Eval | Failed: user: {user.id}, error: {e}")
 
-        api_call_log_row.status = APICallStatusChoices.ERROR.value
-        config_dict = json.loads(api_call_log_row.config)
-        config_dict.update(
-            {
-                "output": {"output": None, "reason": jev_error_message(e) or str(e)},
-            }
-        )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.save()
+        if api_call_log_row is not None:
+            api_call_log_row.status = APICallStatusChoices.ERROR.value
+            config_dict = json.loads(api_call_log_row.config)
+            config_dict.update(
+                {
+                    "output": {
+                        "output": None,
+                        "reason": jev_error_message(e) or str(e),
+                    },
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.save()
 
         raise StandaloneEvaluationError(e)  # noqa: B904
 
@@ -325,7 +341,9 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
                             "source": "standalone_v2",
                             "source_id": str(eval_template.id),
                             "raw_cost_usd": str(actual_cost),
-                            "log_id": str(api_call_log_row.log_id) if api_call_log_row else None,
+                            "log_id": str(api_call_log_row.log_id)
+                            if api_call_log_row
+                            else None,
                             **token_usage_properties(token_usage),
                         },
                     )
@@ -455,18 +473,23 @@ def _run_batched_standalone_eval(
 
     for i in range(num_items):
         input_item = {key: inputs[key][i] for key in keys}
-        result = _run_standalone_eval(
-            eval_template,
-            input_item,
-            model,
-            user,
-            workspace,
-            eval_config,
-            error_localizer_enabled,
-            trace_eval,
-            custom_eval_name,
-            span_id,
-        )
+        try:
+            result = _run_standalone_eval(
+                eval_template,
+                input_item,
+                model,
+                user,
+                workspace,
+                eval_config,
+                error_localizer_enabled,
+                trace_eval,
+                custom_eval_name,
+                span_id,
+            )
+        except EvaluationDenied as denial:
+            denial.completed_results = results
+            denial.failed_index = i
+            raise
         results.append(result)
 
     return results
@@ -490,7 +513,10 @@ def _run_protect(
         protect_inputs["call_type"] = "protect_flash" if protect_flash else "protect"
 
         api_call_log_row = _log_and_deduct_cost_for_standalone_eval(
-            user, eval_template, True, protect_inputs,
+            user,
+            eval_template,
+            True,
+            protect_inputs,
             model="protect_flash" if protect_flash else "protect",
             workspace=workspace,
         )
@@ -502,6 +528,9 @@ def _run_protect(
                     inputs=protect_inputs,
                     config_overrides=config or {},
                     model="protect_flash" if protect_flash else None,
+                    # SDK v1 is also the gateway's runtime guardrail API.
+                    # Preserve its verdict defaults, not evaluation errors.
+                    protect_runtime=True,
                     organization_id=str(user.organization.id),
                     workspace_id=str(workspace.id) if workspace else None,
                 )
@@ -615,6 +644,8 @@ def _run_protect(
 
         logger.info(f"Protect Eval | Completed: user: {user.id}")
         return formatted
+    except EvaluationDenied:
+        raise
     except Exception as e:
         logger.exception(f"Protect Eval | Failed: user: {user.id}, error: {e}")
         raise e

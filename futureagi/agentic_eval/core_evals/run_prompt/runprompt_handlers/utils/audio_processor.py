@@ -19,6 +19,7 @@ import structlog
 from tfc.utils.lazy_extras import av
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from tfc.utils.media_tools import MediaToolUnavailable
 from tfc.utils.storage import (
     audio_bytes_from_url_or_base64,
     convert_to_mp3,
@@ -26,6 +27,7 @@ from tfc.utils.storage import (
     get_audio_duration,
     upload_audio_to_s3,
 )
+
 try:
     from ee.usage.utils.usage_entries import count_tiktoken_tokens
 except ImportError:
@@ -103,6 +105,51 @@ class AudioProcessor:
             raise ValueError("No text found in messages to generate speech.")
 
         # Validate length
+        if len(input_text) > MAX_TTS_TEXT_LENGTH:
+            raise ValueError(
+                f"Text too long for TTS: {len(input_text)} characters "
+                f"(max: {MAX_TTS_TEXT_LENGTH})"
+            )
+
+        return input_text
+
+    @staticmethod
+    def extract_literal_speech_script(messages: list[dict[str, Any]]) -> str:
+        """Speech script for literal TTS: user-role text only.
+
+        System, developer, assistant, tool, unknown and missing roles are
+        control text and must not be spoken. User strings and text parts are
+        kept in order and joined with one space; empty parts and non-text
+        parts are skipped, and text inside each part is not altered. The
+        phrase "record audio with script" is kept when the user put it in the
+        script. Completion-generated audio must keep using
+        extract_text_from_messages, which retains every role.
+
+        Raises:
+            ValueError: If the user script is empty or exceeds the TTS limit
+        """
+        text_parts = []
+        for msg in messages:
+            if not isinstance(msg, dict) or msg.get("role") != "user":
+                continue
+            content = msg.get("content")
+            if isinstance(content, str):
+                parts = [content]
+            elif isinstance(content, list):
+                parts = [
+                    part.get("text")
+                    for part in content
+                    if isinstance(part, dict) and part.get("type") == "text"
+                ]
+            else:
+                parts = []
+            text_parts.extend(p for p in parts if isinstance(p, str) and p)
+
+        input_text = " ".join(text_parts)
+
+        if not input_text.strip():
+            raise ValueError("Enter text to synthesize speech.")
+
         if len(input_text) > MAX_TTS_TEXT_LENGTH:
             raise ValueError(
                 f"Text too long for TTS: {len(input_text)} characters "
@@ -343,6 +390,11 @@ class AudioProcessor:
         # Detect format
         try:
             detected = (detect_audio_format(audio_bytes) or "").lower()
+        except MediaToolUnavailable as exc:
+            # No ffmpeg in this image: send the audio unconverted and let the
+            # provider decode it, as before, but say why it was not converted.
+            logger.warning("stt_audio_not_converted", reason=str(exc))
+            detected = ""
         except Exception:
             detected = ""
 

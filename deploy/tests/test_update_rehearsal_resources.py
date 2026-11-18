@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import copy
 import io
+import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -59,7 +61,9 @@ class FixedSampler(resources.NormalBootstrapEnvelopeSampler):
         self.interval = interval_seconds
         self._used = False
         self._samples = []
-        import threading
+        self._last_read_timing = None
+        self._last_sample_timing = None
+        self._first_gap_read_timings = None
         self._sample_lock = threading.Lock()
         self._sample_error = None
         self._stop = threading.Event()
@@ -79,6 +83,77 @@ class FixedSampler(resources.NormalBootstrapEnvelopeSampler):
 
     def _verify_identity(self, *, check_ready, check_daemon):
         return {}
+
+
+class ManualClock:
+    def __init__(self):
+        self.value = 10.0
+
+    def __call__(self):
+        return self.value
+
+    def advance(self, seconds):
+        self.value += seconds
+
+
+class ControlledStop:
+    """One scheduled read; stopping releases that read only after operation end."""
+
+    def __init__(self, clock):
+        self.clock = clock
+        self.event = threading.Event()
+        self.waits = []
+
+    def wait(self, interval):
+        self.waits.append(interval)
+        if self.event.is_set():
+            return True
+        self.clock.advance(interval + 0.125)  # Deterministic scheduler lateness.
+        return False
+
+    def set(self):
+        self.event.set()
+
+    def is_set(self):
+        return self.event.is_set()
+
+
+class ControlledSampler(FixedSampler):
+    """Exercise the real read/bracket/worker with a fake clock and gated readers."""
+    _read = resources.NormalBootstrapEnvelopeSampler._read
+
+    def __init__(self, *, during_seconds=1.01):
+        super().__init__(interval_seconds=0.5)
+        self.clock = ManualClock()
+        self._stop = ControlledStop(self.clock)
+        self.during_started = threading.Event()
+        self.during_seconds = during_seconds
+
+    def _verify_identity(self, *, check_ready, check_daemon):
+        if not check_ready:
+            self.read_count += 1
+            self.clock.advance(0.125)
+        return {}
+
+    def _reader_request(self, identity):
+        return {}
+
+    def _fixed_reader(self, request):
+        self._reader_fallback_used = self.read_count == 2
+        if self.read_count == 2:
+            self.during_started.set()
+            if not self._stop.event.wait(timeout=5):
+                raise AssertionError("operation did not release the in-flight read")
+            self.clock.advance(self.during_seconds)
+        else:
+            self.clock.advance(0.125)
+        return {key: SAMPLES[0][key] for key in ("disk_bytes", "wal_bytes", "temp_bytes", "memory_bytes")}
+
+    def operation(self):
+        if not self.during_started.wait(timeout=5):
+            raise AssertionError("scheduled read did not start")
+        self.clock.advance(0.25)
+        return "normal-start-return"
 
 
 class VanishingScandir:
@@ -308,6 +383,93 @@ class ResourceEnvelopeTests(unittest.TestCase):
             resources.reduce_envelope(PLAN, TABLES, MIGRATION_TABLES, gap, 3.55,
                                       started_monotonic=10.25, completed_monotonic=13.8)
 
+    def test_gap_threshold_zero_and_backwards_keep_first_pair_and_operation_bounds(self):
+        for stamp in (12.0, 12.01, 10.0, 9.99):
+            samples = copy.deepcopy(SAMPLES)
+            samples[1]["monotonic"], samples[2]["monotonic"] = stamp, 14.0
+            with self.subTest(stamp=stamp):
+                if stamp == 12.0:
+                    resources.validate_samples(samples, 3.5, started_monotonic=10.25, completed_monotonic=13.75)
+                    continue
+                with self.assertRaises(resources.ResourceObservationError) as caught:
+                    resources.validate_samples(samples, 3.5, started_monotonic=10.25, completed_monotonic=13.75)
+                self.assertEqual(str(caught.exception), "resource_sampling_gap")
+                summary = caught.exception.sampling_failure
+                self.assertFalse(summary["qualification_evidence"])
+                self.assertEqual(summary["sample_count"], 3)
+                self.assertEqual((summary["started_monotonic"], summary["completed_monotonic"]), (10.25, 13.75))
+                self.assertEqual((summary["first_monotonic"], summary["last_monotonic"]), (10.0, 14.0))
+                self.assertEqual(summary["first_offending_pair"], dict(previous_index=0, index=1,
+                    previous_monotonic=10.0, monotonic=stamp, delta_seconds=stamp - 10.0))
+                self.assertEqual(summary["reads"], [])
+                self.assertLess(len(json.dumps(summary)), 4096)
+
+    def test_live_read_diagnostics_keep_cadence_and_operation_end_inside_inflight_read(self):
+        for during_seconds, refuses in ((1.0, False), (1.01, True)):
+            with self.subTest(during_seconds=during_seconds):
+                sampler = ControlledSampler(during_seconds=during_seconds)
+                if refuses:
+                    with self.assertRaises(resources.ResourceObservationError) as caught:
+                        sampler.measure(sampler.operation)
+                    self.assertEqual(str(caught.exception), "resource_sampling_gap")
+                    summary = caught.exception.sampling_failure
+                    self.assertEqual(summary["sample_count"], 3)
+                    self.assertEqual(summary["started_monotonic"], 10.25)
+                    self.assertEqual(summary["completed_monotonic"], 11.25)
+                    self.assertEqual(summary["first_offending_pair"]["index"], 1)
+                    self.assertAlmostEqual(summary["first_offending_pair"]["delta_seconds"], 2.01)
+                    self.assertEqual([row["sample_index"] for row in summary["reads"]], [0, 1])
+                    before, during = summary["reads"]
+                    self.assertEqual(before["docker_seconds"], 0.125)
+                    self.assertEqual(before["native_reader_seconds"], 0.125)
+                    self.assertIsNone(before["scheduling_lateness_seconds"])
+                    self.assertFalse(before["privileged_fallback"])
+                    self.assertEqual(during["docker_seconds"], 0.125)
+                    self.assertAlmostEqual(during["native_reader_seconds"], 1.26)
+                    self.assertEqual(during["scheduling_lateness_seconds"], 0.125)
+                    self.assertTrue(during["privileged_fallback"])
+                    self.assertLess(during["started_monotonic"], summary["completed_monotonic"])
+                    self.assertGreater(during["completed_monotonic"], summary["completed_monotonic"])
+                    self.assertAlmostEqual(summary["last_monotonic"], 12.51)
+                    self.assertFalse(summary["qualification_evidence"])
+                    self.assertLess(len(json.dumps(summary)), 4096)
+                else:
+                    result = sampler.measure(sampler.operation)
+                    self.assertEqual(result.operation_result, "normal-start-return")
+                    self.assertEqual(result.migration_measurement["duration_seconds"], 1.0)
+                    self.assertEqual([row["monotonic"] for row in result.private_evidence["samples"]],
+                                     [10.25, 12.25, 12.5])
+                    self.assertNotIn("resource_sampling_failure", result.private_evidence)
+                self.assertTrue(sampler._stop.is_set())
+                self.assertEqual(sampler.read_count, 3)
+                self.assertEqual(sampler._stop.waits, [0.5, 0.5])
+                self.assertLessEqual(len(sampler._first_gap_read_timings or []), 2)
+
+    def test_gap_at_later_pair_reports_only_that_pairs_read_timings(self):
+        sampler = FixedSampler()
+        stamps = iter((10.0, 11.0, 13.01, 15.02, 15.5))
+        def read():
+            stamp = next(stamps)
+            sampler._last_read_timing = dict(started_monotonic=stamp - 0.25, completed_monotonic=stamp,
+                docker_seconds=0.125, native_reader_seconds=0.125, privileged_fallback=False)
+            return dict(SAMPLES[0], monotonic=stamp)
+        with patch.object(sampler, "_read", side_effect=read):
+            for boundary in ("before_start", "during", "during", "during", "after_end"):
+                sampler._take_sample(boundary)
+        with self.assertRaises(resources.ResourceObservationError) as caught:
+            resources.validate_samples(sampler._samples, 5.0, started_monotonic=10.25, completed_monotonic=15.25)
+        self.assertEqual(caught.exception.sampling_failure["first_offending_pair"]["index"], 2)
+        self.assertEqual([row["sample_index"] for row in sampler._first_gap_read_timings], [1, 2])
+
+    def test_gap_diagnostics_never_include_unvalidated_later_sample_values(self):
+        samples = copy.deepcopy(SAMPLES)
+        samples[1]["monotonic"] = 12.01
+        samples[-1] = {"monotonic": "/PRIVATE/TOKEN", "command": "PRIVATE OUTPUT"}
+        with self.assertRaises(resources.ResourceObservationError) as caught:
+            resources.validate_samples(samples, 3.5, started_monotonic=10.25, completed_monotonic=13.75)
+        self.assertIsNone(caught.exception.sampling_failure["last_monotonic"])
+        self.assertNotIn("PRIVATE", json.dumps(caught.exception.sampling_failure))
+
     def test_sample_boundaries_and_duration_must_bracket_operation(self):
         no_before = copy.deepcopy(SAMPLES)
         no_before[0]["boundary"] = "during"
@@ -439,6 +601,47 @@ class ResourceEnvelopeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(resources.ResourceObservationError, "^resource_sampling_failed$"):
             BrokenRead(interval_seconds=0.005).measure(lambda: time.sleep(0.05))
+
+    def test_operation_exception_still_wins_and_stops_inflight_read(self):
+        sampler = ControlledSampler()
+        failure = ValueError("normal startup failed")
+        def operation():
+            sampler.operation()
+            raise failure
+        with self.assertRaises(ValueError) as caught:
+            sampler.measure(operation)
+        self.assertIs(caught.exception, failure)
+        self.assertTrue(sampler._stop.is_set())
+        self.assertEqual([row["boundary"] for row in sampler._samples], ["before_start", "during"])
+        self.assertEqual(sampler.read_count, 2)  # No post-failure measurement or retry.
+
+    def test_reader_records_fallback_without_changing_permission_only_retry(self):
+        counters = {key: SAMPLES[0][key] for key in ("disk_bytes", "wal_bytes", "temp_bytes", "memory_bytes")}
+        class ReaderProcess:
+            def __init__(self, code):
+                self.code, self.returncode = code, None
+                self.stdin, self.stdout, self.stderr = io.BytesIO(), io.BytesIO(), io.BytesIO()
+
+            def communicate(self, payload, timeout):
+                self.returncode = self.code
+                return resources.canonical_json(counters), b""
+
+            def poll(self):
+                return self.returncode
+
+        for codes in ((0,), (3, 0), (4,)):
+            with self.subTest(codes=codes):
+                sampler = FixedSampler()
+                with patch.object(resources.subprocess, "Popen", side_effect=[ReaderProcess(code) for code in codes]) as popen, \
+                        patch.object(resources.Path, "is_file", return_value=True), \
+                        patch.object(resources.os, "access", return_value=True):
+                    if codes == (4,):
+                        with self.assertRaisesRegex(resources.ResourceObservationError, "^resource_reader_failed$"):
+                            sampler._fixed_reader({})
+                    else:
+                        self.assertEqual(sampler._fixed_reader({}), counters)
+                self.assertEqual(popen.call_count, len(codes))
+                self.assertEqual(sampler._reader_fallback_used, codes == (3, 0))
 
     def test_reader_names_a_vanished_entry_at_its_own_check(self):
         def failing_line(returncode, stderr=b""):

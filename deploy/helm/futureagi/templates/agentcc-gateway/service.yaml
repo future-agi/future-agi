@@ -16,10 +16,18 @@ spec:
   selector:
     {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
   ports:
+    {{- if $g.tls.httpEnabled }}
     - name: http
       port: {{ $g.service.port }}
       targetPort: http
       protocol: TCP
+    {{- end }}
+    {{- if $g.tls.enabled }}
+    - name: https
+      port: {{ $g.tls.servicePort }}
+      targetPort: https
+      protocol: TCP
+    {{- end }}
 {{- if $g.autoscaling.enabled }}
 ---
 {{ include "futureagi.hpa" (dict "root" . "component" "agentcc-gateway" "name" (include "futureagi.component" $ctx) "autoscaling" $g.autoscaling) }}

@@ -1,17 +1,18 @@
 import asyncio
 import json
-import os
 import random
-import shutil
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import structlog
-from django.conf import settings
 
 from accounts.models.organization import Organization
+from model_hub.utils.compare_cleanup import (
+    sweep_local_compare_root,
+    sweep_remote_compare_prefixes,
+)
 
 # Activity-aware stub: invocations raise a Temporal non-retryable
 # ApplicationError (these tasks run inside Temporal evaluation activities).
@@ -48,12 +49,13 @@ from model_hub.utils.kb_helpers import is_kb_deleted_or_cancelled
 from model_hub.utils.kb_indexer import KB_TABLE_NAME, KBIndexer
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from tfc.temporal import temporal_activity
-from tfc.utils.storage import (
-    delete_compare_folder,
-)
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
-    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        count_text_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     count_text_tokens = None
     log_and_deduct_cost_for_api_request = None
@@ -361,6 +363,7 @@ def create_synthetic_dataset(
             request_uuid = task_manager.start_task(str(dataset_id))
 
         from tfc.constants.api_calls import APICallTypeChoices
+
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -440,7 +443,9 @@ def create_synthetic_dataset(
         tik_total_tokens = 0
         for col in synthetic_df.columns:
             for value in synthetic_df[col]:
-                tik_total_tokens += (count_text_tokens(str(value)) if count_text_tokens else 0)
+                tik_total_tokens += (
+                    count_text_tokens(str(value)) if count_text_tokens else 0
+                )
 
         rows = list(Row.objects.filter(dataset=dataset))
 
@@ -552,18 +557,18 @@ def create_synthetic_dataset(
 
                 if emit is not None and UsageEvent is not None:
                     emit(
-                    UsageEvent(
-                        org_id=str(organization.id),
-                        event_type=api_call_type,
-                        amount=credits,
-                        properties={
-                            "source": "synthetic_dataset",
-                            "source_id": str(dataset.id),
-                            "raw_cost_usd": str(actual_cost),
-                            **llm_usage_properties(agent),
-                        },
+                        UsageEvent(
+                            org_id=str(organization.id),
+                            event_type=api_call_type,
+                            amount=credits,
+                            properties={
+                                "source": "synthetic_dataset",
+                                "source_id": str(dataset.id),
+                                "raw_cost_usd": str(actual_cost),
+                                **llm_usage_properties(agent),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass  # Metering failure must not break the action
 
@@ -883,22 +888,16 @@ def remove_kb_files(files, org, kb_id):
         return None
 
 
-@temporal_activity(time_limit=60, queue="default")
+# The remote sweep stops starting deletions two minutes before the time limit.
+_REMOTE_SWEEP_BUDGET_SECONDS = 8 * 60
+
+
+@temporal_activity(time_limit=10 * 60, queue="default")
 def delete_unused_compare_folder():
-    try:
-        compare_folder_path = os.path.join(settings.BASE_DIR, "compare")
-        for folder in os.listdir(compare_folder_path):
-            folder_path = os.path.join(compare_folder_path, folder)
-            if os.path.isdir(folder_path):
-                creation_time = os.path.getctime(folder_path)
-                if (time.time() - creation_time) > 7200:
-                    try:
-                        delete_compare_folder(folder)
-                    except Exception as e:
-                        logger.error(
-                            f"Error deleting compare folder {folder}: {str(e)}"
-                        )
-                    shutil.rmtree(folder_path)
-                    logger.info(f"Deleted folder: {folder_path}")
-    except Exception as e:
-        logger.error(f"Error deleting unused compare folder: {str(e)}")
+    deadline = time.monotonic() + _REMOTE_SWEEP_BUDGET_SECONDS
+    # Markers are visible here only when this worker shares the API's root
+    # (standalone, or a shared volume); API processes sweep their own roots.
+    sweep_local_compare_root()
+    # Pages are reachable from any process, including those whose marker
+    # lives in another container or was lost with it.
+    sweep_remote_compare_prefixes(deadline=deadline)

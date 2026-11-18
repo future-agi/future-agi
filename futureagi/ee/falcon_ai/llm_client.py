@@ -3,14 +3,41 @@ import copy
 import json
 import os
 import random
+from contextlib import aclosing
 
 import httpx
 import structlog
+
+from ee.licensing.activation_client import (
+    MAX_RETRY_AFTER_SECONDS,
+    ManagedServiceError,
+    parse_retry_after,
+)
 
 logger = structlog.get_logger(__name__)
 
 # Status codes that are safe to retry (transient errors)
 RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
+# Managed transport wraps rate limits, server errors and connection failures.
+RETRYABLE_MANAGED_CODES = {
+    "RATE_LIMITED",
+    "SERVICE_ERROR",
+    "GATEWAY_TIMEOUT",
+    "GATEWAY_UNREACHABLE",
+}
+# Chat keeps its retries and its own ceiling on a 429's Retry-After.
+CHAT_MAX_RETRY_AFTER_SECONDS = 30.0
+
+
+def _outlasts_retry(retry_after: float | None) -> bool:
+    """Whether an evaluation must give up on a rate limit instead of waiting.
+
+    An evaluation has one recovery and never spends it before Retry-After: a
+    retry sooner lands in the window that refused it. It waits out at most
+    MAX_RETRY_AFTER_SECONDS (one gateway window); a longer hint fails the run
+    now, with the recovery unspent, rather than after a doomed wait.
+    """
+    return retry_after is not None and retry_after > MAX_RETRY_AFTER_SECONDS
 
 
 def _inline_refs(schema, _defs=None, _depth=0):
@@ -39,6 +66,16 @@ def _inline_refs(schema, _defs=None, _depth=0):
     return {
         k: _inline_refs(v, pool, _depth + 1) for k, v in schema.items() if k != "$defs"
     }
+
+
+def _seconds_retry_after(value: str | None) -> float | None:
+    """A Retry-After given as seconds, or None (chat ignores HTTP dates)."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return None
 
 
 class EmptyStreamError(RuntimeError):
@@ -83,6 +120,9 @@ class FalconLLMClient:
 
         # Gateway cost from agentcc.metadata SSE event (accumulated across iterations)
         self._gateway_cost = 0.0
+        # None preserves chat retries. Evaluations share one recovery budget
+        # across transport retries and the final structured-answer attempt.
+        self.retry_budget: int | None = None
 
         # Optional response format (e.g. {"type": "json_schema", ...}) — when set,
         # included in OpenAI-compatible and gateway requests to enforce
@@ -127,16 +167,15 @@ class FalconLLMClient:
     async def stream_completion(self, messages, tools=None):
         """Yield streaming chunks in OpenAI format (normalized from any provider)."""
         if self.use_managed_gateway:
-            async for chunk in self._stream_managed(messages, tools):
-                yield chunk
+            stream = self._stream_managed(messages, tools)
         elif self.provider == "bedrock":
-            async for chunk in self._stream_bedrock(messages, tools):
-                yield chunk
+            stream = self._stream_bedrock(messages, tools)
         elif self.provider == "anthropic":
-            async for chunk in self._stream_anthropic(messages, tools):
-                yield chunk
+            stream = self._stream_anthropic(messages, tools)
         else:
-            async for chunk in self._stream_openai(messages, tools):
+            stream = self._stream_openai(messages, tools)
+        async with aclosing(stream):
+            async for chunk in stream:
                 yield chunk
 
     async def _stream_managed(self, messages, tools=None):
@@ -172,15 +211,16 @@ class FalconLLMClient:
                 )
                 payload["response_format"] = self.response_format
 
-        async for chunk in stream_chat_completion(payload):
-            metadata = chunk.get("agentcc_metadata")
-            if metadata:
-                self._gateway_cost += metadata.get("cost", 0)
+        async with aclosing(stream_chat_completion(payload)) as stream:
+            async for chunk in stream:
+                metadata = chunk.get("agentcc_metadata")
+                if metadata:
+                    self._gateway_cost += metadata.get("cost", 0)
 
-            for choice in chunk.get("choices") or []:
-                if choice.get("finish_reason") == "length":
-                    choice["finish_reason"] = "max_tokens"
-            yield chunk
+                for choice in chunk.get("choices") or []:
+                    if choice.get("finish_reason") == "length":
+                        choice["finish_reason"] = "max_tokens"
+                yield chunk
 
     async def _stream_bedrock(self, messages, tools=None):
         """Stream from AWS Bedrock using boto3, yielding OpenAI-compatible chunks."""
@@ -708,6 +748,15 @@ class FalconLLMClient:
                         last_usage = chunk["usage"]
                     yield chunk
 
+    def take_retry(self) -> bool:
+        """Consume an optional run-wide recovery budget (not a tool iteration)."""
+        if self.retry_budget is None:
+            return True
+        if self.retry_budget <= 0:
+            return False
+        self.retry_budget -= 1
+        return True
+
     async def stream_with_retry(self, messages, tools=None, max_retries=3):
         """Stream completion with retry on retryable errors.
 
@@ -717,16 +766,17 @@ class FalconLLMClient:
         for attempt in range(max_retries):
             try:
                 yielded_any_chunk = False
-                async for chunk in self.stream_completion(messages, tools):
-                    yielded_any_chunk = True
-                    yield chunk
+                async with aclosing(self.stream_completion(messages, tools)) as stream:
+                    async for chunk in stream:
+                        yielded_any_chunk = True
+                        yield chunk
                 if not yielded_any_chunk:
                     raise EmptyStreamError(
                         "LLM upstream returned an empty stream with no chunks"
                     )
                 return
             except EmptyStreamError as e:
-                if attempt >= max_retries - 1:
+                if attempt >= max_retries - 1 or not self.take_retry():
                     raise
 
                 base_delay = min(2**attempt, 30)
@@ -740,9 +790,52 @@ class FalconLLMClient:
                 )
                 await asyncio.sleep(delay)
                 continue
+            except ManagedServiceError as e:
+                # Evaluation-only recovery: preserve chat's error propagation,
+                # never restart partial streams or retry entitlement errors.
+                if (
+                    self.retry_budget is None
+                    or e.code not in RETRYABLE_MANAGED_CODES
+                    or attempt >= max_retries - 1
+                    or yielded_any_chunk
+                    or _outlasts_retry(e.retry_after)
+                    or not self.take_retry()
+                ):
+                    raise
+
+                base_delay = min(2**attempt, 30)
+                delay = base_delay + base_delay * 0.25 * random.random()
+                if e.retry_after is not None:
+                    delay = e.retry_after
+                logger.warning(
+                    "llm_retry_managed",
+                    error_code=e.code,
+                    attempt=attempt + 1,
+                    delay=round(delay, 2),
+                )
+                await asyncio.sleep(delay)
+                continue
             except httpx.HTTPStatusError as e:
                 status = e.response.status_code
-                if status not in RETRYABLE_STATUS_CODES or attempt >= max_retries - 1:
+                evaluation = self.retry_budget is not None
+                header = e.response.headers.get("Retry-After")
+                if status != 429:
+                    retry_after = None
+                elif evaluation:
+                    retry_after = parse_retry_after(header)
+                else:
+                    # Chat honours only a number of seconds; an HTTP date
+                    # falls back to its normal backoff, as before.
+                    retry_after = _seconds_retry_after(header)
+                if (
+                    status not in RETRYABLE_STATUS_CODES
+                    or attempt >= max_retries - 1
+                    or (
+                        evaluation
+                        and (yielded_any_chunk or _outlasts_retry(retry_after))
+                    )
+                    or not self.take_retry()
+                ):
                     raise
 
                 # Exponential backoff with 25% jitter
@@ -752,12 +845,12 @@ class FalconLLMClient:
 
                 if status == 429:
                     # Honor Retry-After header if present
-                    retry_after = e.response.headers.get("Retry-After")
-                    if retry_after:
-                        try:
-                            delay = min(float(retry_after), 30.0)
-                        except (ValueError, TypeError):
-                            pass  # Fall through to computed delay
+                    if retry_after is not None:
+                        delay = (
+                            retry_after
+                            if evaluation
+                            else min(retry_after, CHAT_MAX_RETRY_AFTER_SECONDS)
+                        )
                     logger.warning(
                         "llm_retry_rate_limit",
                         status=429,
@@ -773,8 +866,23 @@ class FalconLLMClient:
                     )
                 await asyncio.sleep(delay)
                 continue
-            except (httpx.TimeoutException, httpx.ConnectError) as e:
-                if attempt >= max_retries - 1:
+            except (
+                httpx.TimeoutException,
+                httpx.ConnectError,
+                httpx.RemoteProtocolError,
+                httpx.ReadError,
+            ) as e:
+                if (
+                    # Read/protocol recovery is evaluation-only; chat keeps its
+                    # existing propagation policy for these failures.
+                    (
+                        self.retry_budget is None
+                        and isinstance(e, (httpx.RemoteProtocolError, httpx.ReadError))
+                    )
+                    or attempt >= max_retries - 1
+                    or (self.retry_budget is not None and yielded_any_chunk)
+                    or not self.take_retry()
+                ):
                     raise
                 # Exponential backoff with 25% jitter
                 base_delay = min(2**attempt, 30)
