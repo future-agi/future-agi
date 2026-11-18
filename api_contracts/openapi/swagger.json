@@ -53180,6 +53180,18 @@
                         "required": false,
                         "type": "integer",
                         "minimum": 0
+                    },
+                    {
+                        "name": "role",
+                        "in": "formData",
+                        "description": "The file's role: `policy` (a policy or reference), `seed_records` (records the world starts with) or `evaluator_only` (kept from the agent and every actor). Left out, the file has no role.",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "policy",
+                            "seed_records",
+                            "evaluator_only"
+                        ]
                     }
                 ],
                 "responses": {
@@ -53199,6 +53211,49 @@
                 "consumes": [
                     "multipart/form-data"
                 ],
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/files/role/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_file_role",
+                "description": "Give one attached file its role in the environment's draft: a policy, seed records, or evaluator-only\n(kept from the agent and every actor).",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentFileRole"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
                 "tags": [
                     "simulate"
                 ],
@@ -145349,6 +145404,19 @@
                     "items": {
                         "$ref": "#/definitions/HarnessActorRecordSource"
                     }
+                },
+                "roles": {
+                    "title": "Roles",
+                    "description": "Each attached file's role, by path. An evaluator-only file is never among `files`.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                            "policy",
+                            "seed_records",
+                            "evaluator_only"
+                        ]
+                    }
                 }
             }
         },
@@ -150848,6 +150916,36 @@
                 }
             }
         },
+        "HarnessEnvironmentFileRole": {
+            "required": [
+                "path",
+                "role"
+            ],
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "description": "The attached file, as the knowledge sources list it.",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "enum": [
+                        "policy",
+                        "seed_records",
+                        "evaluator_only"
+                    ]
+                },
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
         "HarnessNudgeFile": {
             "required": [
                 "path",
@@ -154646,6 +154744,79 @@
                 }
             }
         },
+        "HarnessDroppedCase": {
+            "description": "Cases a rebuild dropped from this suite version for a capability the agent lost, with why.",
+            "required": [
+                "key",
+                "name",
+                "missing",
+                "agent_version",
+                "reason",
+                "restore_failed"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "missing": {
+                    "title": "Missing",
+                    "description": "What the case needed that the agent version no longer has, by kind.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "agent_version": {
+                    "title": "Agent version",
+                    "description": "The agent version it was dropped for.",
+                    "type": "string"
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "restore_failed": {
+                    "title": "Restore failed",
+                    "description": "Why a rebuild that brought it back could not prove it; empty otherwise.",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessRestoredCase": {
+            "description": "Cases the parent suite version had dropped that are back under their keys.",
+            "required": [
+                "key",
+                "name",
+                "proved"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "proved": {
+                    "title": "Proved",
+                    "description": "Proved again on the versions in view; only then does it run.",
+                    "type": "boolean"
+                }
+            }
+        },
         "HarnessScenarioField": {
             "required": [
                 "value",
@@ -154780,6 +154951,20 @@
                     "additionalProperties": {
                         "type": "string",
                         "minLength": 1
+                    }
+                },
+                "dropped": {
+                    "description": "Cases a rebuild dropped from this suite version for a capability the agent lost, with why.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessDroppedCase"
+                    }
+                },
+                "restored": {
+                    "description": "Cases the parent suite version had dropped that are back under their keys.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessRestoredCase"
                     }
                 },
                 "fields": {

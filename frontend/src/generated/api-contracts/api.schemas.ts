@@ -20471,9 +20471,18 @@ export interface HarnessActorLoudnessApi {
   default: number;
 }
 
+/**
+ * Each attached file's role, by path. An evaluator-only file is never among `files`.
+ */
+export type HarnessActorKnowledgeSourcesApiRoles = {
+  [key: string]: "policy" | "seed_records" | "evaluator_only";
+};
+
 export interface HarnessActorKnowledgeSourcesApi {
   files: string[];
   records: HarnessActorRecordSourceApi[];
+  /** Each attached file's role, by path. An evaluator-only file is never among `files`. */
+  roles?: HarnessActorKnowledgeSourcesApiRoles;
 }
 
 export interface HarnessActorUnresolvedApi {
@@ -22952,6 +22961,27 @@ export interface HarnessEnvironmentFileUploadedApi {
   uploaded_path: string;
 }
 
+export type HarnessEnvironmentFileRoleApiRole =
+  (typeof HarnessEnvironmentFileRoleApiRole)[keyof typeof HarnessEnvironmentFileRoleApiRole];
+
+export const HarnessEnvironmentFileRoleApiRole = {
+  policy: "policy",
+  seed_records: "seed_records",
+  evaluator_only: "evaluator_only",
+} as const;
+
+export interface HarnessEnvironmentFileRoleApi {
+  /**
+   * The attached file, as the knowledge sources list it.
+   * @minLength 1
+   * @maxLength 255
+   */
+  path: string;
+  role: HarnessEnvironmentFileRoleApiRole;
+  /** @minimum 0 */
+  expected_revision?: number;
+}
+
 export type HarnessNudgeApiTarget =
   (typeof HarnessNudgeApiTarget)[keyof typeof HarnessNudgeApiTarget];
 
@@ -24644,6 +24674,40 @@ export interface HarnessScenarioGroupingApi {
   label: string;
 }
 
+/**
+ * What the case needed that the agent version no longer has, by kind.
+ */
+export type HarnessDroppedCaseApiMissing = { [key: string]: string };
+
+/**
+ * Cases a rebuild dropped from this suite version for a capability the agent lost, with why.
+ */
+export interface HarnessDroppedCaseApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  name: string;
+  /** What the case needed that the agent version no longer has, by kind. */
+  missing: HarnessDroppedCaseApiMissing;
+  /** The agent version it was dropped for. */
+  agent_version: string;
+  reason: string;
+  /** Why a rebuild that brought it back could not prove it; empty otherwise. */
+  restore_failed: string;
+}
+
+/**
+ * Cases the parent suite version had dropped that are back under their keys.
+ */
+export interface HarnessRestoredCaseApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  name: string;
+  /** Proved again on the versions in view; only then does it run. */
+  proved: boolean;
+}
+
 export type HarnessScenarioFieldApiType =
   (typeof HarnessScenarioFieldApiType)[keyof typeof HarnessScenarioFieldApiType];
 
@@ -24693,6 +24757,10 @@ export interface HarnessScenarioListResponseApi {
   groupings: HarnessScenarioGroupingApi[];
   /** The name to show for each coverage level, sub-goal and noise bed on the page, keyed by it. */
   level_labels: HarnessScenarioListResponseApiLevelLabels;
+  /** Cases a rebuild dropped from this suite version for a capability the agent lost, with why. */
+  dropped?: HarnessDroppedCaseApi[];
+  /** Cases the parent suite version had dropped that are back under their keys. */
+  restored?: HarnessRestoredCaseApi[];
   fields: HarnessScenarioFieldApi[];
 }
 
@@ -45580,6 +45648,8 @@ export type SimulateApiHarnessEnvironmentsUploadFileBody = {
   /** What the file is for: `knowledge`, a document an actor may be given to read. */
   kind: string;
   expected_revision?: number;
+  /** The file's role: `policy` (a policy or reference), `seed_records` (records the world starts with) or `evaluator_only` (kept from the agent and every actor). Left out, the file has no role. */
+  role?: string;
 };
 
 export type SimulateApiHarnessEnvironmentsNudgesParams = {

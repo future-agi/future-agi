@@ -653,6 +653,7 @@ import type {
   HarnessEnvironmentAvailableEvalsApi,
   HarnessEnvironmentDetailApi,
   HarnessEnvironmentEvalEditApi,
+  HarnessEnvironmentFileRoleApi,
   HarnessEnvironmentFileUploadedApi,
   HarnessEnvironmentListResponseApi,
   HarnessEnvironmentRenameApi,
@@ -61886,6 +61887,9 @@ export const simulateApiHarnessEnvironmentsUploadFile = async (
       simulateApiHarnessEnvironmentsUploadFileBody.expected_revision.toString(),
     );
   }
+  if (simulateApiHarnessEnvironmentsUploadFileBody?.role !== undefined) {
+    formData.append(`role`, simulateApiHarnessEnvironmentsUploadFileBody.role);
+  }
 
   return apiMutator<simulateApiHarnessEnvironmentsUploadFileResponse>(
     getSimulateApiHarnessEnvironmentsUploadFileUrl(id),
@@ -61893,6 +61897,53 @@ export const simulateApiHarnessEnvironmentsUploadFile = async (
       ...options,
       method: "POST",
       body: formData,
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsFileRoleResponse200 = {
+  data: HarnessActorListApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsFileRoleResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsFileRoleResponseSuccess =
+  simulateApiHarnessEnvironmentsFileRoleResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsFileRoleResponseError =
+  simulateApiHarnessEnvironmentsFileRoleResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsFileRoleResponse =
+  | simulateApiHarnessEnvironmentsFileRoleResponseSuccess
+  | simulateApiHarnessEnvironmentsFileRoleResponseError;
+
+export const getSimulateApiHarnessEnvironmentsFileRoleUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/files/role/`;
+};
+
+/**
+ * Give one attached file its role in the environment's draft: a policy, seed records, or evaluator-only
+(kept from the agent and every actor).
+ */
+export const simulateApiHarnessEnvironmentsFileRole = async (
+  id: string,
+  harnessEnvironmentFileRoleApi: HarnessEnvironmentFileRoleApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsFileRoleResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsFileRoleResponse>(
+    getSimulateApiHarnessEnvironmentsFileRoleUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEnvironmentFileRoleApi),
     },
   );
 };

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1169,
+  endpointCount: 1170,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29453,6 +29453,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessEnvironmentFileUploaded",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/files/role/": {
+      post: {
+        operationId: "simulate_api_harness-environments_file_role",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessEnvironmentFileRole",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessActorList",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -69724,6 +69743,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentFileRole: {
+      required: ["path", "role"],
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          description: "The attached file, as the knowledge sources list it.",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          enum: ["policy", "seed_records", "evaluator_only"],
+        },
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
     HarnessEnvironmentFileUploaded: {
       required: [
         "actors",
@@ -71064,6 +71106,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           additionalProperties: {
             type: "string",
             minLength: 1,
+          },
+        },
+        dropped: {
+          description:
+            "Cases a rebuild dropped from this suite version for a capability the agent lost, with why.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessDroppedCase",
+          },
+        },
+        restored: {
+          description:
+            "Cases the parent suite version had dropped that are back under their keys.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessRestoredCase",
           },
         },
         fields: {
@@ -107751,6 +107809,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessActorRecordSource",
           },
         },
+        roles: {
+          title: "Roles",
+          description:
+            "Each attached file's role, by path. An evaluator-only file is never among `files`.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            enum: ["policy", "seed_records", "evaluator_only"],
+          },
+        },
       },
     },
     HarnessActorLimitField: {
@@ -112321,6 +112389,80 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessFaultProblem",
           },
+        },
+      },
+    },
+    HarnessDroppedCase: {
+      description:
+        "Cases a rebuild dropped from this suite version for a capability the agent lost, with why.",
+      required: [
+        "key",
+        "name",
+        "missing",
+        "agent_version",
+        "reason",
+        "restore_failed",
+      ],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        missing: {
+          title: "Missing",
+          description:
+            "What the case needed that the agent version no longer has, by kind.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        agent_version: {
+          title: "Agent version",
+          description: "The agent version it was dropped for.",
+          type: "string",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        restore_failed: {
+          title: "Restore failed",
+          description:
+            "Why a rebuild that brought it back could not prove it; empty otherwise.",
+          type: "string",
+        },
+      },
+    },
+    HarnessRestoredCase: {
+      description:
+        "Cases the parent suite version had dropped that are back under their keys.",
+      required: ["key", "name", "proved"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        proved: {
+          title: "Proved",
+          description:
+            "Proved again on the versions in view; only then does it run.",
+          type: "boolean",
         },
       },
     },
