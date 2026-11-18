@@ -3,7 +3,7 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-    dependencies = [("simulate", "0115_certification_case_ordering")]
+    dependencies = [("simulate", "0116_certification_case_ordering")]
 
     operations = [
         migrations.AddField(

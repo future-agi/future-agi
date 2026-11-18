@@ -5,7 +5,7 @@ from django.db import migrations
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("simulate", "0114_alter_certificationcampaign_max_active_cases"),
+        ("simulate", "0115_alter_certificationcampaign_max_active_cases"),
     ]
 
     operations = [
