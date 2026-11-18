@@ -56,7 +56,9 @@ def _clean_source(source: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _check_source(organization_id: Any, workspace_id: Any, source: Mapping) -> None:
+def _check_source(
+    organization_id: Any, workspace_id: Any, source: Mapping
+) -> dict[str, Any]:
     if source.get("subfolder") and not getattr(
         settings, "HARNESS_SOURCE_SUBFOLDER_ENABLED", False
     ):
@@ -69,8 +71,14 @@ def _check_source(organization_id: Any, workspace_id: Any, source: Mapping) -> N
         from simulate.services.harness_github import take_workspace_read
 
         take_workspace_read(workspace_id)
+    checked = dict(source)
     if source.get("kind") == "github" and source.get("visibility") != "private":
-        _require_public_repository(organization_id, workspace_id, source)
+        checked.pop("repository_id", None)
+        repository_id = _require_public_repository(
+            organization_id, workspace_id, source
+        )
+        if repository_id is not None:
+            checked["repository_id"] = repository_id
     if source.get("kind") == "github" and source.get("visibility") == "private":
         from integrations.services.github_app import installation_connected
 
@@ -97,15 +105,16 @@ def _check_source(organization_id: Any, workspace_id: Any, source: Mapping) -> N
                 "The upload expired; upload the folder again",
                 status_code=422,
             )
+    return checked
 
 
 def _require_public_repository(
     organization_id: Any, workspace_id: Any, source: Mapping
-) -> None:
+) -> int | None:
     from simulate.services.harness_agent_changes import validate_public_github_source
 
     try:
-        validate_public_github_source(
+        return validate_public_github_source(
             {"source": {**source, "visibility": "public"}},
             organization_id=organization_id,
             workspace_id=workspace_id,
@@ -142,7 +151,7 @@ def start_scan(
     _require_reading()
 
     cleaned = _clean_source(source)
-    _check_source(organization.id, getattr(workspace, "id", None), cleaned)
+    cleaned = _check_source(organization.id, getattr(workspace, "id", None), cleaned)
     scan = AgentScan.no_workspace_objects.create(
         organization=organization,
         workspace=workspace,
@@ -226,7 +235,7 @@ def connect_agent(
     _require_reading()
     workspace_id = getattr(workspace, "id", None)
     cleaned = _clean_source(source)
-    _check_source(organization.id, workspace_id, cleaned)
+    cleaned = _check_source(organization.id, workspace_id, cleaned)
     found = existing_connected_agent(organization.id, workspace_id, cleaned)
     if found is not None:
         definition, version = found

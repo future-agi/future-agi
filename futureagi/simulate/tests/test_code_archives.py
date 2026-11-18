@@ -13,7 +13,7 @@ from simulate.services.code_archives import (
     store_commit_archive,
     stored_commit_archive,
 )
-from simulate.services.hosted_harness import create_hosted_job
+from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
 from simulate.services.hosted_harness_gateway import (
     HostedSourceAcquirer,
     acquire_source_archive,
@@ -76,6 +76,9 @@ def clones(monkeypatch):
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway.GitHubAppTokenProvider.from_settings",
         lambda: SimpleNamespace(credential=lambda _: nullcontext("installation-token")),
+    )
+    monkeypatch.setattr(
+        "integrations.services.github_app.installation_connected", lambda **_: True
     )
     return runs
 
@@ -271,3 +274,32 @@ def test_corrupt_stored_object_is_cloned_and_healed(organization, storage, clone
         )
         == archive
     )
+
+
+@pytest.mark.django_db
+def test_a_private_source_is_refused_after_github_is_disconnected(
+    organization, monkeypatch
+):
+    minted = []
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.GitHubAppTokenProvider.from_settings",
+        lambda: SimpleNamespace(
+            credential=lambda installation: (
+                minted.append(installation) or nullcontext("installation-token")
+            )
+        ),
+    )
+    source = {
+        "kind": "github",
+        "repository": REPOSITORY,
+        "ref": "main",
+        "visibility": "private",
+        "installation_id": "installation-1",
+    }
+
+    with pytest.raises(HostedHarnessError) as refused:
+        acquire_source_archive(organization.id, uuid.uuid4(), source, label="t")
+
+    assert refused.value.code == "github_installation_not_connected"
+    assert refused.value.status_code == 422
+    assert minted == []

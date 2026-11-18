@@ -1277,6 +1277,9 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
             credential=lambda _: nullcontext("installation-secret-token")
         ),
     )
+    monkeypatch.setattr(
+        "integrations.services.github_app.installation_connected", lambda **_: True
+    )
 
     def run(command, **kwargs):
         observed_commands.append(command)

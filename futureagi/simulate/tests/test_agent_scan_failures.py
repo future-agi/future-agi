@@ -233,6 +233,21 @@ class TestSourceChecks:
 
         assert AgentScan.objects.count() == 1
 
+    @pytest.mark.parametrize(
+        "answered", [{"id": 7, "private": False}, {"private": False}]
+    )
+    def test_a_scan_keeps_the_repository_id_github_returned_not_the_clients(
+        self, organization, workspace, user, answered
+    ):
+        with (
+            patch(LOOKUP, return_value=GitHubResponse("ok", answered)),
+            patch("simulate.tasks.agent_scans.schedule_agent_scan"),
+        ):
+            _scan(organization, workspace, user, {**PUBLIC, "repository_id": 999})
+
+        [scan] = AgentScan.objects.all()
+        assert scan.source.get("repository_id") == answered.get("id")
+
     def test_a_private_repository_skips_the_public_check(
         self, organization, workspace, user
     ):

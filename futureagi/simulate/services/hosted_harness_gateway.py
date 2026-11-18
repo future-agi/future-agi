@@ -1017,7 +1017,20 @@ def acquire_source_archive(
             return stored, pinned_commit
     credential = nullcontext("")
     if source.get("visibility") == "private":
+        from integrations.services.github_app import installation_connected
+
         installation_id = str(source.get("installation_id") or "")
+        if not installation_connected(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            installation_id=installation_id,
+        ):
+            raise HostedHarnessError(
+                "github_installation_not_connected",
+                "Connect GitHub in Settings > Integrations before reading a"
+                " private repository",
+                status_code=422,
+            )
         credential = GitHubAppTokenProvider.from_settings().credential(installation_id)
     with (
         credential as token,

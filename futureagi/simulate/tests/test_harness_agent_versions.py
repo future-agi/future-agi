@@ -1132,6 +1132,10 @@ class TestPreflight:
             f"{gateway}.GitHubAppTokenProvider.from_settings",
             lambda: SimpleNamespace(credential=credential),
         )
+        monkeypatch.setattr(
+            "integrations.services.github_app.installation_connected",
+            lambda **_: True,
+        )
         monkeypatch.setattr(f"{gateway}.subprocess.run", run)
         monkeypatch.setattr(f"{gateway}.shutil.which", lambda _: "/usr/bin/git")
         probe = patch(
