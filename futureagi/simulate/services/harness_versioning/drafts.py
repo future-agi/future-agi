@@ -1306,14 +1306,10 @@ def save_drafts(
             ),
             None,
         )
-        if validation_available(locked) and (
-            expected_review_digest
-            or any_decision(locked)
-            or settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE
-        ):
+        if must_validate(locked, expected_review_digest):
             raise version_error(
                 "validation_required",
-                "Validate the reviewed changes first, then save the validated versions",
+                "Validate these changes first, then save the validated versions",
                 409,
             )
         for piece in DRAFT_PIECES:
@@ -1525,6 +1521,18 @@ def _draft_item(draft: Any, environment: HostedHarnessJob) -> dict[str, Any]:
     }
 
 
+def must_validate(
+    environment: HostedHarnessJob, expected_review_digest: str | None = None
+) -> bool:
+    """Whether a Save of the open drafts must go through Validate first: where the environment's pairings can be
+    validated, once a change was reviewed, or always while Validate before Save is required."""
+    return validation_available(environment) and bool(
+        expected_review_digest
+        or any_decision(environment)
+        or settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE
+    )
+
+
 def list_drafts(environment: HostedHarnessJob) -> dict[str, Any]:
     """The open drafts the Save bar shows, and drafts an update set aside."""
     environment = HostedHarnessJob.no_workspace_objects.select_related(
@@ -1556,6 +1564,7 @@ def list_drafts(environment: HostedHarnessJob) -> dict[str, Any]:
         if entry is not None
         else None
     )
+    body["validation_required"] = must_validate(environment)
     return body
 
 

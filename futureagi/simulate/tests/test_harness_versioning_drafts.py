@@ -1578,6 +1578,7 @@ class TestApi:
             "set_aside",
             "validation",
             "candidates",
+            "validation_required",
         }
         assert body["environment"] is None and body["set_aside"] == []
         # Nothing validated yet.

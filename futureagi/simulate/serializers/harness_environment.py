@@ -1425,6 +1425,9 @@ class HarnessDraftsSerializer(serializers.Serializer):
         allow_null=True,
         help_text="The versions Validate built; send them to Save once validation is ready.",
     )
+    validation_required = serializers.BooleanField(
+        help_text="A Save of these drafts must go through Validate first; a plain Save is refused."
+    )
 
 
 class HarnessDraftValidateSerializer(StrictInputSerializer):

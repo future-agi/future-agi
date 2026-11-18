@@ -753,7 +753,31 @@ def test_once_validate_before_save_is_required_a_plain_save_is_refused(
     assert drafts.open_draft(environment, "environment") is not None
 
 
-def test_plain_drafts_save_works_as_today(user, workspace, storage, auth_client):
+def test_validate_before_save_is_required_by_default(
+    user, workspace, storage, auth_client
+):
+    """Every save goes through Validate unless turned off: the drafts say so before any change is reviewed, and a
+    plain Save is refused with the drafts kept."""
+    from django.conf import settings
+
+    assert settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE is True
+    environment = _with_world(user, workspace, "cand-default", storage)
+    _two_actors(auth_client, environment)
+
+    assert _drafts(auth_client, environment)["validation_required"] is True
+    refused = _plain_save(auth_client, environment)
+    assert (refused.status_code, refused.json()["error"]) == (
+        409,
+        "validation_required",
+    )
+    assert drafts.open_draft(environment, "environment") is not None
+
+
+def test_plain_drafts_save_works_as_today(
+    user, workspace, storage, auth_client, settings
+):
+    # With Validate before Save turned off, an undecided draft saves as is.
+    settings.HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE = False
     environment = _with_world(user, workspace, "cand-plain", storage)
     _two_actors(auth_client, environment)
     # Nothing decided: Validate needs no digest, and a plain Save may still follow it.
