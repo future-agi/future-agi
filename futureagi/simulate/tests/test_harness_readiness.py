@@ -1513,6 +1513,49 @@ class TestReviewFollowUps:
             True,
         )
 
+    def test_certification_files_after_a_file_larger_than_the_read_limit_are_read(
+        self, storage
+    ):
+        """A bundle member bigger than the certification read limit, sorted before the certification files, is
+        streamed past, never kept, and the files after it are read in full."""
+        import os
+
+        from simulate.services.harness_readiness import evidence
+
+        large = "a-large/world.bin"
+        body = archives.pack_archive(
+            {
+                large: os.urandom(evidence._MAX_CERTIFICATION_BYTES + 1024),
+                harness_readiness.TOOL_CERTIFICATION: json.dumps(
+                    {"tools": TOOLS}
+                ).encode(),
+                harness_readiness.ACTION_CERTIFICATION: json.dumps(
+                    {"actions": ACTIONS}
+                ).encode(),
+            }
+        )
+        storage.objects["harness-sealed/stream/large-first.tar.gz"] = body
+
+        found = archives.stream_members(
+            "harness-sealed/stream/large-first.tar.gz",
+            {
+                large,
+                harness_readiness.TOOL_CERTIFICATION,
+                harness_readiness.ACTION_CERTIFICATION,
+            },
+            evidence._MAX_CERTIFICATION_BYTES,
+        )
+        files, readable = evidence._read_once(
+            "harness-sealed/stream/large-first.tar.gz"
+        )
+
+        assert large not in found
+        assert json.loads(found[harness_readiness.TOOL_CERTIFICATION]) == {
+            "tools": TOOLS
+        }
+        assert readable is True
+        assert (files["tools"], files["actions"]) == (TOOLS, ACTIONS)
+
     def test_an_archive_without_the_certification_files_is_not_read_to_its_end(
         self, storage
     ):
