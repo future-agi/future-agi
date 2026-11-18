@@ -4721,8 +4721,6 @@ tfc/utils/functions.py:0: error: Incompatible types in assignment (expression ha
 tfc/utils/functions.py:0: error: Incompatible types in assignment (expression has type "float", target has type "int | None")  [assignment]
 tfc/utils/functions.py:0: error: Incompatible types in assignment (expression has type "float", target has type "int | None")  [assignment]
 tfc/utils/functions.py:0: error: Incompatible types in assignment (expression has type "float", target has type "int | None")  [assignment]
-tfc/utils/functions.py:0: error: Incompatible types in assignment (expression has type "float", variable has type "int")  [assignment]
-tfc/utils/functions.py:0: error: Incompatible types in assignment (expression has type "float", variable has type "int")  [assignment]
 tfc/utils/functions.py:0: error: Item "None" of "dict[str, Any] | list[Any] | str | float | int | tuple[dict[str, Any] | list[Any] | str | float | int | bool | None, list[dict[str, str]]] | None" has no attribute "__iter__" (not iterable)  [union-attr]
 tfc/utils/functions.py:0: error: Item "None" of "str | None" has no attribute "split"  [union-attr]
 tfc/utils/functions.py:0: error: Item "float" of "dict[str, Any] | list[Any] | str | float | int | tuple[dict[str, Any] | list[Any] | str | float | int | bool | None, list[dict[str, str]]] | None" has no attribute "__iter__" (not iterable)  [union-attr]
