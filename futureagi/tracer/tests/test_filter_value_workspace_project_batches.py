@@ -1207,9 +1207,11 @@ def test_workspace_span_system_walk_starts_at_retained_span_boundary(
         "page_size": 10,
     }
 
-    first = _invoke(params)
-    if first.status_code == 200 and first.data["result"].get("next_cursor"):
-        _invoke({**params, "cursor": first.data["result"]["next_cursor"]})
+    first = _result(_invoke(params))
+    if retained_age is not None:
+        assert first["next_cursor"]
+        _result(_invoke({**params, "cursor": first["next_cursor"]}))
+        assert len(windows) == 2
 
     assert windows
     start, end = windows[0]
