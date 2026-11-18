@@ -61203,9 +61203,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
               action: zod.string().min(1),
               code: zod
                 .string()
-                .describe(
-                  "The world's refusal code, as the harness sealed it.",
-                ),
+                .describe("Why the world refused the call, as a code."),
               reason: zod.string(),
             }),
           )
@@ -61677,13 +61675,13 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
               .boolean()
               .optional()
               .describe(
-                "This record's own actions were cut; null for a trial sealed before the harness said so.",
+                "This record's own actions were cut; null for a trial recorded before this was reported.",
               ),
             truncation: zod
               .enum(["actions", "records", "unknown"])
               .optional()
               .describe(
-                "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed before the harness said which; null when nothing was cut.",
+                "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial recorded before this was reported; null when nothing was cut.",
               ),
           })
           .describe(
@@ -61698,7 +61696,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       .boolean()
       .optional()
       .describe(
-        "More records were touched by more than one participant than the trial kept; null for a trial sealed before the harness said so.",
+        "More records were touched by more than one participant than the trial kept; null for a trial recorded before this was reported.",
       ),
     stopped_workers: zod
       .array(
@@ -61708,16 +61706,16 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
             process: zod.string().min(1),
             at: zod
               .number()
-              .describe("When the harness ended it, seconds since the epoch."),
+              .describe("When the run stopped it, in seconds since the epoch."),
             reason: zod.string().min(1),
           })
           .describe(
-            "Workers whose own process the harness ended when their deadline passed.",
+            "Participants running on their own that the run stopped when their deadline passed.",
           ),
       )
       .optional()
       .describe(
-        "Workers whose own process the harness ended when their deadline passed.",
+        "Participants running on their own that the run stopped when their deadline passed.",
       ),
   }),
   earlier_attempts: zod.array(
@@ -61795,9 +61793,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
                   action: zod.string().min(1),
                   code: zod
                     .string()
-                    .describe(
-                      "The world's refusal code, as the harness sealed it.",
-                    ),
+                    .describe("Why the world refused the call, as a code."),
                   reason: zod.string(),
                 }),
               )
@@ -62278,13 +62274,13 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
                   .boolean()
                   .optional()
                   .describe(
-                    "This record's own actions were cut; null for a trial sealed before the harness said so.",
+                    "This record's own actions were cut; null for a trial recorded before this was reported.",
                   ),
                 truncation: zod
                   .enum(["actions", "records", "unknown"])
                   .optional()
                   .describe(
-                    "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed before the harness said which; null when nothing was cut.",
+                    "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial recorded before this was reported; null when nothing was cut.",
                   ),
               })
               .describe(
@@ -62299,7 +62295,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
           .boolean()
           .optional()
           .describe(
-            "More records were touched by more than one participant than the trial kept; null for a trial sealed before the harness said so.",
+            "More records were touched by more than one participant than the trial kept; null for a trial recorded before this was reported.",
           ),
         stopped_workers: zod
           .array(
@@ -62310,17 +62306,17 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
                 at: zod
                   .number()
                   .describe(
-                    "When the harness ended it, seconds since the epoch.",
+                    "When the run stopped it, in seconds since the epoch.",
                   ),
                 reason: zod.string().min(1),
               })
               .describe(
-                "Workers whose own process the harness ended when their deadline passed.",
+                "Participants running on their own that the run stopped when their deadline passed.",
               ),
           )
           .optional()
           .describe(
-            "Workers whose own process the harness ended when their deadline passed.",
+            "Participants running on their own that the run stopped when their deadline passed.",
           ),
       }),
     }),
@@ -62355,7 +62351,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
 });
 
 /**
- * Which of a multi-agent app's workers did what in this trial, read from the spans the app exported.
+ * Which of a multi-agent app's participants did what in this trial, read from the traces the app sent.
  */
 export const SimulateV3CallExecutionWorkersParams = zod.object({
   call_execution_id: zod.string(),
@@ -62395,6 +62391,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
         "infrastructure",
         "not_observed",
         "observed_no_end",
+        "unknown",
       ]),
       cut_short: zod.boolean(),
       past_deadline: zod.boolean(),
@@ -62423,7 +62420,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
         .enum(["held_at_world", "not_enforced", "bypassed", "unknown"])
         .optional()
         .describe(
-          "How the world held it to its limits in this trial: on its own channel (only when the trial shows it), not at all, bypassed, or not known.",
+          "How its limits were enforced in this trial: enforced (only when the trial shows its own calls), not enforced, skipped, or not known.",
         ),
       enforcement_label: zod.string().min(1).optional(),
       channel_bypassed: zod
@@ -62432,7 +62429,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           simulateV3CallExecutionWorkersResponseWorkersItemChannelBypassedDefault,
         )
         .describe(
-          "It reached the world on the shared address instead of its own channel in this trial, so its limits were not held there and its own checks were not graded.",
+          "Its calls went through the main app in this trial, so its limits were not enforced and its own checks were not graded.",
         ),
     }),
   ),
@@ -62476,7 +62473,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       refusal_code: zod
         .string()
         .optional()
-        .describe("The world's refusal code, as the harness sealed it."),
+        .describe("Why the world refused the call, as a code."),
       launch: zod.enum(["async"]).optional(),
       relationship: zod.enum(["observed", "unknown"]).optional(),
       at: zod.string().min(1),
@@ -62506,7 +62503,13 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       "The project the call's traces were read from, to open them in Traces; null when none was read.",
     ),
   collection: zod
-    .enum(["complete", "partial", "unavailable", "no_evidence"])
+    .enum([
+      "complete",
+      "partial",
+      "unavailable",
+      "no_evidence",
+      "infrastructure_lost",
+    ])
     .optional(),
   steps: zod.array(
     zod.object({
@@ -62556,7 +62559,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           refusal_code: zod
             .string()
             .optional()
-            .describe("The world's refusal code, as the harness sealed it."),
+            .describe("Why the world refused the call, as a code."),
           launch: zod.enum(["async"]).optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
@@ -62610,7 +62613,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           refusal_code: zod
             .string()
             .optional()
-            .describe("The world's refusal code, as the harness sealed it."),
+            .describe("Why the world refused the call, as a code."),
           launch: zod.enum(["async"]).optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
@@ -62641,6 +62644,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           "infrastructure",
           "not_observed",
           "observed_no_end",
+          "unknown",
         ])
         .optional(),
       did_not_finish: zod.boolean().optional(),
@@ -62686,7 +62690,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           refusal_code: zod
             .string()
             .optional()
-            .describe("The world's refusal code, as the harness sealed it."),
+            .describe("Why the world refused the call, as a code."),
           launch: zod.enum(["async"]).optional(),
           relationship: zod.enum(["observed", "unknown"]).optional(),
           at: zod.string().min(1),
@@ -64216,6 +64220,7 @@ export const SimulateV3TestExecutionTrialRoutesResponse = zod.object({
         "pending",
         "not_finished",
         "unreadable",
+        "no_evidence",
       ]),
       cells: zod
         .array(

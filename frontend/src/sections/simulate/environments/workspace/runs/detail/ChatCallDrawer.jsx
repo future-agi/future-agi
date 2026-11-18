@@ -122,13 +122,22 @@ export default function ChatCallDrawer({
   // Forgotten on another call, as in the voice drawer.
   const [traceCallId, setTraceCallId] = useState(task.id);
   // An earlier attempt's id, or null for the call itself; forgotten on another call.
-  const [attempt, setAttempt] = useState(null);
+  const [chosenAttempt, setAttempt] = useState(null);
   if (traceCallId !== task.id) {
     setTraceCallId(task.id);
     setOpenStep(null);
     setAttempt(null);
     setFocusTurn(null);
   }
+  const { callDetail, isLoading, error: detailError } = useCallDetail(task.id);
+  // Only an attempt of the call shown: a choice made on the previous call is never read against this one's detail.
+  const chosen =
+    traceCallId === task.id
+      ? callDetail?.earlierAttempts?.find(
+          (one) => one.attempt === chosenAttempt,
+        )
+      : undefined;
+  const attempt = chosen ? chosenAttempt : null;
   const openTrace = (traceId, spanId) => {
     setOpenStep({ traceId, spanId });
     setChosenArtifact("traces");
@@ -142,7 +151,6 @@ export default function ChatCallDrawer({
       : chosenArtifact;
   // An earlier attempt's record is read on its own, whatever the latest attempt kept.
   const showWorkers = hasWorkers || artifact === "workers" || Boolean(attempt);
-  const { callDetail, isLoading, error: detailError } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
   const showChanges = artifact === "world_changes";
@@ -349,11 +357,7 @@ export default function ChatCallDrawer({
             ) : showChanges ? (
               <TrialChangesPanel
                 trialState={
-                  attempt
-                    ? callDetail.earlierAttempts.find(
-                        (one) => one.attempt === attempt,
-                      ).trial_state
-                    : callDetail?.trial_state ?? null
+                  chosen ? chosen.trial_state : callDetail?.trial_state ?? null
                 }
                 underWay={!attempt && TRIAL_UNDER_WAY.has(task.status)}
               />
@@ -368,6 +372,7 @@ export default function ChatCallDrawer({
                 }}
               >
                 <CallTracesPanel
+                  key={task.id}
                   traces={callTraces.traces}
                   projectId={callTraces.projectId}
                   testExecutionId={executionId}

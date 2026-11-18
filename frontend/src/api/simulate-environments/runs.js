@@ -62,8 +62,6 @@ export function executionToRun(raw) {
   const failed = hasOutcomes
     ? raw.outcome_failed ?? 0
     : raw?.failed_calls ?? Math.max(total - passed, 0);
-  // Calls the user stopped: neither errored nor failed.
-  const cancelled = hasOutcomes ? raw.outcome_cancelled ?? 0 : 0;
 
   return {
     id: raw?.id,
@@ -90,7 +88,6 @@ export function executionToRun(raw) {
     scored: raw.scored,
     errored,
     skipped,
-    cancelled,
     hasOutcomes,
     scenarioCount: raw?.selected_scenarios ?? null,
     scenarioIds: raw?.scenario_keys ?? [],

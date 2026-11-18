@@ -57,6 +57,13 @@ export default function CallWorkersPanel({
     const step = key && seq.steps.find((one) => String(one.key) === key);
     if (step) setSelected(step.n);
   }, [seq, callExecutionId, attempt]);
+  // An earlier attempt with no hand-off: the server answers 204, never a pending read, so there is nothing to wait for.
+  if (data === null && attempt)
+    return (
+      <Typography sx={{ p: 2, typography: "s1", color: "text.secondary" }}>
+        {C.noHandOffInAttempt}
+      </Typography>
+    );
   // A failed refetch keeps the tree it has. A call known to have no record never gets here: the drawers drop the tab.
   if (!data)
     return isError ? (
@@ -66,7 +73,7 @@ export default function CallWorkersPanel({
     ) : (
       <CircularProgress size={20} sx={{ m: 2 }} />
     );
-  // The server says why there is no record: the read failed, or an earlier attempt was kept before records were.
+  // Why there is no record yet: still being collected, the read failed, or an earlier attempt was kept before records were.
   if (data.state !== "recorded")
     return (
       <Typography sx={{ p: 2, typography: "s1", color: "text.secondary" }}>
@@ -103,7 +110,8 @@ export default function CallWorkersPanel({
       .filter(test)
       .map((one) => one.name)
       .join(", ");
-  const notObserved = named((one) => !one.observed);
+  const notObserved = named((one) => !one.observed && one.state !== "unknown");
+  const unknown = named((one) => one.state === "unknown");
   const noEnd = named((one) => one.state === "observed_no_end");
   const pastDeadline = named((one) => one.past_deadline);
   const bypassed = named((one) => one.channel_bypassed);
@@ -177,7 +185,14 @@ export default function CallWorkersPanel({
           {C.stoppedByUser}
         </Typography>
       ) : null}
-      {data.collection === "no_evidence" ? (
+      {data.collection === "infrastructure_lost" ? (
+        <Typography
+          data-testid="infrastructure-lost"
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >
+          {C.infrastructureLost}
+        </Typography>
+      ) : data.collection === "no_evidence" ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {data.stopped_by_user ? C.stoppedByUserNoEvidence : C.noEvidence}
         </Typography>
@@ -210,6 +225,14 @@ export default function CallWorkersPanel({
       {notObserved && !seq?.steps.length ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.workersNotObserved(notObserved)}
+        </Typography>
+      ) : null}
+      {unknown ? (
+        <Typography
+          data-testid="workers-unknown"
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >
+          {C.workersUnknown(unknown)}
         </Typography>
       ) : null}
       {noEnd ? (

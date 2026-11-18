@@ -3181,7 +3181,7 @@
 
 **Browser observations:**
 
-- the Workers card lists each worker with its channel and only the tools it may use
+- the Participants card lists each declared participant with its connection and only the tools it may use
 - the stopped call says the refund worker was stopped when its deadline passed
 
 ### SIM-E2E-017 — the Tools card shows each tool's inputs with units, what it returns, and a production-only tool as Unsupported

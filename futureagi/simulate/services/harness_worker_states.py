@@ -12,6 +12,7 @@ from simulate.constants.hosted_harness import (
     TRIAL_STATE_KEY,
     USER_CANCELED,
     WORKER_CHANNEL_BYPASSED,
+    WORKER_DEADLINE_NOT_ENFORCED,
     WORKER_ENFORCEMENT_LABELS,
     WORKER_LIMITS_NOT_ENFORCED,
 )
@@ -377,17 +378,44 @@ def _at_door(metadata: Mapping[str, Any] | None) -> set[str]:
 
 def _unheld(metadata: Mapping[str, Any] | None) -> set[str] | None:
     """The workers whose limits the trial says were not held, by its `worker_limits_not_enforced` notices; None when a
-    notice names no worker, so it falls on every one."""
+    notice names no worker, so it falls on every one. A worker whose deadline did not hold (its
+    `worker_deadline_not_enforced` notice, or the trial's `unenforced_deadlines`) is one of them."""
     trial = (metadata or {}).get(TRIAL_STATE_KEY)
     notices = trial.get("notices") if isinstance(trial, Mapping) else None
-    named: set[str] = set()
+    late = trial.get("unenforced_deadlines") if isinstance(trial, Mapping) else None
+    named: set[str] = {
+        str(one["worker"])
+        for one in (late if isinstance(late, list) else [])
+        if isinstance(one, Mapping) and one.get("worker")
+    }
     for one in notices if isinstance(notices, list) else []:
-        if isinstance(one, Mapping) and one.get("code") == WORKER_LIMITS_NOT_ENFORCED:
+        if isinstance(one, Mapping) and one.get("code") == WORKER_DEADLINE_NOT_ENFORCED:
+            workers = one.get("workers")
+            named.update(
+                str(worker) for worker in (workers if isinstance(workers, list) else [])
+            )
+        elif isinstance(one, Mapping) and one.get("code") == WORKER_LIMITS_NOT_ENFORCED:
             workers = one.get("workers")
             if not isinstance(workers, list) or not workers:
                 return None
             named.update(str(worker) for worker in workers)
     return named
+
+
+def _lost_to_infrastructure(
+    call: CallExecution, attempt: CallExecutionSnapshot | None
+) -> bool:
+    """Whether the call's attempt (or the earlier `attempt`) ended in an infrastructure failure, by its kept ending, else
+    by its receipt or its job's failure."""
+    if attempt is not None:
+        kept = _kept_end(call, attempt)
+        if kept is not None:
+            return kept.get("ending") == "infrastructure"
+        return (
+            trial_ending(_attempt_as_ended(call, attempt), _attempt_job(call, attempt))
+            == "infrastructure"
+        )
+    return trial_ending(call, _job_of(call, _execution(call))) == "infrastructure"
 
 
 def served_workers(
@@ -405,6 +433,12 @@ def served_workers(
     at_door = _at_door(metadata)
     late = refused_past_deadline(metadata)
     trial = (metadata or {}).get(TRIAL_STATE_KEY)
+    # Stopped at its own deadline: the deadline was enforced on it, though it made no call the door saw.
+    held = at_door | (
+        {str(one["worker"]) for one in stopped_workers_of(trial)}
+        if isinstance(trial, Mapping)
+        else set()
+    )
     # A record read before every worker kept a state is served with the state its own events give each one.
     derived = (
         {
@@ -415,6 +449,18 @@ def served_workers(
         if any("state" not in one for one in timeline["workers"])
         else {}
     )
+    if timeline.get("collection") == "no_evidence" and _lost_to_infrastructure(
+        call, attempt
+    ):
+        # Nothing was recorded because the attempt was lost, not because the app sent nothing: no worker is claimed unseen.
+        timeline = {
+            **timeline,
+            "collection": "infrastructure_lost",
+            "workers": [
+                {**one, "state": "unknown"} if not one.get("observed") else one
+                for one in timeline["workers"]
+            ],
+        }
     workers: list[HarnessWorker] = []
     for one in timeline["workers"]:
         enforcement = worker_enforcement(
@@ -422,7 +468,7 @@ def served_workers(
             trial=trial if isinstance(trial, Mapping) else None,
             bypassed=str(one.get("id")) in bypassed,
             unheld=unheld is None or str(one.get("id")) in unheld,
-            at_door=str(one.get("id")) in at_door,
+            at_door=str(one.get("id")) in held,
         )
         served: HarnessWorker = {
             **one,

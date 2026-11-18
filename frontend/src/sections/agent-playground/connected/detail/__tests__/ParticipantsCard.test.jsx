@@ -12,7 +12,8 @@ const ORDER_LOOKUP = {
   tools_shown: ["get_order"],
   binding: "separate",
   enforcement: "unknown",
-  enforcement_label: "Not known: held only when a trial shows it",
+  enforcement_label:
+    "Not confirmed yet: no run has shown this participant's own calls",
 };
 const REFUND = {
   id: "refund",
@@ -23,7 +24,8 @@ const REFUND = {
   tools_shown: ["issue_refund"],
   binding: "not_declared",
   enforcement: "not_enforced",
-  enforcement_label: "Not enforced: it shares the app's address",
+  enforcement_label:
+    "Limits can't be enforced: this participant runs inside the app, so its calls can't be told apart",
 };
 
 describe("ParticipantsCard", () => {

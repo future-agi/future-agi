@@ -1079,7 +1079,7 @@ def _call_for_request(
 
 
 class CallExecutionV3WorkersView(APIView):
-    """Which of a multi-agent app's workers did what in this trial, read from the spans the app exported."""
+    """Which of a multi-agent app's participants did what in this trial, read from the traces the app sent."""
 
     permission_classes = [IsAuthenticated]
 
@@ -1104,7 +1104,11 @@ class CallExecutionV3WorkersView(APIView):
         if reply.next_read_at is not None:
             return Response(
                 CallWorkersPendingSerializer(
-                    {"pending": True, "next_read_at": reply.next_read_at}
+                    {
+                        "pending": True,
+                        "next_read_at": reply.next_read_at,
+                        "participants_declared": reply.participants_declared,
+                    }
                 ).data,
                 status=reply.status,
             )

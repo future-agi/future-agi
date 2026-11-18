@@ -6,13 +6,15 @@ TRIAL_STATE_KEY = "harness_trial_state"
 WORKER_CHANNEL_BYPASSED = "worker_channel_bypassed"
 # How the world holds a worker to its limits, and the words the cards show for it.
 WORKER_ENFORCEMENT_LABELS = {
-    "held_at_world": "Held at the world: its own channel, so its tools and deadline are checked at the world's door",
-    "not_enforced": "Not enforced: it shares the app's address, so the world cannot tell its calls apart",
-    "bypassed": "Bypassed in this trial: it reached the world on the shared address, not its own channel",
-    "unknown": "Not known: held only when a trial shows its calls on its own channel at the world's door",
+    "held_at_world": "Limits enforced: this participant's tools and deadline are checked on every call",
+    "not_enforced": "Limits can't be enforced: this participant runs inside the app, so its calls can't be told apart",
+    "bypassed": "Limits skipped in this run: its calls went through the main app",
+    "unknown": "Not confirmed yet: no run has shown this participant's own calls",
 }
 # The trial notice ALK seals when a scenario relies on worker limits this environment cannot hold.
 WORKER_LIMITS_NOT_ENFORCED = "worker_limits_not_enforced"
+# The trial notice ALK seals naming each worker whose deadline did not hold (e.g. it kept running after its cancel).
+WORKER_DEADLINE_NOT_ENFORCED = "worker_deadline_not_enforced"
 # The trial notice ALK seals when some of a trial's hand-offs could not be recorded.
 HAND_OFFS_INCOMPLETE = "hand_offs_incomplete"
 # Failure codes of a trial the harness held as the scenario's problem, not the agent's: its checks were never graded,

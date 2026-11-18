@@ -106,6 +106,6 @@ test('SIM-E2E-009: a multi-agent call shows its workers turn by turn, an unplace
     await page.goto(`/dashboard/simulate/environments/${seed.environmentId}/runs/${seed.runTestId}/${seed.testExecutionId}?rowId=${seed.cancelledCallExecutionId}`);
     await page.getByRole('tab', { name: PARTICIPANTS_TAB, exact: true }).click({ timeout: UI_READY });
     await expect(page.getByTestId('stopped-by-user')).toBeVisible({ timeout: UI_READY });
-    await expect(page.getByTestId('worker-cleanup')).toContainText("Refund worker: Stopped when the run's sandbox was removed");
+    await expect(page.getByTestId('worker-cleanup')).toContainText("Refund worker: Stopped when the run's test environment shut down");
   });
 });

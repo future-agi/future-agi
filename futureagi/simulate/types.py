@@ -10,7 +10,10 @@ WorkerEventType = Literal["delegated", "transferred", "tool_call", "returned"]
 WorkerStatus = Literal["ok", "error"]
 WorkerRelationship = Literal["observed", "unknown"]
 WorkerAttribution = Literal["reported", "unattributed"]
-WorkerCollection = Literal["complete", "partial", "unavailable", "no_evidence"]
+# `infrastructure_lost`: nothing was recorded because the attempt was lost to an infrastructure failure, never the app.
+WorkerCollection = Literal[
+    "complete", "partial", "unavailable", "no_evidence", "infrastructure_lost"
+]
 # What the `/workers/` answer holds: a kept record, an earlier attempt kept before records were, or a failed read.
 WorkersState = Literal["recorded", "not_kept", "unreadable"]
 WorkerStepKind = Literal["handoff", "tool_call"]
@@ -30,6 +33,8 @@ WorkerState = Literal[
     "not_observed",
     # It took part (its tool calls, or control handed to it), but no return or end was recorded, so none is claimed.
     "observed_no_end",
+    # Not seen in an attempt lost to an infrastructure failure: whether it ran is not known.
+    "unknown",
 ]
 # How a call's trial ended, which a worker still out when it ended takes.
 TrialEnding = Literal["ended", "infrastructure", "cancel_requested", "cancelled"]
@@ -159,7 +164,8 @@ def worker_enforcement(
         return "bypassed"
     if binding != "separate" or unheld:
         return "not_enforced"
-    if trial is None:
+    if trial is None or trial.get("stopped_workers_unreadable") is True:
+        # With no trial, or whether the harness stopped its workers could not be read: not known, never held.
         return "unknown"
     if trial.get("door") is True and trial.get("worker_channels") is True:
         return "held_at_world" if at_door else "unknown"
@@ -465,8 +471,15 @@ class CallWorkersRecord(WorkerTimeline, WorkerSteps):
 
 # A trial's route: compared when `recorded` (a whole record) or `no_hand_off` (a read that found none); never when the
 # record is cut short or due a later read, the read is due, the call did not complete, or the read failed or never ran.
+# `no_evidence`: the read ran but the app sent no traces and the sandbox recorded no hand-offs, so the route is not known.
 TrialRoute = Literal[
-    "recorded", "no_hand_off", "partial", "pending", "not_finished", "unreadable"
+    "recorded",
+    "no_hand_off",
+    "partial",
+    "pending",
+    "not_finished",
+    "unreadable",
+    "no_evidence",
 ]
 # Who took a step's part: a worker, the coordinator, or unknown when the record does not say.
 RouteParty = Literal["worker", "coordinator", "unknown"]
