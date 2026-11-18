@@ -229,7 +229,7 @@ KNOWLEDGE_ROLES = "knowledge/roles.json"
 FileRole = Literal["policy", "seed_records", "evaluator_only"]
 FILE_ROLES: tuple[FileRole, ...] = ("policy", "seed_records", "evaluator_only")
 # A role that is not one of them, answered with the roles there are.
-FILE_ROLE_ERRORS = {
+FILE_ROLE_ERRORS: dict[str, Any] = {
     "invalid_choice": f'"{{input}}" is not a file role: use {", ".join(FILE_ROLES)}.'
 }
 # The role a file with a role the platform does not know is read as: the safe side, as the harness reads it.
