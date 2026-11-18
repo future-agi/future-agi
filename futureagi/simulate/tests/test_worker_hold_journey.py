@@ -241,3 +241,33 @@ def test_a_bypass_alk_reports_holds_the_cases_relying_on_that_worker(
     held = {one["id"]: one["count"] for one in report["selection"]["held_by"]}
     assert held == {"worker:refund": len(REFUND_KEYS)}
     assert report["selection"]["eligible"] == len(LOOKUP_KEYS)
+    # Only the bypassing worker reads Blocked; the other keeps its own reading.
+    lookup = next(
+        one for one in report["workers"] if one["worker_id"] == "order_lookup"
+    )
+    assert lookup["status"] != "blocked"
+    held_by = next(
+        one for one in report["selection"]["held_by"] if one["id"] == "worker:refund"
+    )
+    assert held_by["name"] == "Refund worker"
+    assert held_by["reason"] == refund["reason"]
+    assert refund["fix"]["action"].startswith("Make Refund worker's tool client use")
+
+    # Before any run: a run of only the cases relying on it is refused and creates nothing.
+    runs = HostedHarnessJob.no_workspace_objects.filter(environment=environment)
+    before = runs.count()
+    refused = _run(auth_client, environment, REFUND_KEYS, "worker-bypass-refunds")
+    assert refused.status_code == 409, refused.content
+    assert refused.json()["error"] == "all_cases_blocked"
+    assert "Refund worker" in refused.json()["message"]
+    assert runs.count() == before
+
+    # The whole suite runs the lookups and records the refunds as held back by the worker.
+    with django_capture_on_commit_callbacks(execute=True):
+        started = _run(
+            auth_client, environment, REFUND_KEYS + LOOKUP_KEYS, "worker-bypass-all"
+        )
+    assert started.status_code in (200, 201, 202), started.content
+    chosen = runs.latest("created_at").payload["metadata"]["readiness_selection"]
+    assert chosen["held_back"]["by"] == {"worker:refund": len(REFUND_KEYS)}
+    assert chosen["reasons"] == {"worker:refund": refund["reason"]}
