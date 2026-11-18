@@ -62395,6 +62395,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
         "infrastructure",
         "not_observed",
         "observed_no_end",
+        "unknown",
       ]),
       cut_short: zod.boolean(),
       past_deadline: zod.boolean(),
@@ -62506,7 +62507,13 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       "The project the call's traces were read from, to open them in Traces; null when none was read.",
     ),
   collection: zod
-    .enum(["complete", "partial", "unavailable", "no_evidence"])
+    .enum([
+      "complete",
+      "partial",
+      "unavailable",
+      "no_evidence",
+      "infrastructure_lost",
+    ])
     .optional(),
   steps: zod.array(
     zod.object({
@@ -62641,6 +62648,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
           "infrastructure",
           "not_observed",
           "observed_no_end",
+          "unknown",
         ])
         .optional(),
       did_not_finish: zod.boolean().optional(),
@@ -64216,6 +64224,7 @@ export const SimulateV3TestExecutionTrialRoutesResponse = zod.object({
         "pending",
         "not_finished",
         "unreadable",
+        "no_evidence",
       ]),
       cells: zod
         .array(

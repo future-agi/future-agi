@@ -25,6 +25,7 @@ from simulate.services.harness_workers import (
     FIRST_READ,
     READ_KEY,
     WORKERS_KEY,
+    attempt_timeline,
     check_again_at,
     declared_workers,
     first_read_due,
@@ -48,6 +49,8 @@ class WorkersReply:
     status: int
     record: CallWorkersRecord | None = None
     next_read_at: str | None = None
+    # With a 202: whether the run's version declares any participant, so a single-agent call shows no tab meanwhile.
+    participants_declared: bool = False
 
 
 def _empty(at: str) -> WorkerTimeline:
@@ -110,7 +113,7 @@ def call_workers(
             call.snapshots.filter(
                 id=attempt, rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL
             )
-            .only("status", "snapshot_timestamp", "completed_at")
+            .only("status", "snapshot_timestamp", "completed_at", "provider_call_data")
             .first()
         )
         if snapshot is None:
@@ -119,6 +122,11 @@ def call_workers(
         if kept is None:
             # Rerun before attempts were kept, or one of the oldest no longer kept: its record, if any, is gone.
             return _stated("not_kept", now.isoformat(), now)
+        if WORKERS_KEY not in kept and READ_KEY not in kept:
+            # Rerun before its own read ran: its record is built from the tool calls its snapshot sealed.
+            built = attempt_timeline(call, snapshot, kept)
+            if built is not None:
+                kept = {**kept, WORKERS_KEY: built}
         return _answer(call, kept, now, attempt=snapshot) or WorkersReply(
             status.HTTP_204_NO_CONTENT
         )
@@ -131,8 +139,11 @@ def call_workers(
     # the client checks again at `next_read_at` rather than reading "no workers".
     for due in (first, later_read_due(first)) if first is not None else ():
         if read_pending(due, now):
+            job = job_for_call(call)
             return WorkersReply(
-                status.HTTP_202_ACCEPTED, next_read_at=check_again_at(due, now)
+                status.HTTP_202_ACCEPTED,
+                next_read_at=check_again_at(due, now),
+                participants_declared=bool(job is not None and declared_workers(job)),
             )
     return WorkersReply(status.HTTP_204_NO_CONTENT)
 
@@ -159,6 +170,9 @@ def _trial_route(
     kept = metadata.get(WORKERS_KEY)
     read = metadata.get(READ_KEY)
     if isinstance(kept, Mapping) and kept:
+        if kept.get("collection") == "no_evidence":
+            # Nothing was recorded for its workers: an unmeasured route, never one with no steps.
+            return "no_evidence", None
         record = served_record(cast(WorkerTimeline, kept), now)
         if record["state"] != "recorded":
             return "unreadable", None

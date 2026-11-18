@@ -57920,7 +57920,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         collection: {
           title: "Collection",
           type: "string",
-          enum: ["complete", "partial", "unavailable", "no_evidence"],
+          enum: [
+            "complete",
+            "partial",
+            "unavailable",
+            "no_evidence",
+            "infrastructure_lost",
+          ],
         },
         steps: {
           type: "array",
@@ -99330,6 +99336,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "infrastructure",
             "not_observed",
             "observed_no_end",
+            "unknown",
           ],
         },
         cut_short: {
@@ -99638,6 +99645,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "infrastructure",
             "not_observed",
             "observed_no_end",
+            "unknown",
           ],
         },
         did_not_finish: {
@@ -122952,6 +122960,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "pending",
             "not_finished",
             "unreadable",
+            "no_evidence",
           ],
         },
         cells: {

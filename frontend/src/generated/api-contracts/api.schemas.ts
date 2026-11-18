@@ -28498,6 +28498,7 @@ export const CallWorkersResponseApiCollection = {
   partial: "partial",
   unavailable: "unavailable",
   no_evidence: "no_evidence",
+  infrastructure_lost: "infrastructure_lost",
 } as const;
 
 export type CallWorkersResponseApiWorkerDepths = { [key: string]: number };
@@ -28524,6 +28525,7 @@ export const CallWorkerApiState = {
   infrastructure: "infrastructure",
   not_observed: "not_observed",
   observed_no_end: "observed_no_end",
+  unknown: "unknown",
 } as const;
 
 export type CleanupApiStatus =
@@ -28835,6 +28837,7 @@ export const CallWorkerStepApiEndState = {
   infrastructure: "infrastructure",
   not_observed: "not_observed",
   observed_no_end: "observed_no_end",
+  unknown: "unknown",
 } as const;
 
 export type CallWorkerStepApiRelationship =
@@ -29850,6 +29853,7 @@ export const RouteTrialApiRoute = {
   pending: "pending",
   not_finished: "not_finished",
   unreadable: "unreadable",
+  no_evidence: "no_evidence",
 } as const;
 
 export type RouteCellApiState =

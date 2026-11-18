@@ -63,14 +63,14 @@ class CallWorkerSerializer(serializers.Serializer):
     enforcement = serializers.ChoiceField(
         choices=get_args(WorkerEnforcement),
         required=False,
-        help_text="How the world held it to its limits in this trial: on its own channel (only when the trial "
-        "shows it), not at all, bypassed, or not known.",
+        help_text="How its limits were enforced in this trial: enforced (only when the trial shows its own calls), "
+        "not enforced, skipped, or not known.",
     )
     enforcement_label = serializers.CharField(required=False)
     channel_bypassed = serializers.BooleanField(
         default=False,
-        help_text="It reached the world on the shared address instead of its own channel in this trial, so its "
-        "limits were not held there and its own checks were not graded.",
+        help_text="Its calls went through the main app in this trial, so its limits were not enforced and its own "
+        "checks were not graded.",
     )
 
 
@@ -104,7 +104,7 @@ class CallWorkerEventSerializer(serializers.Serializer):
     refusal_code = serializers.CharField(
         allow_blank=True,
         required=False,
-        help_text="The world's refusal code, as the harness sealed it.",
+        help_text="Why the world refused the call, as a code.",
     )
     # `async` for a hand-off to a background job, placed under the tool call that launched it.
     launch = serializers.ChoiceField(choices=("async",), required=False)
@@ -216,6 +216,10 @@ class CallWorkersQuerySerializer(serializers.Serializer):
 class CallWorkersPendingSerializer(serializers.Serializer):
     pending = serializers.BooleanField()
     next_read_at = serializers.CharField()
+    participants_declared = serializers.BooleanField(
+        help_text="The run's agent version declares at least one participant, so this call's record is worth waiting "
+        "for; false for a single-agent app."
+    )
 
 
 class CallWorkersResponseSerializer(serializers.Serializer):

@@ -122,7 +122,7 @@ class TrialRefusedActionSerializer(serializers.Serializer):
     action = serializers.CharField()
     code = serializers.CharField(
         allow_blank=True,
-        help_text="The world's refusal code, as the harness sealed it.",
+        help_text="Why the world refused the call, as a code.",
     )
     reason = serializers.CharField(allow_blank=True)
 
@@ -421,14 +421,14 @@ class SharedRecordSerializer(serializers.Serializer):
     actions_truncated = serializers.BooleanField(
         allow_null=True,
         default=None,
-        help_text="This record's own actions were cut; null for a trial sealed before the harness said so.",
+        help_text="This record's own actions were cut; null for a trial recorded before this was reported.",
     )
     truncation = serializers.ChoiceField(
         choices=get_args(SharedRecordTruncation),
         allow_null=True,
         default=None,
-        help_text="Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed "
-        "before the harness said which; null when nothing was cut.",
+        help_text="Which bound cut it: its own actions, the trial's list of records, or unknown on a trial recorded "
+        "before this was reported; null when nothing was cut.",
     )
 
 
@@ -436,7 +436,7 @@ class StoppedWorkerSerializer(serializers.Serializer):
     worker = serializers.CharField()
     process = serializers.CharField()
     at = serializers.FloatField(
-        help_text="When the harness ended it, seconds since the epoch."
+        help_text="When the run stopped it, in seconds since the epoch."
     )
     reason = serializers.CharField()
 
@@ -511,12 +511,12 @@ class TrialStateSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         help_text="More records were touched by more than one participant than the trial kept; null for a trial "
-        "sealed before the harness said so.",
+        "recorded before this was reported.",
     )
     stopped_workers = StoppedWorkerSerializer(
         many=True,
         required=False,
-        help_text="Workers whose own process the harness ended when their deadline passed.",
+        help_text="Participants running on their own that the run stopped when their deadline passed.",
     )
 
 

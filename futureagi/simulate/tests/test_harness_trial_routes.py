@@ -470,6 +470,13 @@ HOTELS_EVENT = {
     ("status", "metadata", "hosted", "expected"),
     [
         ("completed", {"harness_workers": _stored()}, True, "recorded"),
+        # The read ran but nothing was recorded for its workers: not a route with no steps.
+        (
+            "completed",
+            {"harness_workers": _stored(events=[], collection="no_evidence")},
+            True,
+            "no_evidence",
+        ),
         # Cut short, or still due a later read: its missing steps are not steps it did not take.
         ("completed", {"harness_workers": _stored(events_omitted=3)}, True, "partial"),
         (
@@ -574,3 +581,55 @@ def test_a_trial_whose_first_read_found_nothing_is_pending_until_the_later_read_
         call_metadata={},
     )
     assert _trial_route(call, NOW, hosted=True)[0] == expected
+
+
+def test_the_same_hand_offs_in_a_different_order_are_a_different_route():
+    """Refunds then Shipping in one trial, Shipping then Refunds in the other: the routes split at the first hand-off."""
+    first, second = _Call(), _Call()
+    first.back(first.ask("refunds"))
+    first.back(first.ask("shipping"))
+    second.back(second.ask("shipping"))
+    second.back(second.ask("refunds"))
+
+    routes = trial_routes("order", [_trial(1, first), _trial(2, second)])
+
+    assert routes["same_route"] is False
+    assert routes["split"]["column"] == 0
+    assert [(one["state"], one["trials"]) for one in routes["split"]["groups"]] == [
+        ("step", [1]),
+        ("absent", [2]),
+    ]
+    # Every column's key is its own, and each trial's cells keep its steps in its own order.
+    assert len({one["key"] for one in routes["columns"]}) == len(routes["columns"])
+    assert [
+        [cell["step"] for cell in trial["cells"] if cell["step"] is not None]
+        for trial in routes["trials"]
+    ] == [[1, 3], [1, 3]]
+
+
+def test_an_unobserved_trial_never_splits_from_an_observed_one():
+    """One trial's hand-offs were recorded; the other's app sent no traces. The unobserved trial is listed, never
+    compared, so no split is claimed."""
+    from types import SimpleNamespace
+
+    from simulate.selectors.call_workers import _trial_route
+
+    unobserved = SimpleNamespace(
+        status="completed",
+        completed_at=NOW,
+        call_metadata={"harness_workers": _stored(events=[], collection="no_evidence")},
+    )
+    route, record = _trial_route(unobserved, NOW, hosted=True)
+    routes = trial_routes(
+        "authority-claim",
+        [
+            _trial(1, _usual()),
+            Trial(
+                call_execution_id="call-2", result="passed", record=record, route=route
+            ),
+        ],
+    )
+
+    assert routes["trials"][1]["route"] == "no_evidence"
+    assert routes["trials"][1]["cells"] is None
+    assert routes["split"] is None and routes["same_route"] is True

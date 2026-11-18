@@ -70,7 +70,7 @@ def record_call_workers(payload: dict[str, object]) -> None:
     except Exception:
         # Out of retries, the call says its read failed rather than reading as one with no other agents.
         if _is_last_attempt(WORKERS_MAX_RETRIES):
-            mark_read(read.call_execution_id, failed=True)
+            mark_read(read.call_execution_id, failed=True, attempt=reset)
         raise
     # The first read found nothing yet, or found a record a later read may change: read once more.
     if (timeline is None and not read.second_read) or (
