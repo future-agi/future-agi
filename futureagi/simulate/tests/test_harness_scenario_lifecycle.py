@@ -869,17 +869,49 @@ def test_a_case_whose_reference_needs_a_tool_the_agent_dropped_is_held_until_it_
     assert back[REFUND_KEYS[0]]["state"] == "active"
 
 
-def test_a_case_on_an_agent_whose_tools_were_never_read_is_not_active(
+def test_a_case_proved_by_a_check_that_never_read_the_agent_is_not_active(
     user, workspace, storage, monkeypatch
 ):
+    """Proved by a check of this agent version that never read its tools: unknown, never Active. A proof whose check
+    read them, one another agent's check made, or one that names no check, is read as before."""
+    import uuid
+
+    from simulate.models import HostedHarnessJob
+
     environment = _environment(user, workspace, storage, "tools-unread")
     _suite(environment, _ten())
-    _proofs(environment, dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED))
     agent = _on_agent(environment, monkeypatch, None)
+    check = HostedHarnessJob.no_workspace_objects.get(id=environment.id)
+    check.pk = check.id = uuid.uuid4()
+    check.run_id = uuid.uuid4()
+    check.idempotency_key = f"check-{check.id}"
+    check.environment_id = environment.id
+    check.agent_version_id = agent.id
+    check.payload = {
+        **(check.payload or {}),
+        "metadata": {"certify_only": True, "agent_reading": "before_certify"},
+    }
+    check.save()
+    _proofs(
+        environment,
+        {
+            REFUND_KEYS[0]: {**PROVED, "job_id": None},
+            REFUND_KEYS[1]: {**PROVED, "job_id": str(environment.id)},
+            **dict.fromkeys(LOOKUP_KEYS, {**PROVED, "job_id": str(check.id)}),
+        },
+    )
+    read_by_check = _views_with(environment, agent)
+    HostedHarnessJob.no_workspace_objects.filter(id=check.id).update(
+        payload={**check.payload, "metadata": {"certify_only": True}}
+    )
 
     views = _views_with(environment, agent)
-    built = _views(environment)
 
-    assert {view["reason"] for view in views.values()} == {"tools_unread"}
-    assert not any(view["state"] == "active" for view in views.values())
-    assert built[LOOKUP_KEYS[0]]["state"] == "active"
+    assert read_by_check[LOOKUP_KEYS[0]]["state"] == "active"
+    assert (views[LOOKUP_KEYS[0]]["state"], views[LOOKUP_KEYS[0]]["reason"]) == (
+        "draft",
+        "tools_unread",
+    )
+    assert views[REFUND_KEYS[0]]["state"] == "active"
+    assert views[REFUND_KEYS[1]]["state"] == "active"
+    assert _views(environment)[LOOKUP_KEYS[0]]["state"] == "active"

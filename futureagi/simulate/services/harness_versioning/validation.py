@@ -541,7 +541,13 @@ def start_validation(
             transaction.on_commit(lambda: _dispatch(job_id))
             logger.info("harness_pair_scenario_proving_started", **_check_log(job))
             return Validation("validating", bundle, purpose, job)
-        if certified and read and live_validation(bundle.id) is None:
+        # A certified pairing proves nothing more on a move: only an explicit Re-check reads its tools on their own.
+        if (
+            certified
+            and read
+            and purpose == "recheck"
+            and live_validation(bundle.id) is None
+        ):
             job = _create_job(
                 locked,
                 runtime,

@@ -447,13 +447,13 @@ def scenario_lifecycle(
         for key, _, content in suite_cases(suite_version)
         if keys is None or key in keys
     }
-    proofs, proved_with = (
+    proofs, proved_with, proved_by = (
         HarnessSuiteValidation.no_workspace_objects.filter(
             suite_version=suite_version, environment_version=environment_version
         )
-        .values_list("proofs", "job__agent_version_id")
+        .values_list("proofs", "job__agent_version_id", "job_id")
         .first()
-    ) or ({}, None)
+    ) or ({}, None, None)
     proofs = proofs or {}
     agent = agent_version_id or environment.agent_version_id
 
@@ -500,7 +500,8 @@ def scenario_lifecycle(
             if isinstance(entry, Mapping) and entry.get("format") == 2
         },
     )
-    agent_tools = _agent_tool_names(agent, environment_version)
+    agent_tools = _agent_tool_names(environment, agent, environment_version)
+    without_tools: dict[Any, bool] = {}
     # The tools on every path of each case's reference, read only when the agent's tools are.
     needed = (
         {
@@ -647,8 +648,14 @@ def scenario_lifecycle(
         if agent_tools is not None and view["state"] in RUNNABLE_STATES | {"validated"}:
             names, label = agent_tools
             if names is None:
-                # Proved, but against tools nobody has read for this agent: unknown, never Active.
-                _demote(view, "tools_unread", reason_text("tools_unread", agent=label))
+                # Proved by a check that never had this agent's tools: unknown, never Active.
+                made_by = (entry or {}).get("job_id") or proved_by
+                if made_by not in without_tools:
+                    without_tools[made_by] = _proved_without_tools(made_by, agent)
+                if entry is not None and without_tools[made_by]:
+                    _demote(
+                        view, "tools_unread", reason_text("tools_unread", agent=label)
+                    )
             elif missing := sorted(needed.get(key, frozenset()) - names):
                 _demote(
                     view,
@@ -728,33 +735,61 @@ def _last_check_ending(
 
 
 def _agent_tool_names(
-    agent_version_id: Any, environment_version: HarnessEnvironmentVersion
+    environment: HostedHarnessJob,
+    agent_version_id: Any,
+    environment_version: HarnessEnvironmentVersion,
 ) -> tuple[set[str] | None, str] | None:
-    """The tools of the pairing's agent version, by name, and its label: ``None`` for the agent the environment
-    version was built with (its tools are the contract's the cases were written against), names ``None`` when no
-    document of its tools was read."""
-    from simulate.models import AgentVersion
+    """The tools of the pairing's agent version, by name, and its label. ``None`` when nothing is compared: the
+    agent the environment version was built with (its tools are the contract's the cases were written against), one
+    whose tools no check can read, or one read as listing none. Names ``None`` when a check would read its tools and
+    none has yet."""
+    from simulate.models import AgentVersion, HarnessAgentVersionRuntime
     from simulate.services.agent_setup import stored_agent
+    from simulate.services.harness_versioning.backfill import effective_runtime
     from simulate.services.harness_versioning.read import _label
+    from simulate.services.harness_versioning.validation import needs_reading
 
     if agent_version_id is None or str(agent_version_id) == str(
         environment_version.agent_version_id
     ):
         return None
-    number = (
-        AgentVersion.no_workspace_objects.filter(id=agent_version_id)
-        .values_list("version_number", flat=True)
-        .first()
-    )
-    label = _label(number) or "this one"
+    agent = AgentVersion.no_workspace_objects.filter(id=agent_version_id).first()
+    if agent is None:
+        return None
+    label = _label(agent.version_number) or "this one"
     document = stored_agent(agent_version_id)
     if document is None:
+        runtime = effective_runtime(
+            environment,
+            HarnessAgentVersionRuntime.no_workspace_objects.filter(
+                agent_version_id=agent_version_id
+            ).first(),
+        )
+        if not needs_reading(environment, agent, environment_version, runtime):
+            return None
         return None, label
-    return {
+    names = {
         str(one.get("name"))
         for one in document.get("tools") or []
         if isinstance(one, Mapping) and one.get("name")
-    }, label
+    }
+    # A reading that lists no tool says nothing to compare against, as readiness reads it.
+    return (names, label) if names else None
+
+
+def _proved_without_tools(job_id: Any, agent_version_id: Any) -> bool:
+    """Whether the check that made a proof ran this agent version without reading its tools; a proof that names no
+    check, or one another agent's check made, is read as it always was."""
+    if not job_id:
+        return False
+    made = (
+        HostedHarnessJob.no_workspace_objects.filter(id=job_id)
+        .values_list("agent_version_id", "payload__metadata")
+        .first()
+    )
+    if made is None or str(made[0]) != str(agent_version_id):
+        return False
+    return isinstance(made[1], Mapping) and not made[1].get("agent_reading")
 
 
 def _proofs_unread(

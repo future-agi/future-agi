@@ -121,9 +121,21 @@ def _job_for(environment, agent):
     return HostedHarnessJob._base_manager.create(**fields)
 
 
-def test_a_partial_validation_keeps_each_case_s_own_agent(user, workspace, storage):
+def test_a_partial_validation_keeps_each_case_s_own_agent(
+    user, workspace, storage, monkeypatch
+):
     """B3: every case proved with A1, then one case validated with A2. Only that case counts for A2; the rest still
     count for A1."""
+    from simulate.services import agent_setup
+
+    # A2's tools were read: every tool the cases call.
+    monkeypatch.setattr(
+        agent_setup,
+        "stored_agent",
+        lambda *_a, **_k: {
+            "tools": [{"name": "lookup_order"}, {"name": "issue_refund"}]
+        },
+    )
     environment, a2 = _with_a2(user, workspace, storage, "rv1-agent")
     _suite(environment, _ten())
     a1 = environment.agent_version

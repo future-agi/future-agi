@@ -236,8 +236,20 @@ def test_a_proof_from_another_agent_version_reads_draft_until_validated_with_thi
     assert _state(environment, agent=other) == ("draft", "proved_on_other_agent", False)
 
 
-def test_a_proof_whose_agent_was_not_recorded_keeps_its_state(user, workspace, storage):
+def test_a_proof_whose_agent_was_not_recorded_keeps_its_state(
+    user, workspace, storage, monkeypatch
+):
     """An older validation kept no job: which agent made it is not known, so it is read as before."""
+    from simulate.services import agent_setup
+
+    # The other agent's tools were read: every tool the cases call.
+    monkeypatch.setattr(
+        agent_setup,
+        "stored_agent",
+        lambda *_a, **_k: {
+            "tools": [{"name": "lookup_order"}, {"name": "issue_refund"}]
+        },
+    )
     environment = _base(user, workspace, storage, "lt-agent-unknown")
     _record(environment, dict.fromkeys(KEYS, PROVED), by_job=False)
 
