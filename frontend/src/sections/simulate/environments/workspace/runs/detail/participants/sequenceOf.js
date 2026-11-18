@@ -81,6 +81,8 @@ const answerOf = (w, start, turnEnd) => {
       label: C.noAnswer,
       full: w.result || C.noAnswerFull,
     };
+  // An end the record names that this view doesn't know: claim no outcome, only a result it holds.
+  if (w.state === "unknown" && w.result == null) return null;
   return {
     kind: "answer",
     bad: w.state === "failed",

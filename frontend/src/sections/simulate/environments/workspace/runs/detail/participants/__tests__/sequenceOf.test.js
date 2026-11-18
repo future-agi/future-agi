@@ -198,6 +198,19 @@ describe("sequenceOf over the worker record", () => {
     expect(seq.problems.map((p) => p.n)).not.toContain(handoff.n);
   });
 
+  it("a hand-off with an end it doesn't know claims nothing, but shows a result the record has", () => {
+    const silent = seqOf(timeline({ returned: null, end: "something_new" }));
+    const handoff = silent.steps.find((s) => s.kind === "handoff");
+    expect(handoff.answer).toBeNull();
+    expect(handoff.bad).toBe(false);
+    expect(handoff.dur).toBeNull();
+    expect(silent.problems.map((p) => p.n)).not.toContain(handoff.n);
+    const answered = seqOf(timeline({ end: "something_new" })).steps.find(
+      (s) => s.kind === "handoff",
+    );
+    expect(answered.answer).toMatchObject({ kind: "answer", bad: false });
+  });
+
   it("a hand-off with no answer and no end time shows no wait", () => {
     const handoff = seqOf(
       timeline({ returned: null, end: "no_return" }),

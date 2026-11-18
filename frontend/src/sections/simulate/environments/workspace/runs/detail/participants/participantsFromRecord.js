@@ -97,7 +97,9 @@ export function participantsFromRecord(record) {
       key: step.key,
       name: worker?.name ?? step.worker_id,
       undeclared: !!worker?.undeclared,
-      state: step.transfer ? "transferred" : STATE_OF_END[step.end] ?? "done",
+      state: step.transfer
+        ? "transferred"
+        : STATE_OF_END[step.end] ?? "unknown",
       transfer: !!step.transfer,
       unknownParent: step.relationship === "unknown",
       parentId: parentLane,
