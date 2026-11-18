@@ -118,3 +118,34 @@ def test_a_description_that_is_not_part_of_the_prompt_is_left_alone(
     version.refresh_from_db()
     assert agent.description == "A hand-written description."
     assert version.configuration_snapshot["description"] == FULL_PROMPT.strip()
+
+
+@pytest.mark.django_db
+def test_backfill_does_not_move_the_agent_in_the_list(organization, workspace):
+    """The list orders by ``updated_at``; a data fix is not use of the agent."""
+    from simulate.models import AgentDefinition
+
+    _, agent, _, _ = _excerpt_era_harness_run(organization, workspace)
+    before = AgentDefinition.no_workspace_objects.get(pk=agent.pk).updated_at
+
+    _run()
+
+    after = AgentDefinition.no_workspace_objects.get(pk=agent.pk)
+    assert after.description == FULL_PROMPT.strip()
+    assert after.updated_at == before
+
+
+@pytest.mark.django_db
+def test_a_soft_deleted_agent_is_still_backfilled_and_counted_once(
+    organization, workspace
+):
+    from simulate.models import AgentDefinition
+
+    _, agent, _, _ = _excerpt_era_harness_run(organization, workspace)
+    AgentDefinition.all_objects.filter(pk=agent.pk).update(deleted=True)
+
+    output = _run()
+
+    stored = AgentDefinition.all_objects.get(pk=agent.pk)
+    assert stored.description == FULL_PROMPT.strip()
+    assert "1 agents," in output

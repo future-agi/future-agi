@@ -347,6 +347,54 @@ def _side_row(version_id: Any, *, lock: bool = False, blob: bool = False):
     return rows.first()
 
 
+def preflight_by_version(version_ids: Iterable[Any]) -> dict[Any, tuple[Any, Any]]:
+    """``{version_id: (status, report)}`` in one query, without the credential blob."""
+    rows = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version_id__in=list(version_ids)
+    ).only("agent_version_id", "preflight_status", "preflight_report")
+    return {
+        row.agent_version_id: (row.preflight_status, row.preflight_report)
+        for row in rows
+    }
+
+
+def _names(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    # A name is a non-empty string; None and "" carry nothing to show.
+    return [str(name) for name in value if name not in (None, "")]
+
+
+def public_preflight_report(report: Any) -> dict[str, Any] | None:
+    """The part of a stored check report a page may show.
+
+    The column is a free-form record that other writers add to: activation
+    outcomes for other environments, the source scan's file paths, a reading's
+    free text. A response gets only the fields the check results render, so a
+    key added to the column later does not reach the browser by default. Why a
+    check failed is carried by ``error`` (a code), never by free text.
+    """
+    if not isinstance(report, Mapping):
+        return None
+    checks = report.get("checks")
+    error = report.get("error")
+    return {
+        "checks": [
+            {
+                "id": str(check.get("id") or ""),
+                "label": str(check.get("label") or ""),
+                "status": str(check.get("status") or ""),
+                "missing": _names(check.get("missing")),
+            }
+            for check in (checks if isinstance(checks, list) else [])
+            if isinstance(check, Mapping)
+        ],
+        "missing": _names(report.get("missing")),
+        "invalid": _names(report.get("invalid")),
+        "error": None if error in (None, "") else str(error),
+    }
+
+
 # --- credential sets ----------------------------------------------------------------
 
 
@@ -783,6 +831,11 @@ def create_agent_version(
     with transaction.atomic():
         definition = AgentDefinition.no_workspace_objects.select_for_update().get(
             id=definition.id
+        )
+        # Every route that versions or reuses an agent comes through here; the
+        # Agents list orders by this so the agent just used is not buried.
+        AgentDefinition.no_workspace_objects.filter(id=definition.id).update(
+            updated_at=timezone.now()
         )
         organization = definition.organization
         if parent is not None and parent.agent_definition_id != definition.id:
@@ -2333,7 +2386,7 @@ def check_creation_credentials(
             "agent_preflight_failed",
             "The agent's credentials didn't pass their check",
             status_code=422,
-            details={"preflight_report": report},
+            details={"preflight_report": public_preflight_report(report)},
         )
     readiness = _connector_credential_readiness(
         payload,

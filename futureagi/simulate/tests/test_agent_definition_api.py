@@ -15,10 +15,15 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
 
 from accounts.models.workspace import Workspace
-from simulate.models import AgentDefinition, AgentVersion
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    HarnessAgentVersionRuntime,
+)
 from simulate.models.agent_definition import ProviderCredentials
 from simulate.views import agent_definition as agent_definition_views
 from tracer.services import observability_switch
@@ -134,6 +139,147 @@ class TestListAgentDefinitions:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["results"][0]["id"] == str(agent_definition.id)
+
+    def test_an_older_agent_touched_since_lists_first(
+        self, auth_client, agent_definition, agent_definition_text
+    ):
+        AgentDefinition.no_workspace_objects.filter(id=agent_definition.id).update(
+            updated_at=timezone.now()
+        )
+
+        response = auth_client.get("/simulate/agent-definitions/")
+
+        assert [r["id"] for r in response.json()["results"]] == [
+            str(agent_definition.id),
+            str(agent_definition_text.id),
+        ]
+
+    def test_the_required_agent_stays_first_and_the_rest_order_by_update(
+        self,
+        auth_client,
+        agent_definition,
+        agent_definition_text,
+        organization,
+        workspace,
+    ):
+        newest = AgentDefinition.objects.create(
+            agent_name="Newest Text Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description="Created last, never touched",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        AgentDefinition.no_workspace_objects.filter(id=agent_definition.id).update(
+            updated_at=timezone.now()
+        )
+
+        response = auth_client.get(
+            f"/simulate/agent-definitions/?agent_definition_id={agent_definition_text.id}"
+        )
+
+        assert [r["id"] for r in response.json()["results"]] == [
+            str(agent_definition_text.id),
+            str(agent_definition.id),
+            str(newest.id),
+        ]
+
+    @pytest.mark.parametrize("page_size", [2, 3])
+    @pytest.mark.parametrize("required_position", [0, 1, 2, 3, 6])
+    def test_the_required_agent_pages_through_every_agent_exactly_once(
+        self, auth_client, organization, workspace, page_size, required_position
+    ):
+        from datetime import timedelta
+
+        now = timezone.now()
+        agents = []
+        for i in range(7):
+            agent = AgentDefinition.objects.create(
+                agent_name=f"Paged Agent {i}",
+                agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+                inbound=True,
+                description="paging",
+                organization=organization,
+                workspace=workspace,
+                languages=["en"],
+            )
+            # Index 0 is the most recently updated, so the list order is 0..6.
+            AgentDefinition.no_workspace_objects.filter(id=agent.id).update(
+                updated_at=now - timedelta(minutes=i)
+            )
+            agents.append(agent)
+        required = agents[required_position]
+        others = [str(a.id) for a in agents if a.id != required.id]
+
+        seen = []
+        pages = []
+        page = 1
+        while True:
+            response = auth_client.get(
+                "/simulate/agent-definitions/"
+                f"?agent_definition_id={required.id}&page={page}&limit={page_size}"
+            )
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["count"] == 7
+            ids = [r["id"] for r in data["results"]]
+            pages.append(ids)
+            seen.extend(ids)
+            if not data["next"]:
+                break
+            page += 1
+
+        assert len(pages) == -(-7 // page_size)
+        assert sorted(seen) == sorted(str(a.id) for a in agents)
+        assert pages[0][0] == str(required.id)
+        assert str(required.id) not in seen[1:]
+        assert seen[1:] == others
+        assert all(len(p) == page_size for p in pages[:-1])
+
+    @pytest.mark.parametrize("with_required", [False, True])
+    def test_agents_with_the_same_timestamps_page_in_a_stable_order(
+        self, auth_client, organization, workspace, with_required
+    ):
+        # Equal sort keys need a unique tie-breaker, or offset paging can repeat or skip one.
+        now = timezone.now()
+        agents = []
+        for i in range(6):
+            agent = AgentDefinition.objects.create(
+                agent_name=f"Tied Agent {i}",
+                agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+                inbound=True,
+                description="ties",
+                organization=organization,
+                workspace=workspace,
+                languages=["en"],
+            )
+            agents.append(agent)
+        AgentDefinition.no_workspace_objects.filter(
+            id__in=[a.id for a in agents]
+        ).update(updated_at=now, created_at=now)
+        required = agents[3] if with_required else None
+        query = f"agent_definition_id={required.id}&" if required else ""
+
+        seen = []
+        page = 1
+        while True:
+            response = auth_client.get(
+                f"/simulate/agent-definitions/?{query}page={page}&limit=2"
+            )
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            seen.extend(r["id"] for r in data["results"])
+            if not data["next"]:
+                break
+            page += 1
+
+        rest = sorted(
+            (str(a.id) for a in agents if a is not required),
+            key=uuid.UUID,
+            reverse=True,
+        )
+        assert seen == ([str(required.id)] if required else []) + rest
 
     def test_pagination(self, auth_client, agent_definition, agent_definition_text):
         response = auth_client.get("/simulate/agent-definitions/?page=1&limit=1")
@@ -414,6 +560,22 @@ class TestCreateAgentDefinition:
 # ============================================================================
 
 
+@pytest.mark.unit
+def test_the_list_order_has_an_index_on_its_filter_and_sort():
+    """The list filters one organization's live agents and sorts newest first."""
+    from django.db.models import Q
+
+    (index,) = [
+        i
+        for i in AgentDefinition._meta.indexes
+        if i.name == "idx_agent_def_org_updated"
+    ]
+
+    assert index.fields == ["organization", "-updated_at", "-created_at", "-id"]
+    # The default manager hides soft-deleted rows, so the index leaves them out.
+    assert index.condition == Q(deleted=False)
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestGetAgentDefinition:
@@ -430,6 +592,50 @@ class TestGetAgentDefinition:
         assert "active_version" in data
         assert "version_count" in data
         assert data["version_count"] == 1
+
+    def test_the_embedded_versions_carry_their_check(
+        self, auth_client, agent_definition, agent_version
+    ):
+        report = {
+            "checks": [
+                {"id": "credentials", "label": "Credentials", "status": "failed"}
+            ],
+            "activation": [{"environment_id": "env-1", "outcome": "environment_busy"}],
+            "source_scan": {"required_files": ["config/secrets.yaml"]},
+        }
+        shown = {
+            "checks": [
+                {
+                    "id": "credentials",
+                    "label": "Credentials",
+                    "status": "failed",
+                    "missing": [],
+                }
+            ],
+            "missing": [],
+            "invalid": [],
+            "error": None,
+        }
+        HarnessAgentVersionRuntime.no_workspace_objects.create(
+            agent_version=agent_version,
+            agent_definition=agent_definition,
+            organization=agent_definition.organization,
+            workspace=agent_definition.workspace,
+            hash="sha256:" + agent_version.id.hex.ljust(64, "0"),
+            source_kind="github",
+            trigger="creation",
+            preflight_status="failed",
+            preflight_report=report,
+        )
+
+        data = auth_client.get(
+            f"/simulate/agent-definitions/{agent_definition.id}/"
+        ).json()
+
+        assert data["versions"][0]["preflight_status"] == "failed"
+        assert data["versions"][0]["preflight_report"] == shown
+        assert data["active_version"]["preflight_status"] == "failed"
+        assert data["active_version"]["preflight_report"] == shown
 
     def test_not_found(self, auth_client):
         fake_id = uuid.uuid4()

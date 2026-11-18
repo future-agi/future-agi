@@ -17,7 +17,12 @@ from typing import Any
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from simulate.models import AgentVersion, CallExecution, HostedHarnessJob
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    CallExecution,
+    HostedHarnessJob,
+)
 
 PROMPT_METADATA_KEYS = ("agent_description", "agent_prompt")
 
@@ -119,9 +124,15 @@ class Command(BaseCommand):
         self, agent, full: str, excerpts: set[str], totals: dict
     ) -> None:
         if _is_shortened(agent.description, full, excerpts):
+            # An update, not a save: ``updated_at`` orders the Agents list, and
+            # a data fix is not use of the agent.
+            # Through the base manager, as the save it replaces did, so an agent
+            # that was soft-deleted still gets its prompt back.
+            updated = AgentDefinition._base_manager.filter(pk=agent.pk).update(
+                description=full
+            )
             agent.description = full
-            agent.save(update_fields=["description", "updated_at"])
-            totals["agents"] += 1
+            totals["agents"] += updated
 
         for version in AgentVersion.no_workspace_objects.filter(agent_definition=agent):
             snapshot = dict(version.configuration_snapshot or {})

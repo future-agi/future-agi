@@ -391,6 +391,7 @@ def _agent_item(
     from simulate.services.harness_agent_versions import (
         _held_elsewhere,
         agent_pick_allowed,
+        public_preflight_report,
         requested_here,
         version_credential_names,
     )
@@ -420,11 +421,12 @@ def _agent_item(
         if runtime is not None and runtime.parent_id
         else None
     )
-    report = (
-        runtime.preflight_report
-        if runtime is not None and isinstance(runtime.preflight_report, Mapping)
-        else None
-    )
+    # The stored report feeds the activation outcome; the item shows only its
+    # public part.
+    stored_report = runtime.preflight_report if runtime is not None else None
+    if not isinstance(stored_report, Mapping):
+        stored_report = None
+    report = public_preflight_report(stored_report)
     # Annotated by ``_runtimes``.
     asked_here = runtime is not None and requested_here(
         getattr(runtime, "asked_by", None),
@@ -479,7 +481,7 @@ def _agent_item(
             if runtime is not None and isinstance(runtime.required_variable_names, list)
             else None
         ),
-        "activation_outcome": _activation_outcome(report, environment_id),
+        "activation_outcome": _activation_outcome(stored_report, environment_id),
         "requested_here": asked_here,
         # As a discard from here takes it: never one another environment holds.
         "discardable": runtime is not None

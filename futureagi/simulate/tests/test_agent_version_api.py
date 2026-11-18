@@ -13,9 +13,13 @@ Tests cover:
 """
 
 import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 from rest_framework import status
 
 from accounts.models.workspace import Workspace
@@ -26,6 +30,7 @@ from simulate.models import (
     AgentDefinition,
     AgentVersion,
     CallExecution,
+    HarnessAgentVersionRuntime,
     Scenarios,
     SimulateEvalConfig,
 )
@@ -100,8 +105,77 @@ def _url(agent_id, suffix=""):
     return f"/simulate/agent-definitions/{agent_id}/versions/{suffix}"
 
 
+def _checked(version, status, report=None):
+    """Give a version the side row that holds its check."""
+    return HarnessAgentVersionRuntime.no_workspace_objects.create(
+        agent_version=version,
+        agent_definition=version.agent_definition,
+        organization=version.organization,
+        workspace=version.workspace,
+        hash="sha256:" + version.id.hex.ljust(64, "0"),
+        source_kind="github",
+        trigger="creation",
+        preflight_status=status,
+        preflight_report=report,
+    )
+
+
+# What the check wrote, with the keys the page never shows (other environments'
+# activation outcomes, the customer's file paths), and what the page may get.
+STORED_REPORT = {
+    "checks": [
+        {
+            "id": "credentials",
+            "label": "Credentials",
+            "status": "failed",
+            "missing": ["OPENAI_API_KEY"],
+            "detail": "internal detail",
+        }
+    ],
+    "missing": ["OPENAI_API_KEY"],
+    "invalid": [],
+    "error": None,
+    "activation": [{"environment_id": "env-1", "outcome": "environment_busy"}],
+    "source_scan": {"required_files": ["config/secrets.yaml"]},
+}
+SHOWN_REPORT = {
+    "checks": [
+        {
+            "id": "credentials",
+            "label": "Credentials",
+            "status": "failed",
+            "missing": ["OPENAI_API_KEY"],
+        }
+    ],
+    "missing": ["OPENAI_API_KEY"],
+    "invalid": [],
+    "error": None,
+}
+
+
 def _version_url(agent_id, version_id, suffix=""):
     return f"/simulate/agent-definitions/{agent_id}/versions/{version_id}/{suffix}"
+
+
+@pytest.mark.integration
+class TestPreflightByVersion:
+    """The one read of a page of checks, shared by the version and agent views."""
+
+    def test_it_is_a_public_service_read_not_a_view_helper(
+        self, agent_definition, agent_version, second_version
+    ):
+        from simulate.services.harness_agent_versions import preflight_by_version
+        from simulate.views import agent_definition as definition_views
+        from simulate.views import agent_version as version_views
+
+        _checked(second_version, "failed", STORED_REPORT)
+
+        read = preflight_by_version([agent_version.id, second_version.id])
+
+        assert read == {second_version.id: ("failed", STORED_REPORT)}
+        assert not hasattr(version_views, "_preflight_by_version")
+        assert definition_views.preflight_by_version is preflight_by_version
+        assert version_views.preflight_by_version is preflight_by_version
 
 
 # ============================================================================
@@ -128,6 +202,55 @@ class TestListAgentVersions:
         assert "version_name_display" in version_data
         assert "is_active" in version_data
         assert "is_latest" in version_data
+
+    def test_a_failed_check_is_listed_with_its_reason(
+        self, auth_client, agent_definition, agent_version, second_version
+    ):
+        _checked(second_version, "failed", STORED_REPORT)
+
+        results = auth_client.get(_url(agent_definition.id)).json()["results"]
+
+        by_id = {row["id"]: row for row in results}
+        failed = by_id[str(second_version.id)]
+        assert failed["preflight_status"] == "failed"
+        assert failed["preflight_report"] == SHOWN_REPORT
+        unchecked = by_id[str(agent_version.id)]
+        assert unchecked["preflight_status"] is None
+        assert unchecked["preflight_report"] is None
+
+    def test_a_discarded_check_row_is_not_read(
+        self, auth_client, agent_definition, agent_version
+    ):
+        row = _checked(agent_version, "failed", {"error": "bad_key"})
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=row.id).update(
+            deleted=True
+        )
+
+        result = auth_client.get(_url(agent_definition.id)).json()["results"][0]
+
+        assert result["preflight_status"] is None
+        assert result["preflight_report"] is None
+
+    def test_a_page_of_versions_reads_the_checks_in_one_query(
+        self, auth_client, agent_definition, agent_version, second_version
+    ):
+        third = agent_definition.create_version(
+            description="Third version",
+            commit_message="Third version",
+            status=AgentVersion.StatusChoices.ARCHIVED,
+        )
+        for version in (agent_version, second_version, third):
+            _checked(version, "passed")
+        table = HarnessAgentVersionRuntime._meta.db_table
+
+        with CaptureQueriesContext(connection) as queries:
+            response = auth_client.get(_url(agent_definition.id))
+
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.json()["results"]) == 3
+        reads = [q for q in queries.captured_queries if f'FROM "{table}"' in q["sql"]]
+        assert len(reads) == 1
+        assert "credential_blob" not in reads[0]["sql"]
 
     def test_agent_not_found(self, auth_client):
         response = auth_client.get(_url(uuid.uuid4()))
@@ -174,6 +297,24 @@ class TestCreateAgentVersion:
         assert data["message"] == "Agent version created successfully"
         assert "version" in data
         assert data["version"]["version_number"] == 2
+
+    def test_a_commit_message_only_version_moves_the_agent_up_the_list(
+        self, auth_client, agent_definition, agent_version
+    ):
+        long_ago = timezone.now() - timedelta(days=30)
+        AgentDefinition.no_workspace_objects.filter(id=agent_definition.id).update(
+            updated_at=long_ago
+        )
+
+        response = auth_client.post(
+            _url(agent_definition.id, "create/"),
+            {"commit_message": "Only a note"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        agent_definition.refresh_from_db()
+        assert agent_definition.updated_at > long_ago
 
     def test_create_archives_previous_active_version(
         self, auth_client, agent_definition, agent_version
@@ -405,6 +546,28 @@ class TestGetAgentVersion:
         assert "configuration_snapshot" in data
         assert isinstance(data["configuration_snapshot"], dict)
 
+    def test_a_failed_check_is_returned_with_its_reason(
+        self, auth_client, agent_definition, agent_version
+    ):
+        _checked(agent_version, "failed", STORED_REPORT)
+
+        data = auth_client.get(
+            _version_url(agent_definition.id, agent_version.id)
+        ).json()
+
+        assert data["preflight_status"] == "failed"
+        assert data["preflight_report"] == SHOWN_REPORT
+
+    def test_an_unchecked_version_has_null_check_fields(
+        self, auth_client, agent_definition, agent_version
+    ):
+        data = auth_client.get(
+            _version_url(agent_definition.id, agent_version.id)
+        ).json()
+
+        assert data["preflight_status"] is None
+        assert data["preflight_report"] is None
+
     def test_agent_not_found(self, auth_client, agent_version):
         response = auth_client.get(_version_url(uuid.uuid4(), agent_version.id))
         assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -453,6 +616,18 @@ class TestActivateAgentVersion:
         data = response.json()
         assert data["message"] == "Agent version activated successfully"
         assert data["version"]["status"] == "active"
+
+    def test_the_activated_version_carries_its_check(
+        self, auth_client, agent_definition, agent_version, second_version
+    ):
+        _checked(second_version, "failed", STORED_REPORT)
+
+        version = auth_client.post(
+            _version_url(agent_definition.id, second_version.id, "activate/")
+        ).json()["version"]
+
+        assert version["preflight_status"] == "failed"
+        assert version["preflight_report"] == SHOWN_REPORT
 
     def test_archives_other_versions(
         self, auth_client, agent_definition, agent_version, second_version
@@ -556,6 +731,18 @@ class TestRestoreAgentVersion:
         assert data["message"] == "Agent definition restored successfully from version"
         assert "agent" in data
         assert "version" in data
+
+    def test_the_restored_version_carries_its_check(
+        self, auth_client, agent_definition, agent_version
+    ):
+        _checked(agent_version, "failed", STORED_REPORT)
+
+        version = auth_client.post(
+            _version_url(agent_definition.id, agent_version.id, "restore/")
+        ).json()["version"]
+
+        assert version["preflight_status"] == "failed"
+        assert version["preflight_report"] == SHOWN_REPORT
 
     def test_restores_agent_fields(self, auth_client, agent_definition, agent_version):
         # Change agent name
@@ -1545,7 +1732,7 @@ class TestCreateAgentVersionObservability:
         assert response.status_code == status.HTTP_201_CREATED
         assert _stored_agent(agent).knowledge_base_id == knowledge_base.id
 
-    def test_version_without_changed_fields_does_not_update_the_agent(
+    def test_version_without_changed_fields_writes_only_the_update_time(
         self, auth_client, organization, workspace
     ):
         agent = _agent(organization, workspace)
@@ -1554,4 +1741,5 @@ class TestCreateAgentVersionObservability:
             response = _create_version(auth_client, agent, {})
 
         assert response.status_code == status.HTTP_201_CREATED
-        assert agent_update_columns(seen) == []
+        # No other column, so a stale copy of the agent cannot write back old values.
+        assert agent_update_columns(seen) == [{"updated_at"}]

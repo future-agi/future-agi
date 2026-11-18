@@ -208,6 +208,93 @@ export function seedCallExecutions(opts: {
   }
 }
 
+export interface AgentListSeed {
+  /** Created first, so it is the older of the two by `created_at`. */
+  olderId: string;
+  olderName: string;
+  newerId: string;
+  newerName: string;
+}
+
+// Two AgentDefinitions with one AgentVersion each. The older one is then given
+// a later `updated_at`, which is what a reuse does (create_agent_version touches
+// the definition); the Agents list orders by it. Created, versioned and touched
+// directly through the ORM for the reason the call-execution seed gives above.
+const AGENT_LIST_SEED_SCRIPT = `
+import json
+import os
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
+import django
+django.setup()
+
+from django.utils import timezone
+
+from accounts.models import Organization
+from accounts.models.workspace import Workspace
+from simulate.models import AgentDefinition, AgentVersion
+
+
+def main():
+    organization = Organization.objects.get(id=os.environ["SEED_ORG_ID"])
+    workspace = Workspace.objects.get(id=os.environ["SEED_WORKSPACE_ID"])
+    suffix = os.environ["SEED_SUFFIX"]
+
+    def make(label):
+        agent = AgentDefinition.objects.create(
+            agent_name=f"e2e-agent-order-{label}-{suffix}",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description=f"e2e agent list order seed {label}",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        AgentVersion.objects.create(
+            agent_definition=agent,
+            organization=organization,
+            workspace=workspace,
+            description=f"e2e seed version {label}",
+            commit_message="e2e seed",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        return agent
+
+    older = make("older")
+    newer = make("newer")
+    AgentDefinition.no_workspace_objects.filter(id=older.id).update(
+        updated_at=timezone.now()
+    )
+    print(json.dumps({
+        "olderId": str(older.id),
+        "olderName": older.agent_name,
+        "newerId": str(newer.id),
+        "newerName": newer.agent_name,
+    }))
+
+
+main()
+`;
+
+export function seedAgentListOrder(opts: {
+  organizationId: string;
+  workspaceId: string;
+}): AgentListSeed {
+  const container = resolveBackendContainer();
+  const suffix = seedSuffix();
+  const dir = mkdtempSync(join(tmpdir(), 'e2e-agent-order-'));
+  const scriptPath = join(dir, `seed-${suffix}.py`);
+  writeFileSync(scriptPath, AGENT_LIST_SEED_SCRIPT);
+  try {
+    return runSeedScript(container, scriptPath, `seed-${suffix}.py`, {
+      SEED_ORG_ID: opts.organizationId,
+      SEED_WORKSPACE_ID: opts.workspaceId,
+      SEED_SUFFIX: suffix,
+    }) as AgentListSeed;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** A built, versioned Environment and the ids of its default pairing. */
 export interface HarnessEnvironmentSeed {
   environmentId: string;

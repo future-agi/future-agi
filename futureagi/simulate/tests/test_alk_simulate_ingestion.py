@@ -462,6 +462,36 @@ class TestProvisionRunTest:
         )
         assert resp.status_code == 400, resp.content
 
+    def test_provision_reusing_an_agent_moves_it_up_the_agents_list(
+        self, organization, workspace
+    ):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from simulate.services import alk_simulate_ingestion as ingestion
+
+        text_agent = AgentDefinition.objects.create(
+            agent_name="Reused text agent",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description="reused",
+            organization=organization,
+            workspace=workspace,
+        )
+        long_ago = timezone.now() - timedelta(days=30)
+        AgentDefinition.no_workspace_objects.filter(id=text_agent.id).update(
+            updated_at=long_ago
+        )
+
+        found = ingestion._provision_agent_definition(
+            organization, str(text_agent.id), None, "", workspace=workspace
+        )
+
+        assert found.id == text_agent.id
+        text_agent.refresh_from_db()
+        assert text_agent.updated_at > long_ago
+
     def test_provisioned_run_test_defaults_tool_evaluation_off(self, auth_client):
         """A caller who says nothing gets the tool-call judge off by default."""
         resp = self._provision(

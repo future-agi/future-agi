@@ -191,6 +191,15 @@ class AgentDefinition(BaseModel):
         verbose_name = "Agent Definition"
         verbose_name_plural = "Agent Definitions"
         ordering = ["-created_at"]
+        indexes = [
+            # The Agents list: one organization's live agents in its page order
+            # (the default manager hides soft-deleted rows; "-id" breaks ties).
+            models.Index(
+                fields=["organization", "-updated_at", "-created_at", "-id"],
+                condition=models.Q(deleted=False),
+                name="idx_agent_def_org_updated",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.agent_name} - {self.contact_number}"

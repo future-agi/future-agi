@@ -17183,6 +17183,21 @@ export const AgentVersionListResponseApiStatus = {
   deprecated: "deprecated",
 } as const;
 
+export interface AgentVersionPreflightCheckApi {
+  id: string;
+  label: string;
+  status: string;
+  missing: string[];
+}
+
+export interface AgentVersionPreflightReportApi {
+  checks: AgentVersionPreflightCheckApi[];
+  missing: string[];
+  invalid: string[];
+  /** @minLength 1 */
+  error: string | null;
+}
+
 export interface AgentVersionListResponseApi {
   readonly id?: string;
   /** Version number of the agent */
@@ -17215,6 +17230,9 @@ export interface AgentVersionListResponseApi {
   readonly commit_message?: string;
   readonly is_active?: string;
   readonly is_latest?: string;
+  /** @minLength 1 */
+  readonly preflight_status?: string | null;
+  preflight_report?: AgentVersionPreflightReportApi | null;
   readonly created_at?: string;
 }
 
@@ -17346,6 +17364,9 @@ export interface AgentVersionResponseApi {
   readonly agent_kind?: string;
   /** @minLength 1 */
   readonly api_key?: string;
+  /** @minLength 1 */
+  readonly preflight_status?: string | null;
+  preflight_report?: AgentVersionPreflightReportApi | null;
   readonly created_at?: string;
   readonly updated_at?: string;
 }
@@ -20837,11 +20858,6 @@ export const HarnessDraftItemApiStatus = {
 export type HarnessDraftItemApiSource = { [key: string]: unknown };
 
 /**
- * An agent version's last check: check statuses and names only.
- */
-export type HarnessDraftItemApiPreflightReport = { [key: string]: unknown };
-
-/**
  * Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.
  */
 export type HarnessDraftItemApiChanges = { [key: string]: number };
@@ -20868,8 +20884,7 @@ export interface HarnessDraftItemApi {
   prompt: string | null;
   /** @minLength 1 */
   preflight_status: string | null;
-  /** An agent version's last check: check statuses and names only. */
-  preflight_report: HarnessDraftItemApiPreflightReport | null;
+  preflight_report: AgentVersionPreflightReportApi | null;
   preflighted_at: string | null;
   /** When an agent version's latest check was asked for. */
   check_started_at: string | null;
@@ -20958,11 +20973,6 @@ export const HarnessVersionApiStatus = {
  */
 export type HarnessVersionApiSource = { [key: string]: unknown };
 
-/**
- * An agent version's last check: check statuses and names only.
- */
-export type HarnessVersionApiPreflightReport = { [key: string]: unknown };
-
 export interface HarnessVersionApi {
   id: string;
   /** @minLength 1 */
@@ -20985,8 +20995,7 @@ export interface HarnessVersionApi {
   prompt: string | null;
   /** @minLength 1 */
   preflight_status: string | null;
-  /** An agent version's last check: check statuses and names only. */
-  preflight_report: HarnessVersionApiPreflightReport | null;
+  preflight_report: AgentVersionPreflightReportApi | null;
   preflighted_at: string | null;
   /** When an agent version's latest check was asked for. */
   check_started_at: string | null;

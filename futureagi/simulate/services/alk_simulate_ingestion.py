@@ -306,6 +306,10 @@ def _provision_agent_definition(
             raise ALKSimulateIngestionError(
                 "agent definition modality does not match the ALK run modality"
             )
+        # A reused agent was just used; the Agents list orders by this.
+        AgentDefinition.no_workspace_objects.filter(id=agent_definition.id).update(
+            updated_at=timezone.now()
+        )
         return agent_definition
     return AgentDefinition.objects.create(
         agent_name=agent_name or "alk-sdk-agent",

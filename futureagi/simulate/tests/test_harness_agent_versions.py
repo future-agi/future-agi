@@ -2372,6 +2372,34 @@ class TestVersionsList:
         suite = response.json()["suite"][0]
         assert (suite["preflight_report"], suite["preflighted_at"]) == (None, None)
 
+    def test_agent_items_leave_out_what_the_page_does_not_show(
+        self, auth_client, user, workspace, storage, scheduled
+    ):
+        environment = _environment(user, workspace, "av-list-scrub", storage)
+        a2 = _create(
+            _a1(environment),
+            environment,
+            secret_values={"OPENAI_API_KEY": "val-openai-new"},
+        )
+        _preflight(a2)
+        side = _side(a2)
+        side.preflight_report = {
+            **side.preflight_report,
+            "activation": [{"environment_id": "env-1", "outcome": "environment_busy"}],
+            "source_scan": {"required_files": ["config/secrets.yaml"]},
+        }
+        side.save(update_fields=["preflight_report"])
+
+        response = auth_client.get(f"{BASE}/{environment.id}/versions/")
+
+        item = next(one for one in response.json()["agent"] if one["id"] == str(a2.id))
+        assert set(item["preflight_report"]) == {
+            "checks",
+            "missing",
+            "invalid",
+            "error",
+        }
+
 
 class TestResolver:
     def _today(self, environment):

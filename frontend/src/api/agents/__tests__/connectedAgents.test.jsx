@@ -96,6 +96,7 @@ describe("mapConnectedAgent", () => {
         inbound: true,
         description: "# ROLE\nYou are the Uber phone-booking assistant.",
         created_at: "2026-10-14T11:50:22.093543Z",
+        updated_at: "2026-10-16T08:00:00Z",
         latest_version: 1,
         latest_version_id: "93956ae6",
         agent_kind: "source",
@@ -116,6 +117,7 @@ describe("mapConnectedAgent", () => {
       environments: [{ id: "e5391b8a", name: "ride-voice-agent" }],
       environmentCount: 1,
       createdAt: "2026-10-14T11:50:22.093543Z",
+      updatedAt: "2026-10-16T08:00:00Z",
     });
   });
 

@@ -832,6 +832,40 @@ export type ${jsonAlias} = JsonValueApi;`,
       }
     }
 
+    // A version with no check row reports null status and report. The report is
+    // a $ref, so orval drops its read-only marker as well as its x-nullable.
+    for (const typeName of [
+      "AgentVersionListResponseApi",
+      "AgentVersionResponseApi",
+    ]) {
+      for (const [anchor, replacement] of [
+        [
+          "readonly preflight_status?: string;",
+          "readonly preflight_status?: string | null;",
+        ],
+        [
+          "preflight_report?: AgentVersionPreflightReportApi;",
+          "preflight_report?: AgentVersionPreflightReportApi | null;",
+        ],
+      ]) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          anchor,
+          replacement,
+          `${typeName}.${anchor.split("?")[0].replace("readonly ", "")} nullable`,
+        );
+      }
+    }
+
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface AgentVersionPreflightReportApi {",
+      "error: string;",
+      "error: string | null;",
+      "AgentVersionPreflightReportApi.error nullable",
+    );
+
     // Orval drops Swagger 2.0 x-nullable: environment versions carry null labels
     // (unnumbered drafts), creators, origins, hashes, parents and pre-versioning
     // diffs. A draft item is a version item plus its editor (its parent and
@@ -851,7 +885,7 @@ export type ${jsonAlias} = JsonValueApi;`,
         ["source", `${typeName}Source`],
         ["prompt", "string"],
         ["preflight_status", "string"],
-        ["preflight_report", `${typeName}PreflightReport`],
+        ["preflight_report", "AgentVersionPreflightReportApi"],
         ["preflighted_at", "string"],
         ["check_started_at", "string"],
         ["credential_names", "string[]"],
@@ -1289,6 +1323,29 @@ export type ${jsonAlias} = JsonValueApi;`,
       );
     }
 
+    for (const response of [
+      "SimulateAgentDefinitionsVersionsListResponseItem",
+      "SimulateAgentDefinitionsVersionsReadResponse",
+      "SimulateAgentDefinitionsVersionsActivateCreateResponse",
+      "SimulateAgentDefinitionsVersionsRestoreCreateResponse",
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        `export const ${response} =`,
+        '"preflight_status": zod.string().min(1)',
+        '"preflight_status": zod.string().min(1).nullable()',
+        `${response}.preflight_status nullable`,
+      );
+      // The report is a $ref, so orval drops its x-nullable and its error's.
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${response} =`,
+        /("preflight_report": zod\.object\(\{[\s\S]*?"error": zod\.string\(\)\.min\(1\))(\s*\}\))/,
+        "$1.nullable()$2.nullable()",
+        `${response}.preflight_report nullable`,
+      );
+    }
+
     // The same nullable version fields, in every list of the versions responses.
     const VERSIONS_RESPONSES = [
       "SimulateApiHarnessEnvironmentsVersionsResponse",
@@ -1326,13 +1383,17 @@ export type ${jsonAlias} = JsonValueApi;`,
         );
       }
     }
-    // Only agent versions are checked, hold credentials or can be picked.
+    // Only agent versions are checked, hold credentials or can be picked. The
+    // report is a $ref, so orval drops its x-nullable and its error's.
     for (const response of VERSIONS_RESPONSES) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${response} =`,
+        /("preflight_report": zod\.object\(\{[\s\S]*?"error": zod\.string\(\)\.min\(1\))(\s*\}\)(?:\.describe\([^)]*\))?)/g,
+        "$1.nullable()$2.nullable()",
+        `${response}.preflight_report nullable`,
+      );
       for (const [pattern, label] of [
-        [
-          /("preflight_report": zod\.object\(\{\s*\}\)\.passthrough\(\)(?:\.describe\([^)]*\))?)/g,
-          "preflight_report",
-        ],
         [
           /("preflighted_at": zod\.string\(\)\.datetime\(\{[^}]*\}\))/g,
           "preflighted_at",

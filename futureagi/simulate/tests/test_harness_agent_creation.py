@@ -6,6 +6,7 @@ import logging
 import threading
 import uuid
 from contextlib import ExitStack
+from datetime import timedelta
 from functools import partial
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.db import connection
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models.workspace import Workspace
@@ -501,6 +503,56 @@ class TestPerEnvironmentAgents:
         }
 
 
+class TestReuseTouchesTheAgent:
+    """The Agents list orders by ``updated_at``, so each route that reuses or
+    versions an agent has to move it."""
+
+    @staticmethod
+    def _age(definition_id):
+        long_ago = timezone.now() - timedelta(days=30)
+        AgentDefinition.no_workspace_objects.filter(id=definition_id).update(
+            updated_at=long_ago
+        )
+        return long_ago
+
+    @staticmethod
+    def _updated_at(definition_id):
+        return AgentDefinition.no_workspace_objects.get(id=definition_id).updated_at
+
+    def test_the_requested_route_moves_it(self, client, user, workspace, gates):
+        first = _job(_post(client, workspace, _vapi()))
+        definition_id = first.agent_version.agent_definition_id
+        long_ago = self._age(definition_id)
+        body = _vapi()
+        body["metadata"] = {"agent_definition_id": str(definition_id)}
+
+        job = _job(_post(client, workspace, body))
+
+        assert job.agent_version.agent_definition_id == definition_id
+        assert self._updated_at(definition_id) > long_ago
+
+    def test_the_shared_route_moves_it(self, client, user, workspace, gates):
+        first = _job(_post(client, workspace, _vapi()))
+        definition_id = first.agent_version.agent_definition_id
+        long_ago = self._age(definition_id)
+
+        same = _job(_post(client, workspace, _vapi()))
+
+        assert same.agent_version.agent_definition_id == definition_id
+        assert self._updated_at(definition_id) > long_ago
+
+    def test_a_credential_change_moves_it(self, client, user, workspace, gates):
+        job = _job(_post(client, workspace, _vapi()))
+        definition_id = job.agent_version.agent_definition_id
+        long_ago = self._age(definition_id)
+
+        service.change_credentials(
+            job, secret_values={"VAPI_API_KEY": "val-vapi-2"}, activate=False
+        )
+
+        assert self._updated_at(definition_id) > long_ago
+
+
 class TestRequestedAgent:
     def test_an_environment_owned_agent_with_the_same_key_is_bound(
         self, client, user, workspace, gates
@@ -661,6 +713,13 @@ class TestRefusals:
         body = response.json()
         assert body["error"] == "agent_preflight_failed"
         assert body["preflight_report"]["invalid"] == ["VAPI_API_KEY"]
+        # Only what the page shows: not the source scan's file paths.
+        assert set(body["preflight_report"]) == {
+            "checks",
+            "missing",
+            "invalid",
+            "error",
+        }
         _no_values(json.dumps(body))
         assert not HostedHarnessJob.no_workspace_objects.exists()
         assert not _definitions(user.organization).exists()

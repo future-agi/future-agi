@@ -51,6 +51,7 @@ from simulate.services.agent_overview import (
     observability_on,
     recent_agent_runs,
 )
+from simulate.services.harness_agent_versions import preflight_by_version
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.ee_stub import _ee_stub
 
@@ -64,7 +65,10 @@ from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.pagination import (
+    ExtendedPageNumberPagination,
+    paginate_required_first,
+)
 from tracer.constants.external_endpoints import ObservabilityRoutes
 from tracer.models.observability_provider import ProviderChoices
 from tracer.models.replay_session import ReplaySession
@@ -176,21 +180,15 @@ class AgentDefinitionView(APIView):
                 except AgentDefinition.DoesNotExist:
                     pass
 
-            page = int(request.query_params.get("page", 1))
-            if required_agent and page == 1:
-                agents = agents.exclude(id=required_agent.id).order_by("-created_at")
-                paginator = ExtendedPageNumberPagination()
-                result_page = paginator.paginate_queryset(agents, request)
-                paginator.page.paginator.count += 1
-                result_page = [required_agent] + result_page[
-                    : paginator.get_page_size(request) - 1
-                ]
-            else:
-                if required_agent:
-                    agents = agents.exclude(id=required_agent.id)
-                agents = agents.order_by("-created_at")
-                paginator = ExtendedPageNumberPagination()
-                result_page = paginator.paginate_queryset(agents, request)
+            # "-id" last: equal timestamps need a unique tie-breaker for stable pages.
+            agents = agents.order_by("-updated_at", "-created_at", "-id")
+            paginator = ExtendedPageNumberPagination()
+            result_page = paginate_required_first(
+                paginator,
+                agents.exclude(id=required_agent.id) if required_agent else agents,
+                required_agent,
+                request,
+            )
 
             serializer = AgentDefinitionListResponseSerializer(
                 result_page,
@@ -424,15 +422,21 @@ class AgentDefinitionDetailView(APIView):
             agent_data = AgentDefinitionResponseSerializer(agent).data
 
             # Get version information
-            versions = agent.get_version_history()
-            versions_data = AgentVersionListResponseSerializer(versions, many=True).data
-
-            # Get active version
+            versions = list(agent.get_version_history())
             active_version = agent.active_version
+            # One read of the checks for the whole list and the active version.
+            ids = [v.id for v in versions]
+            if active_version:
+                ids.append(active_version.id)
+            context = {"preflight": preflight_by_version(ids)}
+            versions_data = AgentVersionListResponseSerializer(
+                versions, many=True, context=context
+            ).data
+
             active_version_data = None
             if active_version:
                 active_version_data = AgentVersionListResponseSerializer(
-                    active_version
+                    active_version, context=context
                 ).data
 
             return Response(

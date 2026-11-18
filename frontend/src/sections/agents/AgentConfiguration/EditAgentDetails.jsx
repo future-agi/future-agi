@@ -463,27 +463,30 @@ const EditAgentDetails = ({
                       }
                     }}
                   />
-                  <Button
-                    variant="outlined"
-                    color="primary"
-                    disabled={isPending}
-                    sx={{
-                      flexShrink: 0,
-                    }}
-                    startIcon={
-                      <SvgColor
-                        src="/assets/icons/ic_refresh.svg"
-                        sx={{
-                          animation: isPending
-                            ? `${spin} 1s linear infinite`
-                            : "none",
-                        }}
-                      />
-                    }
-                    onClick={handleSyncWithProvider}
-                  >
-                    Sync with provider
-                  </Button>
+                  {/* A repo or upload agent has no provider, so nothing to sync with. */}
+                  <ShowComponent condition={!!selectedProvider}>
+                    <Button
+                      variant="outlined"
+                      color="primary"
+                      disabled={isPending}
+                      sx={{
+                        flexShrink: 0,
+                      }}
+                      startIcon={
+                        <SvgColor
+                          src="/assets/icons/ic_refresh.svg"
+                          sx={{
+                            animation: isPending
+                              ? `${spin} 1s linear infinite`
+                              : "none",
+                          }}
+                        />
+                      }
+                      onClick={handleSyncWithProvider}
+                    >
+                      Sync with provider
+                    </Button>
+                  </ShowComponent>
                 </Stack>
                 <ShowComponent condition={isPending}>
                   <Box

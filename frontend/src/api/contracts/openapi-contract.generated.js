@@ -52819,6 +52819,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
         },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_report: {
+          $ref: "#/definitions/AgentVersionPreflightReport",
+        },
         created_at: {
           title: "Created at",
           type: "string",
@@ -52956,6 +52966,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           minLength: 1,
           "x-nullable": true,
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_report: {
+          $ref: "#/definitions/AgentVersionPreflightReport",
         },
         created_at: {
           title: "Created at",
@@ -96901,6 +96921,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentVersionPreflightReport: {
+      required: ["checks", "missing", "invalid", "error"],
+      type: "object",
+      properties: {
+        checks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentVersionPreflightCheck",
+          },
+        },
+        missing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        invalid: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
     AgentccRequestLogMetadataValues: {
       required: ["application", "service", "tags"],
       type: "object",
@@ -106339,11 +106392,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         preflight_report: {
-          title: "Preflight report",
-          description:
-            "An agent version's last check: check statuses and names only.",
-          type: "object",
-          "x-nullable": true,
+          $ref: "#/definitions/AgentVersionPreflightReport",
         },
         preflighted_at: {
           title: "Preflighted at",
@@ -107004,11 +107053,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         preflight_report: {
-          title: "Preflight report",
-          description:
-            "An agent version's last check: check statuses and names only.",
-          type: "object",
-          "x-nullable": true,
+          $ref: "#/definitions/AgentVersionPreflightReport",
         },
         preflighted_at: {
           title: "Preflighted at",
@@ -123388,6 +123433,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    AgentVersionPreflightCheck: {
+      required: ["id", "label", "status", "missing"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+        },
+        missing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
     },
     AlertOption: {
       required: ["value", "label"],

@@ -26,6 +26,9 @@ from simulate.serializers.harness_job import (
 from simulate.serializers.requests.run_test_evals import (
     EvalConfigUpdateRequestSerializer,
 )
+from simulate.serializers.response.agent_version import (
+    AgentVersionPreflightReportSerializer,
+)
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
 from tfc.utils.api_serializers import StrictInputSerializer
@@ -1096,7 +1099,7 @@ class HarnessVersionSerializer(serializers.Serializer):
         help_text="The default agent version's prompt; null on every other item.",
     )
     preflight_status = serializers.CharField(allow_null=True)
-    preflight_report = serializers.JSONField(
+    preflight_report = AgentVersionPreflightReportSerializer(
         allow_null=True,
         help_text="An agent version's last check: check statuses and names only.",
     )

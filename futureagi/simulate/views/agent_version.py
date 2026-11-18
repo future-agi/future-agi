@@ -8,7 +8,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from model_hub.models.develop_dataset import KnowledgeBaseFile
-from simulate.models import AgentDefinition, AgentVersion, CallExecution
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    CallExecution,
+)
 from simulate.serializers.requests.agent_version import (
     AgentVersionCreateRequestSerializer,
 )
@@ -34,6 +38,7 @@ from simulate.services.agent_definition import (
     resolve_api_secret_for_version,
     sync_provider_credentials,
 )
+from simulate.services.harness_agent_versions import preflight_by_version
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.utils.eval_summary import (
     _build_template_statistics,
@@ -97,7 +102,13 @@ class AgentVersionListView(APIView):
             paginator = ExtendedPageNumberPagination()
             result_page = paginator.paginate_queryset(versions, request)
 
-            serializer = AgentVersionListResponseSerializer(result_page, many=True)
+            serializer = AgentVersionListResponseSerializer(
+                result_page,
+                many=True,
+                context={
+                    "preflight": preflight_by_version(v.id for v in result_page or [])
+                },
+            )
             return paginator.get_paginated_response(serializer.data)
 
         except AgentDefinition.DoesNotExist:
@@ -211,10 +222,10 @@ class CreateAgentVersionView(APIView):
                 agent.knowledge_base_id = kb_id
                 changed_fields.append("knowledge_base")
             with transaction.atomic():
-                if changed_fields:
-                    # Only these columns: a full save would write back this
-                    # request's stale copy of the observability link.
-                    agent.save(update_fields=[*changed_fields, "updated_at"])
+                # Only these columns: a full save would write back this
+                # request's stale copy of the observability link. The agent is
+                # touched even with no column sent, since a new version uses it.
+                agent.save(update_fields=[*changed_fields, "updated_at"])
 
                 # Resolve masked secrets *before* creating the new version so we read
                 # them from the active version rather than the brand-new one. The UI
@@ -391,7 +402,9 @@ class AgentVersionDetailView(APIView):
 
             version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
 
-            serializer = AgentVersionResponseSerializer(version)
+            serializer = AgentVersionResponseSerializer(
+                version, context={"preflight": preflight_by_version([version.id])}
+            )
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except AgentDefinition.DoesNotExist:
@@ -440,7 +453,9 @@ class ActivateAgentVersionView(APIView):
 
             response_data = {
                 "message": "Agent version activated successfully",
-                "version": AgentVersionResponseSerializer(version).data,
+                "version": AgentVersionResponseSerializer(
+                    version, context={"preflight": preflight_by_version([version.id])}
+                ).data,
             }
             return Response(response_data, status=status.HTTP_200_OK)
 
@@ -554,7 +569,9 @@ class RestoreAgentVersionView(APIView):
             response_data = {
                 "message": "Agent definition restored successfully from version",
                 "agent": AgentDefinitionResponseSerializer(restored_agent).data,
-                "version": AgentVersionResponseSerializer(version).data,
+                "version": AgentVersionResponseSerializer(
+                    version, context={"preflight": preflight_by_version([version.id])}
+                ).data,
             }
             return Response(response_data, status=status.HTTP_200_OK)
 

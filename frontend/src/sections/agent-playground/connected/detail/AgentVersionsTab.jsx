@@ -5,6 +5,8 @@ import { Box, Button, Skeleton, Stack, Typography } from "@mui/material";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import EmptyState from "src/sections/simulate/environments/components/EmptyState";
+import { PreflightReport } from "src/sections/simulate/environments/workspace/agents/PreflightStatus";
+import { AGENT_VERSIONS_COPY } from "src/sections/simulate/environments/workspace/workspace.constants";
 import ComingSoonCard from "./ComingSoonCard";
 import { Card, LineSkeleton } from "./bits";
 import { MONO } from "./format";
@@ -244,7 +246,23 @@ export default function AgentVersionsTab() {
                     </Typography>
                     {v.isLatest && <Chip label="Latest" />}
                     {v.isActive && <StatusBadge status="active" size="sm" />}
+                    {AGENT_VERSIONS_COPY.preflight[v.preflightStatus] && (
+                      <StatusBadge
+                        data-testid="version-check"
+                        data-status={v.preflightStatus}
+                        status={v.preflightStatus}
+                        label={AGENT_VERSIONS_COPY.preflight[v.preflightStatus]}
+                        size="sm"
+                      />
+                    )}
                   </Stack>
+                  {/* A retry keeps the old failed report, so only a failed check shows lines. */}
+                  {v.preflightStatus === "failed" && (
+                    <PreflightReport
+                      report={v.preflightReport}
+                      fallback={AGENT_VERSIONS_COPY.preflightNoDetail}
+                    />
+                  )}
                   {v.commitMessage && (
                     <Typography
                       sx={{
