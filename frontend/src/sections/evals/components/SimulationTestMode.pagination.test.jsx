@@ -206,6 +206,178 @@ describe("SimulationTestMode exact snapshot pagination", () => {
     installInitialResponses();
   });
 
+  it.each([
+    [
+      endpoints.runTests.previewExecutions("run-1"),
+      "This simulation has no data",
+      "call.assistant_chat_transcript",
+      "call.assistant_chat_transcript",
+    ],
+    [
+      endpoints.testExecutions.previewCalls("execution-1"),
+      "No calls in this simulation",
+      "Expected reply",
+      "4202acbe-7de9-4a00-a338-cc1003cf5a21",
+    ],
+  ])(
+    "can map output when %s has no preview rows",
+    async (url, emptyState, label, savedKey) => {
+      const original = mocks.get.getMockImplementation();
+      mocks.get.mockImplementation((path, config) =>
+        path === url
+          ? Promise.resolve({
+              data: exactPage({ results: [], total: 0, loaded: 0 }),
+            })
+          : original(path, config),
+      );
+      const ready = vi.fn();
+      render(
+        <SimulationTestMode
+          initialRunTestId="run-1"
+          variables={["output"]}
+          sourceColumns={[
+            { field: "call.assistant_chat_transcript" },
+            {
+              id: "4202acbe-7de9-4a00-a338-cc1003cf5a21",
+              name: "Expected reply",
+            },
+          ]}
+          onReadyChange={ready}
+        />,
+      );
+      await screen.findByText(emptyState);
+      expect(ready).toHaveBeenLastCalledWith(false, {});
+      fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
+      fireEvent.click(await screen.findByRole("option", { name: label }));
+      expect(ready).toHaveBeenLastCalledWith(true, { output: savedKey });
+    },
+  );
+
+  const selectedId = "4202acbe-7de9-4a00-a338-cc1003cf5a21";
+  const otherId = "4202acbe-7de9-4a00-a338-cc1003cf5a22";
+  const columnName = "Expected reply";
+
+  function mockEmptyFirstExecution(scenarioColumns = {}) {
+    const original = mocks.get.getMockImplementation();
+    mocks.get.mockImplementation((url, config) => {
+      if (url === endpoints.testExecutions.previewCalls("execution-1")) {
+        return Promise.resolve({
+          data: exactPage({ results: [], total: 0, loaded: 0 }),
+        });
+      }
+      if (url === endpoints.runTests.callExecutionDetail("call-3")) {
+        return Promise.resolve({
+          data: {
+            ...call("call-3"),
+            simulation_call_type: "text",
+            transcript: "assistant: Populated preview",
+            scenario_columns: scenarioColumns,
+          },
+        });
+      }
+      return original(url, config);
+    });
+  }
+
+  async function runWithEmptyPreviewMapping(scenarioColumns) {
+    mockEmptyFirstExecution(scenarioColumns);
+    mocks.post.mockResolvedValue({ data: { status: true, result: {} } });
+    const ref = React.createRef();
+    const ready = vi.fn();
+    const onTestResult = vi.fn();
+    render(
+      <SimulationTestMode
+        ref={ref}
+        templateId="test-template"
+        initialRunTestId="run-1"
+        variables={["output"]}
+        sourceColumns={[{ id: selectedId, name: columnName }]}
+        onReadyChange={ready}
+        onTestResult={onTestResult}
+      />,
+    );
+    await screen.findByText("No calls in this simulation");
+    fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
+    fireEvent.click(await screen.findByRole("option", { name: columnName }));
+    expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more runs" }));
+    fireEvent.mouseDown(await screen.findByText(/Run 1 — completed/));
+    fireEvent.click(await screen.findByRole("option", { name: /Run 2/ }));
+    await screen.findByText('"Populated preview"');
+    act(() => ref.current.runTest());
+    await waitFor(() => expect(onTestResult).toHaveBeenCalled());
+    expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
+  }
+
+  it("runs Test Evaluation with the live value of the UUID selected before any calls", async () => {
+    await runWithEmptyPreviewMapping({
+      [columnName]: {
+        column_name: columnName,
+        dataset_column_id: selectedId,
+        value: "live reply",
+      },
+    });
+    expect(mocks.post).toHaveBeenCalledWith(
+      endpoints.develop.eval.evalPlayground,
+      expect.objectContaining({
+        call_id: "call-3",
+        config: expect.objectContaining({ mapping: { output: "live reply" } }),
+      }),
+    );
+  });
+
+  it.each([
+    ["a different UUID", { dataset_column_id: otherId }],
+    ["no UUID", {}],
+  ])("does not run with a same-name column bearing %s", async (_, identity) => {
+    await runWithEmptyPreviewMapping({
+      [columnName]: {
+        column_name: columnName,
+        ...identity,
+        value: "wrong reply",
+      },
+    });
+    expect(mocks.post).not.toHaveBeenCalledWith(
+      endpoints.develop.eval.evalPlayground,
+      expect.objectContaining({
+        config: expect.objectContaining({
+          mapping: expect.objectContaining({ output: "wrong reply" }),
+        }),
+      }),
+    );
+  });
+
+  it("distinguishes same-name columns in both the options and selected labels", async () => {
+    mockEmptyFirstExecution();
+    const ids = [selectedId, otherId];
+    const ready = vi.fn();
+    render(
+      <SimulationTestMode
+        initialRunTestId="run-1"
+        variables={["first", "second"]}
+        sourceColumns={ids.map((id) => ({ id, name: columnName }))}
+        onReadyChange={ready}
+      />,
+    );
+    await screen.findByText("No calls in this simulation");
+    const inputs = screen.getAllByPlaceholderText("Search field...");
+    for (const [index, id] of ids.entries()) {
+      fireEvent.mouseDown(inputs[index]);
+      const options = await screen.findAllByRole("option");
+      const option = options.find((item) => item.textContent.includes(id));
+      expect(option).toBeDefined();
+      expect(option).toHaveTextContent(columnName);
+      fireEvent.click(option);
+      expect(inputs[index].value).toContain(columnName);
+      expect(inputs[index].value).toContain(id);
+    }
+    expect(ready).toHaveBeenLastCalledWith(true, {
+      first: selectedId,
+      second: otherId,
+    });
+  });
+
   it("shows a retryable bounded error instead of publishing an empty simulation list", async () => {
     const originalImplementation = mocks.get.getMockImplementation();
     let listAttempts = 0;
@@ -243,12 +415,27 @@ describe("SimulationTestMode exact snapshot pagination", () => {
   });
 
   it("omits the model override when the Code playground supplies no model", async () => {
-    mocks.post.mockResolvedValueOnce({ data: { status: true, result: { output: 1 } } });
+    mocks.post.mockResolvedValueOnce({
+      data: { status: true, result: { output: 1 } },
+    });
     const ref = React.createRef();
     const ready = vi.fn();
-    render(<SimulationTestMode ref={ref} templateId="code-eval" model="" initialRunTestId="run-1" variables={[]} onReadyChange={ready} />);
-    await waitFor(() => expect(ready).toHaveBeenLastCalledWith(true, expect.anything()));
-    await act(async () => { ref.current.runTest(); });
+    render(
+      <SimulationTestMode
+        ref={ref}
+        templateId="code-eval"
+        model=""
+        initialRunTestId="run-1"
+        variables={[]}
+        onReadyChange={ready}
+      />,
+    );
+    await waitFor(() =>
+      expect(ready).toHaveBeenLastCalledWith(true, expect.anything()),
+    );
+    await act(async () => {
+      ref.current.runTest();
+    });
     await waitFor(() => expect(mocks.post).toHaveBeenCalled());
     expect(mocks.post.mock.calls[0][1]).not.toHaveProperty("model");
   });
