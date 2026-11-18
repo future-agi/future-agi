@@ -16,6 +16,8 @@ import SideDrawer from "../components/SideDrawer";
 import UiOnlyFlag from "../components/UiOnlyFlag";
 import BuildFilesField from "../buildDrawer/forms/shared/BuildFilesField";
 import { uiOnlyToast } from "../buildDrawer/starts/startUtils";
+import { extOf } from "../buildDrawer/forms/shared/buildFiles";
+import { ROLES } from "../workspace/sources/sources.constants";
 
 const linkSx = {
   typography: "s1",
@@ -136,16 +138,35 @@ const Quiet = ({ children }) => (
 );
 Quiet.propTypes = { children: PropTypes.node };
 
+// Who sees a file in a run, by what it's read as.
+const READS = {
+  Records: "The agent sees these rows only through the world's tools.",
+  Rules:
+    "The agent never sees the file, only what the world's tools return from it.",
+  Background: "Yes, it reads the file directly.",
+  "Grader answers": "No. Only the grader reads it.",
+};
+
 /* What the builder took from one file. The file drawer replaces this once it
    exists, opening the file itself. */
 function FilePreview({ file, summary, onClose }) {
   const from = `From ${file?.name}`;
+  const fromIt = (x) => x.src === from || x.src.startsWith(`${from} ·`);
   const gave = [
     ...(summary.records || [])
-      .filter((t) => t.src === from)
+      .filter(fromIt)
       .map((t) => `${t.name} · ${t.rows.toLocaleString()} rows`),
-    ...(summary.rules || []).filter((r) => r.src === from).map((r) => r.text),
+    ...(summary.rules || []).filter(fromIt).map((r) => r.text),
   ];
+  const facts = file
+    ? [
+        [
+          "Used as",
+          ROLES.find((r) => r.label === file.role)?.option || file.role,
+        ],
+        ["Agent reads it", READS[file.role]],
+      ]
+    : [];
   return (
     <SideDrawer open={!!file} onClose={onClose} width={480}>
       {file && (
@@ -153,8 +174,27 @@ function FilePreview({ file, summary, onClose }) {
           <Box sx={{ pr: 4 }}>
             <Typography sx={{ typography: "m1" }}>{file.name}</Typography>
             <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-              {`Read as ${file.role} · ${formatFileSize(file.size)}`}
+              {`${extOf(file.name).toUpperCase()} · ${formatFileSize(file.size)} · not in the environment yet`}
             </Typography>
+          </Box>
+          <Box>
+            {facts.map(([k, v]) => (
+              <Stack key={k} direction="row" sx={{ py: 0.5 }}>
+                <Typography
+                  sx={{
+                    typography: "s1",
+                    color: "text.tertiary",
+                    width: 120,
+                    flexShrink: 0,
+                  }}
+                >
+                  {k}
+                </Typography>
+                <Typography sx={{ typography: "s1", flex: 1, minWidth: 0 }}>
+                  {v}
+                </Typography>
+              </Stack>
+            ))}
           </Box>
           <PlanRow
             label="What the builder took from it"
@@ -163,7 +203,9 @@ function FilePreview({ file, summary, onClose }) {
             {gave.length ? (
               gave.map((g) => <PlanLine key={g}>{g}</PlanLine>)
             ) : (
-              <PlanLine empty>Background for the agent to read</PlanLine>
+              <PlanLine empty>
+                Nothing is graded from it. The agent reads it as background.
+              </PlanLine>
             )}
           </PlanRow>
         </Stack>
@@ -183,17 +225,27 @@ FilePreview.propTypes = {
  * from. Parts fill in as the files are read. "Approve and build" is the one
  * action; it waits for the reading and for something to build.
  */
-export default function DesignReview({ draft, summary, onAddFiles }) {
+export default function DesignReview({
+  draft,
+  summary,
+  onAddFiles,
+  onDepChoice,
+}) {
   const [adding, setAdding] = useState(false);
   const [openFile, setOpenFile] = useState(null);
-  const { brief, sources, unusable, readingParts, approveBlocked } = summary;
+  // The first few cases, until asked for all of them.
+  const [allCases, setAllCases] = useState(false);
+  const {
+    brief,
+    sources,
+    unusable,
+    readingParts,
+    readingNames,
+    approveBlocked,
+    deps,
+  } = summary;
   const reading = readingParts.length > 0;
-  const readingNames =
-    draft.files
-      .slice(0, 2)
-      .map((f) => f.name)
-      .join(", ") +
-    (draft.files.length > 2 ? ` and ${draft.files.length - 2} more` : "");
+  const pendingDeps = deps.filter((d) => !d.choice);
   const pending = (part) => (readingParts.includes(part) ? readingNames : "");
   const forAgent = !!draft.agent;
 
@@ -209,9 +261,8 @@ export default function DesignReview({ draft, summary, onAddFiles }) {
     </Button>
   );
   const rows = [
-    ["Name", brief.name],
     [
-      forAgent ? "Tests" : "Description",
+      "Description",
       brief.description ||
         (draft.files.length
           ? "None. The design is read from your files."
@@ -244,7 +295,6 @@ export default function DesignReview({ draft, summary, onAddFiles }) {
           ],
         ]
       : []),
-    ...(brief.personalData ? [["Personal data", brief.personalData]] : []),
     ["Channel", brief.channel],
     ["Agent", brief.agent || "None yet. Connect one after you save."],
   ];
@@ -385,6 +435,42 @@ export default function DesignReview({ draft, summary, onAddFiles }) {
       )}
 
       <Stack spacing={3} sx={{ mt: 3 }}>
+        {pendingDeps.length > 0 && (
+          <PlanRow
+            label="Can't be built here, simulate it instead"
+            count={pendingDeps.length}
+          >
+            {pendingDeps.map((d) => (
+              <PlanLine key={d.id}>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Box component="span" sx={{ fontWeight: 500 }}>
+                      {d.request}
+                    </Box>
+                    <Quiet>{`${d.why} Adds ${d.alt.name}.`}</Quiet>
+                  </Box>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => onDepChoice(d.id, "simulate")}
+                    sx={{ color: "text.primary", borderColor: "divider" }}
+                  >
+                    Simulate it
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => onDepChoice(d.id, "skip")}
+                    sx={{ color: "text.primary", borderColor: "divider" }}
+                  >
+                    Leave out
+                  </Button>
+                </Stack>
+              </PlanLine>
+            ))}
+          </PlanRow>
+        )}
+
         <PlanRow label="Records" reading={pending("records")}>
           {records?.length ? (
             records.map((t) => (
@@ -392,7 +478,11 @@ export default function DesignReview({ draft, summary, onAddFiles }) {
                 <Box component="span" sx={{ fontWeight: 500 }}>
                   {t.name}
                 </Box>
-                <Quiet>{`${t.rows.toLocaleString()} rows`}</Quiet>
+                <Quiet>
+                  {[`${t.rows.toLocaleString()} rows`, t.note]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Quiet>
               </PlanLine>
             ))
           ) : (
@@ -421,6 +511,14 @@ export default function DesignReview({ draft, summary, onAddFiles }) {
                 : "None yet"}
             </PlanLine>
           )}
+          {tools &&
+            deps
+              .filter((d) => d.choice === "skip")
+              .map((d) => (
+                <PlanLine key={d.id} empty>
+                  {`${d.request}: can't be built here, left out`}
+                </PlanLine>
+              ))}
         </PlanRow>
 
         <PlanRow label="Rules" reading={pending("rules")}>
@@ -451,11 +549,23 @@ export default function DesignReview({ draft, summary, onAddFiles }) {
         >
           {scenarios?.length ? (
             [
-              ...scenarios.map((s) => (
+              ...scenarios.slice(0, allCases ? undefined : 6).map((s) => (
                 <PlanLine key={s.text} src={s.src}>
                   {s.text}
                 </PlanLine>
               )),
+              scenarios.length > 6 && (
+                <PlanLine key="all" empty>
+                  <ButtonBase
+                    onClick={() => setAllCases((v) => !v)}
+                    sx={linkSx}
+                  >
+                    {allCases
+                      ? "Show fewer"
+                      : `Show all ${scenarios.length}, written and checked when it builds`}
+                  </ButtonBase>
+                </PlanLine>
+              ),
               extraScenarios > 0 && (
                 <PlanLine key="more" empty>
                   {`${extraScenarios} more written when it builds`}
@@ -482,4 +592,6 @@ DesignReview.propTypes = {
   summary: PropTypes.object.isRequired,
   // Plain file rows ({ id, name, size, type }) to add to the design.
   onAddFiles: PropTypes.func.isRequired,
+  // (depId, "simulate" | "skip") for a behaviour that can't be built here.
+  onDepChoice: PropTypes.func.isRequired,
 };
