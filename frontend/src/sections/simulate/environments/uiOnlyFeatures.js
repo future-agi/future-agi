@@ -120,6 +120,11 @@ export const UI_ONLY_FEATURES = Object.freeze({
     label: "Environment settings",
     ask: "editing simulation defaults, egress, environment variables and the simulated user's model",
   },
+  designReview: {
+    label: "Review the design",
+    ask: "a design job endpoint (see #3612) that reads the description and attached files, returns the proposed records, tools, rules, people and scenarios with their sources and open questions, saves the draft, and starts the build on approval",
+    note: "UI only: the design is proposed in this browser from sample rules. Nothing is sent, and approving builds nothing.",
+  },
   environmentFiles: {
     label: "Files and what to test on build forms",
     ask: "build requests that accept attached files (with a personal-data choice) and a line saying what the environment should test, read into the design before the build",
