@@ -12,6 +12,7 @@ import {
 } from "src/api/simulate-environments/sources";
 import SideDrawer from "../../components/SideDrawer";
 import SourceUsage from "./SourceUsage";
+import { PersonalDataTab } from "./PersonalDataChoice";
 import WhatWasRead from "./WhatWasRead";
 import { SOURCES_COPY, isSaved } from "./sources.constants";
 
@@ -203,20 +204,12 @@ function MappingSlot() {
   );
 }
 
-function PersonalDataSlot() {
-  return (
-    <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-      This tab shows the file&apos;s personal data choice.
-    </Typography>
-  );
-}
-
 // Each tab's body, by the `sourceTab` id. Every body gets
 // `{ envId, source, at, readOnly, onEdit, onRemove }`.
 const TAB_BODIES = {
   preview: WhatWasRead,
   mapping: MappingSlot,
-  privacy: PersonalDataSlot,
+  privacy: PersonalDataTab,
   usage: UsedBy,
   versions: Versions,
 };
