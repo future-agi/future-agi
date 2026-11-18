@@ -21,6 +21,7 @@ from simulate.models import (
     HarnessSuiteValidation,
     HostedHarnessJob,
 )
+from simulate.selectors.runs import validation_jobs
 from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_readiness.catalogue import (
     CATALOGUE,
@@ -575,13 +576,12 @@ def changed_since_last_run(
     differ by digest from that run's suite version. No run: none changed."""
     last = (
         HostedHarnessJob.no_workspace_objects.filter(
+            ~validation_jobs(),
             environment_id=pairing.environment.id,
             agent_version_id=getattr(pairing.agent_version, "id", None),
             environment_version_id=pairing.environment_version.id,
             test_execution_id__isnull=False,
             suite_version__isnull=False,
-            # A validation job never ran the agent's cases; its key is set only on them.
-            payload__metadata__certify_only__isnull=True,
         )
         .select_related("suite_version")
         .order_by("-created_at")
