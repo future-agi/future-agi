@@ -805,8 +805,8 @@ For a domain name, also set `BASE_URL`, `FRONTEND_URL` and `APP_URL`
 ([Public URLs](https://docs.futureagi.com/docs/self-hosting/configuration/reference#public-urls)). To send traces from SDKs on
 other machines, put the proxy in front of the collector's `127.0.0.1:4318` the
 same way and set `FI_COLLECTOR_PUBLIC_URL` to its URL: the in-app SDK snippet
-and the setup screen then show it as `FI_TRACES_URL`, next to `BASE_URL` as
-`FI_BASE_URL`.
+and the setup screen then show it as `FI_TRACES_URL`, next to the API's URL
+(`BASE_URL`, else `VITE_HOST_API`) as `FI_BASE_URL`.
 
 ---
 

@@ -311,7 +311,7 @@ ports the UI is `http://<host>:3000` and the API `http://<host>:8000`.
     keys = ["BASE_URL"]
     default = "`http://localhost:8000`"
     setups = ["S", "D", "H"]
-    text = "The API's own public URL: SSO and OAuth callbacks, the MCP and SDK endpoints shown in the UI (the SDK snippet's `FI_BASE_URL`), trusted CSRF origins. Wrong: SSO sign-in redirects fail and copied snippets point at localhost."
+    text = "The API's own public URL: SSO and OAuth callbacks, the MCP and SDK endpoints shown in the UI (the SDK snippet's `FI_BASE_URL`, which falls back to `VITE_HOST_API`, then `http://localhost:<BACKEND_PORT>`, while this is unset), trusted CSRF origins. Wrong: SSO sign-in redirects fail and copied snippets point at localhost."
 
     [[part.section.row]]
     keys = ["FRONTEND_URL"]
@@ -341,7 +341,7 @@ ports the UI is `http://<host>:3000` and the API `http://<host>:8000`.
     keys = ["FI_COLLECTOR_PUBLIC_URL"]
     default = "`http://localhost:<FI_COLLECTOR_OTLP_HTTP_PORT>` (`http://localhost:4318`); Helm: `urls.otlp`, else the OTLP host of the ingress or the Gateway API routes, else `http://localhost:4318` (the port-forward)"
     setups = ["S", "D", "H"]
-    text = "OTLP/HTTP base URL of the trace collector as SDKs outside the stack reach it: what the in-app SDK snippet, the first-run setup screen, the installer's and the app's start-up summaries hand out as `FI_TRACES_URL` (`FI_BASE_URL` is `BASE_URL`, the API). `FI_TRACES_URL` needs fi-instrumentation-otel 1.5.0+ (Python) or @traceai/fi-core 1.4.0+ (TypeScript); with an older SDK, set `FI_BASE_URL` to the collector URL instead. The collector listens on `127.0.0.1` in both Compose setups, so SDKs on other machines need a reverse proxy in front of port 4318 and this set to its URL. Wrong: copied snippets send traces to an address that does not answer."
+    text = "OTLP/HTTP base URL of the trace collector as SDKs outside the stack reach it: what the in-app SDK snippet, the first-run setup screen, the installer's and the app's start-up summaries hand out as `FI_TRACES_URL` (`FI_BASE_URL` is the API's URL: `BASE_URL`, else `VITE_HOST_API`, else `http://localhost:<BACKEND_PORT>`). `FI_TRACES_URL` needs fi-instrumentation-otel 1.5.0+ (Python) or @traceai/fi-core 1.4.0+ (TypeScript); with an older SDK, set `FI_BASE_URL` to the collector URL instead. The collector listens on `127.0.0.1` in both Compose setups, so SDKs on other machines need a reverse proxy in front of port 4318 and this set to its URL. Wrong: copied snippets send traces to an address that does not answer."
 
   [[part.section]]
   heading = "Email"
