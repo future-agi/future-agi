@@ -1,4 +1,5 @@
-// The worker record as the API serves it, shared by the Participants panel and table tests.
+// A worker record as GET /simulate/v3/call-executions/{id}/workers/ serves it, for tests.
+
 // The API's rows, written as it sends them: simulate/services/harness_worker_steps.py arranges a call's events
 // into these, decides each hand-off's end and counts, and is tested there.
 export const handOffStep = (
@@ -189,4 +190,3 @@ export const timeline = ({
     state: "recorded",
     ...rest,
   });
-export const TIMELINE = timeline();

@@ -18,7 +18,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
       isLoading: mocks.loading,
       error: mocks.detailError ?? null,
     }),
-    useHasWorkers: () => false,
+    useHasWorkers: () => mocks.hasWorkers ?? false,
     useCallWorkers: () => ({ data: undefined, isError: false }),
     useCallTraces: (...args) => mocks.runTraces(...args),
   };
@@ -37,6 +37,20 @@ vi.mock("src/components/share-dialog", () => ({
       </button>
     </div>
   ),
+}));
+
+// The Participants panel asks for the transcript at a step, as the real panel's Show in transcript does.
+vi.mock("../CallWorkersPanel", () => ({
+  default: function WorkersStub({ onShowInTranscript }) {
+    return (
+      <button
+        type="button"
+        onClick={() => onShowInTranscript({ turn: 2, at: 12 })}
+      >
+        show step in transcript
+      </button>
+    );
+  },
 }));
 
 const { default: ChatCallDrawer } = await import("../ChatCallDrawer");
@@ -353,5 +367,86 @@ describe("ChatCallDrawer, an earlier attempt", () => {
       "true",
     );
     mocks.callDetail = null;
+  });
+});
+
+describe("ChatCallDrawer Participants", () => {
+  it("Show in transcript from Participants opens the transcript on that turn", async () => {
+    const user = userEvent.setup();
+    Element.prototype.scrollIntoView = vi.fn();
+    mocks.hasWorkers = true;
+    mocks.callDetail = {
+      turns: [
+        { role: "customer", text: "First ask" },
+        { role: "agent", text: "First reply" },
+        { role: "customer", text: "Second ask" },
+      ],
+    };
+    const { rerender } = render(
+      <ChatCallDrawer
+        task={{ id: "c1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Participants" }));
+    await user.click(
+      screen.getByRole("button", { name: "show step in transcript" }),
+    );
+    expect(screen.getByRole("tab", { name: "Transcript" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByText("Second ask").closest("[data-focused]"),
+    ).toHaveAttribute("data-focused", "true");
+    // The next call's transcript opens unmarked.
+    rerender(
+      <ChatCallDrawer
+        task={{ id: "c2", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(document.querySelector('[data-focused="true"]')).toBeNull();
+    mocks.hasWorkers = false;
+    mocks.callDetail = null;
+  });
+});
+
+describe("ChatCallDrawer step link", () => {
+  it("a link to a Participants step opens on Participants", () => {
+    mocks.hasWorkers = true;
+    window.history.pushState({}, "", "/?participantsStep=2");
+    render(
+      <ChatCallDrawer
+        task={{ id: "c1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Participants" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    window.history.pushState({}, "", "/");
+    mocks.hasWorkers = false;
+  });
+});
+
+describe("ChatCallDrawer trial picker", () => {
+  it("shows the scenario's trials in the header and opens the one picked", async () => {
+    const user = userEvent.setup();
+    const onPickTrial = vi.fn();
+    render(
+      <ChatCallDrawer
+        task={{ id: "c2", status: "failed" }}
+        trials={[
+          { id: "c1", trialIndex: 1, status: "passed" },
+          { id: "c2", trialIndex: 2, status: "failed" },
+        ]}
+        onPickTrial={onPickTrial}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Trial 1, Passed" }));
+    expect(onPickTrial).toHaveBeenCalledWith("c1");
   });
 });

@@ -17,9 +17,11 @@ import {
   withScoringStatus,
 } from "src/api/simulate-environments/runDetail";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
+import useVoiceAudioStore from "src/components/VoiceDetailDrawerV2/voiceAudioStore";
 import CallTracesPanel from "./CallTracesPanel";
 import AttemptSelect from "./AttemptSelect";
 import CallWorkersPanel from "./CallWorkersPanel";
+import TrialPicker from "./TrialPicker";
 import { OutcomeReason } from "./chatDrawerCells";
 import {
   CALL_TRACES_COPY,
@@ -28,6 +30,7 @@ import {
 } from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
 import { TRIAL_CHANGES_COPY, TRIAL_UNDER_WAY } from "./trialChanges.constants";
+import { openingTab } from "./participants/stepLink";
 
 // The annotate / queue / dataset / tags actions need project + annotation
 // context this embedded drawer doesn't wire; hide them rather than leave dead
@@ -80,6 +83,10 @@ export default function VoiceCallDrawer({
   hasNext = false,
   traceOpen = false,
   onTracePanelMountedChange,
+  trials = null,
+  onPickTrial,
+  onOpenTrial,
+  wide = false,
 }) {
   const { data, isPending, isError } = useCallExecutionV3Detail(
     task.id,
@@ -108,7 +115,8 @@ export default function VoiceCallDrawer({
   const callTraces = useCallTraces(executionId, task.id);
   const hasWorkers = useHasWorkers(task.id, task.status);
   // Held here because the panel unmounts while the next call's detail loads.
-  const [chosenTab, setChosenTab] = useState("transcript");
+  const [chosenTab, setChosenTab] = useState(openingTab);
+  const seekTo = useVoiceAudioStore((state) => state.seekTo);
   const [openStep, setOpenStep] = useState(null);
   // Forgotten on another call, so stepping to it and back does not reopen the trace.
   const [traceCallId, setTraceCallId] = useState(task.id);
@@ -174,7 +182,17 @@ export default function VoiceCallDrawer({
                     key={`${task.id}:${attempt ?? "latest"}`}
                     attempt={attempt}
                     callExecutionId={task.id}
+                    testExecutionId={executionId}
+                    scenarioKey={task.sourceScenarioKey ?? null}
+                    onOpenTrial={onOpenTrial}
                     callStatus={task.status}
+                    callerName={task.persona}
+                    // The call detail serves the recording's start as `start_time`.
+                    callStartedAt={data?.start_time ?? null}
+                    onShowInTranscript={({ at }) => {
+                      if (at != null) seekTo(at);
+                      setChosenTab("transcript");
+                    }}
                     traceIds={callTraces.traces.map((trace) => trace.traceId)}
                     onOpenTrace={(traceId, spanId) => {
                       setOpenStep({ traceId, spanId });
@@ -206,6 +224,10 @@ export default function VoiceCallDrawer({
   }, [
     task.id,
     task.status,
+    task.persona,
+    task.sourceScenarioKey,
+    onOpenTrial,
+    seekTo,
     showWorkers,
     data,
     attempt,
@@ -252,6 +274,14 @@ export default function VoiceCallDrawer({
         <VoiceDetailDrawerV2
           data={voiceData}
           onClose={onClose}
+          wide={wide}
+          headerLeading={
+            <TrialPicker
+              trials={trials}
+              currentId={task.id}
+              onPick={onPickTrial}
+            />
+          }
           scenarioId={data?.scenario_id}
           isLoading={isPending}
           hiddenActionIds={HIDDEN_VOICE_ACTIONS}
@@ -280,10 +310,18 @@ export default function VoiceCallDrawer({
   );
 }
 VoiceCallDrawer.propTypes = {
+  // Trials of this call's scenario, for the picker in the header.
+  trials: PropTypes.arrayOf(PropTypes.object),
+  onPickTrial: PropTypes.func,
+  onOpenTrial: PropTypes.func,
+  // A multi-agent call opens wider, with more room on the left.
+  wide: PropTypes.bool,
   task: PropTypes.shape({
     id: PropTypes.string,
     status: PropTypes.string,
     outcomeReason: PropTypes.string,
+    persona: PropTypes.string,
+    sourceScenarioKey: PropTypes.string,
   }).isRequired,
   executionId: PropTypes.string,
   onClose: PropTypes.func,

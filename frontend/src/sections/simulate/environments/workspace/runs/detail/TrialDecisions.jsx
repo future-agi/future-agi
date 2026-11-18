@@ -51,7 +51,11 @@ export default function TrialDecisions({ approvals, decisions }) {
               <Typography sx={quiet}>{one.line}</Typography>
               {one.committed_after_refusal && (
                 <Typography
-                  sx={{ typography: "s2", fontWeight: 600, color: "error.main" }}
+                  sx={{
+                    typography: "s2",
+                    fontWeight: 600,
+                    color: "error.main",
+                  }}
                   data-testid="committed-after-refusal"
                 >
                   {C.committedAfterRefusal(one.name)}

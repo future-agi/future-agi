@@ -24,6 +24,7 @@ import {
 import { SCORING_STATUS } from "../runs.constants";
 import { runOutcome } from "./trace/traceTable.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
+import TrialPicker from "./TrialPicker";
 import CallTracesPanel from "./CallTracesPanel";
 import AttemptSelect from "./AttemptSelect";
 import { ATTEMPT_COPY } from "./attempts.constants";
@@ -36,6 +37,7 @@ import {
 import TrialChangesPanel from "./TrialChangesPanel";
 import { TRIAL_CHANGES_COPY, TRIAL_UNDER_WAY } from "./trialChanges.constants";
 import { Meta, Cell, Attr, OutcomeReason } from "./chatDrawerCells";
+import { openingTab } from "./participants/stepLink";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
 const secs = (ms) => (ms == null ? "-" : `${(ms / 1000).toFixed(1)}s`);
@@ -90,6 +92,10 @@ export default function ChatCallDrawer({
   hasNext = false,
   traceOpen = false,
   onTracePanelMountedChange,
+  trials = null,
+  onPickTrial,
+  onOpenTrial,
+  wide = false,
 }) {
   const [shareOpen, setShareOpen] = useState(false);
   useEffect(() => {
@@ -110,7 +116,8 @@ export default function ChatCallDrawer({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
-  const [chosenArtifact, setChosenArtifact] = useState("transcript");
+  const [chosenArtifact, setChosenArtifact] = useState(openingTab);
+  const [focusTurn, setFocusTurn] = useState(null);
   const [openStep, setOpenStep] = useState(null);
   // Forgotten on another call, as in the voice drawer.
   const [traceCallId, setTraceCallId] = useState(task.id);
@@ -120,6 +127,7 @@ export default function ChatCallDrawer({
     setTraceCallId(task.id);
     setOpenStep(null);
     setAttempt(null);
+    setFocusTurn(null);
   }
   const { callDetail, isLoading, error: detailError } = useCallDetail(task.id);
   // Only an attempt of the call shown: a choice made on the previous call is never read against this one's detail.
@@ -208,6 +216,7 @@ export default function ChatCallDrawer({
           flexShrink: 0,
         }}
       >
+        <TrialPicker trials={trials} currentId={task.id} onPick={onPickTrial} />
         <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
           Conversation ID :{" "}
           <Box component="span" sx={{ color: "text.primary" }}>
@@ -276,7 +285,8 @@ export default function ChatCallDrawer({
         {/* left: the artifact */}
         <Stack
           sx={{
-            flex: 1.15,
+            // About 62% of a wide multi-agent drawer goes to the artifact.
+            flex: wide ? 1.63 : 1.15,
             minWidth: 0,
             borderRight: { md: "1px solid" },
             borderColor: { md: "divider" },
@@ -306,16 +316,24 @@ export default function ChatCallDrawer({
             {...ownsArrowKeys}
             sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}
           >
-            {/* Hidden, not unmounted, on another tab, so its open rows and Raw events survive a visit to Traces. */}
+            {/* Hidden, not unmounted, on another tab, so its picked step survives a visit to Traces. */}
             {showWorkers ? (
               <Box sx={{ display: artifact === "workers" ? "block" : "none" }}>
                 <CallWorkersPanel
                   key={`${task.id}:${attempt ?? "latest"}`}
                   callExecutionId={task.id}
+                  testExecutionId={executionId}
+                  scenarioKey={task.sourceScenarioKey ?? null}
+                  onOpenTrial={onOpenTrial}
                   callStatus={task.status}
                   onOpenTrace={openTrace}
                   traceIds={traceIds}
                   attempt={attempt}
+                  callerName={callDetail?.persona || task.persona}
+                  onShowInTranscript={({ turn }) => {
+                    setFocusTurn({ turn });
+                    setChosenArtifact("transcript");
+                  }}
                 />
               </Box>
             ) : null}
@@ -381,6 +399,7 @@ export default function ChatCallDrawer({
                 customerName={callDetail?.persona}
                 participants={callDetail?.participants || []}
                 hasCustomer={callDetail?.hasCustomer}
+                focusTurn={focusTurn}
               />
             )}
           </Box>
@@ -552,9 +571,16 @@ export default function ChatCallDrawer({
   );
 }
 ChatCallDrawer.propTypes = {
+  // Trials of this call's scenario, for the picker in the header.
+  trials: PropTypes.arrayOf(PropTypes.object),
+  onPickTrial: PropTypes.func,
+  onOpenTrial: PropTypes.func,
+  // A multi-agent call: more of the drawer goes to the artifact.
+  wide: PropTypes.bool,
   task: PropTypes.shape({
     id: PropTypes.string,
     scenario: PropTypes.string,
+    sourceScenarioKey: PropTypes.string,
     persona: PropTypes.string,
     status: PropTypes.string,
     turns: PropTypes.number,

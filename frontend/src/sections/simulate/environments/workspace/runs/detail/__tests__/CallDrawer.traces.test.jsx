@@ -21,6 +21,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
     ...actual,
     useCallDetail: () => ({ callDetail: null, isLoading: false }),
     useHasWorkers: () => mocks.hasWorkers,
+    useTrialRoutes: () => ({ data: undefined }),
     // A call not read yet is pending, as the next call is while its detail loads.
     useCallExecutionV3Detail: (id) =>
       id === "voice-1"
@@ -59,11 +60,11 @@ vi.mock(
   },
 );
 
-// A Participants step asks for its trace at its own span, as the real panel's Open in Traces does, and offers it
-// only when the drawer lists that trace.
+// A Participants step asks for its trace at its own span, as the real panel's Open in trace does; the panel
+// itself decides when to offer it.
 vi.mock("../CallWorkersPanel", () => ({
-  default: function WorkersStub({ onOpenTrace, traceIds = [] }) {
-    return traceIds.includes("trace-1") ? (
+  default: function WorkersStub({ onOpenTrace }) {
+    return onOpenTrace ? (
       <button type="button" onClick={() => onOpenTrace("trace-1", "span-7")}>
         open step trace
       </button>
@@ -184,12 +185,10 @@ describe("CallDrawer — a call with no trace", () => {
 
 describe("CallDrawer — a trace key left in the URL", () => {
   const leaveTraceInUrl = () =>
-    useLLMTracingStore
-      .getState()
-      .setTraceDetailDrawerOpen({
-        traceId: "trace-1",
-        projectId: "hidden-project",
-      });
+    useLLMTracingStore.getState().setTraceDetailDrawerOpen({
+      traceId: "trace-1",
+      projectId: "hidden-project",
+    });
 
   it("leaves a chat call's arrows working on Transcript and clears the key", async () => {
     const user = userEvent.setup();
@@ -350,28 +349,6 @@ describe("CallDrawer: Open in Traces from a Participants step", () => {
       world_changes: false,
     });
   });
-
-  it("offers no Open in Traces for a trace the call does not list, on chat and voice", async () => {
-    const user = userEvent.setup();
-    mocks.traces = {
-      projectId: "hidden-project",
-      traces: [{ traceId: "trace-9", name: "other" }],
-      isError: false,
-    };
-    const chat = renderChat();
-    await user.click(screen.getByRole("tab", { name: "Participants" }));
-    expect(
-      screen.queryByRole("button", { name: "open step trace" }),
-    ).toBeNull();
-    chat.unmount();
-
-    renderVoice();
-    await user.click(screen.getByRole("button", { name: "Participants" }));
-    expect(
-      screen.queryByRole("button", { name: "open step trace" }),
-    ).toBeNull();
-  });
-
   it("does not reopen the trace on a voice call after stepping to the next call and back", async () => {
     const user = userEvent.setup();
     const { rerender } = renderVoice({ hasPrev: true, hasNext: true });

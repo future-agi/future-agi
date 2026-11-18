@@ -20,14 +20,6 @@ export const CALL_WORKERS_COPY = {
   tab: "Participants",
   error: "Couldn't load this call's participants.",
   unknown: "Unknown",
-  turn: (n) =>
-    n === null
-      ? "Turn not recorded"
-      : n === 0
-        ? "Before the caller spoke"
-        : `Turn ${n}`,
-  // The record does not say which hand-off this ran in, so it sits at the top of its turn.
-  parentUnknown: "parent unknown",
   noEvidence:
     "Nothing was recorded for this call's participants: your app sent no traces and no hand-off was seen during the run.",
   infrastructureLost:
@@ -36,20 +28,8 @@ export const CALL_WORKERS_COPY = {
     "Only part of this call's traces could be read, so some steps may be missing.",
   unavailableCollection:
     "This call's traces could not be read, so its steps may be missing.",
-  modelTokens: (model, tokens) =>
-    [model, tokens ? `${tokens.toLocaleString()} tokens` : null]
-      .filter(Boolean)
-      .join(" · "),
-  openInTraces: "Open in Traces",
-  inParallel: "in parallel",
-  payloadOmitted: "Not kept: this call's record reached its size limit",
   eventsOmitted: (count) =>
     `${count} more step${count === 1 ? "" : "s"} not shown: this call's record reached its size limit`,
-  request: "Caller's request",
-  noRequest: "No request recorded",
-  response: "Coordinator's reply",
-  noReply: "No reply recorded",
-  transferred: (name) => `Control passed to ${name}`,
   sandboxOnly:
     "Your app sent no traces for this call, so the Traces tab is empty. These steps were recorded by the test run.",
   // What multi-agent testing covers, said on every multi-agent call, so nothing reads as more than it is.
@@ -58,34 +38,6 @@ export const CALL_WORKERS_COPY = {
   // Added where a call went past it.
   beyondBoundary:
     "This call also had nested, parallel or background hand-offs: they are shown as recorded, outside that support.",
-  noResult: "No result recorded",
-  noReturn: (name) => `No return from ${name} before the call ended`,
-  returnCutOff: (name) =>
-    `Return from ${name} not shown: this call's record is incomplete`,
-  failed: "error",
-  input: "Input",
-  output: "Output",
-  noPayload: "Nothing recorded",
-  ok: "ok",
-  showJson: "Show JSON",
-  hideJson: "Hide JSON",
-  caller: "Caller",
-  messageStep: "Message",
-  handOffStep: "Hand-off",
-  controlPassStep: "Control pass",
-  toolCallStep: "Tool call",
-  answerStep: "Answer",
-  noReturnStep: "No return",
-  notShownStep: "Not shown",
-  replyStep: "Reply",
-  showMore: "Show more",
-  showLess: "Show less",
-  rawEvents: "Raw events",
-  workerColumn: "Participant",
-  taskColumn: "Task",
-  resultColumn: "Result",
-  showRow: (name) => `Show raw data for ${name}`,
-  hideRow: (name) => `Hide raw data for ${name}`,
   // The API's counts of how the call's hand-offs ended.
   handOffSummary: ({
     hand_offs: handOffs,
@@ -103,8 +55,6 @@ export const CALL_WORKERS_COPY = {
     ].filter(Boolean);
     return `${handOffs} hand-off${handOffs === 1 ? "" : "s"} to ${workers} participant${workers === 1 ? "" : "s"}. ${ends.join(", ")}.`;
   },
-  callsOutsideTable: (count) =>
-    `${count} tool call${count === 1 ? "" : "s"} had no hand-off, so ${count === 1 ? "it isn't" : "they aren't"} in this table. Turn on Raw events to see ${count === 1 ? "it" : "them"}.`,
   // Why a call has no record to show, by the state the API serves.
   states: {
     collecting: "Collecting this call's participants…",
@@ -146,6 +96,7 @@ export const CALL_WORKERS_COPY = {
   checkStatus: { failed: "Failed", inconclusive: "Unsure" },
   // A worker's check sits on its worker's one hand-off; any other says why it is on no step.
   onHandOff: "On its hand-off",
+  onStep: (n) => `On step ${n}`,
   untied: {
     no_moment:
       "Not tied to a step: nothing recorded ties this check to a moment in the call",
@@ -176,26 +127,55 @@ export const CALL_WORKERS_COPY = {
     "Stopped by the user before any participant's work was recorded.",
 };
 
-// The Participants tab's layout: how deep a row indents, how fast a fold opens, the JSON button's size.
-// Indent levels in the table's narrow Worker column; deeper rows stay at the last one.
-export const MAX_ROW_INDENT = 3;
-
-export const MOTION_MS = 180;
-export const NO_MOTION_SX = {
-  "@media (prefers-reduced-motion: reduce)": { transition: "none !important" },
+export const TRIAL_PICKER_COPY = {
+  label: "Trial",
+  tooltip: (n, verdict) => `Trial ${n}, ${verdict}`,
 };
 
-export const JSON_BUTTON_SX = {
-  fontSize: 11,
-  lineHeight: 1,
-  fontWeight: 500,
-  height: 20,
-  minHeight: 20,
-  minWidth: 0,
-  px: 0.75,
-  py: 0,
-  borderRadius: "5px",
-  borderColor: "divider",
-  color: "text.secondary",
-  "& .MuiButton-startIcon": { mr: 0.5, ml: 0 },
+// A scenario's trials lined up by route, as the trial-routes API serves them.
+export const TRIAL_ROUTES_COPY = {
+  trials: (count) => `${count} trials`,
+  splitAt: "Split at ",
+  sameRoute: "Every trial took the same route",
+  // The server compares only trials that finished with a whole record.
+  sameRouteCompared: "Every compared trial took the same route",
+  tooFewCompared: "Fewer than two trials could be compared",
+  show: "Show trials",
+  hide: "Hide trials",
+  showTools: "Show tool calls",
+  trial: "Trial",
+  result: "Result",
+  trialN: (n) => `Trial ${n}`,
+  unknown: "Unknown",
+  // What a trial did at a step: asked a worker (or called a tool), and how it went.
+  cell: (state, kind, count) =>
+    ({
+      step: kind === "tool_call" ? "Called" : "Asked",
+      failed: "Failed",
+      no_answer: "No answer",
+      cut_off: "Cut off",
+      repeated: `×${count}`,
+      absent: kind === "tool_call" ? "Not called" : "Not asked",
+    })[state] ?? state,
+  // "Asked in trials 1 and 3", "Asked 2 times in trial 1".
+  splitGroup: (state, kind, count, trials) => {
+    const word =
+      state === "repeated"
+        ? `${kind === "tool_call" ? "Called" : "Asked"} ${count} times`
+        : TRIAL_ROUTES_COPY.cell(state, kind, count);
+    const list =
+      trials.length === 1
+        ? `trial ${trials[0]}`
+        : `trials ${trials.slice(0, -1).join(", ")} and ${trials.at(-1)}`;
+    return `${word} in ${list}`;
+  },
+  openStep: (n) => `Open trial ${n} at this step`,
+  // A trial the server lists but doesn't compare, and why.
+  notCompared: {
+    partial: "Not compared: its record was read only in part",
+    pending: "Not compared: its record isn't read yet",
+    not_finished: "Not compared: the trial didn't finish",
+    unreadable: "Not compared: its record couldn't be read",
+    no_evidence: "Not compared: nothing was recorded for its participants",
+  },
 };

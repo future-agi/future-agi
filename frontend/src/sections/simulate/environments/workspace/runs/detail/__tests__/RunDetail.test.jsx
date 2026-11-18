@@ -296,7 +296,15 @@ RunAnalyticsStub.propTypes = {
 };
 vi.mock("../RunAnalytics", () => ({ default: RunAnalyticsStub }));
 
-function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
+function CallDrawerStub({
+  task,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
+  onClose,
+  onOpenTrial,
+}) {
   if (!task) return null;
   return (
     <div>
@@ -313,6 +321,9 @@ function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
       <button type="button" onClick={onNext} disabled={!hasNext}>
         next call
       </button>
+      <button type="button" onClick={() => onOpenTrial("x1", 3)}>
+        open trial x1 at step 3
+      </button>
     </div>
   );
 }
@@ -323,6 +334,7 @@ CallDrawerStub.propTypes = {
   onPrev: PropTypes.func,
   onNext: PropTypes.func,
   onClose: PropTypes.func,
+  onOpenTrial: PropTypes.func,
 };
 vi.mock("../CallDrawer", () => ({ default: CallDrawerStub }));
 
@@ -1853,6 +1865,48 @@ describe("RunDetail ?rowId=", () => {
     await user.click(screen.getByRole("button", { name: "close call" }));
     expect(screen.queryByText(/^drawer:/)).toBeNull();
     expect(locationText()).toBe("?foo=1|REPLACE");
+  });
+
+  it("keeps a step link while its call opens and drops it on another call", async () => {
+    detailFor("x1", { data: CHAT_DETAIL, error: null });
+    renderDetail({ initialEntries: ["/?rowId=x1&participantsStep=3"] });
+
+    expect(await screen.findByText("drawer:x1")).toBeInTheDocument();
+    expect(locationText()).toContain("participantsStep=3");
+
+    act(() =>
+      navArgs().onStep({
+        task: { id: "c51", simulationCallType: "voice" },
+        source: "table",
+        page: 2,
+      }),
+    );
+    expect(locationText()).toBe("?rowId=c51|REPLACE");
+  });
+
+  it("opens another trial from the trials table at its step, even off the table page", async () => {
+    const user = userEvent.setup();
+    detailFor("x1", { data: CHAT_DETAIL, error: null });
+    renderDetail({ initialEntries: ["/?foo=1"] });
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    await user.click(
+      screen.getByRole("button", { name: "open trial x1 at step 3" }),
+    );
+    expect(await screen.findByText("drawer:x1")).toBeInTheDocument();
+    expect(locationText()).toContain("rowId=x1");
+    expect(locationText()).toContain("participantsStep=3");
+  });
+
+  it("keeps the open call when a trial picked from the trials table can't be found", async () => {
+    const user = userEvent.setup();
+    detailFor("x1", { data: undefined, error: { statusCode: 404 } });
+    renderDetail({ initialEntries: ["/?foo=1"] });
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    await user.click(
+      screen.getByRole("button", { name: "open trial x1 at step 3" }),
+    );
+    await waitFor(() => expect(locationText()).toContain("rowId=c1"));
+    expect(screen.getByText("drawer:c1")).toBeInTheDocument();
   });
 
   it("writes a row opened from Analytics to the URL", async () => {
