@@ -84,6 +84,8 @@ NOT_ACTIVE_ROW = "not_active"
 # Held-back key for a case its last proof found a defect in (a leaked answer, a control that passed, no control): a
 # validation would only repeat the verdict, so it waits for the case to be fixed.
 PROOF_FAILED_ROW = "proof_failed"
+# Held-back key for a case whose cited seed records could not be read just now: nothing failed, it is unknown.
+SEED_UNREAD_ROW = "unreadable"
 # The Draft reasons a validation can settle; any other Draft reason is a proof's verdict on the case itself.
 UNVALIDATED_REASONS = frozenset(
     {
@@ -99,6 +101,7 @@ LIFECYCLE_LABELS = {
     PROOF_FAILED_ROW: "Proof",
     ARCHIVED_ROW: "Archived",
     NOT_ACTIVE_ROW: "Not saved",
+    SEED_UNREAD_ROW: "Seed records",
 }
 # A case whose actors act in the world or whose faults are set on a tool the world's door does not stand in front of.
 NO_DOOR_ROW = "no_world_door"
@@ -501,7 +504,13 @@ def _held_back(
         reasons[NO_DOOR_ROW] = NO_DOOR_REASON
     # A worker is not a row: a case it holds back reads ALK's sealed cause, or its bypass.
     reasons.update(_worker_reasons(placed, workers))
-    for row in (NOT_VALIDATED_ROW, ARCHIVED_ROW, NOT_ACTIVE_ROW, PROOF_FAILED_ROW):
+    for row in (
+        NOT_VALIDATED_ROW,
+        ARCHIVED_ROW,
+        NOT_ACTIVE_ROW,
+        PROOF_FAILED_ROW,
+        SEED_UNREAD_ROW,
+    ):
         texts = [
             one.lifecycle_reason
             for one in placed
@@ -944,6 +953,9 @@ def _place(
         lifecycle_reason = reason_text("not_active")
     elif not runnable(view) and view["reason"] in UNVALIDATED_REASONS:
         blocked.append(NOT_VALIDATED_ROW)
+        lifecycle_reason = view["reason_text"]
+    elif not runnable(view) and view["reason"] == "seed_records_unread":
+        blocked.append(SEED_UNREAD_ROW)
         lifecycle_reason = view["reason_text"]
     elif not runnable(view):
         blocked.append(PROOF_FAILED_ROW)

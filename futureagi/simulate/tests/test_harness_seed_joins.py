@@ -6,6 +6,8 @@ import pytest
 
 from simulate.services import harness_scenario_lifecycle, harness_seed_joins
 from simulate.services.harness_actor_rules import KNOWLEDGE_ROLES
+from simulate.services.harness_readiness import selection
+from simulate.services.harness_readiness.report import resolve_pairing
 from simulate.services.harness_scenario_lifecycle import runnable
 from simulate.tests.test_harness_affected_scenarios import (
     LOOKUP_KEYS,
@@ -171,4 +173,11 @@ def test_an_unreadable_archive_is_never_remembered_and_its_citing_cases_are_held
     )
     assert not runnable(views[citing])
     assert views[REFUND_KEYS[1]]["reason"] != "seed_records_unread"
+    # A run counts it as unreadable just now, never as a failed proof.
+    plan = selection.select_for_run(
+        resolve_pairing(environment), keys=[citing, REFUND_KEYS[1]], trials=1
+    )
+    assert plan.view["held_back"]["by"] == {"unreadable": 1}
+    assert "could not be read just now" in plan.view["reasons"]["unreadable"]
+    assert plan.view["running"] == 1
     cache.clear()
