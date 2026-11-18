@@ -25,6 +25,7 @@ from simulate.models import (
 )
 from simulate.models.harness_versioning import VersionStatus
 from simulate.services.canonical_json import canonical_digest
+from simulate.services.harness_versioning.versions import proof_passes
 
 LifecycleState = Literal["draft", "validated", "active", "kept_as_written", "archived"]
 # The states a run may pick (decision of 18 Nov): Active, and Kept as written, which runs labelled as not proved so a
@@ -181,12 +182,6 @@ def warning_text(
             sorted({tool for one in controls for tool in one.get("assumed") or []})
         )
     return WARNING_TEXTS.get(code, code).format_map(values)
-
-
-def proof_passes(entry: object) -> bool:
-    from simulate.services.harness_versioning.versions import _proof_passes
-
-    return _proof_passes(entry)
 
 
 def _summary(entry: Mapping[str, Any] | None) -> ProofSummary | None:
@@ -428,7 +423,10 @@ def scenario_lifecycle(
         suite_version.status == VersionStatus.ACTIVE
         and environment_version.status == VersionStatus.ACTIVE
     )
-    unavailable = not validation.can_validate(environment, environment.agent_version_id)
+    # Whether the pairing's own agent can be validated here: a default agent that can tells nothing about it.
+    unavailable = not validation.can_validate(
+        environment, agent_version_id or environment.agent_version_id
+    )
     ended = _last_check_ending(environment, suite_version, environment_version)
     resolved = resolve(
         environment,

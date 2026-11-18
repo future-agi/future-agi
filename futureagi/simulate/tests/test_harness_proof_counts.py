@@ -44,7 +44,8 @@ def test_proof_counts_on_list(user, workspace, storage):
 
     counts = proof_counts(environment)
 
-    assert counts == {"proved": 5, "kept_as_written": 1, "not_proved": 4}
+    # The older `holds` entry counts as its case reads: kept as written, never proved.
+    assert counts == {"proved": 4, "kept_as_written": 2, "not_proved": 4}
 
 
 def test_judged_only_counts_as_kept(user, workspace, storage):

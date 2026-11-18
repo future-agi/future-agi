@@ -212,3 +212,43 @@ def test_a_known_defect_never_runs_as_unvalidated(user, workspace, storage):
             _run(environment, REFUND_KEYS, key="leak-2")
 
     assert refused.value.code == "all_cases_blocked"
+
+
+def test_a_legacy_holds_entry_never_counts_as_proved(user, workspace, storage):
+    """Review round 1, SF4: an older entry's `holds` reads Kept as written, so its proof summary and counts never say
+    proved."""
+    from simulate.services.harness_versioning.versions import proof_counts, proof_passes
+
+    assert proof_passes({"holds": True}) is False
+    assert proof_passes({"format": 2, "proved": True}) is True
+    environment = _environment(user, workspace, storage, "rv1-legacy-holds")
+    _suite(environment, _ten(), proved=False)
+    _proofs(environment, dict.fromkeys(KEYS, {"holds": True}))
+
+    assert all(not view["proof"]["proved"] for view in _views(environment).values())
+    assert (proof_counts(environment) or {}).get("proved", 0) == 0
+
+
+def test_validation_unavailable_is_read_for_the_pairing_s_own_agent(
+    user, workspace, storage
+):
+    """Review round 1, SF2: whether a case may run unvalidated depends on the pairing's agent, not the default."""
+    environment, a2 = _with_a2(user, workspace, storage, "rv1-unavailable-agent")
+    _suite(environment, _ten(), proved=False)
+    suite, version = environment.suite_version, environment.environment_version
+
+    def reason(agent):
+        return scenario_lifecycle(
+            environment,
+            suite_version=suite,
+            environment_version=version,
+            agent_version_id=agent.id,
+        )[KEYS[0]]["reason"]
+
+    with patch.object(
+        validation,
+        "can_validate",
+        side_effect=lambda env, agent_id: str(agent_id) != str(a2.id),
+    ):
+        assert reason(environment.agent_version) == "not_validated"
+        assert reason(a2) == "validation_unavailable"

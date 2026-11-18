@@ -718,13 +718,14 @@ def suite_change(
     return diff, diffs.summarize_suite(diff)
 
 
-def _proof_passes(entry: object) -> bool:
-    """Whether a saved proof counts as proved: format 2 reads `proved`, an older entry `holds`."""
-    if not isinstance(entry, Mapping):
-        return False
-    if entry.get("format") == 2:
-        return entry.get("proved") is True
-    return entry.get("holds") is True
+def proof_passes(entry: object) -> bool:
+    """Whether a saved proof counts as proved: only a format-2 proof that ran says so. An older entry's `holds` was
+    never a proof of the checks (its case reads Kept as written)."""
+    return (
+        isinstance(entry, Mapping)
+        and entry.get("format") == 2
+        and entry.get("proved") is True
+    )
 
 
 def proof_counts(job: HostedHarnessJob) -> dict[str, int] | None:
@@ -754,9 +755,13 @@ def pair_proof_counts(
     counts = {"proved": 0, "kept_as_written": 0, "not_proved": 0}
     for key in keys:
         entry = proofs.get(key) if isinstance(proofs, dict) else None
-        if _proof_passes(entry):
+        if proof_passes(entry):
             counts["proved"] += 1
-        elif isinstance(entry, Mapping) and entry.get("kept_as_written") is True:
+        elif isinstance(entry, Mapping) and (
+            entry.get("kept_as_written") is True
+            # An older entry that held runs kept as written, as its case reads.
+            or (entry.get("format") != 2 and entry.get("holds") is True)
+        ):
             counts["kept_as_written"] += 1
         else:
             counts["not_proved"] += 1
@@ -764,7 +769,7 @@ def pair_proof_counts(
 
 
 def _validation_status(proofs: Mapping[str, Any], keys: list[str]) -> str:
-    holding = [key for key in keys if _proof_passes(proofs.get(key))]
+    holding = [key for key in keys if proof_passes(proofs.get(key))]
     if keys and len(holding) == len(keys):
         return HarnessSuiteValidation.Status.PASSED
     if holding:
