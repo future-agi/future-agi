@@ -149,11 +149,15 @@ def get_observe_error_localizer_state(
     Observe tasks are keyed by ``source_id = EvalLogger.id``. The failure or
     skip reason lives only on the task, so readers that show a span eval need
     this to tell "failed" apart from "never ran".
+
+    Reads the primary: the result comes from ClickHouse, which can be ahead
+    of a lagging replica, so the worker's task row may be seconds old.
     """
     if not eval_logger_id or organization is None:
         return None
     task = (
-        ErrorLocalizerTask.no_workspace_objects.filter(
+        ErrorLocalizerTask.no_workspace_objects.using("default")
+        .filter(
             source=ErrorLocalizerSource.OBSERVE,
             source_id=str(eval_logger_id),
             organization=organization,
