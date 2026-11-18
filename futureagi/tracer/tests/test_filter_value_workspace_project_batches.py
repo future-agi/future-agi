@@ -1192,9 +1192,7 @@ def test_workspace_span_system_walk_starts_at_retained_span_boundary(
         "Project",
         SimpleNamespace(
             objects=SimpleNamespace(
-                filter=lambda **_kwargs: SimpleNamespace(
-                    values_list=lambda *_args: []
-                )
+                filter=lambda **_kwargs: SimpleNamespace(values_list=lambda *_args: [])
             )
         ),
     )
@@ -1219,4 +1217,3 @@ def test_workspace_span_system_walk_starts_at_retained_span_boundary(
     assert end - start == expected_age
     # The continuation resumes the frozen window from the signed cursor.
     assert all(window == windows[0] for window in windows)
-
