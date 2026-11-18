@@ -431,7 +431,7 @@ UNPRICED = {
 }
 
 
-def _platform_names():
+def _configured_names():
     sources = {
         "ModelConfigs": _config_names(),
         "claude-sonnet-4-6 and its Bedrock form": [
@@ -451,12 +451,15 @@ def _platform_names():
     return sorted({(name, where) for where, names in sources.items() for name in names})
 
 
+def _platform_names():
+    return [
+        (name, where) for name, where in _configured_names() if name not in UNPRICED
+    ]
+
+
 @pytest.mark.requires_ee
 @pytest.mark.parametrize(("name", "where"), _platform_names())
 def test_every_model_the_platform_configures_has_both_token_prices(name, where):
-    if name in UNPRICED:
-        pytest.skip(UNPRICED[name])
-
     found = lookup_pricing(name)
 
     assert found is not None, f"{name} ({where}) has no price in any table"
@@ -466,7 +469,9 @@ def test_every_model_the_platform_configures_has_both_token_prices(name, where):
 
 @pytest.mark.requires_ee
 def test_the_exempt_names_are_the_ones_that_have_no_price():
+    configured = {name for name, _ in _configured_names()}
     for name in UNPRICED:
+        assert name in configured, f"{name} is exempt but no longer configured"
         assert lookup_pricing(name) is None
 
 
