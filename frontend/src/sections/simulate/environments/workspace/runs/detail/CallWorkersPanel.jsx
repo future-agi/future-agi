@@ -42,7 +42,8 @@ export default function CallWorkersPanel({
     callStatus,
     attempt,
   );
-  const [selected, setSelected] = useState(null);
+  // The picked step by its API key, so a record read again with a step added before it keeps the same step.
+  const [selectedKey, setSelectedKey] = useState(null);
   const seq = useMemo(
     () =>
       data?.state === "recorded"
@@ -50,6 +51,9 @@ export default function CallWorkersPanel({
         : null,
     [data, callerName],
   );
+  const selected = seq?.steps.find((one) => one.key === selectedKey)?.n ?? null;
+  const setSelected = (n) =>
+    setSelectedKey(seq?.steps.find((one) => one.n === n)?.key ?? null);
   // A link to a step names the API's own step key. It opens that step once per call, so a refetch keeps the user's pick.
   const linkedFor = useRef(null);
   useEffect(() => {
@@ -58,7 +62,7 @@ export default function CallWorkersPanel({
     linkedFor.current = callExecutionId;
     const key = linkedStepKey();
     const step = key && seq.steps.find((one) => String(one.key) === key);
-    if (step) setSelected(step.n);
+    if (step) setSelectedKey(step.key);
   }, [seq, callExecutionId, attempt]);
   // An earlier attempt with no hand-off: the server answers 204, never a pending read, so there is nothing to wait for.
   if (data === null && attempt)
@@ -173,8 +177,8 @@ export default function CallWorkersPanel({
           currentId={callExecutionId}
           onOpen={(id, stepKey) => {
             if (id !== callExecutionId) return onOpenTrial?.(id, stepKey);
-            const step = seq?.steps.find((one) => one.key === stepKey);
-            if (step) setSelected(step.n);
+            if (seq?.steps.some((one) => one.key === stepKey))
+              setSelectedKey(stepKey);
           }}
         />
       ) : null}
