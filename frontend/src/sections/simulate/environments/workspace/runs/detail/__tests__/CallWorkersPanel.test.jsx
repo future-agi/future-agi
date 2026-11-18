@@ -23,6 +23,8 @@ const { default: CallWorkersPanel } = await import("../CallWorkersPanel");
 const { CALL_WORKERS_COPY: C } = await import("../callTraces.constants");
 
 import {
+  REPLY_CALL,
+  callStep,
   handOffStep,
   counts,
   WORKERS,
@@ -490,6 +492,31 @@ describe("CallWorkersPanel, an earlier attempt", () => {
     expect(asked.at(-1)).toEqual(["c1", "completed", "a1"]);
     render(<CallWorkersPanel callExecutionId="c1" callStatus="completed" />);
     expect(asked.at(-1)).toEqual(["c1", "completed", null]);
+  });
+});
+
+describe("CallWorkersPanel, a record read again", () => {
+  it("keeps the picked step when a step is added before it", () => {
+    result = { data: timeline(), isLoading: false, isError: false };
+    const { rerender } = render(<CallWorkersPanel callExecutionId="c1" />);
+    fireEvent.click(document.querySelector('[data-row="3"]'));
+    expect(screen.getByTestId("step-detail")).toHaveTextContent("get_order");
+    // The pending record is read again and now starts with an earlier call.
+    const early = {
+      ...REPLY_CALL,
+      seq: 7,
+      tool: "check_account",
+      at: "2026-10-31T11:59:51+00:00",
+    };
+    const grown = timeline();
+    grown.steps = [...grown.steps, callStep(early)];
+    grown.turns = grown.turns.map((round) => ({
+      ...round,
+      children: [early.seq, ...round.children],
+    }));
+    result = { data: grown, isLoading: false, isError: false };
+    rerender(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.getByTestId("step-detail")).toHaveTextContent("get_order");
   });
 });
 
