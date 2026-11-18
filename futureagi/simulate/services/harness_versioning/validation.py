@@ -68,9 +68,13 @@ UNAVAILABLE_REASON = (
     "the check could not prepare this environment's test world on our side; runs go"
     " ahead without it"
 )
-# The processes ALK itself adds to a generated world (agent-learning-kit
-# bundle_author_v2: the managed world-db, the generated tool-proxy and mcp-toolbox). Any
-# other process is the agent's or one of its services, whatever it is called.
+# Whose failure it was, decided here because the agent can write the failure file it
+# reads. The tables below are ALK's: agent-learning-kit ``fi/alk/harness/failure_record.py``
+# (``_OWNED_PROCESSES``, ``_HARNESS_CODES``, ``_OWNED_SEED_DIAGNOSTICS``, ``_AGENT_OUTPUT``,
+# ``_TYPED``). This is the platform's one copy; ``test_harness_failure_tables_contract``
+# pins it to ALK's values, so a change on either side fails there.
+# The processes ALK itself adds to a generated world (the managed world-db, the generated
+# tool-proxy and mcp-toolbox). Any other process is the agent's or one of its services.
 _OWNED_PROCESSES = frozenset({"world-db", "tool-proxy", "mcp-toolbox"})
 # Codes ALK raises with an infrastructure domain at every raise site, whatever the process.
 _INFRASTRUCTURE_CODES = frozenset(
