@@ -12,7 +12,7 @@ import math
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -55,7 +55,7 @@ class GitHubResponse:
 
 @dataclass(frozen=True)
 class ReadCredential:
-    token: str | None = None
+    token: str | None = field(default=None, repr=False)
     installation_id: str | None = None
     workspace_owned: bool = False
 
@@ -142,10 +142,11 @@ def read_credential(
         finally:
             revoke_installation_token(token)
         return
-    fallback = fallback_read_token()
-    if fallback:
+    fallback_token = fallback_read_token()
+    if fallback_token:
         yield ReadCredential(
-            fallback, str(getattr(settings, "GITHUB_APP_FALLBACK_INSTALLATION_ID", ""))
+            fallback_token,
+            str(getattr(settings, "GITHUB_APP_FALLBACK_INSTALLATION_ID", "")),
         )
         return
     yield NO_CREDENTIAL

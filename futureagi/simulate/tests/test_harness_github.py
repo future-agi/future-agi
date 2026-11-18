@@ -1,6 +1,7 @@
 """The GitHub reader: the token each read carries, GitHub's own limits, the errors a
 person sees, the workspace limit and name checks."""
 
+import json
 import time
 import uuid
 from unittest.mock import MagicMock, patch
@@ -309,6 +310,69 @@ class TestErrorHeaders:
             ).headers()
             == {}
         )
+
+
+class TestCredentialNeverReachesSentry:
+    def test_the_token_is_not_in_the_repr(self):
+        assert "tok-1" not in repr(CRED)
+        assert "inst-1" in repr(CRED)
+
+    @pytest.mark.parametrize("workspace_owned", [True, False])
+    def test_an_error_inside_a_read_sends_no_token_to_sentry(
+        self, settings, workspace_owned
+    ):
+        import sentry_sdk
+        from sentry_sdk.transport import Transport
+
+        from integrations.services import github_app
+        from tfc.logging.sentry import _event_scrubber, _get_before_send
+
+        secret = "ghs_" + "s3cr3tV4lue" * 3
+        events = []
+
+        class Capture(Transport):
+            def capture_envelope(self, envelope):
+                events.append(envelope.get_event())
+
+        client = sentry_sdk.Client(
+            dsn="https://key@sentry.example.com/1",
+            transport=Capture,
+            include_local_variables=True,
+            send_default_pii=True,
+            event_scrubber=_event_scrubber(),
+            before_send=_get_before_send(),
+            default_integrations=False,
+        )
+        settings.GITHUB_APP_FALLBACK_INSTALLATION_ID = "ours"
+        with (
+            patch.object(
+                github,
+                "_workspace_installation",
+                return_value="42" if workspace_owned else None,
+            ),
+            patch.object(github_app, "installation_token", return_value=secret),
+            patch.object(github_app, "revoke_installation_token"),
+            patch.object(github_app, "fallback_read_token", return_value=secret),
+            patch.object(
+                github.requests, "get", side_effect=RuntimeError("read failed")
+            ),
+            sentry_sdk.isolation_scope() as scope,
+        ):
+            scope.set_client(client)
+            try:
+                with read_credential("org", "ws") as credential:
+                    github_get("/x", accept="a", credential=credential, purpose="t")
+            except RuntimeError:
+                sentry_sdk.capture_exception()
+
+        [event] = events
+        frames = [
+            frame
+            for value in event["exception"]["values"]
+            for frame in value["stacktrace"]["frames"]
+        ]
+        assert any("credential" in (frame.get("vars") or {}) for frame in frames)
+        assert secret not in json.dumps(event, default=str)
 
 
 class TestNames:
