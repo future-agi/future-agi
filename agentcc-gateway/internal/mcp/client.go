@@ -23,6 +23,7 @@ type Client struct {
 	closed      atomic.Bool
 
 	// Callbacks.
+	callbackMu     sync.Mutex
 	onToolsChanged func(serverID string, tools []Tool)
 
 	// Config.
@@ -58,11 +59,17 @@ func NewClient(cfg ClientConfig) *Client {
 }
 
 // Connect establishes the connection, performs the MCP handshake, and discovers tools.
-func (c *Client) Connect(ctx context.Context) (err error) {
+func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.connectLocked(ctx)
+}
 
-	// Create transport.
+func (c *Client) connectLocked(ctx context.Context) (err error) {
+	if old := c.currentTransport(); old != nil {
+		c.healthy.Store(false)
+		old.Close()
+	}
 	transport, err := c.startTransport(ctx)
 	if err != nil {
 		return fmt.Errorf("create transport: %w", err)
@@ -96,7 +103,7 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		Params:  paramsData,
 	}
 
-	resp, err := c.currentTransport().Send(ctx, initMsg)
+	resp, err := transport.Send(ctx, initMsg)
 	if err != nil {
 		return fmt.Errorf("initialize: %w", err)
 	}
@@ -109,24 +116,26 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		JSONRPC: "2.0",
 		Method:  MethodInitialized,
 	}
-	if _, err := c.currentTransport().Send(ctx, notif); err != nil {
+	if _, err := transport.Send(ctx, notif); err != nil {
 		slog.Warn("failed to send initialized notification", "server", c.serverID, "error", err)
 	}
 
-	// Discover tools.
-	if err := c.discoverTools(ctx); err != nil {
-		slog.Warn("tool discovery failed", "server", c.serverID, "error", err)
-		// Non-fatal: server might not have tools yet.
+	// Stage discovery in this handshake. A rejected replacement must not
+	// overwrite the last accepted catalog or notify downstream sessions.
+	var tools ListToolsResult
+	var resources ListResourcesResult
+	var prompts ListPromptsResult
+	toolsErr := discover(ctx, transport, `2`, MethodToolsList, &tools)
+	if toolsErr != nil {
+		slog.Warn("tool discovery failed", "server", c.serverID, "error", toolsErr)
 	}
-
-	// Discover resources (non-fatal).
-	if err := c.discoverResources(ctx); err != nil {
-		slog.Debug("resource discovery failed (may not be supported)", "server", c.serverID, "error", err)
+	resourcesErr := discover(ctx, transport, `3`, MethodResourcesList, &resources)
+	if resourcesErr != nil {
+		slog.Debug("resource discovery failed (may not be supported)", "server", c.serverID, "error", resourcesErr)
 	}
-
-	// Discover prompts (non-fatal).
-	if err := c.discoverPrompts(ctx); err != nil {
-		slog.Debug("prompt discovery failed (may not be supported)", "server", c.serverID, "error", err)
+	promptsErr := discover(ctx, transport, `4`, MethodPromptsList, &prompts)
+	if promptsErr != nil {
+		slog.Debug("prompt discovery failed (may not be supported)", "server", c.serverID, "error", promptsErr)
 	}
 
 	// Missing optional discovery methods are fine; an expired stdio startup
@@ -137,44 +146,44 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	if c.closed.Load() {
 		return fmt.Errorf("client closed")
 	}
+	if t, ok := transport.(*StdioTransport); ok && !t.Healthy() {
+		return fmt.Errorf("stdio session ended during discovery")
+	}
+	if resourcesErr == nil {
+		c.resources.Store(&resources.Resources)
+	}
+	if promptsErr == nil {
+		c.prompts.Store(&prompts.Prompts)
+	}
+	if toolsErr == nil {
+		c.tools.Store(&tools.Tools)
+	}
 	c.healthy.Store(true)
+	if toolsErr == nil {
+		c.callbackMu.Lock()
+		notify := c.onToolsChanged
+		c.callbackMu.Unlock()
+		if notify != nil {
+			notify(c.serverID, tools.Tools)
+		}
+	}
 
-	// Start health monitoring.
-	go c.healthLoop()
+	go c.healthLoop(transport)
 
 	slog.Info("mcp client connected", "server", c.serverID, "tools", c.ToolCount())
 	return nil
 }
 
-// discoverTools calls tools/list and caches the result.
-func (c *Client) discoverTools(ctx context.Context) error {
-	msg := &Message{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`2`),
-		Method:  MethodToolsList,
-	}
-
-	resp, err := c.currentTransport().Send(ctx, msg)
+// discover decodes a list response without publishing it to clients.
+func discover(ctx context.Context, transport Transport, id, method string, result any) error {
+	resp, err := transport.Send(ctx, &Message{JSONRPC: "2.0", ID: json.RawMessage(id), Method: method})
 	if err != nil {
-		return fmt.Errorf("tools/list: %w", err)
+		return fmt.Errorf("%s: %w", method, err)
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("tools/list error: %s", resp.Error.Message)
+		return fmt.Errorf("%s error: %s", method, resp.Error.Message)
 	}
-
-	var result ListToolsResult
-	if err := json.Unmarshal(resp.Result, &result); err != nil {
-		return fmt.Errorf("decode tools/list: %w", err)
-	}
-
-	c.tools.Store(&result.Tools)
-
-	// Notify callback.
-	if c.onToolsChanged != nil {
-		c.onToolsChanged(c.serverID, result.Tools)
-	}
-
-	return nil
+	return json.Unmarshal(resp.Result, result)
 }
 
 // CallTool forwards a tool call to the upstream server.
@@ -182,7 +191,8 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]inte
 	if c.closed.Load() {
 		return nil, fmt.Errorf("client closed")
 	}
-	if !c.healthy.Load() {
+	transport, ok := c.availableTransport()
+	if !ok {
 		return nil, fmt.Errorf("server %s is unhealthy", c.serverID)
 	}
 
@@ -205,7 +215,7 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]inte
 		Params:  paramsData,
 	}
 
-	resp, err := c.currentTransport().Send(ctx, msg)
+	resp, err := transport.Send(ctx, msg)
 	if err != nil {
 		return nil, fmt.Errorf("tools/call: %w", err)
 	}
@@ -259,53 +269,10 @@ func (c *Client) Prompts() []Prompt {
 	return *p
 }
 
-// discoverResources calls resources/list and caches the result.
-func (c *Client) discoverResources(ctx context.Context) error {
-	msg := &Message{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`3`),
-		Method:  MethodResourcesList,
-	}
-	resp, err := c.currentTransport().Send(ctx, msg)
-	if err != nil {
-		return err
-	}
-	if resp.Error != nil {
-		return fmt.Errorf("resources/list error: %s", resp.Error.Message)
-	}
-	var result ListResourcesResult
-	if err := json.Unmarshal(resp.Result, &result); err != nil {
-		return fmt.Errorf("decode resources/list: %w", err)
-	}
-	c.resources.Store(&result.Resources)
-	return nil
-}
-
-// discoverPrompts calls prompts/list and caches the result.
-func (c *Client) discoverPrompts(ctx context.Context) error {
-	msg := &Message{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`4`),
-		Method:  MethodPromptsList,
-	}
-	resp, err := c.currentTransport().Send(ctx, msg)
-	if err != nil {
-		return err
-	}
-	if resp.Error != nil {
-		return fmt.Errorf("prompts/list error: %s", resp.Error.Message)
-	}
-	var result ListPromptsResult
-	if err := json.Unmarshal(resp.Result, &result); err != nil {
-		return fmt.Errorf("decode prompts/list: %w", err)
-	}
-	c.prompts.Store(&result.Prompts)
-	return nil
-}
-
 // ReadResource reads a specific resource from the upstream server.
 func (c *Client) ReadResource(ctx context.Context, uri string) (*ReadResourceResult, error) {
-	if c.closed.Load() || !c.healthy.Load() {
+	transport, ok := c.availableTransport()
+	if !ok {
 		return nil, fmt.Errorf("server %s is unavailable", c.serverID)
 	}
 	params := ReadResourceParams{URI: uri}
@@ -317,7 +284,7 @@ func (c *Client) ReadResource(ctx context.Context, uri string) (*ReadResourceRes
 		Method:  MethodResourcesRead,
 		Params:  paramsData,
 	}
-	resp, err := c.currentTransport().Send(ctx, msg)
+	resp, err := transport.Send(ctx, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +300,8 @@ func (c *Client) ReadResource(ctx context.Context, uri string) (*ReadResourceRes
 
 // GetPrompt gets a prompt from the upstream server.
 func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[string]string) (*GetPromptResult, error) {
-	if c.closed.Load() || !c.healthy.Load() {
+	transport, ok := c.availableTransport()
+	if !ok {
 		return nil, fmt.Errorf("server %s is unavailable", c.serverID)
 	}
 	params := GetPromptParams{Name: name, Arguments: arguments}
@@ -345,7 +313,7 @@ func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[strin
 		Method:  MethodPromptsGet,
 		Params:  paramsData,
 	}
-	resp, err := c.currentTransport().Send(ctx, msg)
+	resp, err := transport.Send(ctx, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -366,11 +334,26 @@ func (c *Client) ServerID() string {
 
 // Healthy returns whether the upstream server is healthy.
 func (c *Client) Healthy() bool {
-	return c.healthy.Load() && !c.closed.Load()
+	_, healthy := c.availableTransport()
+	return healthy
+}
+
+// Pin an operation to the same transport whose health it observed. HTTP
+// keeps its existing three-ping policy; a locally closed pipe is definitive.
+func (c *Client) availableTransport() (Transport, bool) {
+	c.transportMu.RLock()
+	defer c.transportMu.RUnlock()
+	available := c.healthy.Load() && !c.closed.Load()
+	if t, ok := c.transport.(*StdioTransport); ok && t.closed.Load() {
+		available = false
+	}
+	return c.transport, available
 }
 
 // SetOnToolsChanged sets a callback for when the tool list changes.
 func (c *Client) SetOnToolsChanged(fn func(serverID string, tools []Tool)) {
+	c.callbackMu.Lock()
+	defer c.callbackMu.Unlock()
 	c.onToolsChanged = fn
 }
 
@@ -387,13 +370,23 @@ func (c *Client) Close() error {
 }
 
 // healthLoop periodically pings the upstream server.
-func (c *Client) healthLoop() {
+func (c *Client) healthLoop(transport Transport) {
 	ticker := time.NewTicker(c.cfg.PingInterval)
 	defer ticker.Stop()
+	var localClose <-chan struct{}
+	if t, ok := transport.(*StdioTransport); ok {
+		localClose = t.done
+	}
 
 	failures := 0
-	for range ticker.C {
-		if c.closed.Load() {
+	for {
+		select {
+		case <-localClose:
+			c.reconnect(transport)
+			return
+		case <-ticker.C:
+		}
+		if c.closed.Load() || c.currentTransport() != transport {
 			return
 		}
 
@@ -404,27 +397,31 @@ func (c *Client) healthLoop() {
 			Method:  MethodPing,
 		}
 
-		_, err := c.currentTransport().Send(ctx, msg)
+		_, err := transport.Send(ctx, msg)
 		cancel()
 
 		if err != nil {
 			failures++
 			slog.Warn("mcp ping failed", "server", c.serverID, "failures", failures, "error", err)
 			if failures >= 3 {
-				c.healthy.Store(false)
-				slog.Error("mcp server marked unhealthy", "server", c.serverID)
-				go c.reconnect()
+				c.reconnect(transport)
 				return
 			}
 		} else {
 			failures = 0
-			c.healthy.Store(true)
 		}
 	}
 }
 
 // reconnect attempts to re-establish the connection with exponential backoff.
-func (c *Client) reconnect() {
+func (c *Client) reconnect(previous Transport) {
+	c.mu.Lock()
+	if c.closed.Load() || c.currentTransport() != previous {
+		c.mu.Unlock()
+		return
+	}
+	c.healthy.Store(false)
+	c.mu.Unlock()
 	backoff := time.Second
 	maxBackoff := 60 * time.Second
 
@@ -432,17 +429,17 @@ func (c *Client) reconnect() {
 		slog.Info("mcp reconnecting", "server", c.serverID, "attempt", attempt, "backoff", backoff)
 		time.Sleep(backoff)
 
-		if c.closed.Load() {
+		c.mu.Lock()
+		if c.closed.Load() || c.currentTransport() != previous {
+			c.mu.Unlock()
 			return
-		}
-
-		if old := c.currentTransport(); old != nil {
-			old.Close()
 		}
 		// Run the same bounded handshake, discovery and cleanup as startup.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err := c.Connect(ctx)
+		err := c.connectLocked(ctx)
 		cancel()
+		previous = c.currentTransport()
+		c.mu.Unlock()
 		if err == nil {
 			return
 		}
