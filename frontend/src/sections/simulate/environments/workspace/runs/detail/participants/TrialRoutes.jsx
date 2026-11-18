@@ -105,7 +105,10 @@ export default function TrialRoutes({
     : "";
 
   return (
-    <Box sx={{ borderTop: "1px solid", borderColor: "divider", pt: 0.75 }}>
+    <Box
+      data-trial-routes
+      sx={{ borderTop: "1px solid", borderColor: "divider", pt: 0.75 }}
+    >
       <Stack
         direction="row"
         spacing={1.25}

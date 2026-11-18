@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CircularProgress, Stack, Typography } from "@mui/material";
+import { keyframes } from "@mui/material/styles";
 import { useCallWorkers } from "src/api/simulate-environments/runDetail";
 import { fDateTime } from "src/utils/format-time";
 import { CALL_WORKERS_COPY as C } from "./callTraces.constants";
@@ -15,6 +16,11 @@ import {
 import { sequenceOf } from "./participants/sequenceOf";
 import TrialRoutes from "./participants/TrialRoutes";
 import { STEP_PARAM, linkedStepKey } from "./participants/stepLink";
+
+const easeIn = keyframes`
+  from { opacity: 0; }
+  to { opacity: 1; }
+`;
 
 export default function CallWorkersPanel({
   callExecutionId,
@@ -122,7 +128,17 @@ export default function CallWorkersPanel({
     });
 
   return (
-    <Stack spacing={1.25} sx={{ p: 1.5 }}>
+    <Stack
+      spacing={1.25}
+      sx={{
+        p: 1.5,
+        // Each call's record eases in, so a switch between trials reads as a change; the trials table holds still.
+        "& > :not([data-trial-routes])": {
+          animation: `${easeIn} 200ms ease-out`,
+          "@media (prefers-reduced-motion: reduce)": { animation: "none" },
+        },
+      }}
+    >
       <ParticipantsHeader
         summary={handOffs ? C.handOffSummary(data.counts) : null}
         notes={[
