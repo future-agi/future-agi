@@ -131,49 +131,34 @@ AttachmentsCard.propTypes = {
  * What became of the proposals in the chat: added to Review changes, with
  * the blocked items in Couldn't apply, or dismissed.
  */
-export function ProposalsOutcome({ outcome, nextLabel, onReviewChanges }) {
+export function ProposalsOutcome({ outcome, onOpenSources, onReviewChanges }) {
   if (!outcome)
     return (
-      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+      <Typography sx={{ typography: "m3", color: "text.secondary" }}>
         {COPY.rejected}
       </Typography>
     );
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
-      <Box sx={{ px: 1.5, py: 1.25 }}>
-        <Typography sx={{ typography: "m3", fontWeight: 600 }}>
-          {PROPOSALS_COPY.cardTitle}
-        </Typography>
-        <Typography sx={{ typography: "s1" }}>
-          {COPY.added(outcome.accepted.length)}
-        </Typography>
+    <Stack spacing={1} alignItems="flex-start">
+      <Box>
+        <Typography sx={{ typography: "m3" }}>{COPY.added}</Typography>
         {outcome.failed.length > 0 && (
           <Typography sx={{ typography: "s1", color: "text.secondary" }}>
             {COPY.couldntApply(outcome.failed.length)}
           </Typography>
         )}
       </Box>
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1}
-        sx={{
-          px: 1.5,
-          py: 1.25,
-          borderTop: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
-          {nextLabel ? COPY.savedAs(nextLabel) : PROPOSALS_COPY.footer.saved}
-        </Typography>
+      <Stack direction="row" spacing={1}>
+        <Button variant="outlined" size="small" onClick={onOpenSources}>
+          {COPY.openSources}
+        </Button>
         {onReviewChanges && (
           <Button variant="outlined" size="small" onClick={onReviewChanges}>
             {PROPOSALS_COPY.reviewChanges}
           </Button>
         )}
       </Stack>
-    </Box>
+    </Stack>
   );
 }
 
@@ -183,7 +168,7 @@ ProposalsOutcome.propTypes = {
     accepted: PropTypes.array.isRequired,
     failed: PropTypes.array.isRequired,
   }),
-  // The environment version Save makes, like "v4".
-  nextLabel: PropTypes.string,
+  // Opens World & tools, where the files are.
+  onOpenSources: PropTypes.func.isRequired,
   onReviewChanges: PropTypes.func,
 };

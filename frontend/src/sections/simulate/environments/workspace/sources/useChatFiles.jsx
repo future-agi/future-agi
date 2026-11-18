@@ -63,19 +63,20 @@ export default function useChatFiles(env, chat, { onReviewChanges } = {}) {
       );
   };
 
+  // With files, the text shows in the files' bubble instead of its own.
   const send = (text, files = []) => {
-    // The text bubble the chat adds for it comes first.
     if (text) chat.send(text);
-    if (files.length) sendFiles(text, files, chatTurns.length + (text ? 1 : 0));
+    if (files.length) sendFiles(text, files, chatTurns.length);
   };
 
+  // World & tools, with the file open at `at` when a source is given.
   const openSource = (sourceId, at) =>
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
-        ["sourceTab", "at"].forEach((key) => next.delete(key));
+        ["source", "sourceTab", "at"].forEach((key) => next.delete(key));
         next.set("tab", "world");
-        next.set("source", sourceId);
+        if (sourceId) next.set("source", sourceId);
         if (at) next.set("at", at);
         return next;
       },
@@ -123,10 +124,8 @@ export default function useChatFiles(env, chat, { onReviewChanges } = {}) {
                   envId={envId}
                   prepared={prepared}
                   layout="card"
-                  // The label is kept as it was, not the next one after a later save.
-                  onDone={(outcome) =>
-                    update(id, { outcome, savedLabel: nextLabel })
-                  }
+                  nextLabel={nextLabel}
+                  onDone={(outcome) => update(id, { outcome })}
                   onOpenSource={openSource}
                   onAddFiles={(files) => sendFiles("", files, chatTurns.length)}
                   onReviewChanges={onReviewChanges}
@@ -134,7 +133,7 @@ export default function useChatFiles(env, chat, { onReviewChanges } = {}) {
               ) : (
                 <ProposalsOutcome
                   outcome={entry.outcome}
-                  nextLabel={entry.savedLabel}
+                  onOpenSources={() => openSource()}
                   onReviewChanges={onReviewChanges}
                 />
               ),
@@ -146,20 +145,27 @@ export default function useChatFiles(env, chat, { onReviewChanges } = {}) {
       {
         id: `${id}-user`,
         role: "user",
-        text: COPY.attached(entry.files.map((file) => file.name)),
+        text: COPY.attached(
+          entry.files.map((file) => file.name),
+          entry.text,
+        ),
       },
       { id: `${id}-reply`, role: "builder", steps },
     ];
   };
 
-  // shortcut: placed by the chat's turn count at send time, so a turn the
-  // projection inserts above the pending text bubble shifts it by one; anchor
-  // on message ids if the conversation API ever carries files.
+  // shortcut: placed by the chat's turn count at send time, and the chat's own
+  // bubble for the text is found by its text; anchor on message ids if the
+  // conversation API ever carries files.
   const turns = spliceTurns(
     chatTurns,
     entries
       .filter((entry) => entry.envId === envId)
-      .map((entry) => ({ at: entry.at, turns: turnsOf(entry) })),
+      .map((entry) => ({
+        at: entry.at,
+        text: entry.text,
+        turns: turnsOf(entry),
+      })),
   );
 
   return { turns, send };
