@@ -40,10 +40,12 @@ def _hint(exc):
     return {"exc_info": (type(exc), exc, None)}
 
 
-def _log_hint(logger_name, exc=None):
+def _log_hint(logger_name, exc=None, msg=None):
     """The hint Sentry's logging integration passes for a log record."""
     hint = _hint(exc) if exc is not None else {}
-    hint["log_record"] = SimpleNamespace(name=logger_name)
+    hint["log_record"] = SimpleNamespace(
+        name=logger_name, msg=msg, exc_info=hint.get("exc_info")
+    )
     return hint
 
 
@@ -124,19 +126,24 @@ def test_keeps_messages_that_only_resemble_expected_outcomes():
         assert before_send({"message": message}, {}) is not None
 
 
-def test_drops_litellm_own_logger_events_but_keeps_ours():
-    """LiteLLM logs a credential failure at ERROR before raising it to our code,
-    which owns the outcome. Its logger is filtered by name, not by message."""
+def test_only_drops_litellm_credential_records_from_its_own_logger():
     error = ValueError("Could not deserialize key data.")
-    message = f"Failed to load vertex credentials. Error: {error}"
-    event = {"logger": "LiteLLM", "message": message}
-    assert before_send(event, _log_hint("LiteLLM", error)) is None
-    # The same failure logged or captured by our own code is still an issue.
-    for name in ("model_hub.utils.utils", "LiteLLM Router", "litellm"):
-        event = {"logger": name, "message": message}
-        assert before_send(event, _log_hint(name, error)) is not None
-    # Only records LiteLLM itself logged qualify, not a direct capture.
-    assert before_send({"logger": "LiteLLM"}, _hint(error)) is not None
+    msg = (
+        "Failed to load vertex credentials. Check to see if credentials "
+        f"containing partial/invalid information. Error: {error}"
+    )
+    event = {"logger": "LiteLLM", "message": msg}
+    assert before_send(event, _log_hint("LiteLLM", error, msg)) is None
+    # LiteLLM also catches SDK setup and network failures at this call site.
+    for unexpected in (None, ImportError(), ConnectionError()):
+        assert before_send(event, _log_hint("LiteLLM", unexpected, msg)) is event
+    # The same words in a direct capture or elsewhere in an error aren't enough.
+    assert before_send(event, _hint(error)) is event
+    for other_msg in (f"unexpected parsing error: {msg}", None, {"message": msg}):
+        assert before_send(event, _log_hint("LiteLLM", error, other_msg)) is event
+    for name in ("model_hub.utils.utils", "LiteLLM Router", "LiteLLM.child", "litellm"):
+        event = {"logger": name, "message": msg}
+        assert before_send(event, _log_hint(name, error, msg)) is event
 
 
 def test_expected_outcome_loggers_are_dropped_by_before_send_alone():
@@ -147,8 +154,8 @@ def test_expected_outcome_loggers_are_dropped_by_before_send_alone():
         for processor in global_event_processors
         if getattr(processor, "__module__", "").startswith("tfc.")
     ]
-    for name in ("django.security.DisallowedHost", "LiteLLM"):
-        assert before_send({"logger": name}, _log_hint(name)) is None
+    name = "django.security.DisallowedHost"
+    assert before_send({"logger": name}, _log_hint(name)) is None
 
 
 # Real errors: kept

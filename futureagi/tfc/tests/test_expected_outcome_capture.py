@@ -173,7 +173,9 @@ def test_litellm_logger_errors_are_breadcrumbs_and_our_captures_stay_issues(
         raise ValueError("Could not deserialize key data.")
     except ValueError as error:
         logging.getLogger("LiteLLM").exception(
-            "Failed to load vertex credentials. Error: %s", error
+            "Failed to load vertex credentials. Check to see if credentials "
+            "containing partial/invalid information. Error: %s",
+            error,
         )
         assert transport.events == []
         logging.getLogger("model_hub.utils.utils").exception("model_check_failed")
@@ -196,6 +198,13 @@ def test_litellm_logger_errors_are_breadcrumbs_and_our_captures_stay_issues(
         "model_hub.utils.utils",
         None,
     ]
+
+
+def test_unexpected_litellm_error_is_an_issue(transport):
+    logging.getLogger("LiteLLM").error("Unexpected response parser failure")
+    [event] = transport.events
+    assert event["logger"] == "LiteLLM"
+    assert event["logentry"]["formatted"] == "Unexpected response parser failure"
 
 
 def test_real_litellm_vertex_key_failure_is_not_an_issue(transport):

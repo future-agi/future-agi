@@ -15,18 +15,14 @@ POLICY = json.loads(
 )
 
 
-def test_stalled_reminders_are_daily_without_delaying_new_tasks():
-    parent = POLICY["notification_policy_route"]
-    route = next(
-        r
-        for r in parent.get("routes", [])
-        if ["kind", "=", "stalled"] in r["object_matchers"]
-    )
-    assert route["repeat_interval"] == "24h"
+def test_stalled_and_failed_tasks_share_the_six_hour_reminder():
+    route = POLICY["notification_policy_route"]
+    assert route["object_matchers"] == [["alert_group", "=", "eval-tasks"]]
+    assert not route.get("routes")
+    assert route["repeat_interval"] == "6h"
     assert route["group_wait"] == "30s"
     assert route["group_interval"] == "5m"
     assert route["group_by"] == ["alertname", "task_id"]
-    assert parent["repeat_interval"] == "6h"  # failed-task escalation is unchanged
 
 
 @pytest.mark.django_db

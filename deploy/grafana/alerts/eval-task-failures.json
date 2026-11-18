@@ -1,5 +1,5 @@
 {
-  "_comment": "Grafana alert rules backing up the in-app 'continuous eval task FAILED' Slack alert (tracer/services/eval_tasks/failure_alert.py). Apply each rule with POST /api/v1/provisioning/alert-rules (folderUID filled in at apply time). Rows are one alert per task (per reason for the stalled rule); string columns become labels. Routed by alert_group=eval-tasks to #critical with daily stalled-task reminders and 6h failed-task reminders (see notification_policy_route).",
+  "_comment": "Grafana alert rules backing up the in-app 'continuous eval task FAILED' Slack alert (tracer/services/eval_tasks/failure_alert.py). Apply each rule with POST /api/v1/provisioning/alert-rules (folderUID filled in at apply time). Rows are one alert per task (per reason for the stalled rule); string columns become labels. Routed by alert_group=eval-tasks to #critical with a 6h repeat (see notification_policy_route).",
   "rules": [
     {
       "uid": "eval-task-stalled",
@@ -138,16 +138,6 @@
     "group_by": ["alertname", "task_id"],
     "group_wait": "30s",
     "group_interval": "5m",
-    "repeat_interval": "6h",
-    "routes": [
-      {
-        "receiver": "__CRITICAL_CONTACT_POINT__",
-        "object_matchers": [["kind", "=", "stalled"]],
-        "group_by": ["alertname", "task_id"],
-        "group_wait": "30s",
-        "group_interval": "5m",
-        "repeat_interval": "24h"
-      }
-    ]
+    "repeat_interval": "6h"
   }
 }

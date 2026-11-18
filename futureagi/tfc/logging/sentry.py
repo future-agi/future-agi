@@ -67,13 +67,6 @@ EXPECTED_OUTCOME_LOGGERS = frozenset(
         # django.security.* loggers (SuspiciousOperation, SuspiciousFileOperation,
         # RequestDataTooBig, csrf, ...) stay captured.
         "django.security.DisallowedHost",
-        # LiteLLM's own verbose_logger logs a provider or credential failure at
-        # ERROR (for example an undecodable Vertex AI service-account key) and
-        # then raises it to the caller. Our code owns that outcome: model
-        # validation answers 400 and logs a WARNING, and genuine faults are
-        # logged or captured from our own loggers. We register no LiteLLM
-        # callbacks, so none of our code runs under this logger.
-        "LiteLLM",
     }
 )
 
@@ -405,8 +398,26 @@ def _get_before_send() -> Callable:
         # an exception event, so our own report of that same exception object
         # (LiteLLM raises it to our code) is still sent.
         record = hint.get("log_record")
-        if getattr(record, "name", None) in EXPECTED_OUTCOME_LOGGERS:
+        record_name = getattr(record, "name", None)
+        if record_name in EXPECTED_OUTCOME_LOGGERS:
             return None
+        # VertexBase.get_access_token logs and re-raises *all* load_auth
+        # failures. Model validation handles malformed key data (ValueError);
+        # dependency and transport failures at this same site remain issues.
+        if record_name == "LiteLLM":
+            msg = getattr(record, "msg", None)
+            exc_info = getattr(record, "exc_info", None)
+            if (
+                isinstance(msg, str)
+                and msg.startswith(
+                    "Failed to load vertex credentials. Check to see if credentials "
+                    "containing partial/invalid information. Error: "
+                )
+                and isinstance(exc_info, tuple)
+                and len(exc_info) == 3
+                and isinstance(exc_info[1], ValueError)
+            ):
+                return None
 
         # 2. A handled exception is not necessarily harmless. Only typed feature
         # refusals qualify; generic HTTP errors, lookup outages, disconnects and
