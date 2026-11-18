@@ -12,14 +12,15 @@ import (
 
 // Client manages a connection to a single upstream MCP server.
 type Client struct {
-	serverID  string
-	transport Transport
-	tools     atomic.Pointer[[]Tool]     // cached tool list (lock-free reads)
-	resources atomic.Pointer[[]Resource] // cached resource list
-	prompts   atomic.Pointer[[]Prompt]   // cached prompt list
-	healthy   atomic.Bool
-	mu        sync.Mutex // serializes reconnection
-	closed    atomic.Bool
+	serverID    string
+	transportMu sync.RWMutex // protects the current transport, never held during requests
+	transport   Transport
+	tools       atomic.Pointer[[]Tool]     // cached tool list (lock-free reads)
+	resources   atomic.Pointer[[]Resource] // cached resource list
+	prompts     atomic.Pointer[[]Prompt]   // cached prompt list
+	healthy     atomic.Bool
+	mu          sync.Mutex // serializes reconnection
+	closed      atomic.Bool
 
 	// Callbacks.
 	onToolsChanged func(serverID string, tools []Tool)
@@ -62,11 +63,10 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	defer c.mu.Unlock()
 
 	// Create transport.
-	transport, err := c.createTransport(ctx)
+	transport, err := c.startTransport(ctx)
 	if err != nil {
 		return fmt.Errorf("create transport: %w", err)
 	}
-	c.transport = transport
 	// A failed client is never registered, so nobody else will close it.
 	defer func() {
 		if err != nil {
@@ -96,7 +96,7 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		Params:  paramsData,
 	}
 
-	resp, err := c.transport.Send(ctx, initMsg)
+	resp, err := c.currentTransport().Send(ctx, initMsg)
 	if err != nil {
 		return fmt.Errorf("initialize: %w", err)
 	}
@@ -109,7 +109,7 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		JSONRPC: "2.0",
 		Method:  MethodInitialized,
 	}
-	if _, err := c.transport.Send(ctx, notif); err != nil {
+	if _, err := c.currentTransport().Send(ctx, notif); err != nil {
 		slog.Warn("failed to send initialized notification", "server", c.serverID, "error", err)
 	}
 
@@ -129,6 +129,14 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		slog.Debug("prompt discovery failed (may not be supported)", "server", c.serverID, "error", err)
 	}
 
+	// Missing optional discovery methods are fine; an expired stdio startup
+	// deadline is not a completed handshake. The deferred close reaps it.
+	if c.cfg.TransportType == "stdio" && ctx.Err() != nil {
+		return fmt.Errorf("stdio discovery: %w", ctx.Err())
+	}
+	if c.closed.Load() {
+		return fmt.Errorf("client closed")
+	}
 	c.healthy.Store(true)
 
 	// Start health monitoring.
@@ -146,7 +154,7 @@ func (c *Client) discoverTools(ctx context.Context) error {
 		Method:  MethodToolsList,
 	}
 
-	resp, err := c.transport.Send(ctx, msg)
+	resp, err := c.currentTransport().Send(ctx, msg)
 	if err != nil {
 		return fmt.Errorf("tools/list: %w", err)
 	}
@@ -197,7 +205,7 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]inte
 		Params:  paramsData,
 	}
 
-	resp, err := c.transport.Send(ctx, msg)
+	resp, err := c.currentTransport().Send(ctx, msg)
 	if err != nil {
 		return nil, fmt.Errorf("tools/call: %w", err)
 	}
@@ -258,7 +266,7 @@ func (c *Client) discoverResources(ctx context.Context) error {
 		ID:      json.RawMessage(`3`),
 		Method:  MethodResourcesList,
 	}
-	resp, err := c.transport.Send(ctx, msg)
+	resp, err := c.currentTransport().Send(ctx, msg)
 	if err != nil {
 		return err
 	}
@@ -280,7 +288,7 @@ func (c *Client) discoverPrompts(ctx context.Context) error {
 		ID:      json.RawMessage(`4`),
 		Method:  MethodPromptsList,
 	}
-	resp, err := c.transport.Send(ctx, msg)
+	resp, err := c.currentTransport().Send(ctx, msg)
 	if err != nil {
 		return err
 	}
@@ -309,7 +317,7 @@ func (c *Client) ReadResource(ctx context.Context, uri string) (*ReadResourceRes
 		Method:  MethodResourcesRead,
 		Params:  paramsData,
 	}
-	resp, err := c.transport.Send(ctx, msg)
+	resp, err := c.currentTransport().Send(ctx, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +345,7 @@ func (c *Client) GetPrompt(ctx context.Context, name string, arguments map[strin
 		Method:  MethodPromptsGet,
 		Params:  paramsData,
 	}
-	resp, err := c.transport.Send(ctx, msg)
+	resp, err := c.currentTransport().Send(ctx, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -372,8 +380,8 @@ func (c *Client) Close() error {
 		return nil
 	}
 	c.healthy.Store(false)
-	if c.transport != nil {
-		return c.transport.Close()
+	if transport := c.currentTransport(); transport != nil {
+		return transport.Close()
 	}
 	return nil
 }
@@ -396,7 +404,7 @@ func (c *Client) healthLoop() {
 			Method:  MethodPing,
 		}
 
-		_, err := c.transport.Send(ctx, msg)
+		_, err := c.currentTransport().Send(ctx, msg)
 		cancel()
 
 		if err != nil {
@@ -428,64 +436,39 @@ func (c *Client) reconnect() {
 			return
 		}
 
-		c.mu.Lock()
-		// Close old transport.
-		if c.transport != nil {
-			c.transport.Close()
+		if old := c.currentTransport(); old != nil {
+			old.Close()
 		}
-
+		// Run the same bounded handshake, discovery and cleanup as startup.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		transport, err := c.createTransport(ctx)
-		if err != nil {
-			cancel()
-			c.mu.Unlock()
-			slog.Warn("mcp reconnect transport failed", "server", c.serverID, "error", err)
-			backoff = min(backoff*2, maxBackoff)
-			continue
-		}
-		c.transport = transport
-
-		// Re-initialize.
-		initParams := InitializeParams{
-			ProtocolVersion: ProtocolVersion,
-			Capabilities:    ClientCapabilities{},
-			ClientInfo:      Implementation{Name: "agentcc-gateway", Version: "1.0.0"},
-		}
-		paramsData, _ := json.Marshal(initParams)
-		initMsg := &Message{
-			JSONRPC: "2.0",
-			ID:      json.RawMessage(`1`),
-			Method:  MethodInitialize,
-			Params:  paramsData,
-		}
-		resp, err := c.transport.Send(ctx, initMsg)
-		if err != nil || resp.Error != nil {
-			cancel()
-			transport.Close() // Don't leave the failed process running through backoff.
-			c.mu.Unlock()
-			slog.Warn("mcp reconnect init failed", "server", c.serverID, "error", err)
-			backoff = min(backoff*2, maxBackoff)
-			continue
-		}
-
-		// Send initialized notification.
-		notif := &Message{JSONRPC: "2.0", Method: MethodInitialized}
-		c.transport.Send(ctx, notif)
-
-		// Re-discover tools, resources, prompts.
-		c.discoverTools(ctx)
-		c.discoverResources(ctx)
-		c.discoverPrompts(ctx)
+		err := c.Connect(ctx)
 		cancel()
-		c.mu.Unlock()
-
-		c.healthy.Store(true)
-		slog.Info("mcp reconnected", "server", c.serverID, "tools", c.ToolCount())
-
-		// Restart health loop.
-		go c.healthLoop()
-		return
+		if err == nil {
+			return
+		}
+		slog.Warn("mcp reconnect failed", "server", c.serverID, "error", err)
+		backoff = min(backoff*2, maxBackoff)
 	}
+}
+
+func (c *Client) currentTransport() Transport {
+	c.transportMu.RLock()
+	defer c.transportMu.RUnlock()
+	return c.transport
+}
+
+// Publish the child before shutdown can take its final transport snapshot.
+func (c *Client) startTransport(ctx context.Context) (Transport, error) {
+	c.transportMu.Lock()
+	defer c.transportMu.Unlock()
+	if c.closed.Load() {
+		return nil, fmt.Errorf("client closed")
+	}
+	t, err := c.createTransport(ctx)
+	if err == nil {
+		c.transport = t
+	}
+	return t, err
 }
 
 func (c *Client) createTransport(ctx context.Context) (Transport, error) {

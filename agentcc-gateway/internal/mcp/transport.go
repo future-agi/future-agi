@@ -157,14 +157,18 @@ type StdioTransport struct {
 	pendMu  sync.Mutex
 
 	stderrDone chan struct{}
+	writeGate  chan struct{} // one complete JSON line at a time
+	done       chan struct{} // closed by Close to wake senders
 }
 
 // NewStdioTransport creates a transport that launches a subprocess.
 func NewStdioTransport(command string, args []string) *StdioTransport {
 	return &StdioTransport{
-		command: command,
-		args:    args,
-		pending: make(map[string]chan *Message),
+		command:   command,
+		args:      args,
+		pending:   make(map[string]chan *Message),
+		writeGate: make(chan struct{}, 1),
+		done:      make(chan struct{}),
 	}
 }
 
@@ -270,12 +274,9 @@ func (t *StdioTransport) Send(ctx context.Context, msg *Message) (*Message, erro
 		return nil, fmt.Errorf("marshal: %w", err)
 	}
 
-	// For notifications, just write and return.
+	data = append(data, '\n')
 	if msg.IsNotification() {
-		t.mu.Lock()
-		_, err = t.stdin.Write(append(data, '\n'))
-		t.mu.Unlock()
-		return nil, err
+		return nil, t.write(ctx, data)
 	}
 
 	// Register a response channel.
@@ -285,36 +286,59 @@ func (t *StdioTransport) Send(ctx context.Context, msg *Message) (*Message, erro
 	t.pending[idStr] = ch
 	t.pendMu.Unlock()
 
-	// Write the request.
-	t.mu.Lock()
-	_, err = t.stdin.Write(append(data, '\n'))
-	t.mu.Unlock()
-	if err != nil {
+	defer func() {
 		t.pendMu.Lock()
-		delete(t.pending, idStr)
+		if t.pending[idStr] == ch {
+			delete(t.pending, idStr)
+		}
 		t.pendMu.Unlock()
+	}()
+	if err := t.write(ctx, data); err != nil {
 		return nil, fmt.Errorf("write: %w", err)
 	}
 
-	// Wait for response or context cancellation.
 	select {
 	case resp := <-ch:
 		return resp, nil
 	case <-ctx.Done():
-		t.pendMu.Lock()
-		delete(t.pending, idStr)
-		t.pendMu.Unlock()
 		return nil, ctx.Err()
+	case <-t.done:
+		return nil, fmt.Errorf("transport closed")
 	}
 }
 
+func (t *StdioTransport) write(ctx context.Context, data []byte) error {
+	select {
+	case t.writeGate <- struct{}{}:
+		defer func() { <-t.writeGate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.done:
+		return fmt.Errorf("transport closed")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if t.closed.Load() {
+		return fmt.Errorf("transport closed")
+	}
+	// Unlike waiting for a response, interrupting a write may leave half a
+	// JSON line on the pipe. Close the session rather than reusing that line.
+	stop := context.AfterFunc(ctx, func() { t.Close() })
+	_, err := t.stdin.Write(data)
+	if !stop() {
+		return ctx.Err()
+	}
+	return err
+}
+
 func (t *StdioTransport) Close() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.closed.Swap(true) {
 		return nil // already closed
 	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	close(t.done)
 
 	if t.stdin != nil {
 		t.stdin.Close()
@@ -329,14 +353,6 @@ func (t *StdioTransport) Close() error {
 		case <-time.After(5 * time.Second):
 		}
 	}
-
-	// Clean up pending requests.
-	t.pendMu.Lock()
-	for id, ch := range t.pending {
-		close(ch)
-		delete(t.pending, id)
-	}
-	t.pendMu.Unlock()
 
 	t.healthy.Store(false)
 	return nil

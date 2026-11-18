@@ -71,6 +71,7 @@ type Server struct {
 	videoExporter       otel.SpanExporter
 	videoInitErr        error
 	shadowFlusher       *routing.ShadowFlusher
+	closeMCP            func()
 	router              *Router
 	internalInspections []RouteInspection
 	ready               atomic.Bool
@@ -761,6 +762,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			Separator:       cfg.MCP.Separator,
 		})
 
+		s.closeMCP = sync.OnceFunc(mcpServer.Close)
+
 		// Attach per-key tool filtering if auth is configured.
 		if authEnabled && authKeyStore != nil {
 			mcpServer.SetKeyAuth(&mcpKeyAuth{keyStore: authKeyStore})
@@ -1188,6 +1191,10 @@ func (s *Server) Start() error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	slog.Info("shutting down gateway...")
 	s.ready.Store(false)
+	// Let active requests drain, but also reap children on an early return.
+	if s.closeMCP != nil {
+		defer s.closeMCP()
+	}
 
 	// Drain and deregister cluster node.
 	if s.clusterMgr != nil {
