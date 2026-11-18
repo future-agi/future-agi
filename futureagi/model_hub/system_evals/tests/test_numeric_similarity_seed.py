@@ -28,6 +28,24 @@ def _score(code):
     return namespace["evaluate"](None, "1,234", 1234, None)["score"]
 
 
+def test_numeric_similarity_runs_in_local_executor(monkeypatch, settings):
+    from agentic_eval.core_evals.fi_utils import sandbox
+
+    monkeypatch.setattr(sandbox, "CODE_EXECUTOR_URL", "")
+    settings.CODE_EXECUTOR_LOCAL_FALLBACK = True
+    settings.CLOUD_DEPLOYMENT = ""
+    definition = next(
+        d for d in seeder.load_yaml_evals() if d["name"] == "numeric_similarity"
+    )
+    result = sandbox.execute_sandboxed_python(
+        definition["config"]["code"], {"output": "1,234e1", "expected": 12340}
+    )
+    assert result == {
+        "status": "success",
+        "data": {"result": 1.0, "reason": "Numeric Similarity: 1.000"},
+    }
+
+
 @pytest.mark.django_db
 def test_existing_catalog_refreshes_only_numeric_similarity(monkeypatch):
     definitions = seeder.load_yaml_evals()

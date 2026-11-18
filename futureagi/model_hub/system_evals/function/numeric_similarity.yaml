@@ -26,7 +26,7 @@ config:
         import re
         pred = kwargs.get("output", output)
         ref = kwargs.get("expected", expected)
-        def _to_number(value, name):
+        def to_number(value, name):
             if value is None:
                 return None, f"{name} is None"
             if not isinstance(value, (int, float)):
@@ -58,15 +58,13 @@ config:
             if not math.isfinite(number):
                 return None, f"Non-finite number in {name}"
             return number, None
-        pred_num, pred_error = _to_number(pred, "output")
-        ref_num, ref_error = _to_number(ref, "expected")
-        errors = []
-        if pred_error:
-            errors.append(pred_error)
-        if ref_error:
-            errors.append(ref_error)
+        prediction = to_number(pred, "output")
+        reference = to_number(ref, "expected")
+        errors = [error for error in (prediction[1], reference[1]) if error]
         if errors:
             return {"score": 0.0, "reason": f"Cannot calculate: {'; '.join(errors)}"}
+        pred_num = prediction[0]
+        ref_num = reference[0]
         diff = abs(pred_num - ref_num)
         normalized_diff = diff / max(abs(pred_num), abs(ref_num), 1)
         similarity = max(0.0, 1.0 - normalized_diff)
