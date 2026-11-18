@@ -61,10 +61,13 @@ export default function FilterValueLabel({
   // chain ends; only then fall back to the raw value.
   // Bounded per chip: a value that no longer exists must not make every mount
   // walk the whole workspace vocabulary.
+  // Keyed on the selection's contents, not the array's identity: a parent
+  // that rebuilds `filter.value` on every render must not restart the chain.
+  const valuesKey = useMemo(() => JSON.stringify(values), [values]);
   const continuationReads = useRef(0);
   useEffect(() => {
     continuationReads.current = 0;
-  }, [values]);
+  }, [valuesKey]);
   const hasUnresolved =
     hasValue && !labelsAreValues && values.some((v) => !byValue.has(v));
   const canReadMore =
