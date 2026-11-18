@@ -75,7 +75,9 @@ import type {
   AdminPricingMutationResponseApi,
   AgentBuildPreflightResponseApi,
   AgentCodeChangesResponseApi,
+  AgentCodeCompareResponseApi,
   AgentCodeFileResponseApi,
+  AgentCodePatchesResponseApi,
   AgentCodeTreeResponseApi,
   AgentConnectAvailabilityResponseApi,
   AgentConnectRequestApi,
@@ -1257,6 +1259,8 @@ import type {
   SimulateAgentDefinitionsListParams,
   SimulateAgentDefinitionsRunsListParams,
   SimulateAgentDefinitionsVersionsCodeChangesListParams,
+  SimulateAgentDefinitionsVersionsCodeCompareListParams,
+  SimulateAgentDefinitionsVersionsCodeComparePatchesListParams,
   SimulateAgentDefinitionsVersionsCodeFileListParams,
   SimulateAgentDefinitionsVersionsCompatibilityListParams,
   SimulateApiAgentDefinitionOperationsList200,
@@ -57962,6 +57966,201 @@ export const simulateAgentDefinitionsVersionsCodeChangesList = async (
 ): Promise<simulateAgentDefinitionsVersionsCodeChangesListResponse> => {
   return apiMutator<simulateAgentDefinitionsVersionsCodeChangesListResponse>(
     getSimulateAgentDefinitionsVersionsCodeChangesListUrl(
+      agentId,
+      versionId,
+      params,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponse200 = {
+  data: AgentCodeCompareResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponse422 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 422;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 422 | 503>;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponseSuccess =
+  simulateAgentDefinitionsVersionsCodeCompareListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsCodeCompareListResponseError = (
+  | simulateAgentDefinitionsVersionsCodeCompareListResponse400
+  | simulateAgentDefinitionsVersionsCodeCompareListResponse404
+  | simulateAgentDefinitionsVersionsCodeCompareListResponse422
+  | simulateAgentDefinitionsVersionsCodeCompareListResponse503
+  | simulateAgentDefinitionsVersionsCodeCompareListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsVersionsCodeCompareListResponse =
+  | simulateAgentDefinitionsVersionsCodeCompareListResponseSuccess
+  | simulateAgentDefinitionsVersionsCodeCompareListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsCodeCompareListUrl = (
+  agentId: string,
+  versionId: string,
+  params?: SimulateAgentDefinitionsVersionsCodeCompareListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/compare/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/compare/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/compare/?against=.
+ */
+export const simulateAgentDefinitionsVersionsCodeCompareList = async (
+  agentId: string,
+  versionId: string,
+  params?: SimulateAgentDefinitionsVersionsCodeCompareListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsCodeCompareListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsCodeCompareListResponse>(
+    getSimulateAgentDefinitionsVersionsCodeCompareListUrl(
+      agentId,
+      versionId,
+      params,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponse200 =
+  {
+    data: AgentCodePatchesResponseApi;
+    status: 200;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponse400 =
+  {
+    data: ApiErrorWithDetailsResponseApi;
+    status: 400;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponse404 =
+  {
+    data: ApiErrorWithDetailsResponseApi;
+    status: 404;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponse422 =
+  {
+    data: ApiErrorWithDetailsResponseApi;
+    status: 422;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponse503 =
+  {
+    data: ApiErrorWithDetailsResponseApi;
+    status: 503;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 422 | 503>;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponseSuccess =
+  simulateAgentDefinitionsVersionsCodeComparePatchesListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponseError =
+  (
+    | simulateAgentDefinitionsVersionsCodeComparePatchesListResponse400
+    | simulateAgentDefinitionsVersionsCodeComparePatchesListResponse404
+    | simulateAgentDefinitionsVersionsCodeComparePatchesListResponse422
+    | simulateAgentDefinitionsVersionsCodeComparePatchesListResponse503
+    | simulateAgentDefinitionsVersionsCodeComparePatchesListResponseDefault
+  ) & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateAgentDefinitionsVersionsCodeComparePatchesListResponse =
+  | simulateAgentDefinitionsVersionsCodeComparePatchesListResponseSuccess
+  | simulateAgentDefinitionsVersionsCodeComparePatchesListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsCodeComparePatchesListUrl = (
+  agentId: string,
+  versionId: string,
+  params: SimulateAgentDefinitionsVersionsCodeComparePatchesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/compare/patches/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/compare/patches/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/compare/patches/?against=&path=.
+ */
+export const simulateAgentDefinitionsVersionsCodeComparePatchesList = async (
+  agentId: string,
+  versionId: string,
+  params: SimulateAgentDefinitionsVersionsCodeComparePatchesListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsCodeComparePatchesListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsCodeComparePatchesListResponse>(
+    getSimulateAgentDefinitionsVersionsCodeComparePatchesListUrl(
       agentId,
       versionId,
       params,

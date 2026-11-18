@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1165,
+  endpointCount: 1167,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27824,6 +27824,96 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/":
+      {
+        get: {
+          operationId: "simulate_agent-definitions_versions_code_compare_list",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            against: {
+              required: false,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentCodeCompareResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            422: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            503: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/patches/":
+      {
+        get: {
+          operationId:
+            "simulate_agent-definitions_versions_code_compare_patches_list",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            against: {
+              required: false,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+            path: {
+              required: true,
+              schema: {
+                type: "array",
+                items: {
+                  type: "string",
+                  maxLength: 4096,
+                  minLength: 1,
+                },
+                minItems: 1,
+                maxItems: 25,
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentCodePatchesResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            422: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            503: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/": {
       get: {
         operationId: "simulate_agent-definitions_versions_code_file_list",
@@ -50611,6 +50701,67 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentCodeCompareResponse: {
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        against: {
+          title: "Against",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        unavailable: {
+          title: "Unavailable",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        same_code: {
+          title: "Same code",
+          type: "boolean",
+          readOnly: true,
+        },
+        env_changed: {
+          title: "Env changed",
+          type: "boolean",
+          readOnly: true,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodeCompareFile",
+          },
+          readOnly: true,
+        },
+        total_files: {
+          title: "Total files",
+          type: "integer",
+          readOnly: true,
+        },
+        additions: {
+          title: "Additions",
+          type: "integer",
+          readOnly: true,
+        },
+        deletions: {
+          title: "Deletions",
+          type: "integer",
+          readOnly: true,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
     AgentCodeFileResponse: {
       type: "object",
       properties: {
@@ -50640,6 +50791,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         content: {
           title: "Content",
           type: "string",
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodePatchesResponse: {
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        against: {
+          title: "Against",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodePatch",
+          },
           readOnly: true,
         },
       },
@@ -50733,6 +50908,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         subfolder: {
           title: "Subfolder",
+          type: "string",
+          pattern:
+            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+          maxLength: 512,
+        },
+        entry: {
+          title: "Entry",
           type: "string",
           pattern:
             "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
@@ -51539,6 +51721,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         found_check: {
           $ref: "#/definitions/AgentFoundCheck",
+        },
+        source_checked_at: {
+          title: "Source checked at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        source_check_interval_seconds: {
+          title: "Source check interval seconds",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
         },
       },
     },
@@ -53843,12 +54038,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Origin",
           type: "string",
           readOnly: true,
+          minLength: 1,
           "x-nullable": true,
         },
         preflight_status: {
           title: "Preflight status",
           type: "string",
           readOnly: true,
+          minLength: 1,
           "x-nullable": true,
         },
         check_step: {
@@ -53862,6 +54059,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         check_failure: {
           $ref: "#/definitions/AgentVersionCheckFailure",
+        },
+        check_started_at: {
+          title: "Check started at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
         },
         environments_count: {
           title: "Environments count",
@@ -54032,12 +54236,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Origin",
           type: "string",
           readOnly: true,
+          minLength: 1,
           "x-nullable": true,
         },
         preflight_status: {
           title: "Preflight status",
           type: "string",
           readOnly: true,
+          minLength: 1,
           "x-nullable": true,
         },
         check_step: {
@@ -54051,6 +54257,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         check_failure: {
           $ref: "#/definitions/AgentVersionCheckFailure",
+        },
+        check_started_at: {
+          title: "Check started at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
         },
         environments_count: {
           title: "Environments count",
@@ -96134,6 +96347,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentCodeCompareFile: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        previous_path: {
+          title: "Previous path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["added", "removed", "modified", "renamed"],
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["text", "binary", "too_large"],
+          readOnly: true,
+        },
+        additions: {
+          title: "Additions",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        deletions: {
+          title: "Deletions",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        collapsed: {
+          title: "Collapsed",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodePatch: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["text", "binary", "too_large"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        unchanged: {
+          title: "Unchanged",
+          type: "boolean",
+          readOnly: true,
+        },
+        hunks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodeHunk",
+          },
+          readOnly: true,
+        },
+      },
+    },
     AgentCodeEntry: {
       type: "object",
       properties: {
@@ -97530,6 +97820,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         retryable: {
           title: "Retryable",
           type: "boolean",
+        },
+        missing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
       "x-nullable": true,
@@ -121757,6 +122054,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentCodeHunk: {
+      type: "object",
+      properties: {
+        old_start: {
+          title: "Old start",
+          type: "integer",
+          readOnly: true,
+        },
+        old_lines: {
+          title: "Old lines",
+          type: "integer",
+          readOnly: true,
+        },
+        new_start: {
+          title: "New start",
+          type: "integer",
+          readOnly: true,
+        },
+        new_lines: {
+          title: "New lines",
+          type: "integer",
+          readOnly: true,
+        },
+        lines: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+          readOnly: true,
+        },
+      },
+    },
     AgentFixVerdict: {
       required: ["accepted", "reason", "must_pass_regressions"],
       type: "object",
@@ -137010,6 +137339,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Label",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
         },
       },
       "x-nullable": true,

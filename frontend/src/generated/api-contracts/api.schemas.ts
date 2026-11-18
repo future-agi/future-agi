@@ -17159,6 +17159,8 @@ export interface AgentDefinitionDetailResponseApi {
   readonly connected?: boolean;
   managed_by?: RunEnvironmentRefApi;
   found_check?: AgentFoundCheckApi;
+  readonly source_checked_at?: string;
+  readonly source_check_interval_seconds?: number;
 }
 
 export type AgentBuildPreflightCheckApiStatus =
@@ -17271,10 +17273,10 @@ export const HarnessRunSummaryApiKind = {
   simulate: "simulate",
 } as const;
 
-export interface AgentVersionRefApi {
+export type AgentVersionRefApi = {
   id: string;
   version_number: number;
-}
+} | null;
 
 export interface EnvironmentVersionRefApi {
   id: string;
@@ -17290,7 +17292,7 @@ export interface HarnessRunSummaryApi {
   /** @minLength 1 */
   status: string;
   environment: RunEnvironmentRefApi;
-  agent_version: AgentVersionRefApi;
+  agent_version: AgentVersionRefApi | null;
   environment_version: EnvironmentVersionRefApi;
   partial: boolean;
   outcome_passed: number;
@@ -17317,29 +17319,15 @@ export const AgentVersionListResponseApiStatus = {
   deprecated: "deprecated",
 } as const;
 
-/**
- * Where a pending check stands: storing the code, reading the agent, or checking its credentials.
- */
-export type AgentVersionListResponseApiCheckStep =
-  (typeof AgentVersionListResponseApiCheckStep)[keyof typeof AgentVersionListResponseApiCheckStep];
-
-export const AgentVersionListResponseApiCheckStep = {
-  snapshot: "snapshot",
-  reading: "reading",
-  check: "check",
-} as const;
-
-/**
- * Why a failed check failed, when the version carries a reason.
- */
-export interface AgentVersionCheckFailureApi {
+export type AgentVersionCheckFailureApi = {
   /** @minLength 1 */
   code: string;
   message: string;
   retryable: boolean;
-}
+  missing?: string[];
+} | null;
 
-export interface AgentVersionSourceApi {
+export type AgentVersionSourceApi = {
   /** @minLength 1 */
   kind: string;
   /** @minLength 1 */
@@ -17352,48 +17340,38 @@ export interface AgentVersionSourceApi {
   subfolder?: string;
   /** @minLength 1 */
   archive_artifact_id?: string;
-}
+} | null;
 
 export interface AgentVersionListResponseApi {
   readonly id?: string;
   /** Version number of the agent */
   readonly version_number?: number;
-  /**
-   * Human-readable version name (e.g., 'v1.2.3')
-   * @minLength 1
-   */
-  readonly version_name?: string;
+  version_name?: string | null;
   readonly version_name_display?: string;
   /** Current status of this version */
   readonly status?: AgentVersionListResponseApiStatus;
   /** @minLength 1 */
   readonly status_display?: string;
-  /** Performance score (0.0 to 10.0) */
-  readonly score?: string;
+  score?: string | null;
   /** Number of tests run for this version */
   readonly test_count?: number;
-  /** Test pass rate percentage */
-  readonly pass_rate?: string;
+  pass_rate?: string | null;
   /**
    * Description of changes in this version
    * @minLength 1
    */
   readonly description?: string;
-  /**
-   * Commit message for the agent version
-   * @minLength 1
-   */
-  readonly commit_message?: string;
+  commit_message?: string | null;
   readonly is_active?: string;
   readonly is_latest?: string;
   readonly in_production?: boolean;
-  readonly origin?: string;
-  readonly preflight_status?: string;
-  /** Where a pending check stands: storing the code, reading the agent, or checking its credentials. */
-  readonly check_step?: AgentVersionListResponseApiCheckStep;
-  check_failure?: AgentVersionCheckFailureApi;
+  origin?: string | null;
+  preflight_status?: string | null;
+  check_step?: "snapshot" | "reading" | "check" | null;
+  check_failure?: AgentVersionCheckFailureApi | null;
+  check_started_at?: string | null;
   readonly environments_count?: number;
-  source?: AgentVersionSourceApi;
+  source?: AgentVersionSourceApi | null;
   readonly created_at?: string;
 }
 
@@ -17448,18 +17426,6 @@ export const AgentVersionResponseApiStatus = {
 } as const;
 
 /**
- * Where a pending check stands: storing the code, reading the agent, or checking its credentials.
- */
-export type AgentVersionResponseApiCheckStep =
-  (typeof AgentVersionResponseApiCheckStep)[keyof typeof AgentVersionResponseApiCheckStep];
-
-export const AgentVersionResponseApiCheckStep = {
-  snapshot: "snapshot",
-  reading: "reading",
-  check: "check",
-} as const;
-
-/**
  * Snapshot of agent configuration at this version
  */
 export type AgentVersionResponseApiConfigurationSnapshot = {
@@ -17470,37 +17436,23 @@ export interface AgentVersionResponseApi {
   readonly id?: string;
   /** Version number of the agent */
   readonly version_number?: number;
-  /**
-   * Human-readable version name (e.g., 'v1.2.3')
-   * @minLength 1
-   */
-  readonly version_name?: string;
+  version_name?: string | null;
   readonly version_name_display?: string;
   /** Current status of this version */
   readonly status?: AgentVersionResponseApiStatus;
   /** @minLength 1 */
   readonly status_display?: string;
-  /** Performance score (0.0 to 10.0) */
-  readonly score?: string;
+  score?: string | null;
   /** Number of tests run for this version */
   readonly test_count?: number;
-  /** Test pass rate percentage */
-  readonly pass_rate?: string;
+  pass_rate?: string | null;
   /**
    * Description of changes in this version
    * @minLength 1
    */
   readonly description?: string;
-  /**
-   * Commit message for the agent version
-   * @minLength 1
-   */
-  readonly commit_message?: string;
-  /**
-   * Detailed release notes for this version
-   * @minLength 1
-   */
-  readonly release_notes?: string;
+  commit_message?: string | null;
+  release_notes?: string | null;
   /** Parent agent definition */
   readonly agent_definition?: string;
   /** Organization this version belongs to */
@@ -17509,16 +17461,14 @@ export interface AgentVersionResponseApi {
   readonly configuration_snapshot?: AgentVersionResponseApiConfigurationSnapshot;
   readonly is_active?: string;
   readonly is_latest?: string;
-  /** @minLength 1 */
-  readonly agent_kind?: string;
-  /** @minLength 1 */
-  readonly api_key?: string;
-  source?: AgentVersionSourceApi;
-  readonly origin?: string;
-  readonly preflight_status?: string;
-  /** Where a pending check stands: storing the code, reading the agent, or checking its credentials. */
-  readonly check_step?: AgentVersionResponseApiCheckStep;
-  check_failure?: AgentVersionCheckFailureApi;
+  agent_kind?: string | null;
+  api_key?: string | null;
+  source?: AgentVersionSourceApi | null;
+  origin?: string | null;
+  preflight_status?: string | null;
+  check_step?: "snapshot" | "reading" | "check" | null;
+  check_failure?: AgentVersionCheckFailureApi | null;
+  check_started_at?: string | null;
   readonly environments_count?: number;
   readonly created_at?: string;
   readonly updated_at?: string;
@@ -17538,20 +17488,13 @@ export const AgentVersionCreateRequestApiAgentType = {
   text: "text",
 } as const;
 
-export type AgentVersionCreateRequestApiAuthenticationMethod =
-  (typeof AgentVersionCreateRequestApiAuthenticationMethod)[keyof typeof AgentVersionCreateRequestApiAuthenticationMethod];
-
-export const AgentVersionCreateRequestApiAuthenticationMethod = {
-  api_key: "api_key",
-} as const;
-
 export type AgentVersionCreateRequestApiModelDetails = {
   [key: string]: unknown;
-};
+} | null;
 
 export type AgentVersionCreateRequestApiLivekitConfigJson = {
   [key: string]: unknown;
-};
+} | null;
 
 export interface AgentVersionCreateRequestApi {
   /**
@@ -17560,18 +17503,18 @@ export interface AgentVersionCreateRequestApi {
    */
   agent_name?: string;
   agent_type?: AgentVersionCreateRequestApiAgentType;
-  description?: string;
-  provider?: string;
-  api_key?: string;
-  assistant_id?: string;
-  authentication_method?: AgentVersionCreateRequestApiAuthenticationMethod;
-  language?: string;
-  languages?: string[];
-  contact_number?: string;
+  description?: string | null;
+  provider?: string | null;
+  api_key?: string | null;
+  assistant_id?: string | null;
+  authentication_method?: "api_key" | null;
+  language?: string | null;
+  languages?: string[] | null;
+  contact_number?: string | null;
   inbound?: boolean;
-  target_speaks_first?: boolean;
-  knowledge_base?: string;
-  model?: string;
+  target_speaks_first?: boolean | null;
+  knowledge_base?: string | null;
+  model?: string | null;
   model_details?: AgentVersionCreateRequestApiModelDetails;
   /** @maxLength 500 */
   livekit_url?: string;
@@ -17710,8 +17653,7 @@ export interface StoredAgentApi {
   voice: StoredVoiceApi;
   telephony: StoredTelephonyApi[];
   supports: string[];
-  /** @minLength 1 */
-  direction_answer: string;
+  direction_answer: string | null;
   gaps: string[];
   /** @minLength 1 */
   instrumentation: string;
@@ -17975,6 +17917,86 @@ export interface AgentCodeChangesResponseApi {
   readonly unavailable?: string;
 }
 
+export type AgentCodeCompareFileApiStatus =
+  (typeof AgentCodeCompareFileApiStatus)[keyof typeof AgentCodeCompareFileApiStatus];
+
+export const AgentCodeCompareFileApiStatus = {
+  added: "added",
+  removed: "removed",
+  modified: "modified",
+  renamed: "renamed",
+} as const;
+
+export type AgentCodeCompareFileApiKind =
+  (typeof AgentCodeCompareFileApiKind)[keyof typeof AgentCodeCompareFileApiKind];
+
+export const AgentCodeCompareFileApiKind = {
+  text: "text",
+  binary: "binary",
+  too_large: "too_large",
+} as const;
+
+export interface AgentCodeCompareFileApi {
+  /** @minLength 1 */
+  readonly path?: string;
+  /** @minLength 1 */
+  readonly previous_path?: string;
+  readonly status?: AgentCodeCompareFileApiStatus;
+  readonly kind?: AgentCodeCompareFileApiKind;
+  readonly additions?: number;
+  readonly deletions?: number;
+  readonly collapsed?: boolean;
+}
+
+export interface AgentCodeCompareResponseApi {
+  /** @minLength 1 */
+  readonly version?: string;
+  /** @minLength 1 */
+  readonly against?: string;
+  /** @minLength 1 */
+  readonly unavailable?: string;
+  readonly same_code?: boolean;
+  readonly env_changed?: boolean;
+  readonly files?: readonly AgentCodeCompareFileApi[];
+  readonly total_files?: number;
+  readonly additions?: number;
+  readonly deletions?: number;
+  readonly truncated?: boolean;
+}
+
+export type AgentCodePatchApiKind =
+  (typeof AgentCodePatchApiKind)[keyof typeof AgentCodePatchApiKind];
+
+export const AgentCodePatchApiKind = {
+  text: "text",
+  binary: "binary",
+  too_large: "too_large",
+} as const;
+
+export interface AgentCodeHunkApi {
+  readonly old_start?: number;
+  readonly old_lines?: number;
+  readonly new_start?: number;
+  readonly new_lines?: number;
+  readonly lines?: readonly string[];
+}
+
+export interface AgentCodePatchApi {
+  /** @minLength 1 */
+  readonly path?: string;
+  readonly kind?: AgentCodePatchApiKind;
+  readonly unchanged?: boolean;
+  readonly hunks?: readonly AgentCodeHunkApi[];
+}
+
+export interface AgentCodePatchesResponseApi {
+  /** @minLength 1 */
+  readonly version?: string;
+  /** @minLength 1 */
+  readonly against?: string;
+  readonly files?: readonly AgentCodePatchApi[];
+}
+
 export type AgentCodeFileResponseApiKind =
   (typeof AgentCodeFileResponseApiKind)[keyof typeof AgentCodeFileResponseApiKind];
 
@@ -18047,8 +18069,7 @@ export interface AgentVersionCompatibilityResponseApi {
   /** @minLength 1 */
   readonly version_id?: string;
   readonly status?: AgentVersionCompatibilityResponseApiStatus;
-  /** @minLength 1 */
-  readonly base?: string;
+  base?: string | null;
   /** @minLength 1 */
   readonly reason?: string;
   readonly same_version?: boolean;
@@ -18122,7 +18143,9 @@ export interface AgentVersionProductionResponseApi {
   readonly moved_environment_ids?: readonly string[];
 }
 
-export type AgentVersionRestoreResponseApiAgent = { [key: string]: string };
+export type AgentVersionRestoreResponseApiAgent = {
+  [key: string]: string | null;
+};
 
 export interface AgentVersionRestoreResponseApi {
   /** @minLength 1 */
@@ -18185,6 +18208,11 @@ export interface AgentConnectRequestApi {
    * @pattern ^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$
    */
   subfolder?: string;
+  /**
+   * @maxLength 512
+   * @pattern ^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$
+   */
+  entry?: string;
   env_values?: AgentConnectRequestApiEnvValues;
 }
 
@@ -19884,7 +19912,7 @@ export interface HarnessEnvironmentApi {
   sub_goals_count: number;
   tools_count: number;
   runs_count: number;
-  agent_version: AgentVersionRefApi;
+  agent_version: AgentVersionRefApi | null;
   agent_policy: HarnessEnvironmentApiAgentPolicy;
   last_updated: string;
   created_at: string;
@@ -19964,7 +19992,7 @@ export interface HarnessEnvironmentOverviewApi {
   sub_goals_count: number;
   tools_count: number;
   runs_count: number;
-  agent_version: AgentVersionRefApi;
+  agent_version: AgentVersionRefApi | null;
   agent_policy: HarnessEnvironmentOverviewApiAgentPolicy;
   last_updated: string;
   created_at: string;
@@ -41495,6 +41523,19 @@ export type SimulateAgentDefinitionsRunsListParams = {
 
 export type SimulateAgentDefinitionsVersionsCodeChangesListParams = {
   against?: string;
+};
+
+export type SimulateAgentDefinitionsVersionsCodeCompareListParams = {
+  against?: string;
+};
+
+export type SimulateAgentDefinitionsVersionsCodeComparePatchesListParams = {
+  against?: string;
+  /**
+   * @minItems 1
+   * @maxItems 25
+   */
+  path: string[];
 };
 
 export type SimulateAgentDefinitionsVersionsCodeFileListParams = {

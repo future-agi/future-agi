@@ -50043,6 +50043,163 @@
                 }
             ]
         },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_versions_code_compare_list",
+                "description": "GET /agent-definitions/{id}/versions/{vid}/code/compare/?against=.",
+                "parameters": [
+                    {
+                        "name": "against",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentCodeCompareResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/patches/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_versions_code_compare_patches_list",
+                "description": "GET /agent-definitions/{id}/versions/{vid}/code/compare/patches/?against=&path=.",
+                "parameters": [
+                    {
+                        "name": "against",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "path",
+                        "in": "query",
+                        "required": true,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "minLength": 1
+                        },
+                        "maxItems": 25,
+                        "minItems": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentCodePatchesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/": {
             "get": {
                 "operationId": "simulate_agent-definitions_versions_code_file_list",
@@ -137290,6 +137447,19 @@
                 },
                 "found_check": {
                     "$ref": "#/definitions/AgentFoundCheck"
+                },
+                "source_checked_at": {
+                    "title": "Source checked at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "source_check_interval_seconds": {
+                    "title": "Source check interval seconds",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
                 }
             }
         },
@@ -137689,6 +137859,13 @@
                 "retryable": {
                     "title": "Retryable",
                     "type": "boolean"
+                },
+                "missing": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 }
             },
             "x-nullable": true
@@ -137834,12 +138011,14 @@
                     "title": "Origin",
                     "type": "string",
                     "readOnly": true,
+                    "minLength": 1,
                     "x-nullable": true
                 },
                 "preflight_status": {
                     "title": "Preflight status",
                     "type": "string",
                     "readOnly": true,
+                    "minLength": 1,
                     "x-nullable": true
                 },
                 "check_step": {
@@ -137856,6 +138035,13 @@
                 },
                 "check_failure": {
                     "$ref": "#/definitions/AgentVersionCheckFailure"
+                },
+                "check_started_at": {
+                    "title": "Check started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "environments_count": {
                     "title": "Environments count",
@@ -138076,12 +138262,14 @@
                     "title": "Origin",
                     "type": "string",
                     "readOnly": true,
+                    "minLength": 1,
                     "x-nullable": true
                 },
                 "preflight_status": {
                     "title": "Preflight status",
                     "type": "string",
                     "readOnly": true,
+                    "minLength": 1,
                     "x-nullable": true
                 },
                 "check_step": {
@@ -138098,6 +138286,13 @@
                 },
                 "check_failure": {
                     "$ref": "#/definitions/AgentVersionCheckFailure"
+                },
+                "check_started_at": {
+                    "title": "Check started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "environments_count": {
                     "title": "Environments count",
@@ -138529,7 +138724,8 @@
                 "label": {
                     "title": "Label",
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             },
             "x-nullable": true
@@ -139129,6 +139325,213 @@
                 }
             }
         },
+        "AgentCodeCompareFile": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "previous_path": {
+                    "title": "Previous path",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "added",
+                        "removed",
+                        "modified",
+                        "renamed"
+                    ],
+                    "readOnly": true
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "binary",
+                        "too_large"
+                    ],
+                    "readOnly": true
+                },
+                "additions": {
+                    "title": "Additions",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "deletions": {
+                    "title": "Deletions",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "collapsed": {
+                    "title": "Collapsed",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentCodeCompareResponse": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "against": {
+                    "title": "Against",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "unavailable": {
+                    "title": "Unavailable",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "same_code": {
+                    "title": "Same code",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "env_changed": {
+                    "title": "Env changed",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentCodeCompareFile"
+                    },
+                    "readOnly": true
+                },
+                "total_files": {
+                    "title": "Total files",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "additions": {
+                    "title": "Additions",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "deletions": {
+                    "title": "Deletions",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentCodeHunk": {
+            "type": "object",
+            "properties": {
+                "old_start": {
+                    "title": "Old start",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "old_lines": {
+                    "title": "Old lines",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "new_start": {
+                    "title": "New start",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "new_lines": {
+                    "title": "New lines",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentCodePatch": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "binary",
+                        "too_large"
+                    ],
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "unchanged": {
+                    "title": "Unchanged",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "hunks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentCodeHunk"
+                    },
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentCodePatchesResponse": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "against": {
+                    "title": "Against",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentCodePatch"
+                    },
+                    "readOnly": true
+                }
+            }
+        },
         "AgentCodeFileResponse": {
             "type": "object",
             "properties": {
@@ -139592,6 +139995,12 @@
                 },
                 "subfolder": {
                     "title": "Subfolder",
+                    "type": "string",
+                    "pattern": "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+                    "maxLength": 512
+                },
+                "entry": {
+                    "title": "Entry",
                     "type": "string",
                     "pattern": "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
                     "maxLength": 512
