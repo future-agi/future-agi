@@ -187,6 +187,10 @@ def test_a_github_source_without_a_commit_is_refused_in_a_sentence(sandbox):
         str(caught.value) == harness_sandbox.KIT_REFUSALS["github_commit_sha_required"]
     )
     assert "github_commit_sha_required" not in str(caught.value)
+    # The Connect page sends no commit and nothing resolves one yet (TH-10408), so the
+    # user can't repair this: the sentence says it's ours and asks for nothing again.
+    assert "on our side" in str(caught.value)
+    assert "again" not in str(caught.value)
 
 
 def test_a_validation_list_without_a_known_code_reads_as_its_messages(sandbox):

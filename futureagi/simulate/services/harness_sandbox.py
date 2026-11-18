@@ -166,9 +166,11 @@ class HarnessSandboxClient:
 
 # The sentence the page shows for a code the ALK sandbox refuses a request with.
 KIT_REFUSALS = {
+    # Ours to fix, not the user's: the Connect page sends no commit, and nothing
+    # resolves the branch to one yet (TH-10408).
     "github_commit_sha_required": (
-        "The GitHub source has no commit to run. Choose the branch or commit "
-        "again and resubmit."
+        "We couldn't find the commit to run for this GitHub source. This is a "
+        "problem on our side, not with your repository."
     ),
 }
 
