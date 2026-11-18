@@ -105,7 +105,9 @@ class AgentVersionListView(APIView):
             serializer = AgentVersionListResponseSerializer(
                 result_page,
                 many=True,
-                context={"preflight": preflight_by_version(v.id for v in result_page)},
+                context={
+                    "preflight": preflight_by_version(v.id for v in result_page or [])
+                },
             )
             return paginator.get_paginated_response(serializer.data)
 

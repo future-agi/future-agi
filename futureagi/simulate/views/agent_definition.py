@@ -1,6 +1,7 @@
 import json
 import re
 from datetime import datetime
+from typing import Any
 
 import requests
 import structlog
@@ -203,12 +204,13 @@ class AgentDefinitionView(APIView):
 
             # "-id" last: equal timestamps need a unique tie-breaker for stable pages.
             agents = agents.order_by("-updated_at", "-created_at", "-id")
+            to_page: Any = agents
             if required_agent:
-                agents = _RequiredFirst(
+                to_page = _RequiredFirst(
                     required_agent, agents.exclude(id=required_agent.id)
                 )
             paginator = ExtendedPageNumberPagination()
-            result_page = paginator.paginate_queryset(agents, request)
+            result_page = paginator.paginate_queryset(to_page, request) or []
 
             serializer = AgentDefinitionListResponseSerializer(
                 result_page,

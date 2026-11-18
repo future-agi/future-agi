@@ -13,7 +13,8 @@ logger = structlog.get_logger(__name__)
 
 class AgentVersionPreflightCheckSerializer(serializers.Serializer):
     id = serializers.CharField(allow_blank=True)
-    label = serializers.CharField(allow_blank=True)
+    # The check's own label, not DRF's `Field.label`: the metaclass collects it as a field.
+    label = serializers.CharField(allow_blank=True)  # type: ignore[assignment]
     status = serializers.CharField(allow_blank=True)
     missing = serializers.ListField(child=serializers.CharField())
 
@@ -27,14 +28,17 @@ class AgentVersionPreflightReportSerializer(serializers.Serializer):
     error = serializers.CharField(allow_null=True)
 
 
-def _preflight(context, version):
+def _preflight(context, version) -> tuple[str | None, dict | None]:
     """The check's (status, report) the view read for this version, else nulls.
 
     The fields sit on a side table, so the views read a page of them in one
     query and pass them in the context; a version with no row, or a serializer
     given no context, reports nothing rather than querying per row.
     """
-    return (context.get("preflight") or {}).get(version.id, (None, None))
+    found: tuple[str | None, dict | None] = (context.get("preflight") or {}).get(
+        version.id, (None, None)
+    )
+    return found
 
 
 class AgentVersionResponseSerializer(serializers.ModelSerializer):

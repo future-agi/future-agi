@@ -128,11 +128,11 @@ class Command(BaseCommand):
             # a data fix is not use of the agent.
             # Through the base manager, as the save it replaces did, so an agent
             # that was soft-deleted still gets its prompt back.
-            changed = AgentDefinition._base_manager.filter(pk=agent.pk).update(
+            updated = AgentDefinition._base_manager.filter(pk=agent.pk).update(
                 description=full
             )
             agent.description = full
-            totals["agents"] += changed
+            totals["agents"] += updated
 
         for version in AgentVersion.no_workspace_objects.filter(agent_definition=agent):
             snapshot = dict(version.configuration_snapshot or {})
