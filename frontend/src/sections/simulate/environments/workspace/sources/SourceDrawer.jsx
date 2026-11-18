@@ -8,7 +8,6 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import {
   sourceSummaryKey,
   useEnvironmentSources,
-  useSourceCapabilities,
 } from "src/api/simulate-environments/sources";
 import SideDrawer from "../../components/SideDrawer";
 import MappingTab from "./MappingTab";
