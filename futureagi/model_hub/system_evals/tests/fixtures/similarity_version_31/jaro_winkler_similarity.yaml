@@ -1,0 +1,83 @@
+eval_id: 145
+name: jaro_winkler_similarity
+description: Computes Jaro-Winkler similarity between two strings. Particularly effective for short strings like names, labels,
+  and identifiers. Adds a prefix bonus to the base Jaro distance.
+criteria: Measures string similarity using character matching with transposition counting and common prefix boosting.
+eval_tags:
+- NLP Metrics
+- Output Validation
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - expected
+  output: score
+  eval_type_id: CustomCodeEval
+  config:
+    case_insensitive:
+      type: boolean
+      default: true
+    prefix_weight:
+      type: number
+      default: 0.1
+  config_params_desc:
+    output: The generated/output text
+    expected: The expected/reference text
+    case_insensitive: Whether to lowercase before comparing (default true)
+    prefix_weight: Winkler prefix scaling factor (default 0.1, max 0.25)
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        s1 = str(kwargs.get("output", output or "")).strip()
+        s2 = str(kwargs.get("expected", expected or "")).strip()
+        case_insensitive = kwargs.get("case_insensitive", True)
+        pw = min(float(kwargs.get("prefix_weight", 0.1)), 0.25)
+        if case_insensitive:
+            s1 = s1.lower()
+            s2 = s2.lower()
+        if s1 == s2:
+            return {"score": 1.0, "reason": "Jaro-Winkler: 1.0 (exact match)"}
+        if not s1 or not s2:
+            return {"score": 0.0, "reason": "Jaro-Winkler: 0.0 (empty string)"}
+        len1, len2 = len(s1), len(s2)
+        md = max(len1, len2) // 2 - 1
+        if md < 0:
+            md = 0
+        s1m = [False] * len1
+        s2m = [False] * len2
+        matches = 0
+        trans = 0
+        for i in range(len1):
+            lo = max(0, i - md)
+            hi = min(i + md + 1, len2)
+            for j in range(lo, hi):
+                if s2m[j] or s1[i] != s2[j]:
+                    continue
+                s1m[i] = True
+                s2m[j] = True
+                matches += 1
+                break
+        if matches == 0:
+            return {"score": 0.0, "reason": "Jaro-Winkler: 0.0 (no matches)"}
+        k = 0
+        for i in range(len1):
+            if not s1m[i]:
+                continue
+            while not s2m[k]:
+                k += 1
+            if s1[i] != s2[k]:
+                trans += 1
+            k += 1
+        jaro = (matches/len1 + matches/len2 + (matches - trans/2)/matches) / 3
+        prefix = 0
+        for i in range(min(4, len1, len2)):
+            if s1[i] == s2[i]:
+                prefix += 1
+            else:
+                break
+        score = max(0.0, min(1.0, jaro + prefix * pw * (1 - jaro)))
+        return {"score": float(score), "reason": f"Jaro-Winkler: {score:.4f} (Jaro={jaro:.4f}, prefix={prefix})"}

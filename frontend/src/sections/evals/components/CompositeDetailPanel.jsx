@@ -600,7 +600,7 @@ const CompositeDetailPanel = ({
           Change child evaluation type?
         </DialogTitle>
         <DialogContent>
-          <DialogContentText sx={{ fontSize: "13px" }}>
+          <DialogContentText sx={{ fontSize: "12px" }}>
             Switching the child evaluation type will clear the current{" "}
             {childrenList.length} child
             {childrenList.length === 1 ? "" : "ren"} because they don&apos;t

@@ -456,3 +456,33 @@ def test_reset_during_bridge_initialization_does_not_publish_stale_client(
     assert stale_client.creation_loop is current_client.creation_loop
     assert stale_client.operation_loops == [stale_client.creation_loop]
     assert current_client.operation_loops == [current_client.creation_loop]
+
+
+@pytest.mark.unit
+def test_a_dispatch_deadline_bounds_the_wait_on_a_wedged_bridge(monkeypatch):
+    import concurrent.futures
+
+    # The bridge never answers: the caller must still get its thread back.
+    never = concurrent.futures.Future()
+
+    def wedged(coroutine, _loop):
+        coroutine.close()
+        return never
+
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", wedged)
+    monkeypatch.setattr(
+        temporal_client, "_DISPATCH_DEADLINE_MARGIN_SECONDS", 0.2, raising=False
+    )
+
+    async def dispatch():
+        return "unreachable"
+
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        temporal_client._run_async_in_sync_context(
+            dispatch, dispatch_timeout_seconds=0.1
+        )
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.1 + 0.2 + 1.0
+    assert never.cancelled()

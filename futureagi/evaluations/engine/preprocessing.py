@@ -57,7 +57,12 @@ def _fetch_url_bytes(url):
                 url=stripped[:120],
             )
             return None
-        ct = (response.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
+        ct = (
+            (response.headers.get("Content-Type", "") or "")
+            .split(";")[0]
+            .strip()
+            .lower()
+        )
         if ct in _REJECTED_CONTENT_TYPES:
             logger.warning(
                 "image_preprocess_rejected_content_type",
@@ -67,7 +72,9 @@ def _fetch_url_bytes(url):
             return None
         return response.content, ct or "application/octet-stream"
     except Exception as e:
-        logger.warning("image_preprocess_fetch_failed", url=stripped[:120], error=str(e))
+        logger.warning(
+            "image_preprocess_fetch_failed", url=stripped[:120], error=str(e)
+        )
         return None
 
 
@@ -312,7 +319,9 @@ def _preprocess_fid(inputs):
         fake_pil = _parse_image_list(fake_images)
 
         if len(real_pil) < 2 or len(fake_pil) < 2:
-            inputs["_fid_error"] = f"FID requires at least 2 images per set (got {len(real_pil)} real, {len(fake_pil)} fake)"
+            inputs["_fid_error"] = (
+                f"FID requires at least 2 images per set (got {len(real_pil)} real, {len(fake_pil)} fake)"
+            )
             return inputs
 
         device = "cuda" if torch.cuda.is_available() else "cpu"

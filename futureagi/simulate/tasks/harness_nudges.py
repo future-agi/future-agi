@@ -92,14 +92,33 @@ def schedule_reconcile_task(environment_id: Any):
     )
 
 
-def _unique(task: Any, args: list[Any], task_id: str):
+def _unique(
+    task: Any,
+    args: list[Any],
+    task_id: str,
+    *,
+    dispatch_timeout_seconds: float | None = None,
+):
     from temporalio.common import WorkflowIDConflictPolicy
 
     return task.apply_async(
         args=args,
         task_id=task_id,
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+        dispatch_timeout_seconds=dispatch_timeout_seconds,
     )
+
+
+# A sandbox stop, a nudge check and a turn finish are scheduled from request-path
+# on-commit hooks (draft save, discard, suite amend, turn events). A slow Temporal
+# frontend must not hold a request whose write has already committed, so these
+# schedules give up after this deadline, as the accounts request paths do. A missed
+# deadline raises and the caller logs it; the workflow may still have started on the
+# server, which is harmless: the id is fixed and the conflict policy is USE_EXISTING,
+# so a later schedule reuses it. A sandbox whose stop never started falls back to its
+# idle limit.
+REQUEST_PATH_DISPATCH_TIMEOUT_SECONDS = 2.0
+SANDBOX_STOP_DISPATCH_TIMEOUT_SECONDS = REQUEST_PATH_DISPATCH_TIMEOUT_SECONDS
 
 
 @temporal_activity(time_limit=60, max_retries=0, queue="default")
@@ -142,8 +161,9 @@ def finish_harness_nudge_turn(conversation_id: str, turn_sequence: int) -> str:
 
 @temporal_activity(time_limit=180, max_retries=3, queue="default")
 def stop_harness_nudge_sandbox(conversation_id: str, provider_ref: str) -> str:
-    """Delete the sandbox a closed rebuild ran in; an expired lease alone does not
-    stop a turn that is still working.
+    """Delete a chat's own sandbox once its lease is let go: a closed rebuild's, a
+    retired idle chat's, or an abandoned one's. An expired lease alone does not stop
+    a process that is still working.
 
     The provider is called directly so a failed delete raises and Temporal retries
     the activity; the gateway's own helper logs and swallows every error."""
@@ -187,6 +207,7 @@ def schedule_nudge_check_task(environment_id: Any):
         check_harness_nudges,
         [str(environment_id)],
         f"harness-nudge-check-{environment_id}",
+        dispatch_timeout_seconds=REQUEST_PATH_DISPATCH_TIMEOUT_SECONDS,
     )
 
 
@@ -195,6 +216,7 @@ def schedule_finish_turn(conversation_id: Any, turn_sequence: int):
         finish_harness_nudge_turn,
         [str(conversation_id), int(turn_sequence)],
         f"harness-nudge-finish-{conversation_id}-{turn_sequence}",
+        dispatch_timeout_seconds=REQUEST_PATH_DISPATCH_TIMEOUT_SECONDS,
     )
 
 
@@ -203,6 +225,7 @@ def schedule_sandbox_stop(conversation_id: Any, provider_ref: str):
         stop_harness_nudge_sandbox,
         [str(conversation_id), str(provider_ref)],
         f"harness-nudge-sandbox-stop-{provider_ref}",
+        dispatch_timeout_seconds=SANDBOX_STOP_DISPATCH_TIMEOUT_SECONDS,
     )
 
 

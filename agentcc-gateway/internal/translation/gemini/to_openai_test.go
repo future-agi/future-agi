@@ -497,6 +497,13 @@ func TestRequestToCanonical_ResponseMimeTypeJSONWithSchema(t *testing.T) {
 	if len(req.ResponseFormat.JSONSchema) == 0 {
 		t.Error("expected JSONSchema to be non-empty")
 	}
+	// OpenAI requires a json_schema name; the translator gives one.
+	var js struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.ResponseFormat.JSONSchema, &js); err != nil || js.Name != "response" {
+		t.Errorf("json_schema name = %q (%v), want \"response\"", js.Name, err)
+	}
 }
 
 func TestRequestToCanonical_ResponseModalities_Drop(t *testing.T) {
