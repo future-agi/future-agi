@@ -10,6 +10,8 @@ import {
   Button,
   InputAdornment,
   ButtonBase,
+  Menu,
+  MenuItem,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import {
@@ -53,6 +55,7 @@ const unsupportedReasonOf = (setting) =>
 
 export function TierDial({ setting, onChange, onAllowLive }) {
   const [allowAnchor, setAllowAnchor] = useState(null);
+  const [menuAnchor, setMenuAnchor] = useState(null);
   const live = liveAllowedOf(setting);
   const unsupported = unsupportedReasonOf(setting);
   const tip = (t) => {
@@ -86,20 +89,68 @@ export function TierDial({ setting, onChange, onAllowLive }) {
     );
   }
 
+  const current = tierOf(setting.tier);
   return (
     <>
-      <Stack
-        direction="row"
-        role="radiogroup"
-        aria-label={`Fidelity for ${setting.name}`}
+      {/* One small dropdown: the current tier; the other three, with what
+          each means, in the list. */}
+      <Tooltip
+        arrow
+        title={
+          unsupported
+            ? `Unsupported for this test — ${unsupported}`
+            : tip(current)
+        }
+      >
+        <ButtonBase
+          type="button"
+          aria-haspopup="menu"
+          aria-label={`How ${setting.name} answers: ${current.word}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setMenuAnchor(e.currentTarget);
+          }}
+          sx={{
+            flexShrink: 0,
+            height: 24,
+            px: 1,
+            gap: 0.5,
+            minWidth: 104,
+            justifyContent: "space-between",
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "4px",
+            font: "inherit",
+            typography: "s3",
+            fontWeight: 600,
+            color: unsupported ? "status.danger.fg" : "text.primary",
+            "&:hover": { bgcolor: "action.hover" },
+          }}
+        >
+          <Box
+            component="span"
+            sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
+          >
+            {unsupported && (
+              <Iconify icon="solar:danger-triangle-linear" width={12} />
+            )}
+            {current.word}
+          </Box>
+          <Iconify
+            icon="solar:alt-arrow-down-linear"
+            width={12}
+            sx={{ color: "text.tertiary" }}
+          />
+        </ButtonBase>
+      </Tooltip>
+      <Menu
+        anchorEl={menuAnchor}
+        open={!!menuAnchor}
+        onClose={() => setMenuAnchor(null)}
         onClick={(e) => e.stopPropagation()}
-        sx={{
-          flexShrink: 0,
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: "4px",
-          p: "1px",
-        }}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        slotProps={{ paper: { sx: { width: 280, mt: 0.5 } } }}
       >
         {TIERS.map((t) => {
           const on = setting.tier === t.id;
@@ -115,83 +166,69 @@ export function TierDial({ setting, onChange, onAllowLive }) {
             <Tooltip
               key={t.id}
               arrow
-              title={
-                on && unsupported
-                  ? `Unsupported for this test — ${unsupported}`
-                  : tip(t)
-              }
+              placement="left"
+              title={disabled ? tip(t) : ""}
             >
-              <ButtonBase
-                type="button"
-                role="radio"
-                aria-checked={on}
-                aria-disabled={disabled || undefined}
-                onClick={(e) => {
-                  if (on || disabled) return;
-                  if (canAllow) {
-                    setAllowAnchor(e.currentTarget);
-                    return;
-                  }
-                  onChange(t.id);
-                }}
-                sx={{
-                  p: 0,
-                  px: 0.75,
-                  height: 20,
-                  border: 0,
-                  borderRadius: "4px",
-                  font: "inherit",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "3px",
-                  typography: "s3",
-                  fontWeight: on ? 600 : 500,
-                  cursor: on || disabled ? "default" : "pointer",
-                  color: on
-                    ? unsupported
-                      ? "status.danger.fg"
-                      : "text.primary"
-                    : disabled
-                      ? "text.disabled"
-                      : "text.tertiary",
-                  bgcolor: on ? "action.selected" : "transparent",
-                  "&:hover":
-                    on || disabled ? undefined : { color: "text.primary" },
-                }}
-              >
-                {gated && (
-                  <Iconify
-                    icon="solar:lock-keyhole-minimalistic-linear"
-                    width={12}
-                    sx={{ flexShrink: 0 }}
-                  />
-                )}
-                {on && unsupported && (
-                  <Iconify
-                    icon="solar:danger-triangle-linear"
-                    width={12}
-                    sx={{ flexShrink: 0 }}
-                  />
-                )}
-                {t.word}
-                {isDefault && (
-                  <Box
-                    component="span"
-                    aria-label="default"
-                    sx={{
-                      width: 4,
-                      height: 4,
-                      borderRadius: "50%",
-                      bgcolor: "text.disabled",
-                      flexShrink: 0,
-                    }}
-                  />
-                )}
-              </ButtonBase>
+              <span>
+                <MenuItem
+                  selected={on}
+                  disabled={disabled}
+                  onClick={(e) => {
+                    if (on) return setMenuAnchor(null);
+                    if (canAllow) {
+                      setAllowAnchor(menuAnchor);
+                      setMenuAnchor(null);
+                      return undefined;
+                    }
+                    setMenuAnchor(null);
+                    onChange(t.id);
+                    return e;
+                  }}
+                  sx={{
+                    alignItems: "flex-start",
+                    gap: 1,
+                    py: 0.75,
+                    whiteSpace: "normal",
+                  }}
+                >
+                  <Box sx={{ width: 14, pt: "2px", flexShrink: 0 }}>
+                    {on ? (
+                      <Iconify icon="solar:check-read-linear" width={14} />
+                    ) : gated ? (
+                      <Iconify
+                        icon="solar:lock-keyhole-minimalistic-linear"
+                        width={12}
+                      />
+                    ) : null}
+                  </Box>
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+                      {t.word}
+                      {isDefault && (
+                        <Box
+                          component="span"
+                          sx={{
+                            color: "text.tertiary",
+                            fontWeight: 400,
+                            ml: 0.75,
+                          }}
+                        >
+                          default
+                        </Box>
+                      )}
+                    </Typography>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary" }}
+                    >
+                      {t.note}
+                    </Typography>
+                  </Box>
+                </MenuItem>
+              </span>
             </Tooltip>
           );
         })}
-      </Stack>
+      </Menu>
       <Popover
         open={!!allowAnchor}
         anchorEl={allowAnchor}
@@ -338,8 +375,7 @@ export function FaultsControl({ setting, onApply }) {
             display: "inline-flex",
             alignItems: "center",
             gap: 0.5,
-            minWidth: 92,
-            justifyContent: "flex-start",
+            ...(on ? { minWidth: 92, justifyContent: "flex-start" } : {}),
             typography: "s3",
             fontWeight: on ? 600 : 500,
             color: on ? "text.primary" : "text.disabled",
@@ -356,7 +392,8 @@ export function FaultsControl({ setting, onApply }) {
               flexShrink: 0,
             }}
           />
-          {on ? word : "No faults"}
+          {/* No faults: just the bolt; the word appears once some are set. */}
+          {on ? word : null}
         </ButtonBase>
       </Tooltip>
       <Popover

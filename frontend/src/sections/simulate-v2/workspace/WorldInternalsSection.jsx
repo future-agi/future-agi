@@ -436,28 +436,47 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
           >
             {summary}
           </Box>
-          {
-            " — how each tool answers during a run. A change is a world edit, saved as the next environment version."
-          }
+          <Tooltip
+            arrow
+            title="How each tool answers during a run. A change is a world edit, saved as the next environment version."
+          >
+            <Box
+              component="span"
+              sx={{ display: "inline-flex", verticalAlign: "middle", ml: 0.5 }}
+            >
+              <Iconify
+                icon="solar:info-circle-linear"
+                width={14}
+                sx={{ color: "text.tertiary" }}
+              />
+            </Box>
+          </Tooltip>
         </>
       }
       action={
         <Stack direction="row" spacing={1} alignItems="center">
           {patch && onAddMcp && (
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={onAddMcp}
-              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-              sx={{
-                color: "text.primary",
-                borderColor: "divider",
-                flexShrink: 0,
-                whiteSpace: "nowrap",
-              }}
+            <Tooltip
+              arrow
+              title="From an MCP server — Shopify, Stripe, Zendesk or any URL. Each tool starts Simulated."
             >
-              Add tools
-            </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={onAddMcp}
+                startIcon={
+                  <Iconify icon="solar:add-circle-linear" width={16} />
+                }
+                sx={{
+                  color: "text.primary",
+                  borderColor: "divider",
+                  flexShrink: 0,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Add tools
+              </Button>
+            </Tooltip>
           )}
         </Stack>
       }
@@ -497,11 +516,6 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
                   }
                   width={14}
                   sx={{ color: "text.tertiary", flexShrink: 0 }}
-                />
-                <Iconify
-                  icon="solar:code-linear"
-                  width={16}
-                  sx={{ color: "primary.main", flexShrink: 0 }}
                 />
                 <Typography
                   noWrap
@@ -668,46 +682,6 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
             </Box>
           );
         })}
-        {/* Where the eye lands when the list ends: the next tool comes from here. */}
-        {patch && onAddMcp && (
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1.5}
-            {...clickable(onAddMcp)}
-            sx={{
-              ...focusRing,
-              px: 2.5,
-              py: 1.25,
-              cursor: "pointer",
-              "&:hover": { bgcolor: "action.hover" },
-            }}
-          >
-            <Box sx={{ width: 13, flexShrink: 0 }} />
-            <Iconify
-              icon="solar:add-circle-linear"
-              width={16}
-              sx={{ color: "text.secondary", flexShrink: 0 }}
-            />
-            <Typography
-              sx={{
-                typography: "s2",
-                fontWeight: 600,
-                width: 220,
-                flexShrink: 0,
-              }}
-            >
-              Add tools from an MCP server
-            </Typography>
-            <Typography
-              noWrap
-              sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
-            >
-              Shopify, Stripe, Zendesk or any server URL. Each tool starts
-              Simulated.
-            </Typography>
-          </Stack>
-        )}
       </Stack>
     </SectionCard>
   );
