@@ -532,7 +532,7 @@ def test_run_header_resolves_unstamped_call_versions(
             configuration_snapshot=snapshot,
         )
 
-    execution.agent_version = version({})
+    execution.agent_version = version({"agent_type": agent.agent_type})
     execution.save(update_fields=["agent_version"])
     first, second = calls[:2]
     selected = execution.calls.filter(pk__in=[first.pk, second.pk])
@@ -576,7 +576,9 @@ def test_unconfigured_call_provider_payload_fallback_in_python_and_sql(
     agent = execution.agent_definition
     agent.provider = None
     agent.save(update_fields=["provider"])
-    call = calls[0]
+    # Fetch after clearing the definition's provider so the just-saved
+    # assertion cannot see the old related object from the fixture call.
+    call = execution.calls.get(pk=calls[0].pk)
     call.provider_call_data = payload
     call.save(update_fields=["provider_call_data"])
     assert call_agent_provider(call) == expected
