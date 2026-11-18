@@ -24,6 +24,8 @@ from simulate.services.agent_setup import store_agent
 from simulate.services.harness_readiness import catalogue as catalogue_module
 from simulate.services.harness_readiness import evidence as evidence_module
 from simulate.services.harness_readiness import report as report_module
+from simulate.services.harness_readiness import selection as selection_module
+from simulate.services.harness_tool_reach import production_only_reason
 from simulate.services.harness_versioning import archives, assembly
 from simulate.services.harness_versioning import validation as validation_module
 from simulate.services.hosted_harness import HostedHarnessError
@@ -70,7 +72,12 @@ ACTIONS = [
 PRODUCTION_ONLY = {
     "tool_entrypoints": [{"tool": "issue_refund", "mode": "in_process"}],
     "dependencies": [
-        {"name": "payments", "engine": "", "reached": {}, "used_by": ["issue_refund"]}
+        {
+            "name": "payments",
+            "engine": "",
+            "reached": {"host": "api.payments.example"},
+            "used_by": ["issue_refund"],
+        }
     ],
 }
 
@@ -662,9 +669,8 @@ class TestRows:
 
         assert routing["status"] == "blocked"
         assert routing["reason_code"] == "production_only"
-        assert routing["reason"] == (
-            "Unsupported for this controlled test: issue_refund reaches production"
-        )
+        # The Tools card's sentence, so the two never disagree.
+        assert routing["reason"] == production_only_reason("issue_refund")
         assert routing["targets"] == [
             {"kind": "tool", "name": "issue_refund", "result": "failed"}
         ]
@@ -844,7 +850,7 @@ class TestPairs:
 
         with (
             patch.object(
-                report_module, "read_evidence", wraps=report_module.read_evidence
+                selection_module, "read_evidence", wraps=selection_module.read_evidence
             ) as read,
             patch.object(harness_readiness, "store_run_snapshot") as stored,
         ):
@@ -883,7 +889,7 @@ class TestPairs:
 
         with (
             patch.object(
-                report_module,
+                selection_module,
                 "read_evidence",
                 side_effect=ConnectionError("storage unreachable"),
             ),
@@ -907,7 +913,7 @@ class TestPairs:
         from simulate.tests.test_harness_versioning_runs import NAMES, _key
 
         with patch.object(
-            report_module,
+            selection_module,
             "read_evidence",
             side_effect=ConnectionError("storage unreachable"),
         ):
@@ -1047,9 +1053,11 @@ class TestApi:
             "computed_at",
             "selection",
             "workers",
+            "blockers",
         }
-        # A single agent declares no workers: no worker rows.
+        # A single agent declares no workers: no worker rows, and its blockers are its blocked rows.
         assert body["workers"] == []
+        assert body["blockers"] == body["counts"]["blocked"]
         assert set(body["selection"]) == {
             "suite_total",
             "excluded",
@@ -1327,9 +1335,7 @@ class TestDoneWhen:
         routing = rows["tool_routing"]
         assert routing["status"] == "blocked"
         assert routing["reason_code"] == "production_only"
-        assert routing["reason"] == (
-            "Unsupported for this controlled test: issue_refund reaches production"
-        )
+        assert routing["reason"] == production_only_reason("issue_refund")
         assert routing["fix"] == {
             "type": "tool_routing",
             "category": "tool_routing",

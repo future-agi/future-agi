@@ -1230,7 +1230,7 @@ def test_another_agent_s_tool_gap_keeps_the_production_only_tool_held(
                 {
                     "name": "orders-db",
                     "engine": "",
-                    "reached": {},
+                    "reached": {"host": "orders.example.com"},
                     "used_by": ["lookup_order"],
                 }
             ],
