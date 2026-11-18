@@ -129,9 +129,7 @@ class TestSearchLiteralQuery:
         context = ToolContext(user=None, organization=None, workspace=None)
 
         with patch.object(tool, "_search_datasets", return_value=[]) as search:
-            result = tool.run(
-                {"query": query, "entity_types": '["datasets"]'}, context
-            )
+            result = tool.run({"query": query, "entity_types": '["datasets"]'}, context)
 
         assert not result.is_error, result.content
         assert result.data["query"] == query

@@ -193,8 +193,7 @@ class BaseTool(ABC):
         for key, value in raw_params.items():
             schema = properties.get(key, {})
             accepts_string = schema.get("type") == "string" or any(
-                variant.get("type") == "string"
-                for variant in schema.get("anyOf", [])
+                variant.get("type") == "string" for variant in schema.get("anyOf", [])
             )
             if (
                 not accepts_string
