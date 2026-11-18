@@ -348,7 +348,7 @@ const PERSONAS = ["Ellie Marsh", "Marcus Reid", "Aditi Rao", "Harper Lang", "Pri
  * person removed stays removed, and a file's own rules and tables arrive
  * through its source, cited. Null when they add nothing.
  */
-export const designFromSourcesPatch = (env, fresh) => {
+export const designFromSourcesPatch = (env, fresh, allSources = []) => {
   const text = fresh
     .filter((f) => f.parsed?.kind === "table" || f.role === "policy" || f.parsed?.read)
     .map((f) =>
@@ -359,8 +359,10 @@ export const designFromSourcesPatch = (env, fresh) => {
     .join(". ");
   if (!text.trim()) return null;
   const next = scratchDesignOf(text);
+  /* Tables a file already supplies — this one or one added earlier — are
+     never generated again (orders.csv's orders stays the only orders). */
   const fileTables = new Set(
-    fresh.filter((f) => f.parsed?.kind === "table").map((f) => f.parsed.table),
+    [...fresh, ...allSources].filter((f) => f.parsed?.kind === "table").map((f) => f.parsed.table),
   );
   const haveT = new Set((env?.seed?.tables || []).map((t) => t.name));
   const haveTools = new Set((env?.tools || []).map((t) => t.name));

@@ -843,7 +843,7 @@ export default function EnvironmentWorkspace() {
                 {
                   ...t.steps[0],
                   text: latestEnvState.current?.versionBuild?.first
-                    ? `Building ${env.name} from the design you approved. Each part shows on the right as it's written, then the release checks run and you review and save it as v1.`
+                    ? `Building ${env.name} from the design you approved. Each part shows on the right as it's written, then the release checks run. A clean build saves itself as v1.`
                     : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`,
                 },
                 ...t.steps.slice(1),
@@ -2029,7 +2029,7 @@ export default function EnvironmentWorkspace() {
                         ? [
                             {
                               kind: "note",
-                              text: `Here's what I'd change${text ? ` for “${text}”` : ""}. Expected answers stay with the evaluator; everything else cites where it came from.`,
+                              text: `Here's what I'd change${text ? ` for “${text}”` : ""}. Expected answers stay with the grader; everything else cites where it came from.`,
                             },
                             {
                               kind: "node",
@@ -2069,7 +2069,7 @@ export default function EnvironmentWorkspace() {
     const latest = latestEnvState.current;
     const merged = mergeDesignFiles(latest, read);
     patch({ sources: merged.sources });
-    const res = designFromSourcesPatch(env, merged.fresh);
+    const res = designFromSourcesPatch(env, merged.fresh, merged.sources);
     if (res)
       dispatch({
         type: "patchEnvironment",

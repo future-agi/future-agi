@@ -61,7 +61,10 @@ const GROUPS = [
   { label: "Scenarios", kinds: ["scenario"] },
   { label: "Background for the agent", kinds: ["reference"] },
   { label: "Personal data — your choice", kinds: ["personal"] },
-  { label: "Who sees what, and problems", kinds: ["hidden", "unreadable"] },
+  {
+    label: "Kept from the agent, and problems",
+    kinds: ["hidden", "unreadable"],
+  },
 ];
 
 /**
