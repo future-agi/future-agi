@@ -55,6 +55,8 @@ LATEST = (
     ('tracer','0133_eval_recalculation'),
     ('tracer','0134_merge_eval_recalculation_and_sampling'),
     ('tracer','0135_eval_put_back'),
+    # Directory name, not app label: agentcc/ migrations run as app "prism".
+    ('agentcc','0030_guardrail_policy_runs_on_gateway'),
     ('simulate','0108_evidence_import'),
     ('simulate','0109_evidence_import_transcript'),
     ('simulate','0110_evidence_import_dataset'),
@@ -99,9 +101,9 @@ FLOOR_ONLY = (
     ('tracer','0120_alert_issue_state_occurrences_high_water'),
 )
 
-LATEST_COUNT = 63
+LATEST_COUNT = 64
 INVENTORIES = ((REVISIONS[1], LATEST, LATEST_COUNT),
-               (REVISIONS[0], LATEST + FLOOR_ONLY, 68))
+               (REVISIONS[0], LATEST + FLOOR_ONLY, 69))
 
 
 def keywords(node): return {k.arg:k.value for k in node.keywords}
@@ -226,6 +228,16 @@ def baseline_state(revision):
             options=keywords(node)
             if 'name' not in options or 'fields' not in options: continue
             state.models[(app,ast.literal_eval(options['name']).lower())]=model(node)
+    # agentcc 0024 builds its RenameModel/AlterModelTable operations in a loop
+    # over a literal MODEL_RENAMES table, so no CreateModel names the current
+    # Agentcc* models. Re-key them from that literal (AST only, never executed).
+    renames=ast.parse(migration_path('agentcc','0024_rename_prism_to_agentcc').read_text())
+    renames=next(ast.literal_eval(n.value) for n in renames.body if isinstance(n,ast.Assign)
+        and any(isinstance(t,ast.Name) and t.id=='MODEL_RENAMES' for t in n.targets))
+    for old,new,table in renames:
+        renamed=state.models.pop(('agentcc',old.lower()))
+        renamed.options={**renamed.options,'db_table':table}
+        state.models[('agentcc',new.lower())]=renamed
     usage=ast.parse(source(revision,'ee/usage/models/usage.py'))
     for node in usage.body:
         if not isinstance(node,ast.ClassDef): continue
@@ -366,6 +378,23 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 actual[migration.name]={table for engine,table in tables}
             with self.subTest(revision=revision):
                 self.assertEqual(actual,expected)
+
+    def test_guardrail_policy_runs_on_gateway_scope_is_its_own_table(self):
+        # prism 0030 is one AddField on the guardrail policy model; it must
+        # resolve to that table alone and select no high-volume reference.
+        registry=p.load_high_volume_registry()
+        identity=('agentcc','0030_guardrail_policy_runs_on_gateway')
+        for revision in REVISIONS:
+            with self.subTest(revision=revision):
+                state=baseline_state(revision)
+                env=scope_environment(state)
+                migration=pending_plan([identity],env)[0]
+                self.assertEqual([type(op).__name__ for op in migration.operations],['AddField'])
+                tables=env['touched'](migration.operations[0],migration,state)
+                self.assertEqual(tables,{('postgres','public.agentcc_guardrail_policy')})
+                plan=[{'app_label':identity[0],'name':identity[1]}]
+                row={**plan[0],'tables':[{'engine':e,'table':t} for e,t in sorted(tables)]}
+                self.assertEqual(list(p.select_reference_registry(registry,[row],plan=plan)),[])
 
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
         registry=p.load_high_volume_registry()

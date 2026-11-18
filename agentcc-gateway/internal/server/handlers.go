@@ -1102,6 +1102,9 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = req.Model
 	rc.Request = &req
+	if !completeChatWire(body) {
+		rc.GuardrailInputUnsupported = "chat request contains unknown message fields"
+	}
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
 
@@ -1523,6 +1526,9 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 
 			rc.Provider = fbProviderID
 			rc.Request.Model = resolvedModel
+			if admissionErr := h.reAdmitChangedInspection(ctx, rc); admissionErr != nil {
+				return admissionErr
+			}
 
 			noteChatResponsesRouteDrops(w, rc, fbProvider, rc.Request)
 			fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
@@ -1542,7 +1548,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		return err
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "chat.completions", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -1566,6 +1572,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 	// Wrap the failover loop inside engine.Process so pre-plugins run once,
 	// then the failover retries only the provider call, then post-plugins run once.
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		var admissionErr *models.APIError
 		foResult, err := h.executeProviderFailover(ctx, rc, fo, orgCfg, func(ctx context.Context, providerID string, p providers.Provider, modelOverride string) error {
 			// Reset for this attempt.
 			rc.Provider = providerID
@@ -1577,6 +1584,12 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Request.Model = originalModel
 			}
 
+			if admissionErr != nil {
+				return admissionErr
+			}
+			if admissionErr = h.reAdmitChangedInspection(ctx, rc); admissionErr != nil {
+				return admissionErr
+			}
 			noteChatResponsesRouteDrops(w, rc, p, rc.Request)
 			resp, err := h.callChatProvider(ctx, p, rc.Request)
 			if err != nil {
@@ -1590,6 +1603,9 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 			return nil
 		})
 
+		if admissionErr != nil {
+			return admissionErr
+		}
 		if err != nil {
 			// Provider failover exhausted — try model fallback chain.
 			// A chain is configured under the name the caller asked for, so it
@@ -1613,6 +1629,9 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 
 				rc.Provider = fbProviderID
 				rc.Request.Model = resolvedModel
+				if admissionErr := h.reAdmitChangedInspection(ctx, rc); admissionErr != nil {
+					return admissionErr
+				}
 
 				noteChatResponsesRouteDrops(w, rc, fbProvider, rc.Request)
 				fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
@@ -1644,7 +1663,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "chat.completions", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -1697,7 +1716,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// callCtx bounds an attempt only until its first chunk. The stream itself
 	// lives on the request context: failover cancels callCtx as soon as the
 	// attempt returns, which would otherwise end the stream after one chunk.
+	var admissionErr *models.APIError
 	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
+		if admissionErr != nil {
+			return admissionErr
+		}
+		if admissionErr = h.reAdmitChangedInspection(callCtx, rc); admissionErr != nil {
+			return admissionErr
+		}
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
 		start := time.Now()
 		noteChatResponsesRouteDrops(w, rc, callProvider, rc.Request)
@@ -1737,6 +1763,9 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		orgID := rc.Metadata["org_id"]
 
 		tryModelFallbacks := func(firstErr error) error {
+			if admissionErr != nil {
+				return admissionErr
+			}
 			if effectiveFailover == nil || !effectiveFailover.ShouldFailover(firstErr) {
 				return firstErr
 			}
@@ -1767,6 +1796,9 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 					rc.Metadata["original_model"] = originalModel
 					rc.Metadata["fallback_model"] = resolvedModel
 					return nil
+				}
+				if admissionErr != nil {
+					return admissionErr
 				}
 			}
 
@@ -1810,7 +1842,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	}
 
 	// Run pre-plugins before opening the upstream stream.
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "chat.completions", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -1913,7 +1945,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
-					rc.Flags.GuardrailTriggered = true
+					res.StoreBlock(rc)
 					sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message))
 					finalizeStream(false)
 					return
@@ -1947,6 +1979,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
+						res.StoreBlock(rc)
 						sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message))
 					} else if res.Disclaimer != "" {
 						disclaimer := res.Disclaimer
@@ -1996,7 +2029,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			// Run streaming guardrail check.
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
-					rc.Flags.GuardrailTriggered = true
+					res.StoreBlock(rc)
 					sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message))
 					finalizeStream(false)
 					return
