@@ -158,8 +158,9 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
   });
 
   const chip30 = chip(page, '30D');
-  let clicked30 = 0, highlighted30 = 0;
+  let burstStart = 0, clicked30 = 0, highlighted30 = 0;
   await test.step('UI: Today, 7D and 30D clicked back to back; 30D highlights before any 30D query', async () => {
+    burstStart = Date.now(); // Every query from here on belongs to the burst.
     await chip(page, 'Today').click();
     await chip(page, '7D').click();
     clicked30 = Date.now();
@@ -171,7 +172,6 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
   });
 
   await test.step('API: the burst sends only the 30-day range per widget, at least 450 ms after the click', async () => {
-    const burstStart = clicked30 - 5_000; // Covers the Today and 7D clicks too.
     for (const metric of METRICS) {
       await uiExpect.poll(() => queries(metric, burstStart).length, { message: `${metric} 30D query sent` })
         .toBeGreaterThan(0);
@@ -221,12 +221,13 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
 
   await test.step('API: Done sends exactly the custom range per widget, dispatched at once', async () => {
     for (const metric of METRICS) {
-      await uiExpect.poll(() => queries(metric, doneAt).length, { message: `${metric} custom query sent` })
-        .toBeGreaterThan(0);
+      const custom = () => queries(metric, doneAt).filter(r => rangeKey(r.input as QueryInput) === customKey);
+      await uiExpect.poll(() => custom().length, { message: `${metric} custom query sent` }).toBeGreaterThan(0);
       const sent = queries(metric, doneAt);
       await attach(`custom-${metric}`, sent.map(r => ({ input: r.input, startedAt: r.startedAt })));
+      // Dispatch time first: a debounced Done would only send the range ~500 ms later.
+      expect(custom()[0].startedAt - doneAt, `${metric} custom query is not debounced`).toBeLessThan(CUSTOM_DISPATCH_MS);
       expect(distinctRanges(metric, doneAt), `${metric} custom ranges`).toEqual([customKey]);
-      expect(sent[0].startedAt - doneAt, `${metric} custom query is not debounced`).toBeLessThan(CUSTOM_DISPATCH_MS);
     }
     for (const metric of METRICS) await settledExact(metric, doneAt, customKey);
   });
@@ -258,6 +259,10 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     }
   });
 
+  const firstAfter = (metric: Metric, since: number) => queries(metric, since)[0]?.startedAt - since;
+  await attach('timings-ms', Object.fromEntries(METRICS.map(metric => [metric, {
+    burstClickToFirst30D: firstAfter(metric, clicked30), highlightBeforeFirst30D: queries(metric, burstStart)[0]?.startedAt - highlighted30,
+    doneToFirstCustom: firstAfter(metric, doneAt), refreshClickToFirst: firstAfter(metric, refreshAt) }])));
   await Promise.all([...http.pending]);
   http.stop();
   expect(pageErrors, 'no page errors').toEqual([]);
