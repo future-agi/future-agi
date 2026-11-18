@@ -9,7 +9,9 @@ from decimal import ROUND_DOWN, Decimal
 from typing import Any, cast
 from uuid import UUID, uuid5
 
+import structlog
 from django.core.serializers.json import DjangoJSONEncoder
+from django.db import Error as DbError
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -57,6 +59,8 @@ OUR_FIX_FAILURES = frozenset(
 )
 
 logger = logging.getLogger(__name__)
+# The sandbox metering writes log as sandbox_usage.py does: keyword fields, the trace kept.
+metering_logger = structlog.get_logger(__name__)
 
 
 def check_harness_usage(attempt: HostedHarnessAttempt, action: str) -> dict:
@@ -977,8 +981,14 @@ def note_sandbox_delete_request(attempt: HostedHarnessAttempt) -> None:
             observation["delete_requested_at"] = timezone.now().isoformat()
             current.sandbox_runtime = observation
             current.save(update_fields=["sandbox_runtime", "updated_at"])
-    except Exception:  # noqa: BLE001 - metering never fails a delete
-        logger.exception("sandbox delete request not recorded attempt=%s", attempt.id)
+    except DbError:
+        # A database fault never fails the delete; a programming error fails the cleanup
+        # step, which is retried, so the ask is not silently lost.
+        metering_logger.error(
+            "sandbox_delete_request_not_recorded",
+            attempt_id=str(attempt.id),
+            exc_info=True,
+        )
 
 
 def rearm_sandbox_runtime(
@@ -1001,8 +1011,13 @@ def rearm_sandbox_runtime(
             observation["lifetime_seconds"] = int(lifetime_seconds)
             current.sandbox_runtime = observation
             current.save(update_fields=["sandbox_runtime", "updated_at"])
-    except Exception:  # noqa: BLE001 - metering never fails a launch
-        logger.exception("sandbox lifetime renewal not recorded attempt=%s", attempt.id)
+    except DbError:
+        # A database fault never fails the launch; a programming error still does.
+        metering_logger.error(
+            "sandbox_lifetime_renewal_not_recorded",
+            attempt_id=str(attempt.id),
+            exc_info=True,
+        )
 
 
 def sandbox_metered_end(ended_at, armed_at, lifetime_seconds: int):

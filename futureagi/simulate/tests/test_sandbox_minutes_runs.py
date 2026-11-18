@@ -430,6 +430,62 @@ def test_a_run_sandbox_found_gone_without_a_delete_is_billed_to_the_find(
     assert minutes == Decimal(20)
 
 
+def _save_raises(monkeypatch, error):
+    def save(self, *args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(HostedHarnessAttempt, "save", save)
+
+
+@pytest.mark.django_db
+def test_a_database_fault_noting_the_delete_ask_never_fails_the_delete(
+    hosted_attempt, clock, monkeypatch
+):
+    from django.db import OperationalError
+
+    attempt = hosted_attempt.attempt
+    harness_usage.record_sandbox_runtime(
+        attempt, started=True, provider="daytona", lifetime_seconds=3600
+    )
+    _save_raises(monkeypatch, OperationalError("connection lost"))
+
+    harness_usage.note_sandbox_delete_request(attempt)
+
+
+@pytest.mark.django_db
+def test_a_code_error_noting_the_delete_ask_fails_the_cleanup_step(
+    hosted_attempt, clock, monkeypatch
+):
+    attempt = hosted_attempt.attempt
+    harness_usage.record_sandbox_runtime(
+        attempt, started=True, provider="daytona", lifetime_seconds=3600
+    )
+    _save_raises(monkeypatch, TypeError("a slip in the observation"))
+
+    # Swallowed, the ask would be lost and a failing delete billed to its cleanup.
+    with pytest.raises(TypeError):
+        harness_usage.note_sandbox_delete_request(attempt)
+
+
+@pytest.mark.django_db
+def test_a_code_error_recording_a_renewal_is_not_swallowed(
+    hosted_attempt, clock, monkeypatch
+):
+    attempt = hosted_attempt.attempt
+    harness_usage.record_sandbox_runtime(
+        attempt, started=True, provider="e2b", lifetime_seconds=LIFETIME
+    )
+    _save_raises(monkeypatch, TypeError("a slip in the observation"))
+
+    with pytest.raises(TypeError):
+        harness_usage.rearm_sandbox_runtime(
+            attempt,
+            provider=SimpleNamespace(renews_ttl=True),
+            lifetime_seconds=3600,
+            renewed_at=clock[0],
+        )
+
+
 def _start_then_renew(attempt, clock, *, provider):
     t0 = clock[0]
     harness_usage.record_sandbox_runtime(

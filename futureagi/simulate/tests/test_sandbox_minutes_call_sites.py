@@ -2918,6 +2918,7 @@ def test_every_chat_runtime_start_is_known():
         "services/evidence_drafts.py::start_drafting",
         "services/harness_provider.py::send_message",
         "services/harness_provider.py::_extend_in_chat",
+        "services/harness_starting_record_rework.py::file_rework",
         "services/harness_versioning/rebuild.py::_start_runtime",
         "services/hosted_harness_conversation.py::send_to_harness",
         "services/hosted_harness_conversation.py::start_chat_after_platform_landing",
