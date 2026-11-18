@@ -6,17 +6,58 @@ Stripe meter events fire at invoice-close (see invoice_generation.py);
 no hourly catch-up. Errors re-raise so Temporal applies its retry policy.
 """
 
+import asyncio
+import contextvars
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime
+from threading import Event
 
 from asgiref.sync import sync_to_async
 from django.db import close_old_connections
 from temporalio import activity
+
 from tfc.temporal.billing.types import (
     MonthlyClosingInput,
     MonthlyClosingOutput,
     MonthlyInvoiceInput,
     MonthlyInvoiceOutput,
 )
+from tfc.temporal.common.heartbeat import Heartbeater
+
+
+@asynccontextmanager
+async def _billing_heartbeats() -> AsyncIterator[Callable[[str], None]]:
+    """Keep slow billing phases alive and deliver thread progress on the loop."""
+    loop = asyncio.get_running_loop()
+    context = contextvars.copy_context()
+    stopped = Event()
+
+    async with Heartbeater() as heartbeater:
+
+        def report_progress(org_id: str) -> None:
+            if not stopped.is_set():
+                heartbeater.details = (org_id,)
+                activity.heartbeat(org_id)
+
+        def progress_from_thread(org_id: str) -> None:
+            # The invoice service calls this before each organization, outside
+            # its transaction. Cooperatively stop there, never in the middle of
+            # an organization's billing work. CancelledError is a BaseException:
+            # the service's except Exception progress handler must not swallow it.
+            if stopped.is_set():
+                raise asyncio.CancelledError("Billing activity has stopped")
+            # Async activity heartbeats create asyncio tasks. The executor has
+            # no loop, so carry the activity context back to its owning loop.
+            loop.call_soon_threadsafe(report_progress, org_id, context=context)
+
+        try:
+            yield progress_from_thread
+        finally:
+            # Cancelling the await cannot interrupt synchronous billing. Signal
+            # its next organization boundary and suppress queued heartbeats.
+            stopped.set()
+
 
 # ── Monthly Invoice Generation ─────────────────────────────────────────────
 
@@ -32,9 +73,10 @@ async def generate_monthly_invoices_activity(
     """
     close_old_connections()
     try:
-        created, skipped, errors = await sync_to_async(
-            _generate_monthly_invoices_sync, thread_sensitive=False
-        )(input.period, input.org_id)
+        async with _billing_heartbeats() as on_progress:
+            created, skipped, errors = await sync_to_async(
+                _generate_monthly_invoices_sync, thread_sensitive=False
+            )(input.period, input.org_id, on_progress=on_progress)
         activity.logger.info(
             f"Monthly invoices: created={created}, skipped={skipped}, errors={errors}"
         )
@@ -49,7 +91,7 @@ async def generate_monthly_invoices_activity(
 
 
 def _generate_monthly_invoices_sync(
-    period: str, org_id: str = ""
+    period: str, org_id: str = "", *, on_progress: Callable[[str], None] | None = None
 ) -> tuple[int, int, int]:
     """Sync wrapper — generates invoices for paid orgs (or a single org).
 
@@ -85,7 +127,7 @@ def _generate_monthly_invoices_sync(
             skip_stripe=False,
             skip_email=False,
             stdout=lambda msg: activity.logger.info(msg),
-            on_progress=activity.heartbeat,
+            on_progress=on_progress,
         )
         return result.created, result.skipped, result.errors
     finally:
@@ -97,14 +139,13 @@ def _generate_monthly_invoices_sync(
 
 def _run_monthly_reset_sync(period: str) -> None:
     try:
-        from ee.usage.tasks.monthly_reset import run_monthly_reset
+        from ee.cloud.tasks.monthly_reset import run_monthly_reset
     except ImportError:
         run_monthly_reset = None
 
     if run_monthly_reset is None:
         # monthly_reset lives in the private cloud overlay (ee/cloud/); it is
-        # absent from OSS and self-hosted EE images (ee/usage/tasks/ ships only
-        # __init__.py + phone_home.py). Skip cleanly instead of raising
+        # absent from OSS and self-hosted EE images. Skip cleanly instead of raising
         # ImportError, which would fail monthly_closing_activity on the 1st of
         # every month on every self-hosted install — before the guarded invoice
         # step below even runs.
@@ -149,19 +190,20 @@ async def monthly_closing_activity(
         except (TypeError, ValueError):
             raise ValueError(
                 f"monthly_closing_activity requires YYYY-MM period, got {period_closed!r}"
-            )
+            ) from None
         period_billed = _next_period_str(period_closed)
         activity.logger.info(
             f"monthly_closing_start closed={period_closed} billed={period_billed}"
         )
 
-        await sync_to_async(_run_monthly_reset_sync, thread_sensitive=False)(
-            period_closed
-        )
+        async with _billing_heartbeats() as on_progress:
+            await sync_to_async(_run_monthly_reset_sync, thread_sensitive=False)(
+                period_closed
+            )
 
-        created, skipped, errors = await sync_to_async(
-            _generate_monthly_invoices_sync, thread_sensitive=False
-        )(period_billed, "")
+            created, skipped, errors = await sync_to_async(
+                _generate_monthly_invoices_sync, thread_sensitive=False
+            )(period_billed, "", on_progress=on_progress)
         activity.logger.info(
             f"monthly_closing_done closed={period_closed} billed={period_billed} "
             f"created={created} skipped={skipped} errors={errors}"

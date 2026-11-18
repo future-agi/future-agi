@@ -45,7 +45,7 @@ export default function BaseOptions({ icons, options, value, onChange }) {
               },
             }}
           >
-            <SvgColor src={`/assets/icons/setting/ic_${icons[index]}.svg`} />
+            <SvgColor width={24} src={`/assets/icons/setting/ic_${icons[index]}.svg`} />
           </ButtonBase>
         );
       })}

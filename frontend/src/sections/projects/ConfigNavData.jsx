@@ -11,7 +11,7 @@ const icon = (name) => (
     sx={{ width: "20px", height: "20px" }}
   />
   // OR
-  // <Iconify icon="fluent:mail-24-filled" />
+  // <Iconify icon="solar:letter-linear" />
   // https://icon-sets.iconify.design/solar/
   // https://www.streamlinehq.com/icons
 );

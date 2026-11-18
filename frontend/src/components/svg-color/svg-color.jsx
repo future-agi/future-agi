@@ -1,9 +1,10 @@
 import { Box } from "@mui/material";
 import { forwardRef, useEffect, useRef } from "react";
-import { mergeRefs } from "src/utils/utils";
+import { mergeRefs } from "src/utils/mergeRefs";
 import PropTypes from "prop-types";
 
-const SvgColor = forwardRef(({ src, sx, ...other }, ref) => {
+// Design system: icons default to 16px. Illustrations pass their own size.
+const SvgColor = forwardRef(({ src, width = 16, sx, className, ...other }, ref) => {
   const nodeRef = useRef(null);
 
   useEffect(() => {
@@ -26,11 +27,11 @@ const SvgColor = forwardRef(({ src, sx, ...other }, ref) => {
   return (
     <Box
       component="span"
-      className="svg-color"
+      className={className ? `svg-color ${className}` : "svg-color"}
       ref={mergeRefs(ref, nodeRef)}
       sx={{
-        width: 24,
-        height: 24,
+        width,
+        height: width,
         display: "inline-block",
         bgcolor: "currentColor",
         mask: `url(${src}) no-repeat center / contain`,
@@ -44,7 +45,9 @@ const SvgColor = forwardRef(({ src, sx, ...other }, ref) => {
 SvgColor.displayName = "SvgColor";
 SvgColor.propTypes = {
   src: PropTypes.string,
+  width: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   sx: PropTypes.object,
+  className: PropTypes.string,
 };
 
 export default SvgColor;

@@ -1,8 +1,8 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
-  Card,
   Stack,
   Typography,
   Accordion,
@@ -14,14 +14,16 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  TablePagination,
   ToggleButton,
   ToggleButtonGroup,
   CircularProgress,
   Skeleton,
   Tooltip,
 } from "@mui/material";
+import { TablePaginationCustom } from "src/components/table";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { useQuery } from "@tanstack/react-query";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import useSessions from "./hooks/useSessions";
@@ -63,6 +65,16 @@ function formatTimestamp(iso) {
     return "N/A";
   }
 }
+
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
 
 function getStatusChipColor(code) {
   if (code >= 200 && code < 300) return "success";
@@ -149,11 +161,10 @@ function SessionDetail({ sessionId, onRequestClick }) {
             </TableCell>
             <TableCell>{req.model || "-"}</TableCell>
             <TableCell>
-              <Chip
-                label={req.status_code ?? "-"}
-                size="small"
-                variant="outlined"
-                color={getStatusChipColor(req.status_code)}
+              <StatusBadge
+                status={req.status_code}
+                label={String(req.status_code ?? "-")}
+                role={CHIP_ROLE[getStatusChipColor(req.status_code)]}
               />
             </TableCell>
             <TableCell>
@@ -169,7 +180,9 @@ function SessionDetail({ sessionId, onRequestClick }) {
                 {req.latency_ms != null ? `${req.latency_ms}ms` : "-"}
               </Typography>
             </TableCell>
-            <TableCell>{formatCost(req.cost)}</TableCell>
+            <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
+              {formatCost(req.cost)}
+            </TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -230,7 +243,7 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
   // =========================================================================
 
   return (
-    <Card>
+    <Section variant="panel" sx={{ p: 0, overflow: "hidden" }}>
       {/* ---- Sort controls ---- */}
       <Stack
         direction="row"
@@ -288,7 +301,9 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
               }}
             >
               <AccordionSummary
-                expandIcon={<Iconify icon="mdi:chevron-down" width={20} />}
+                expandIcon={
+                  <Iconify icon="solar:alt-arrow-down-linear" width={20} />
+                }
               >
                 <Stack
                   direction="row"
@@ -367,30 +382,16 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
 
       {/* ---- Empty state ---- */}
       {!isLoading && sessions.length === 0 && (
-        <Stack alignItems="center" spacing={1.5} py={6}>
-          <Iconify
-            icon="mdi:group"
-            width={48}
-            sx={{ color: "text.disabled" }}
-          />
-          <Typography variant="h6" color="text.secondary">
-            No sessions found
-          </Typography>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            textAlign="center"
-            maxWidth={400}
-          >
-            Requests with session IDs appear here. Check that your gateway is
-            configured to capture session IDs.
-          </Typography>
-        </Stack>
+        <EmptyState
+          icon="solar:users-group-rounded-linear"
+          title="No sessions yet"
+          description="Requests with session IDs appear here. Check that your gateway captures session IDs."
+          sx={{ pt: 6, pb: 6 }}
+        />
       )}
 
       {/* ---- Pagination ---- */}
-      <TablePagination
-        component="div"
+      <TablePaginationCustom
         count={totalCount}
         page={page - 1}
         rowsPerPage={pageSize}
@@ -398,7 +399,7 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
       />
-    </Card>
+    </Section>
   );
 };
 

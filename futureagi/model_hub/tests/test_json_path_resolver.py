@@ -33,7 +33,7 @@ class TestParseJsonSafely:
             '```json\n{"a":1}\n```',
             'Here is the result: {"a":1}',
             '{"a":1} extra text',
-            "\ufeff{\"a\":1}",
+            '\ufeff{"a":1}',
             "[1,2,3] extra text",
         ]:
             data, ok = parse_json_safely(raw)

@@ -15,8 +15,8 @@ criteria: "You are evaluating how well the output follows the specific instructi
   \ direction but misses specific requirements. Score 1.0 if it precisely follows every instruction, format, and constraint.\n\
   \n## Inputs\n\n<output>{{output}}</output>\n\n<prompt>{{prompt}}</prompt>"
 eval_tags:
-- NLP Metrics
-- Output Validation
+- Instruction Following
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

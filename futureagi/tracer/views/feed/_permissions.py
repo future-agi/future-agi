@@ -61,3 +61,26 @@ def resolve_requested_project_ids(
     if str(requested_project_id) in accessible:
         return [str(requested_project_id)]
     return None
+
+
+def is_authorized_empty_feed_scope(request) -> bool:
+    """True when an empty project list means "this scope has no projects yet".
+
+    `get_accessible_project_ids` returns ``[]`` both for a request with no
+    organization and for a valid organization/workspace that simply has no
+    projects. The list and stats endpoints use this to tell the two apart
+    (TH-8209); the resolver itself and its other callers are unchanged.
+
+    Only the organization the authentication class resolved onto the request
+    counts. The resolver's ``user.organization`` fallback does not: a request
+    whose scope could not be established keeps the existing denial. When a
+    workspace was resolved it must belong to that organization. Workspace
+    membership itself was already enforced during authentication.
+    """
+    org = getattr(request, "organization", None)
+    if org is None:
+        return False
+    workspace = getattr(request, "workspace", None)
+    if workspace is not None and str(workspace.organization_id) != str(org.id):
+        return False
+    return True

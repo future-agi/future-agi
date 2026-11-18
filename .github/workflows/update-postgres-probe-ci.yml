@@ -1,0 +1,68 @@
+# Exercise the fixed read-only sizing probe against a real disposable
+# PostgreSQL 16, without booting a product stack or publishing.
+name: Update PostgreSQL probe
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "deploy/update/probes/standalone.py"
+      - "deploy/update/docker_host.py"
+      - "deploy/tests/test_update_standalone_state.py"
+      - "deploy/tests/test_update_postgres_native.py"
+      - "futureagi/uv.lock"
+      - ".github/workflows/update-postgres-probe-ci.yml"
+  push:
+    branches: [dev, main, diag/update-postgres-probe]
+    paths:
+      - "deploy/update/probes/standalone.py"
+      - "deploy/update/docker_host.py"
+      - "deploy/tests/test_update_standalone_state.py"
+      - "deploy/tests/test_update_postgres_native.py"
+      - "futureagi/uv.lock"
+      - ".github/workflows/update-postgres-probe-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-observer:
+    name: Native PostgreSQL 16 table-size contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ephemeral-update-probe-only
+          POSTGRES_DB: updater_probe
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres -d updater_probe"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the locked PostgreSQL client
+        # Matches futureagi/uv.lock; only a client, not the product dependency tree.
+        run: python -m pip install 'psycopg[binary]==3.3.2'
+      - name: Test actual SQL, identities, visibility and refusals
+        env:
+          FAGI_UPDATE_PG_NATIVE_TEST: "1"
+          PGHOST: "127.0.0.1"
+          PGPORT: ${{ job.services.postgres.ports[5432] }}
+          PGDATABASE: updater_probe
+          PGUSER: postgres
+          PGPASSWORD: ephemeral-update-probe-only
+        run: |
+          set -euo pipefail
+          python -B -m unittest discover -s deploy/tests -p 'test_update_postgres_native.py' -v

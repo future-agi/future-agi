@@ -17,7 +17,6 @@ import json
 
 import pytest
 
-from model_hub.models.evals_metric import EvalTemplate
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger
 
@@ -606,9 +605,7 @@ class TestFlattenEvalScoreIntoEntry:
         assert entry == {"cfg-1": 0.0}
 
     def test_choices_spread_into_flat_keys(self):
-        entry = self._flatten(
-            {"per_choice": {"neutral": 100.0, "joy": 0.0}}, "choices"
-        )
+        entry = self._flatten({"per_choice": {"neutral": 100.0, "joy": 0.0}}, "choices")
         assert entry == {"cfg-1**neutral": 100.0, "cfg-1**joy": 0.0}
 
     def test_error_marker_passthrough(self):
@@ -720,3 +717,10 @@ class TestTalkRatioBackendSplit:
         assert result["bot_talk_pct"] is None
         assert result["user_talk_pct"] is None
         assert result["talk_ratio"] is None
+
+    def test_zero_ratio_renders_zero_agent_percentage(self):
+        result = self._run({"call.talk_ratio": 0.0})
+        assert result["talk_ratio"] == 0.0
+        assert result["agent_talk_percentage"] == 0.0
+        assert result["bot_talk_pct"] == 0
+        assert result["user_talk_pct"] == 100

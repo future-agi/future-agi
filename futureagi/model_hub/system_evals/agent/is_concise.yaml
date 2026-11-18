@@ -14,8 +14,8 @@ criteria: "You are evaluating whether the output is concise and free from unnece
   \ communicates efficiently without unnecessary padding or tangents. Return 'Failed' if it is bloated with redundant phrases,\
   \ repeated points, or irrelevant information.\n\n## Inputs\n\n<output>{{output}}</output>"
 eval_tags:
-- NLP Metrics
-- Chatbot behaviors
+- Quality
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

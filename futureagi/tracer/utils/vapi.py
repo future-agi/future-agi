@@ -13,6 +13,7 @@ try:
 except ImportError:
     ConversationMetricsCalculator = None
 from simulate.temporal.utils.async_storage import convert_audio_url_to_s3_sync
+from tracer.utils.attribute_accessor import vapi_customer
 from tracer.utils.helper import flatten_dict
 
 logger = structlog.get_logger(__name__)
@@ -26,7 +27,9 @@ from tracer.utils.otel import (
     WorkflowAttributes,
 )
 
-metrics_calculator = ConversationMetricsCalculator() if ConversationMetricsCalculator else None
+metrics_calculator = (
+    ConversationMetricsCalculator() if ConversationMetricsCalculator else None
+)
 
 # The four Vapi recording OTel attribute keys that _extract_recording_urls writes.
 _VAPI_RECORDING_KEYS: list[str] = [
@@ -85,7 +88,7 @@ def _rehost_recording_urls_sync(
 
         # Derive url_type from the key tail (e.g. "mono.combined" -> "mono_combined")
         if key.startswith(prefix):
-            tail = key[len(prefix):]
+            tail = key[len(prefix) :]
         else:
             tail = key
         url_type = _VAPI_URL_TYPE_BY_KEY.get(tail)
@@ -112,9 +115,13 @@ def _rehost_recording_urls_sync(
     # Mirror S3 URLs onto flat consumer-facing aliases (in-place on eval_attributes)
     mono_s3 = s3_url_by_url_type.get("mono_combined")
     stereo_s3 = s3_url_by_url_type.get("stereo")
-    if mono_s3 and not VapiRecordingService.is_fagi_s3_url(eval_attributes.get("recording_url")):
+    if mono_s3 and not VapiRecordingService.is_fagi_s3_url(
+        eval_attributes.get("recording_url")
+    ):
         eval_attributes["recording_url"] = mono_s3
-    if stereo_s3 and not VapiRecordingService.is_fagi_s3_url(eval_attributes.get("stereo_recording_url")):
+    if stereo_s3 and not VapiRecordingService.is_fagi_s3_url(
+        eval_attributes.get("stereo_recording_url")
+    ):
         eval_attributes["stereo_recording_url"] = stereo_s3
 
     # Mirror to CallExecution / CallExecutionSnapshot (best-effort, import-guarded).
@@ -436,10 +443,11 @@ def _extract_common_call_fields(log: dict, eval_attributes: dict):
     # fall back to createdAt (always present) if startedAt is missing
     # (e.g. queued/scheduled calls).
     try:
-        start_key = "startedAt" if "startedAt" in log else "createdAt"
-        if start_key in log and "endedAt" in log:
-            start = datetime.fromisoformat(log[start_key].replace("Z", "+00:00"))
-            end = datetime.fromisoformat(log["endedAt"].replace("Z", "+00:00"))
+        start_value = log.get("startedAt") or log.get("createdAt")
+        end_value = log.get("endedAt")
+        if start_value and end_value:
+            start = datetime.fromisoformat(start_value.replace("Z", "+00:00"))
+            end = datetime.fromisoformat(end_value.replace("Z", "+00:00"))
             eval_attributes[CallAttributes.DURATION] = int(
                 (end - start).total_seconds()
             )
@@ -449,7 +457,7 @@ def _extract_common_call_fields(log: dict, eval_attributes: dict):
         eval_attributes[CallAttributes.DURATION] = None
 
     # participant_phone_number
-    customer = log.get("customer") or {}
+    customer = vapi_customer(log)
     eval_attributes[CallAttributes.PARTICIPANT_PHONE_NUMBER] = customer.get("number")
 
     # call_status (raw provider status)

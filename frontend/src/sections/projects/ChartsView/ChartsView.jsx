@@ -25,15 +25,22 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 import { Helmet } from "react-helmet-async";
 import ChartsGenerator from "./ChartsGenerator";
+import { isIncompleteCost } from "../LLMTracing/GraphSection/common";
+import { TracerProjectGetGraphDataResponse } from "src/generated/api-contracts/api.zod";
 import ChartsDateTimeRangePicker from "./ChartsDateTimeRangePicker";
 import EvaluationCharts from "./EvaluationCharts";
 import { useChartsViewContext } from "./ChartsViewProvider/ChartsViewContext";
 import { normalizeTimestamp } from "./ChartsViewProvider/common";
+import { latencyChartLabels } from "./common";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import TraceFilterPanel from "../LLMTracing/TraceFilterPanel";
 import FilterChips from "../LLMTracing/FilterChips";
 import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
+import {
+  AGGREGATION_PREPARING_MESSAGE,
+  getExactAggregationReadState,
+} from "src/utils/queryReadState";
 
 const DateRangeButtonOptions = [
   { title: "Hour", value: "hour" },
@@ -49,7 +56,6 @@ const metricUnits = {
 };
 
 const metricYLabels = {
-  latency: "Latency in (ms)",
   tokens: "Tokens",
   traffic: "Traffic in (spans)",
   cost: "Cost in ($)",
@@ -278,6 +284,7 @@ const ChartsView = () => {
   const {
     data: graphData,
     isLoading,
+    isError: graphError,
     refetch: refetchSystemMetrics,
     isRefetching: isRefetchingSystemMetrics,
   } = useQuery({
@@ -295,10 +302,28 @@ const ChartsView = () => {
     enabled: Boolean(observeId) && filters?.length > 0,
   });
 
+  const costCoverage = useMemo(() => {
+    const coverage = TracerProjectGetGraphDataResponse.shape.result.shape.cost_coverage.parse(
+      graphData?.result?.cost_coverage,
+    );
+    return new Map((coverage || []).map((point) => [point.timestamp, point]));
+  }, [graphData]);
+  const systemMetrics = graphData?.result?.system_metrics;
+  const latencyLabels = useMemo(
+    () => latencyChartLabels(graphData?.result?.system_metric_statistics),
+    [graphData],
+  );
+  const graphReadState = getExactAggregationReadState(systemMetrics, {
+    isError: graphError,
+  });
+  const graphReadMessage =
+    graphReadState === "complete" ? null : AGGREGATION_PREPARING_MESSAGE;
+
   const chartCategories = useMemo(() => {
     if (
-      graphData?.result?.system_metrics &&
-      Object.keys(graphData?.result?.system_metrics)?.length > 0
+      graphReadState === "complete" &&
+      systemMetrics &&
+      Object.keys(systemMetrics)?.length > 0
     ) {
       setIsData(true);
       return [
@@ -307,15 +332,15 @@ const ChartsView = () => {
           charts: [
             {
               id: "chart-1",
-              label: "Latency",
+              label: latencyLabels.label,
               unit: metricUnits?.latency,
-              yAxisLabel: metricYLabels?.latency,
+              yAxisLabel: latencyLabels.yAxisLabel,
               isEvaluationChart: false,
               series: [
                 {
-                  name: "Latency",
+                  name: latencyLabels.seriesName,
                   data:
-                    graphData?.result?.system_metrics?.latency?.map((item) => ({
+                    systemMetrics?.latency?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
                       y: item?.latency,
                     })) || [],
@@ -332,7 +357,7 @@ const ChartsView = () => {
                 {
                   name: "Tokens",
                   data:
-                    graphData?.result?.system_metrics?.tokens?.map((item) => ({
+                    systemMetrics?.tokens?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
                       y: item?.tokens,
                     })) || [],
@@ -349,7 +374,7 @@ const ChartsView = () => {
                 {
                   name: "Traffic",
                   data:
-                    graphData?.result?.system_metrics?.traffic?.map((item) => ({
+                    systemMetrics?.traffic?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
                       y: item?.traffic,
                     })) || [],
@@ -366,9 +391,10 @@ const ChartsView = () => {
                 {
                   name: "Cost",
                   data:
-                    graphData?.result?.system_metrics?.cost?.map((item) => ({
+                    systemMetrics?.cost?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
-                      y: item?.cost,
+                      y: isIncompleteCost(costCoverage.get(item.timestamp)) ? null : item?.cost,
+                      cost_coverage: costCoverage.get(item.timestamp),
                     })) || [],
                 },
               ],
@@ -379,7 +405,7 @@ const ChartsView = () => {
     }
 
     return [];
-  }, [graphData]);
+  }, [graphReadState, latencyLabels, systemMetrics, costCoverage]);
 
   const refreshGrid = useCallback(() => {
     queryClient.invalidateQueries({
@@ -443,17 +469,16 @@ const ChartsView = () => {
               variant="outlined"
               size="small"
               sx={{
-                px: 1.5,
                 bgcolor: isFilterOpen ? "action.hover" : "background.paper",
               }}
               onClick={handleFilterToggle}
               startIcon={
                 hasActiveFilter ? (
                   <Badge variant="dot" color="error" overlap="circular">
-                    <Iconify icon="mdi:filter-outline" width={16} />
+                    <Iconify icon="solar:filter-linear" width={16} />
                   </Badge>
                 ) : (
-                  <Iconify icon="mdi:filter-outline" width={16} />
+                  <Iconify icon="solar:filter-linear" width={16} />
                 )
               }
             >
@@ -474,9 +499,6 @@ const ChartsView = () => {
             <Button
               variant="outlined"
               size="small"
-              sx={{
-                px: 1.5,
-              }}
               disabled={isLoading}
               startIcon={
                 <SvgColor
@@ -564,6 +586,16 @@ const ChartsView = () => {
 
       {/* Chart Categories and Charts */}
       <Box sx={{ paddingTop: theme.spacing(3) }}>
+        {graphReadMessage && (
+          <Typography
+            role="status"
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: "block", mb: 1 }}
+          >
+            {graphReadMessage}
+          </Typography>
+        )}
         {isLoading ? (
           <>
             <Skeleton
