@@ -133,3 +133,91 @@ def test_a_graded_scenario_edit_needs_the_changes_to_definitions_it_names_and_a_
     ]
     renamed = {**_change("scenario", "refund-in-window", "changed"), "fields": ["name"]}
     assert depends_on(renamed, changes, SCENARIOS) == ["tool:issue_refund"]
+
+
+def _j(value):
+    import json
+
+    return json.dumps(value).encode()
+
+
+def test_a_whole_file_suite_index_and_each_scenario_change_need_each_other():
+    """Review round 1, B5: with scenarios.json reviewed as one file (an entry with no name), rejecting the removal of
+    scenario x while accepting the index would drop x from the saved suite. The two are decided together."""
+    from simulate.services.harness_versioning.review_items import compute_changes
+
+    default = {
+        "scenarios.json": _j([{"name": "a"}, {"name": "x"}, {"description": "orphan"}]),
+        "scenarios/a/scenario.json": _j({"name": "a"}),
+        "scenarios/x/scenario.json": _j({"name": "x"}),
+    }
+    draft = {
+        "scenarios.json": _j([{"name": "a"}, {"description": "orphan"}]),
+        "scenarios/a/scenario.json": _j({"name": "a"}),
+    }
+    changes = compute_changes(default, draft)
+    by_id = {one["id"]: one for one in changes}
+    assert set(by_id) == {"file:scenarios.json", "scenario:x"}
+
+    assert depends_on(by_id["file:scenarios.json"], changes, {}) == ["scenario:x"]
+    assert depends_on(by_id["scenario:x"], changes, {}) == ["file:scenarios.json"]
+
+
+def test_removing_a_tool_a_saved_scenario_sets_a_fault_on_needs_its_scenario_edit():
+    """Review round 1, SF11: a fault on the tool, or an actor brought in on it, makes the scenario name the tool."""
+    removal = _change("tool", "issue_refund", "removed")
+    edit = {**_change("scenario", "s1"), "fields": ["faults"]}
+    faulted = {
+        "s1": {
+            "name": "s1",
+            "faults": [{"action": "issue_refund", "mode": "timeout_before_commit"}],
+        }
+    }
+    on_tool = {
+        "s1": {
+            "name": "s1",
+            "actors": [
+                {
+                    "id": "manager",
+                    "trigger": {"kind": "on_tool", "tool": "issue_refund"},
+                }
+            ],
+        }
+    }
+
+    assert depends_on(removal, [removal, edit], {"s1": {"name": "s1"}}, faulted) == [
+        "scenario:s1"
+    ]
+    assert depends_on(removal, [removal, edit], {"s1": {"name": "s1"}}, on_tool) == [
+        "scenario:s1"
+    ]
+
+
+def test_removing_a_tool_an_actor_is_brought_in_on_needs_that_actor_s_edit():
+    """Review round 1, SF12: the saved actor joins on the tool; removing the tool needs the actor edit."""
+    from simulate.services.harness_versioning.review_items import compute_changes
+
+    tools = [{"name": "lookup"}, {"name": "issue_refund"}]
+    actor = {
+        "id": "manager",
+        "activation": {"trigger": {"kind": "on_tool", "tool": "issue_refund"}},
+    }
+    default = {
+        "contract.json": _j({"tools": tools}),
+        "actors.json": _j({"actors": [actor]}),
+    }
+    draft = {
+        "contract.json": _j({"tools": tools[:1]}),
+        "actors.json": _j(
+            {"actors": [{**actor, "activation": {"trigger": {"kind": "always"}}}]}
+        ),
+    }
+    changes = compute_changes(default, draft)
+    by_id = {one["id"]: one for one in changes}
+    assert set(by_id) == {"tool:issue_refund", "actor:manager"}
+
+    needed = depends_on(
+        by_id["tool:issue_refund"], changes, {}, {}, base_actors={"manager": actor}
+    )
+
+    assert needed == ["actor:manager"]

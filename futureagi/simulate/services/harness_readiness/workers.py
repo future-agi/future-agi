@@ -24,7 +24,8 @@ from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 
 BYPASS_CODE = "worker_channel_bypassed"
 _BYPASSES_SHOWN = 5
-_CALLS_READ = 50
+# How many flagged calls are read per report: enough to count every bypass of the recent runs.
+BYPASS_CALLS_READ = 500
 
 # Why ALK's run holds a case back (`worker-limits.json` `scenarios.<key>.cause`), as the reason a person reads.
 _CAUSE_REASONS = {
@@ -170,15 +171,23 @@ def _bypasses(calls: list[CallExecution]) -> dict[str, list[WorkerBypass]]:
 
 
 def recent_calls(runs: list[Any]) -> list[CallExecution]:
-    """The newest calls of the agent's recent runs, read once for every worker's evidence."""
+    """The calls of the agent's recent runs whose trial flagged a worker's bypass, newest first: read by the flag
+    itself, so a bypass is found however many calls came after it."""
     if not runs:
         return []
     return list(
         CallExecution.objects.filter(
             test_execution_id__in=HostedHarnessJob.no_workspace_objects.filter(
                 id__in=runs
-            ).values("test_execution_id")
-        ).order_by("-created_at")[:_CALLS_READ]
+            ).values("test_execution_id"),
+            **{
+                f"call_metadata__{TRIAL_STATE_KEY}__notices__contains": [
+                    {"code": BYPASS_CODE}
+                ]
+            },
+        )
+        .only("id", "test_execution_id", "call_metadata")
+        .order_by("-created_at")[:BYPASS_CALLS_READ]
     )
 
 

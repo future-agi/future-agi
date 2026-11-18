@@ -110,9 +110,9 @@ def children(declared: Any, runs: list[Any]) -> Reading:
     checks: list[EvidenceCheck] = [
         {
             "check": "stable_ids",
+            # Seen only once two runs show the same worker under one id; a single run shows nothing yet.
             "result": result(
-                any(a & b for i, a in enumerate(run_ids) for b in run_ids[i + 1 :]),
-                len(run_ids) > 1,
+                any(a & b for i, a in enumerate(run_ids) for b in run_ids[i + 1 :])
             ),
         },
         {
@@ -157,6 +157,15 @@ def children(declared: Any, runs: list[Any]) -> Reading:
         },
     ]
     at = calls[0].created_at.isoformat()
+    if not declared_ids:
+        # Workers the contract does not declare can be observed, never held to anything: not Supported.
+        return Reading(
+            "limited",
+            "workers_not_declared",
+            "Runs of this agent recorded workers its contract does not declare; declare them to check them.",
+            evidence=checks,
+            checked_at=at,
+        )
     unseen = [one["check"] for one in checks if one["result"] == "not_seen"]
     if not unseen and any(
         declared_ids <= _observed_ids(record) and _hand_offs_whole(record)

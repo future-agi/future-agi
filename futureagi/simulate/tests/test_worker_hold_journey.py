@@ -271,3 +271,70 @@ def test_a_bypass_alk_reports_holds_the_cases_relying_on_that_worker(
     chosen = runs.latest("created_at").payload["metadata"]["readiness_selection"]
     assert chosen["held_back"]["by"] == {"worker:refund": len(REFUND_KEYS)}
     assert chosen["reasons"] == {"worker:refund": refund["reason"]}
+
+
+def test_a_bypass_older_than_the_newest_calls_still_blocks_its_worker(
+    auth_client,
+    organization,
+    user,
+    workspace,
+    storage,
+    monkeypatch,
+    django_capture_on_commit_callbacks,
+):
+    """A trial flags a worker's bypass, then many more calls of the agent's runs come after it (the returns app's live
+    matrix): the worker still reads Blocked, since any recent run of the pairing saw it bypass."""
+    environment = _environment_with_workers(
+        user,
+        workspace,
+        storage,
+        monkeypatch,
+        "worker-bypass-old",
+        _sealed(
+            {
+                "present": True,
+                "surface": "tool_proxy",
+                "worker_deadlines": "per_worker",
+            },
+            held=False,
+        ),
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        started = _run(auth_client, environment, LOOKUP_KEYS, "worker-bypass-old-run")
+    assert started.status_code in (200, 201, 202), started.content
+    run = HostedHarnessJob.no_workspace_objects.filter(environment=environment).latest(
+        "created_at"
+    )
+    calls = list(CallExecution.objects.filter(test_execution_id=run.test_execution_id))
+    flagged = calls[0]
+    CallExecution.objects.filter(id=flagged.id).update(
+        call_metadata={
+            TRIAL_STATE_KEY: {
+                "notices": [
+                    {
+                        "code": "worker_channel_bypassed",
+                        "message": "Refund worker used the app's connection.",
+                        "workers": ["refund"],
+                    }
+                ]
+            }
+        }
+    )
+    # Sixty later calls of the same run, none of them flagged.
+    template = calls[-1]
+    for _ in range(60):
+        CallExecution.objects.create(
+            test_execution_id=template.test_execution_id,
+            scenario_id=template.scenario_id,
+            status=template.status,
+            simulation_call_type=template.simulation_call_type,
+            call_metadata={},
+        )
+
+    report = auth_client.get(f"{BASE}/{environment.id}/capabilities/").json()
+
+    refund = next(one for one in report["workers"] if one["worker_id"] == "refund")
+    assert (refund["status"], refund["bypassed_count"]) == ("blocked", 1)
+    assert refund["bypassed"] == [
+        {"run_id": str(run.test_execution_id), "call_execution_id": str(flagged.id)}
+    ]
