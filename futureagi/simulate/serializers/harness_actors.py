@@ -10,7 +10,11 @@ from rest_framework.exceptions import ErrorDetail
 
 from model_hub.serializers.contracts import JsonObjectRequestField
 from simulate.services.harness_actor_labels import choice_labels
-from simulate.services.harness_actor_rules import LIMIT_FIELDS, UPLOAD_KINDS
+from simulate.services.harness_actor_rules import (
+    FILE_ROLES,
+    LIMIT_FIELDS,
+    UPLOAD_KINDS,
+)
 from simulate.services.harness_actor_validation import (
     ACTOR_RECORD_MAX_CHARS,
     Problem,
@@ -602,6 +606,11 @@ class HarnessWorldActionSerializer(serializers.Serializer):
 class HarnessActorKnowledgeSourcesSerializer(serializers.Serializer):
     files = serializers.ListField(child=serializers.CharField())
     records = HarnessActorRecordSourceSerializer(many=True)
+    roles = serializers.DictField(
+        child=serializers.ChoiceField(choices=FILE_ROLES),
+        required=False,
+        help_text="Each attached file's role, by path. An evaluator-only file is never among `files`.",
+    )
 
 
 class HarnessActorUnresolvedSerializer(serializers.Serializer):
@@ -676,6 +685,22 @@ class HarnessEnvironmentFileUploadSerializer(serializers.Serializer):
         choices=tuple(UPLOAD_KINDS),
         help_text="What the file is for: `knowledge`, a document an actor may be given to read.",
     )
+    expected_revision = serializers.IntegerField(min_value=0, required=False)
+    role = serializers.ChoiceField(
+        choices=FILE_ROLES,
+        required=False,
+        help_text=(
+            "The file's role: `policy` (a policy or reference), `seed_records` (records the world starts with) or "
+            "`evaluator_only` (kept from the agent and every actor). Left out, the file has no role."
+        ),
+    )
+
+
+class HarnessEnvironmentFileRoleSerializer(serializers.Serializer):
+    path = serializers.CharField(
+        max_length=255, help_text="The attached file, as the knowledge sources list it."
+    )
+    role = serializers.ChoiceField(choices=FILE_ROLES)
     expected_revision = serializers.IntegerField(min_value=0, required=False)
 
 

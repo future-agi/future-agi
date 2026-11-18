@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from simulate.models import HostedHarnessJob
 from simulate.selectors.stage_outputs import stage_output
@@ -104,6 +104,8 @@ class KnowledgeSources(TypedDict):
 
     files: list[str]
     records: list[RecordSource]
+    # Each attached file's role, by path; an evaluator-only file is never among `files`.
+    roles: dict[str, str]
 
 
 def text_of(value: object) -> str:
@@ -194,8 +196,47 @@ def _rules_before_declared() -> ActorRules:
 
 
 def actor_rules(files: dict[str, bytes]) -> ActorRules:
-    """The actor rules of the release that sealed these files."""
-    return read_json(files, ACTOR_RULES_FILE) or _rules_before_declared()
+    """The actor rules of the release that sealed these files, with every attached file marked evaluator-only in
+    `knowledge/roles.json` among the files only the evaluator reads (the harness adds them the same way at seal)."""
+    rules = read_json(files, ACTOR_RULES_FILE) or _rules_before_declared()
+    hidden = [
+        path.rsplit("/", 1)[-1]
+        for path, role in file_roles(files).items()
+        if role == "evaluator_only"
+    ]
+    if not hidden:
+        return rules
+    evaluator_only = dict(rules.get("evaluator_only") or {})
+    evaluator_only["files"] = sorted({*(evaluator_only.get("files") or []), *hidden})
+    return cast(ActorRules, {**rules, "evaluator_only": evaluator_only})
+
+
+# Each attached file's role, by its path under `knowledge/`: what the harness seals it as.
+KNOWLEDGE_ROLES = "knowledge/roles.json"
+FileRole = Literal["policy", "seed_records", "evaluator_only"]
+FILE_ROLES: tuple[FileRole, ...] = ("policy", "seed_records", "evaluator_only")
+
+
+def file_roles(files: dict[str, bytes]) -> dict[str, FileRole]:
+    """Each attached file's role from `knowledge/roles.json`. A role the platform does not know reads
+    evaluator-only, as the harness keeps such a file hidden; a path outside `knowledge/` is left out, and a file
+    that is not a JSON object is no roles."""
+    try:
+        body = json.loads(files.get(KNOWLEDGE_ROLES) or b"null")
+    except ValueError:
+        # Not JSON: no roles, every file as before, as the harness reads it.
+        body = None
+    roles: dict[str, FileRole] = {}
+    for path, role in body.items() if isinstance(body, dict) else []:
+        name = str(path)
+        if (
+            not name.startswith("knowledge/")
+            or ".." in name.split("/")
+            or name == KNOWLEDGE_ROLES
+        ):
+            continue
+        roles[name] = role if role in FILE_ROLES else "evaluator_only"
+    return roles
 
 
 def value_at(record: ActorRecord, path: str) -> Any:
@@ -322,6 +363,7 @@ def knowledge_sources(
             name for name in environment_files if readable_file(name, rules)
         ),
         "records": records,
+        "roles": dict(sorted(file_roles(environment_files).items())),
     }
 
 

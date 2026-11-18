@@ -15,10 +15,12 @@ from simulate.services.harness_actor_rules import (
     UPLOAD_KINDS,
     UPLOAD_MAX_BYTES,
     ActorRecord,
+    FileRole,
     actor_rules,
     cast_records,
     readable_file,
 )
+from simulate.services.harness_file_roles import with_role
 from simulate.services.hosted_harness import HostedHarnessError
 
 if TYPE_CHECKING:
@@ -35,6 +37,7 @@ def upload_environment_file(
     content: bytes,
     user: User | None,
     expected_revision: int | None,
+    role: FileRole | None = None,
 ) -> tuple[Cast, str]:
     """Put one uploaded file into the environment draft and return the cast and the stored path.
 
@@ -78,9 +81,11 @@ def upload_environment_file(
         )
     if path in environment_files:
         raise _taken(base, path, cast_records(environment_files))
-    cast = written_cast(
-        environment, {**environment_files, path: content}, suite_files, refs, user
-    )
+    files = {**environment_files, path: content}
+    if role is not None:
+        # The file's role is written with it, so an evaluator-only file is never visible to actors, even briefly.
+        files = with_role(files, path, role)
+    cast = written_cast(environment, files, suite_files, refs, user)
     return cast, path
 
 

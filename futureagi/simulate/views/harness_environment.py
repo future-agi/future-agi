@@ -48,6 +48,7 @@ from simulate.serializers.harness_actors import (
     HarnessActorViewQuerySerializer,
     HarnessActorViewSerializer,
     HarnessActorWriteSerializer,
+    HarnessEnvironmentFileRoleSerializer,
     HarnessEnvironmentFileUploadedSerializer,
     HarnessEnvironmentFileUploadSerializer,
     editor_problems,
@@ -121,6 +122,7 @@ from simulate.services import (
     harness_actor_validation,
     harness_actor_view,
     harness_actors,
+    harness_file_roles,
 )
 from simulate.services.evidence_import import (
     TranscriptInput,
@@ -765,8 +767,33 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             content=upload.read(UPLOAD_MAX_BYTES + 1),
             user=request.user,
             expected_revision=data.get("expected_revision"),
+            role=data.get("role"),
         )
         return Response({**cast, "uploaded_path": path})
+
+    @action(detail=True, methods=["post"], url_path="files/role")
+    @validated_request(
+        request_serializer=HarnessEnvironmentFileRoleSerializer,
+        responses={200: HarnessActorListSerializer},
+        operation_id="simulate_api_harness-environments_file_role",
+    )
+    def file_role(self, request, pk=None):
+        """Give one attached file its role in the environment's draft: a policy, seed records, or evaluator-only
+        (kept from the agent and every actor)."""
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        data = request.validated_data
+        return Response(
+            harness_file_roles.set_file_role(
+                job,
+                path=data["path"],
+                role=data["role"],
+                user=request.user,
+                expected_revision=data.get("expected_revision"),
+            )
+        )
 
     def _actor_edit(self, request, pk, *, op, actor_id=None):
         version_reads.require_versioning()
