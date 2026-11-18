@@ -1,4 +1,5 @@
 import traceback
+from typing import Any
 
 from django.db.models import Prefetch
 from django.http import Http404
@@ -73,7 +74,7 @@ class CallTranscriptView(APIView):
 
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 
-            rows = CallTranscriptSerializer(transcripts, many=True).data
+            rows: Any = CallTranscriptSerializer(transcripts, many=True).data
             if rows:
                 rows = SpeakerRoleResolver.align_transcript_rows(
                     rows,
@@ -152,7 +153,7 @@ class TestExecutionTranscriptsView(APIView):
                 ]
                 transcripts.sort(key=lambda x: x.start_time_ms)
 
-                rows = CallTranscriptSerializer(transcripts, many=True).data
+                rows: Any = CallTranscriptSerializer(transcripts, many=True).data
                 if rows:
                     rows = SpeakerRoleResolver.align_transcript_rows(
                         rows,
@@ -164,7 +165,7 @@ class TestExecutionTranscriptsView(APIView):
                         ),
                     )
 
-                call_data = {
+                call_data: dict[str, Any] = {
                     "call_execution_id": str(call_execution.id),
                     "phone_number": call_execution.phone_number,
                     "status": call_execution.status,
