@@ -511,6 +511,8 @@ class RouteCell(TypedDict):
     step: int | None
     steps: list[int]
     count: int
+    # Each occurrence's own state, in the order the trial took them.
+    states: list[RouteCellState]
 
 
 class RouteTrial(TypedDict):
@@ -525,6 +527,7 @@ class RouteTrial(TypedDict):
 class RouteSplitGroup(TypedDict):
     state: RouteCellState
     count: int
+    states: list[RouteCellState]
     trials: list[int]
 
 

@@ -5103,3 +5103,185 @@ def test_a_span_store_that_cannot_be_reached_never_loses_a_sealed_record(
     stored = call.call_metadata[harness_workers.WORKERS_KEY]
     assert stored == timeline and stored["collection"] == "complete"
     assert any(one["type"] == "delegated" for one in stored["events"])
+
+
+class _ClosingFails(_Reader):
+    def close(self):
+        raise TimeoutError("clickhouse timed out")
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("fails_at", ["creating the client", "closing it"])
+def test_a_span_reader_that_fails_to_open_or_close_never_loses_a_sealed_record(
+    user, workspace, storage, settings, fails_at
+):
+    """The trace list answers but the span store times out when its client is made, or when it is closed: the call's
+    sealed worker events are still its record, and the read still says it ran."""
+    from unittest.mock import patch
+
+    from simulate.models import CallExecution
+    from simulate.services import harness_workers
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(
+        _environment(user, workspace, f"workers-rd-{fails_at[:5]}", storage), key="r"
+    )
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    handed = {
+        "type": "delegated",
+        "id": "ev-1",
+        "worker_id": "refund",
+        "by": "Returns coordinator",
+        "relationship": "observed",
+        "at": 1_763_000_000.0,
+    }
+    CallExecution.objects.filter(id=call.id).update(
+        provider_call_data={
+            "livekit": {
+                "tool_calls": [
+                    {
+                        "name": "refund",
+                        "arguments": {"input": "refund order 1042"},
+                        "ok": True,
+                        "at": 1_763_000_000.0,
+                        "worker_id": "Returns coordinator",
+                        "delegated_to": "refund",
+                        "worker_events": [
+                            handed,
+                            {**handed, "type": "returned", "status": "ok"},
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+    reader = (
+        {"side_effect": TimeoutError("clickhouse timed out")}
+        if fails_at == "creating the client"
+        else {"return_value": _ClosingFails(SPANS)}
+    )
+
+    with (
+        patch(
+            "simulate.services.harness_workers.list_run_traces", return_value=_traced()
+        ),
+        patch("simulate.services.harness_workers.get_reader", **reader),
+    ):
+        timeline = harness_workers.record_call_workers(str(call.id))
+
+    call.refresh_from_db()
+    stored = call.call_metadata[harness_workers.WORKERS_KEY]
+    assert stored == timeline and stored["collection"] == "complete"
+    assert any(one["type"] == "delegated" for one in stored["events"])
+
+
+@pytest.mark.django_db
+def test_a_failed_dispatch_during_a_rerun_never_marks_the_new_attempt_unreadable(
+    user, workspace, storage, settings
+):
+    """Attempt 1's read fails to enqueue, and the user reruns the call between reading the attempt and noting the
+    failure: the failure belongs to attempt 1, so attempt 2 never reads as unreadable."""
+    from unittest.mock import patch
+
+    from simulate.models import CallExecution
+    from simulate.services import harness_workers
+    from simulate.services.call_rerun import clear_call_for_rerun
+    from simulate.tasks import alk_sim
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-dispatch", storage), key="d")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+
+    def rerun_then_fail(*args, **kwargs):
+        clear_call_for_rerun(
+            CallExecution.objects.get(id=call.id), clear_metadata=False
+        )
+        raise ConnectionError("broker unreachable")
+
+    with patch.object(
+        alk_sim.record_call_workers, "apply_async", side_effect=rerun_then_fail
+    ):
+        alk_sim.dispatch_worker_read(call.id)
+
+    call.refresh_from_db()
+    assert harness_workers.attempt_reset(call.id) is not None
+    assert harness_workers.READ_KEY not in call.call_metadata
+
+
+@pytest.mark.django_db
+def test_an_attempt_rerun_before_its_first_read_keeps_its_turns_from_the_snapshot(
+    user, workspace, storage, settings, auth_client
+):
+    """A two-turn attempt rerun before its read ran: its hand-off was made after the caller's second message, so the
+    record built from its snapshot puts it in turn 2 with that turn's request and reply, read from the transcript the
+    snapshot kept (the call's own rows now belong to the new attempt)."""
+    from datetime import UTC, datetime
+
+    from simulate.models import CallExecution, CallTranscript
+    from simulate.models.test_execution import CallExecutionSnapshot
+    from simulate.services.call_rerun import clear_call_for_rerun
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(
+        _environment(user, workspace, "workers-early-turns", storage), key="t"
+    )
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    start = 1_763_000_000.0
+    handed = {
+        "type": "delegated",
+        "id": "ev-1",
+        "worker_id": "refund",
+        "by": "Returns coordinator",
+        "relationship": "observed",
+        "at": start + 30,
+    }
+    sealed = {
+        "name": "refund",
+        "arguments": {"input": "refund order 1042"},
+        "ok": True,
+        "at": start + 30,
+        "start_time_ms": 30_000,
+        "worker_id": "Returns coordinator",
+        "delegated_to": "refund",
+        "worker_events": [
+            handed,
+            {**handed, "type": "returned", "status": "ok", "at": start + 35},
+        ],
+    }
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.COMPLETED,
+        started_at=datetime.fromtimestamp(start, tz=UTC),
+        provider_call_data={"livekit": {"tool_calls": [sealed]}},
+    )
+    for role, text, offset in (
+        ("user", "Hi, I need help with an order", 1_000),
+        ("assistant", "Sure, which order?", 5_000),
+        ("user", "Refund order 1042 please", 20_000),
+        ("assistant", "Your refund is issued", 40_000),
+    ):
+        CallTranscript.objects.create(
+            call_execution=call, speaker_role=role, content=text, start_time_ms=offset
+        )
+    call.refresh_from_db()
+
+    clear_call_for_rerun(call, clear_metadata=False)
+    snapshot = CallExecutionSnapshot.objects.get(call_execution=call)
+    body = auth_client.get(
+        f"/simulate/v3/call-executions/{call.id}/workers/",
+        {"attempt": str(snapshot.id)},
+    ).json()
+
+    # The call's start, from the clock the sealed tool calls count from.
+    assert datetime.fromisoformat(body["started_at"]).timestamp() == start
+    handoff = next(one for one in body["steps"] if one["kind"] == "handoff")
+    assert handoff["turn"] == 2
+    second = next(one for one in body["turns"] if one["turn"] == 2)
+    assert second["request"]["text"] == "Refund order 1042 please"
+    assert second["response"]["text"] == "Your refund is issued"
+    assert second["handoffs"] == [handoff["key"]]

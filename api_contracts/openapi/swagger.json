@@ -166984,7 +166984,8 @@
                 "state",
                 "step",
                 "steps",
-                "count"
+                "count",
+                "states"
             ],
             "type": "object",
             "properties": {
@@ -167016,6 +167017,21 @@
                 "count": {
                     "title": "Count",
                     "type": "integer"
+                },
+                "states": {
+                    "description": "Each occurrence's own state, in the order the trial took them.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "step",
+                            "failed",
+                            "no_answer",
+                            "cut_off",
+                            "repeated",
+                            "absent"
+                        ]
+                    }
                 }
             },
             "x-nullable": true
@@ -167153,6 +167169,7 @@
             "required": [
                 "state",
                 "count",
+                "states",
                 "trials"
             ],
             "type": "object",
@@ -167172,6 +167189,21 @@
                 "count": {
                     "title": "Count",
                     "type": "integer"
+                },
+                "states": {
+                    "description": "Each occurrence's own state, in order; trials split when these differ.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "step",
+                            "failed",
+                            "no_answer",
+                            "cut_off",
+                            "repeated",
+                            "absent"
+                        ]
+                    }
                 },
                 "trials": {
                     "type": "array",
