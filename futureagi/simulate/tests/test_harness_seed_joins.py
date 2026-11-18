@@ -96,3 +96,30 @@ def test_only_the_cases_citing_the_broken_file_are_held(
     assert not runnable(views[citing])
     assert all(views[key]["reason"] != "broken_join" for key in views if key != citing)
     assert harness_scenario_lifecycle.REASON_TEXTS["broken_join"]
+
+
+def test_an_archive_is_streamed_once_for_its_joins_and_remembered(monkeypatch):
+    from types import SimpleNamespace
+
+    from django.core.cache import cache
+
+    cache.clear()
+    files = _files([{"id": "R-2", "order_id": "O-999"}])
+    reads = []
+
+    def file_bodies(version, paths):
+        reads.append(set(paths))
+        return {path: files[path] for path in paths if path in files}
+
+    monkeypatch.setattr(harness_seed_joins, "file_bodies", file_bodies)
+    version = SimpleNamespace(
+        archive_object_key="harness-sealed/once.tar.gz",
+        documents={"file_digests": dict.fromkeys(files, "sha256:x")},
+    )
+
+    first = harness_seed_joins.environment_broken_joins(version, {REFUNDS})
+    again = harness_seed_joins.environment_broken_joins(version, {REFUNDS})
+
+    assert len(reads) == 1
+    assert first == again and first
+    cache.clear()

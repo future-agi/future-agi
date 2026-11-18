@@ -10,11 +10,14 @@ pointing at a file that is not attached is not checked: nothing says where its r
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import PurePosixPath
+
+from django.core.cache import cache
 
 from simulate.services.harness_actor_rules import KNOWLEDGE_ROLES, file_roles
 from simulate.services.harness_scenario_sources import file_bodies
@@ -24,6 +27,8 @@ JOIN_SUFFIX = "_id"
 ROW_ID = "id"
 # How many broken rows a reason names before it counts the rest.
 SHOWN = 3
+# How long an archive's broken joins are remembered; the archive itself never changes.
+JOINS_TTL_SECONDS = 7 * 24 * 3600
 SEED_FORMATS = (".csv", ".json")
 
 
@@ -98,20 +103,49 @@ def broken_joins(files: Mapping[str, bytes]) -> dict[str, list[BrokenJoin]]:
 def environment_broken_joins(
     version: object, cited: set[str]
 ) -> dict[str, list[BrokenJoin]]:
-    """The broken joins of the seed files a version attaches, read only when a case cites an attached file."""
-    if not cited:
+    """The broken joins of the seed files a version attaches, read only when a case cites an attached file. The
+    archive is streamed once, for the roles file and every file that could hold seed rows (named by the version's
+    file digests), and what it holds is remembered by the archive, which never changes."""
+    archive = getattr(version, "archive_object_key", None)
+    if not cited or not archive:
         return {}
-    roles = file_bodies(version, {KNOWLEDGE_ROLES})
-    if not roles:
-        return {}
-    seeds = [
+    remembered = cache.get(_cache_key(archive))
+    if isinstance(remembered, dict):
+        return {
+            path: [BrokenJoin(**one) for one in joins]
+            for path, joins in remembered.items()
+        }
+    digests = (getattr(version, "documents", None) or {}).get("file_digests") or {}
+    candidates = {
         path
-        for path, role in file_roles(roles).items()
-        if role == "seed_records" and path.endswith(SEED_FORMATS)
-    ]
-    if not seeds:
-        return {}
-    return broken_joins({**roles, **file_bodies(version, set(seeds))})
+        for path in digests
+        if isinstance(path, str)
+        and path.startswith("knowledge/")
+        and path.endswith(SEED_FORMATS)
+    }
+    files = file_bodies(version, {KNOWLEDGE_ROLES, *candidates})
+    if KNOWLEDGE_ROLES in files:
+        # A seed file the digests did not name (a version saved before they were kept) is read in a second pass.
+        unread = {
+            path
+            for path, role in file_roles(files).items()
+            if role == "seed_records"
+            and path.endswith(SEED_FORMATS)
+            and path not in files
+        }
+        if unread:
+            files = {**files, **file_bodies(version, unread)}
+    found = broken_joins(files) if KNOWLEDGE_ROLES in files else {}
+    cache.set(
+        _cache_key(archive),
+        {path: [asdict(one) for one in joins] for path, joins in found.items()},
+        timeout=JOINS_TTL_SECONDS,
+    )
+    return found
+
+
+def _cache_key(archive: str) -> str:
+    return "harness-seed-joins:v1:" + hashlib.sha256(archive.encode()).hexdigest()
 
 
 def broken_join_text(joins: list[BrokenJoin]) -> str:
