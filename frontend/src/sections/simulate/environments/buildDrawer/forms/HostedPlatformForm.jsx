@@ -2,15 +2,24 @@ import PropTypes from "prop-types";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import PanelHostedPlatform from "../../panels/PanelHostedPlatform";
 
-const PRESETS = {
-  vapi: { agentType: AGENT_TYPES.VOICE, platform: "vapi" },
-  retell: { agentType: AGENT_TYPES.VOICE, platform: "retell" },
-  livekit: { agentType: AGENT_TYPES.VOICE, platform: "livekit" },
-  phone: { agentType: AGENT_TYPES.VOICE, platform: "other" },
+const PLATFORM_BY_TYPE = {
+  vapi: { [AGENT_TYPES.VOICE]: "vapi" },
+  retell: { [AGENT_TYPES.VOICE]: "retell", [AGENT_TYPES.CHAT]: "retell_chat" },
+  livekit: { [AGENT_TYPES.VOICE]: "livekit" },
+  phone: { [AGENT_TYPES.VOICE]: "other" },
 };
 
-export default function HostedPlatformForm({ item }) {
-  return <PanelHostedPlatform key={item?.id} preset={PRESETS[item?.id]} />;
+export default function HostedPlatformForm({ item, onBusyChange }) {
+  return (
+    <PanelHostedPlatform
+      key={item?.id}
+      platformByType={PLATFORM_BY_TYPE[item?.id]}
+      onBusyChange={onBusyChange}
+    />
+  );
 }
 
-HostedPlatformForm.propTypes = { item: PropTypes.object };
+HostedPlatformForm.propTypes = {
+  item: PropTypes.object,
+  onBusyChange: PropTypes.func,
+};

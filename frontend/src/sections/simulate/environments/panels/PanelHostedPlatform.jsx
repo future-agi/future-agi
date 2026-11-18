@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useReducer } from "react";
+import { useEffect, useReducer } from "react";
 import { Box, Stack, Typography } from "@mui/material";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import Field from "../components/Field";
@@ -52,11 +52,22 @@ function reducer(s, a) {
   return { ...s, [a.field]: value };
 }
 
-export default function PanelHostedPlatform({ preset }) {
-  const [form, dispatch] = useReducer(reducer, preset, (p) =>
-    p ? { ...initial, ...p } : initial,
+export default function PanelHostedPlatform({ platformByType, onBusyChange }) {
+  const lockedTypes = platformByType ? Object.keys(platformByType) : null;
+  const [form, dispatch] = useReducer(reducer, lockedTypes, (types) =>
+    types?.length
+      ? {
+          ...initial,
+          agentType: types[0],
+          platform: platformByType[types[0]],
+        }
+      : initial,
   );
   const build = usePanelBuild();
+  useEffect(() => {
+    onBusyChange?.(build.committing);
+  }, [build.committing, onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
   const { canEdit } = useSimulationAccess();
   // Any edit invalidates a prior preflight result, so re-disable Build.
   const set = (field) => (value) => {
@@ -78,7 +89,9 @@ export default function PanelHostedPlatform({ preset }) {
   /* When agent type flips, snap to the first platform of the new type and clear
      the credentials so we do not carry a key into another provider's form. */
   const pickAgentType = (nextType) => {
-    const first = (HOSTED_PLATFORMS_BY_TYPE[nextType] || [])[0];
+    const first = platformByType
+      ? { id: platformByType[nextType] }
+      : (HOSTED_PLATFORMS_BY_TYPE[nextType] || [])[0];
     set("agentType")(nextType);
     set("platform")(first?.id || "");
     set("id")("");
@@ -149,11 +162,22 @@ export default function PanelHostedPlatform({ preset }) {
   });
 
   return (
-    <Stack spacing={1.5} sx={{ p: 1.5 }}>
+    <Stack
+      spacing={1.5}
+      useFlexGap={!!platformByType}
+      sx={
+        platformByType
+          ? { px: 2.5, pt: 2.5, pb: 0, minHeight: "100%" }
+          : { p: 1.5 }
+      }
+    >
+      {(!lockedTypes || lockedTypes.length > 1) && (
       <Box>
         <Label>Agent type</Label>
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
-          {ENTRY_AGENT_TYPES.map((t) => (
+          {ENTRY_AGENT_TYPES.filter(
+            (t) => !lockedTypes || lockedTypes.includes(t.id),
+          ).map((t) => (
             <ChipCard
               key={t.id}
               icon={t.icon}
@@ -165,6 +189,8 @@ export default function PanelHostedPlatform({ preset }) {
           ))}
         </Box>
       </Box>
+      )}
+      {!platformByType && (
       <Box>
         <Label>Platform</Label>
         {platforms.length === 0 ? (
@@ -189,6 +215,7 @@ export default function PanelHostedPlatform({ preset }) {
           </Box>
         )}
       </Box>
+      )}
       {chosen && (
         <>
           {isOther ? (
@@ -298,14 +325,13 @@ export default function PanelHostedPlatform({ preset }) {
         busy={build.committing}
         hint={!canEdit ? WORKSPACE_COPY.viewer.create : build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
         onClick={build.commitBuild}
+        sticky={!!platformByType}
       />
     </Stack>
   );
 }
 
 PanelHostedPlatform.propTypes = {
-  preset: PropTypes.shape({
-    agentType: PropTypes.string,
-    platform: PropTypes.string,
-  }),
+  platformByType: PropTypes.objectOf(PropTypes.string),
+  onBusyChange: PropTypes.func,
 };

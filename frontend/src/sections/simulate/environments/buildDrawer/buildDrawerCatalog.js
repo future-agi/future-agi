@@ -216,7 +216,7 @@ const ALL_CATALOG_ITEMS = [
     { logo: "vapi" },
     "Add your Vapi API key, then pick the assistant · Voice and chat",
     "voice phone assistant",
-    { panel: "hosted", preset: { voice: "vapi", chat: null } },
+    { panel: "hosted", flush: true, preset: { voice: "vapi", chat: null } },
   ),
   hosted(
     "retell",
@@ -225,7 +225,11 @@ const ALL_CATALOG_ITEMS = [
     { logo: "retell" },
     "Add your Retell AI API key, then pick the agent · Voice and chat",
     "voice phone chat agent",
-    { panel: "hosted", preset: { voice: "retell", chat: "retell_chat" } },
+    {
+      panel: "hosted",
+      flush: true,
+      preset: { voice: "retell", chat: "retell_chat" },
+    },
   ),
   hosted(
     "elevenlabs",
@@ -291,7 +295,7 @@ const ALL_CATALOG_ITEMS = [
     logo: "livekit",
     keywords: "voice webrtc server",
     channels: ["voice"],
-    setup: { panel: "livekit", title: "LiveKit" },
+    setup: { panel: "livekit", title: "LiveKit", flush: true },
   },
   {
     id: "running",
@@ -311,7 +315,7 @@ const ALL_CATALOG_ITEMS = [
     icon: "solar:phone-calling-rounded-linear",
     keywords: "call telephone pstn voice",
     channels: ["voice"],
-    setup: { panel: "phone" },
+    setup: { panel: "phone", flush: true },
   },
   closed(
     "sierra",
