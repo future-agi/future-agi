@@ -1738,19 +1738,17 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         )
         if not failed.exists():
             return self._gm.bad_request("No rows failed.")
-        # Only a confirmed live workflow can take these rows without a restart.
-        running = False
-        if task.status in ACTIVE:
-            gone = _workflow_gone(task)
-            if gone is None:
-                return self._gm.custom_error_response(
-                    503, "The run's status couldn't be checked. Try again shortly."
-                )
-            running = not gone
-        if not running and (refused := self._replacement_refusal(task, run)):
-            return refused
-        if not running and (busy := self._busy(request, task)):
-            return busy
+        # Even a completed task snapshot may have a live workflow draining it.
+        gone = _workflow_gone(task)
+        if gone is None:
+            return self._gm.custom_error_response(
+                503, "The run's status couldn't be checked. Try again shortly."
+            )
+        if gone:
+            if refused := self._replacement_refusal(task, run):
+                return refused
+            if busy := self._busy(request, task):
+                return busy
         # Checked again: the key may have gone since the run started.
         if missing := _jev_key_missing(self._gm, task.project, _questions(task)):
             return missing
@@ -1763,7 +1761,7 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         from tracer.services.instant_eval_answers import forget_answers
 
         with transaction.atomic():
-            if not running and (busy := self._busy_locked(request, task)):
+            if gone and (busy := self._busy_locked(request, task)):
                 return busy
             ids = list(failed.values_list("id", flat=True))
             retried = failed.update(
@@ -1782,9 +1780,10 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
                     answers_version=F("answers_version") + 1
                 )
             # A run still draining claims the requeued rows itself.
-            if not running:
+            if gone:
                 self._restart(task)
-        return self._restarted(task, f"Retrying {retried:,} answers.", retried=retried)
+        respond = self._restarted if gone else self._ok
+        return respond(task, f"Retrying {retried:,} answers.", retried=retried)
 
     def _replacement_refusal(self, task, run):
         """Retry failed and Read more replace the existing run. Only suggest
