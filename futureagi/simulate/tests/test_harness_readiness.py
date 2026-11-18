@@ -21,6 +21,7 @@ from simulate.serializers.harness_environment import (
 )
 from simulate.services import harness_readiness
 from simulate.services.agent_setup import store_agent
+from simulate.services.harness_readiness import catalogue as catalogue_module
 from simulate.services.harness_readiness import evidence as evidence_module
 from simulate.services.harness_readiness import report as report_module
 from simulate.services.harness_versioning import archives, assembly
@@ -45,7 +46,7 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
 )
 from simulate.tests.test_harness_versioning_runs import _run
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 BASE = "/simulate/api/harness-environments"
 PASSED = {
@@ -91,14 +92,6 @@ OWN_TOOLS_SERVICE = {
 }
 
 
-@pytest.fixture(autouse=True)
-def readiness_on(settings):
-    settings.HARNESS_VERSIONING_ENABLED = True
-    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
-    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example"
-    cache.clear()
-
-
 def _environment(user, workspace, storage, key):
     """Legacy A1 is the default; its pairing with E1 and S1 is certified."""
     environment = _agent_env(user, workspace, key, storage, body=_sealed_authoring())
@@ -142,11 +135,13 @@ def _certify(
     warnings=(),
     routed=None,
     unobserved=(),
+    sealed=None,
 ):
     """Make the pairing of ``agent`` (the default when absent) with the defaults, or
     ``pairing``, a certified bundle holding this certificate, these per-tool and
     per-action files, the tools ``routed`` to the world in qualification (by default
-    each tool whose probe passed or was refused) and these warnings."""
+    each tool whose probe passed or was refused), these warnings and any other
+    ``sealed`` files, by archive path."""
     pairing = pairing or _pairing(environment, agent)
     if routed is None:
         routed = [
@@ -181,6 +176,9 @@ def _certify(
                 if routed
                 else {}
             ),
+            **{
+                path: json.dumps(body).encode() for path, body in (sealed or {}).items()
+            },
         }
     )
     HarnessAssembledBundle._base_manager.update_or_create(
@@ -1048,7 +1046,10 @@ class TestApi:
             "rules_version",
             "computed_at",
             "selection",
+            "workers",
         }
+        # A single agent declares no workers: no worker rows.
+        assert body["workers"] == []
         assert set(body["selection"]) == {
             "suite_total",
             "excluded",
@@ -1059,10 +1060,14 @@ class TestApi:
             "stale",
             "untested",
             "lists",
+            "held_by",
+            "blocking_area",
             "dropped",
             "grading",
             "requirements_recorded",
         }
+        # A single agent's workers hold nothing back.
+        assert body["selection"]["held_by"] == []
         assert set(body["selection"]["lists"]) == {
             "eligible",
             "blocked",
@@ -1141,9 +1146,10 @@ class TestApi:
         assert body["counts"] == {
             "blocked": 0,
             "stale": 0,
-            "untested": 9,
+            "untested": 8,
             "partial": 0,
-            "unavailable": 1,
+            # Sub-agent evidence reads not applicable for an agent that declares no workers.
+            "unavailable": 2,
             "supported": 6,
         }
         assert body["validation"]["state"] == "ready"
@@ -1345,11 +1351,16 @@ class TestDoneWhen:
         assert body["counts"] == {
             "blocked": 1,
             "stale": 0,
-            "untested": 9,
+            "untested": 8,
             "partial": 0,
-            "unavailable": 1,
+            # Sub-agent evidence reads not applicable for an agent that declares no workers and showed none.
+            "unavailable": 2,
             "supported": 5,
         }
+        assert (rows["children"]["status"], rows["children"]["reason_code"]) == (
+            "unavailable",
+            "single_agent",
+        )
 
         HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
             agent_version=a2
@@ -1477,7 +1488,22 @@ class TestReviewFollowUps:
         files, readable = evidence._read_once("harness-sealed/stream/a.tar.gz")
 
         assert (files, readable) == (
-            {"tools": TOOLS, "actions": ACTIONS, "routed": [], "unobserved": []},
+            {
+                "tools": TOOLS,
+                "actions": ACTIONS,
+                "routed": [],
+                "unobserved": [],
+                # No door files in this archive: each reads absent.
+                **dict.fromkeys(
+                    (
+                        "worker_permissions",
+                        "door_outcome",
+                        "worker_limits",
+                        "actions_to_tools",
+                    )
+                ),
+                "door_unreadable": False,
+            },
             True,
         )
 
@@ -1512,7 +1538,22 @@ class TestReviewFollowUps:
             files, readable = evidence._read_once("harness-sealed/stream/old.tar.gz")
 
         assert (files, readable) == (
-            {"tools": [], "actions": [], "routed": [], "unobserved": []},
+            {
+                "tools": [],
+                "actions": [],
+                "routed": [],
+                "unobserved": [],
+                # No door files in this archive: each reads absent.
+                **dict.fromkeys(
+                    (
+                        "worker_permissions",
+                        "door_outcome",
+                        "worker_limits",
+                        "actions_to_tools",
+                    )
+                ),
+                "door_unreadable": False,
+            },
             True,
         )
         assert sum(read) < len(body) // 4
@@ -1558,7 +1599,7 @@ class TestReviewFollowUps:
 
         key = "harness-sealed/stream/busy.tar.gz"
         cache_key = (
-            "harness-readiness-certification:"
+            f"harness-readiness-certification:v{evidence._FILES_VERSION}:"
             + hashlib.sha256(key.encode()).hexdigest()
         )
         cache.add(cache_key + ":reading", 1)
@@ -1615,10 +1656,22 @@ class TestReviewFollowUps:
 
         assert bundle.certification_files == {
             "object_key": "harness-sealed/stored/never-read.tar.gz",
+            # Stamped with the current files version, so readiness never reads it again.
+            "files_version": assembly.CERTIFICATION_FILES_VERSION,
             "tools": TOOLS,
             "actions": ACTIONS,
             "routed": [],
             "unobserved": [],
+            # No world door files in this sealed archive.
+            **dict.fromkeys(
+                (
+                    "worker_permissions",
+                    "door_outcome",
+                    "worker_limits",
+                    "actions_to_tools",
+                )
+            ),
+            "door_unreadable": False,
         }
         with patch.object(evidence.archives, "stream_members") as streamed:
             read = evidence.read_evidence(pairing, bundle)
@@ -1650,6 +1703,16 @@ class TestReviewFollowUps:
                 if one["status"] in ("passed", "refused")
             ],
             "unobserved": [],
+            **dict.fromkeys(
+                (
+                    "worker_permissions",
+                    "door_outcome",
+                    "worker_limits",
+                    "actions_to_tools",
+                )
+            ),
+            "door_unreadable": False,
+            "files_version": assembly.CERTIFICATION_FILES_VERSION,
         }
         cache.clear()
         with patch.object(evidence.archives, "stream_members") as streamed:
@@ -1667,7 +1730,7 @@ class TestReviewFollowUps:
 
         key = "harness-sealed/stream/slow.tar.gz"
         reading = (
-            "harness-readiness-certification:"
+            f"harness-readiness-certification:v{evidence._FILES_VERSION}:"
             + hashlib.sha256(key.encode()).hexdigest()
             + ":reading"
         )
@@ -1873,7 +1936,7 @@ class TestConsequence:
             "Audio checks do not apply to a chat connection"
         )
         assert rows["browser"]["consequence"].startswith("No check measures this yet")
-        assert report["rules_version"] == "9"
+        assert report["rules_version"] == catalogue_module.RULES_VERSION
         HarnessCapabilityReportSerializer(data=report).is_valid(raise_exception=True)
 
     @pytest.mark.parametrize(

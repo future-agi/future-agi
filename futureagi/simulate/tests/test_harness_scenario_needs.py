@@ -18,16 +18,13 @@ from simulate.tests.test_harness_readiness import (
     _environment,
 )
 from simulate.tests.test_harness_readiness import (
-    readiness_on as readiness_on,  # noqa: F401 - fixture
-)
-from simulate.tests.test_harness_readiness import (
     scheduled as scheduled,  # noqa: F401 - fixture
 )
 from simulate.tests.test_harness_readiness import (
     storage as storage,  # noqa: F401 - fixture
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 
 def _check(*lines):

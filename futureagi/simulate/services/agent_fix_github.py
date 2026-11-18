@@ -2,21 +2,38 @@
 request on its repository: the candidate's patch, applied to the commit the fix started
 from, on a branch of its own."""
 
+import html
 import re
 import tempfile
 from math import floor
 from pathlib import Path
-from textwrap import shorten
 from typing import Any
+from urllib.parse import quote
 
 import requests
 import structlog
 from django.conf import settings
 
 from simulate.models import AgentFixCandidate, HarnessAgentVersionRuntime
-from simulate.selectors.agent_fix import limited_validation, overridable_regressions
+from simulate.pydantic_schemas.agent_fix import (
+    HELD_BACK_VERIFIED_MIN,
+    EvalGrading,
+    VerdictTier,
+    VerdictTierPart,
+)
+from simulate.selectors.agent_fix import (
+    eval_review,
+    held_back_cases,
+    limited_validation,
+    overridable_regressions,
+    verdict_tiers,
+)
 from simulate.services.agent_fix_engine import load_object
-from simulate.services.agent_fix_runs import record_override, require_shippable
+from simulate.services.agent_fix_runs import (
+    base_moved,
+    record_override,
+    require_shippable,
+)
 from simulate.services.harness_github import safe_repository, short_ref
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import (
@@ -30,17 +47,19 @@ logger = structlog.get_logger(__name__)
 _COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
 _AUTHOR = ("Future AGI", "fix-my-agent@futureagi.com")
 _NO_DRAFTS = "draft pull requests are not supported"
-_TITLE_CHARS = 120
-_LIMITED_NOTE = (
-    "**Limited validation.** Too few failing cases were held back to verify this fix."
-    " Review it closely before you merge."
-)
+_TITLE_CHARS = 72
+# GitHub refuses a pull request body over 65,536 characters; this leaves it room.
+_BODY_CHARS = 60_000
+# The changed files a body lists; the rest are counted.
+_FILES_LISTED = 50
 
 
 def open_pull_request(
     candidate: AgentFixCandidate, *, user: Any, override_reason: str = ""
 ) -> str:
-    """Open the candidate's pull request once and return its URL."""
+    """Open the candidate's pull request once and return its URL. Refused when the ref the
+    agent runs from (its branch or tag) moved since the fix's commit, whatever the reason
+    given: the fix proved its change on that commit alone."""
     require_shippable(candidate, override_reason=override_reason)
     if candidate.pull_request_url:
         return candidate.pull_request_url
@@ -78,12 +97,17 @@ def open_pull_request(
         )
     patch = load_object(candidate.patch_object_key) or b""
     branch = f"futureagi/fix-{str(fix_run.id)[:8]}-{candidate.attempt}"
-    # Before the push: the commit carries the reason, so a retry pushes the same commit.
-    record_override(candidate, reason=override_reason, user=user)
-    title, body = _description(candidate)
+    ref = str(source.get("ref") or "")
     with GitHubAppTokenProvider.from_settings().credential(installation_id) as token:
+        base = _base_branch(repository, ref, token)
+        head = _ref_head(repository, ref, base, token)
+        if head is not None and head != commit:
+            name = short_ref(ref) if ref.startswith("refs/tags/") else base
+            raise base_moved(f"{name} @ {commit[:7]}", f"{name} @ {head[:7]}")
+        # Before the push: the commit carries the reason, so a retry pushes the same commit.
+        record_override(candidate, reason=override_reason, user=user)
+        title, body = _description(candidate, patch)
         _push(repository, commit, branch, patch, candidate, title, body, token)
-        base = _base_branch(repository, str(source.get("ref") or ""), token)
         url = _pull_request(
             repository,
             branch,
@@ -111,50 +135,557 @@ def _percent(rate: float) -> str:
 
 
 def _evidence(verdict: dict) -> str:
-    """The pass rates a reviewer weighs, as the fix page shows them."""
-    return ", ".join(
-        f"{name} cases {_percent(before)} → {_percent(after)}"
+    """The pass rates a reviewer weighs and the must-pass cases it broke, as the fix page's
+    headline says them."""
+    rates = [
+        f"{name} pass rate {_percent(before)} → {_percent(after)}"
         for name, (before, after) in (
             ("held-back", verdict.get("held_back_pass_rate") or (None, None)),
             ("target", verdict.get("target_pass_rate") or (None, None)),
         )
         if after is not None
+    ]
+    if not rates:
+        return ""
+    broke = len(verdict.get("must_pass_regressions") or [])
+    return ", ".join([*rates, f"broke {broke or 'none'}"])
+
+
+# The FE says the same where the user ships.
+_EVALS_INCOMPLETE = (
+    "**Platform evals did not finish on this candidate,** so their results are missing."
+    " Review it closely before you merge."
+)
+
+
+def _evals_note(candidate: AgentFixCandidate) -> str:
+    """The platform evals the winner does worse on than the current version. They do not
+    decide a fix, so the reviewer reads them here, or that none did, or that they did not
+    finish. Only a winner is graded."""
+    if candidate.outcome != AgentFixCandidate.Outcome.WINNER:
+        return ""
+    review = eval_review(candidate.fix_run)
+    lines = [_EVALS_INCOMPLETE] if review.grading == EvalGrading.INCOMPLETE else []
+    if review.warnings:
+        lines.append(
+            "**Platform evals this change does worse on.** They do not pick the winner;"
+            " review them before you merge."
+        )
+        lines += [
+            f"- {_text(one.name)}: {_percent(one.pass_rate)} passed ({one.trials} trials),"
+            f" {_percent(one.base_pass_rate)} on the current version"
+            f" ({one.base_trials} trials)"
+            for one in review.warnings
+        ]
+    elif review.grading == EvalGrading.DONE and review.compared:
+        lines.append("Platform evals: none did worse than the current version.")
+    return "\n".join(lines)
+
+
+def _must_pass_check(check: str) -> str:
+    """A must-pass check, sent as "scenario key: sub-goal", as its case and its check."""
+    case, _, sub_goal = check.partition(": ")
+    named = f"Must-pass case “{_text(case)}”"
+    return f"{named}: its “{_text(sub_goal)}” check" if sub_goal else named
+
+
+def _limited_note(candidate: AgentFixCandidate) -> str:
+    held = held_back_cases(candidate.fix_run)
+    which = (
+        "No failing cases were"
+        if not held
+        else f"Only {held} failing case was"
+        if held == 1
+        else f"Only {held} failing cases were"
+    )
+    return (
+        f"**Limited validation.** {which} held back from the epoch to verify it; it takes"
+        f" {HELD_BACK_VERIFIED_MIN} or more. Check the changed behavior yourself before"
+        " you merge."
     )
 
 
 def _override_note(candidate: AgentFixCandidate) -> str:
-    """What a candidate the must-pass check refused ships with, and the user's reason."""
-    checks = "\n".join(f"- `{check}`" for check in overridable_regressions(candidate))
-    reason = "\n".join(f"> {line}" for line in candidate.override_reason.splitlines())
+    """What a candidate the must-pass check refused is opened with, and the user's reason."""
+    checks = "\n".join(
+        f"- {_must_pass_check(check)}" for check in overridable_regressions(candidate)
+    )
+    reason = "\n".join(
+        f"> {_line(line)}" for line in candidate.override_reason.splitlines()
+    )
     return (
-        "**Known regression.** Fix my agent did not accept this change: these must-pass"
-        f" checks regressed.\n\n{checks}\n\nIt ships anyway, for this reason:\n\n{reason}"
+        "**Known regression.** Epoch did not accept this change: it broke these"
+        f" must-pass checks.\n\n{checks}\n\nIt was opened anyway, for this reason:"
+        f"\n\n{reason}"
     )
 
 
-def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
-    """The title and body, which say so when too few cases were held back to verify it,
-    and when it ships with a known regression on the user's reason."""
+def _changed_files(patch: bytes) -> list[tuple[str, int, int]]:
+    """Each file the patch changes, in patch order, with its added and removed lines."""
+    files: dict[str, list[int]] = {}
+    path, in_hunk = None, False
+    for line in patch.decode("utf-8", "replace").splitlines():
+        if line.startswith("diff --git "):
+            path, in_hunk = line.rsplit(" b/", 1)[-1], False
+            files.setdefault(path, [0, 0])
+        elif path is None:
+            continue
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif in_hunk and line.startswith("+"):
+            files[path][0] += 1
+        elif in_hunk and line.startswith("-"):
+            files[path][1] += 1
+    return [(name, added, removed) for name, (added, removed) in files.items()]
+
+
+def _causes(candidate: AgentFixCandidate) -> list[str]:
+    """What the fix's diagnosis found its target cases fail on, in its own words."""
+    causes = (candidate.fix_run.diagnosis or {}).get("causes") or []
+    return [str(cause).strip() for cause in causes if str(cause).strip()]
+
+
+def _title(
+    candidate: AgentFixCandidate, files: list[tuple[str, int, int]], marks: str
+) -> str:
+    """What the pull request is for and where: the causes the diagnosis found, fixed in
+    the files the whole diff changes. Made only of counts and a file name, so it never
+    cuts a sentence; the first wording that fits is used."""
+    name = f"Epoch ({marks})" if marks else "Epoch"
+    causes = len(_causes(candidate))
+    counted = _plural(len(files), "file", "files") if files else "the agent"
+    places = [Path(files[0][0]).name, counted] if len(files) == 1 else [counted]
+    if not causes:
+        wordings = [f"{name}: change {place}" for place in places]
+    else:
+        fixes = _plural(causes, "diagnosed cause", "diagnosed causes")
+        wordings = [f"{name}: fix {fixes} in {place}" for place in places]
+        # Both marks leave room only for the shorter word.
+        wordings.append(
+            f"{name}: fix {_plural(causes, 'cause', 'causes')} in {counted}"
+        )
+    return next((one for one in wordings if len(one) <= _TITLE_CHARS), wordings[-1])
+
+
+def _cell(text: Any) -> str:
+    """A line as one table cell: on one line, with any pipe not yet escaped escaped."""
+    return re.sub(r"(?<!\\)\|", r"\\|", " ".join(str(text).split()))
+
+
+# What GitHub Markdown reads as inline syntax; HTML's own characters become entities.
+# An underscore inside a word never starts emphasis, so only one at a word's edge counts.
+_INLINE_SYNTAX = re.compile(r"[\\`*\[\]|~]|_(?![^\W_])|(?<![^\W_])_")
+
+
+def _text(value: Any) -> str:
+    """Words the engine, a check or a person wrote, as literal Markdown on one line: never
+    a tag, a link, emphasis or a table cell, and never the end of the page's own markup."""
+    flat = html.escape(" ".join(str(value).split()), quote=False)
+    return _INLINE_SYNTAX.sub(lambda found: f"\\{found[0]}", flat)
+
+
+def _line(value: Any) -> str:
+    """One line as ``_text``, which also cannot start a heading, a list or a rule."""
+    text = _text(value)
+    if numbered := re.match(r"\d+(?=[.)])", text):
+        return f"{numbered[0]}\\{text[numbered.end() :]}"
+    return f"\\{text}" if text[:1] in ("#", "+", "-", "=") and text else text
+
+
+def _code(value: Any) -> str:
+    """A path as inline code in a table cell, literal whatever it holds: fenced with more
+    backticks than it has in a row, its pipes escaped."""
+    flat = " ".join(str(value).split()).replace("|", "\\|")
+    fence = "`" * (max(map(len, re.findall("`+", flat)), default=0) + 1)
+    pad = " " if flat[:1] == "`" or flat[-1:] == "`" else ""
+    return f"{fence}{pad}{flat}{pad}{fence}"
+
+
+# The fix page's words for a check and for the parts of the reply time and cost check
+# (fixRunView.js: CHECK_LABELS, checkLabel, describePart, unknownWhy). The engine's ids
+# are never shown.
+_CHECK_LABELS = {
+    "static": "Change is valid",
+    "target": "Target scenarios",
+    "held-back": "Held-back scenarios",
+    "must-pass": "Must-pass scenarios",
+    "repeats": "Holds over repeats",
+    "ceilings": "Reply time and cost",
+}
+_PART_LABELS = {"reply latency": "Reply time", "agent cost": "Agent's cost"}
+_UNKNOWN_PARTS = {"reply latency": "Reply time unknown", "agent cost": "Cost unknown"}
+_UNTRACED_COST = (
+    "This agent's model calls weren't measured. Epoch measures calls made through the"
+    " OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing."
+)
+
+
+def _check_label(name: str, request: dict) -> str:
+    if name == "model-lock":
+        many = len(request.get("allowed_models") or []) > 1
+        return "Approved models" if many else "Model unchanged"
+    if name in _CHECK_LABELS:
+        return _CHECK_LABELS[name]
+    words = re.sub(r"[-_]+", " ", name)
+    return _text(words[:1].upper() + words[1:])
+
+
+def _result(status: str) -> str:
+    # A shipped candidate failed no check but must-pass, and ran every check after it,
+    # so a skipped check here ran and could not measure.
+    return "Couldn't measure" if status == "skipped" else _text(status.capitalize())
+
+
+def _part_line(part: VerdictTierPart, request: dict) -> str:
+    """A part of the reply time and cost check in words: within its limit, or unknown with
+    why and what would make it known (fixRunView.js partDetail, unknownWhy)."""
+    status, text = part.status, part.detail
+    if status == "passed":
+        return "Within the limit."
+    if status == "failed":
+        return "Over the limit."
+    if part.name == "reply latency":
+        return (
+            "The conversations recorded no reply times. Run again; if it repeats, check"
+            " that the agent replies within the turn."
+        )
+    if not request.get("meters_agent_cost"):
+        return _UNTRACED_COST
+    if "sandbox could not measure" in text:
+        return (
+            f"{_conversations(text, 'have a model call the sandbox')} made a model call"
+            " that couldn't be measured, such as a call through another SDK or a direct"
+            " HTTP request. Route that call through the OpenAI or Anthropic SDK, or add"
+            " traceAI tracing."
+        )
+    if re.search("baseline not measured|not verified against the baseline", text):
+        return (
+            "The current version's cost wasn't measured, so there is nothing to compare"
+            " it with. Run the environment again to measure it."
+        )
+    if "with no cost" in text:
+        return (
+            "A model the agent called has no price. Add a price for it to measure cost."
+        )
+    return (
+        f"{_conversations(text, 'exported no model call')} returned no model-call"
+        " record. Run again to measure them."
+    )
+
+
+def _conversations(text: str, cause: str) -> str:
+    """The count in the engine's "3 of 12 finalist conversations …", which the line keeps."""
+    found = re.search(rf"(\d+) of (\d+) finalist conversations {cause}", text)
+    return f"{found[1]} of {found[2]} conversations" if found else "Some conversations"
+
+
+def _part_label(name: str) -> str:
+    return _PART_LABELS.get(name) or _text(name)
+
+
+def _part_row(part: VerdictTierPart, request: dict) -> str:
+    result = _result(part.status)
+    if part.status == "skipped":
+        result = _UNKNOWN_PARTS.get(part.name, result)
+    label = _cell(_part_label(part.name))
+    return f"| ↳ {label} | {result} | {_cell(_part_line(part, request))} |"
+
+
+def _rate_line(rate: Any, gain: bool, tail: str = "") -> str:
+    said = "a clear gain" if gain else "not a clear gain"
+    if rate:
+        return f"{_percent(rate[0])} → {_percent(rate[1])}{tail}, {said}."
+    return f"{said[:1].upper()}{said[1:]}{tail}."
+
+
+# What a check that passed shows when the verdict holds no number for it.
+_PASSED = {
+    "static": "Applies cleanly and edits only allowed files.",
+    "repeats": "Held up over the repeat runs.",
+    "ceilings": "Within the reply-time and cost limits.",
+}
+
+
+def _tier_line(tier: VerdictTier, verdict: dict, plan: dict, request: dict) -> str:
+    """A check's result in plain words from the verdict's own numbers, as the fix page says
+    it (fixRunView.js tierLine). A shipped candidate passed every check but must-pass, or
+    could not measure one; the parts of one that could not measure say why."""
+    name, passed = tier.name, tier.status == "passed"
+    if name == "target":
+        return _rate_line(verdict.get("target_pass_rate"), passed)
+    if name == "held-back":
+        tail = " on scenarios the epoch never saw"
+        return _rate_line(verdict.get("held_back_pass_rate"), passed, tail)
+    if name == "must-pass":
+        broke = len(verdict.get("must_pass_regressions") or [])
+        if not passed:
+            scenarios = _plural(broke, "must-pass scenario", "must-pass scenarios")
+            return f"{scenarios} broke." if broke else "A must-pass scenario broke."
+        total, protected = plan.get("must_pass"), plan.get("protected")
+        kept = f", including the {protected} you protected" if protected else ""
+        if not total:
+            return "No must-pass scenario broke."
+        return f"None of the {total} must-pass scenarios broke{kept}."
+    if name == "model-lock":
+        models = request.get("allowed_models") or []
+        if passed:
+            return (
+                f"Called only {', '.join(_text(model) for model in models)}."
+                if models
+                else "Called only allowed models."
+            )
+        sent = (
+            "Some conversations sent no traces."
+            if request.get("observes_models")
+            else "This agent sends no traces."
+        )
+        return f"{sent} The change names no new model."
+    if not passed:
+        return ""
+    return _PASSED.get(name, "Passed.")
+
+
+# What measuring an agent's model calls on its own reads (fixRunView.js MEASURED_NOTICE).
+_MEASURED = (
+    "Measured automatically: model, tokens and timing only. Prompts and replies are"
+    " never recorded."
+)
+
+
+def _decided_section(tiers: list[VerdictTier], verdict: dict, request: dict) -> str:
+    """The engine's own account of each check, its statistics included, folded away for a
+    reviewer who wants to see how the verdict was reached."""
+    lines = []
+    for tier in tiers:
+        if tier.detail:
+            lines.append(f"- {_check_label(tier.name, request)}: {_text(tier.detail)}")
+        lines += [
+            f"  - {_part_label(part.name)}: {_text(part.detail)}"
+            for part in tier.parts
+            if part.detail
+        ]
+    if not lines:
+        return ""
+    # The engine reports the held-back pass rate from the repeat runs when they ran.
+    pooled = verdict.get("held_back_pass_rate") and any(
+        tier.name == "repeats" for tier in tiers
+    )
+    note = (
+        "The held-back pass rate above comes from the repeat runs.\n\n"
+        if pooled
+        else ""
+    )
+    listed = "\n".join(lines)
+    return f"<details><summary>How it was decided</summary>\n\n{note}{listed}\n\n</details>"
+
+
+def _verdict_section(
+    tiers: list[VerdictTier], verdict: dict, standing: str, request: dict, plan: dict
+) -> str:
+    """The verdict's checks in the fix page's words, each part of one on its own row, and
+    the engine's statistics folded below them."""
+    if not tiers:
+        return f"### Verdict: {standing}"
+    rows = []
+    for tier in tiers:
+        rows.append(
+            f"| {_cell(_check_label(tier.name, request))}"
+            f" | {_result(tier.status)}"
+            f" | {_cell(_tier_line(tier, verdict, plan, request))} |"
+        )
+        rows += [_part_row(part, request) for part in tier.parts]
+    listed = "\n".join(rows)
+    table = f"| Check | Result | Detail |\n|---|---|---|\n{listed}"
+    # Only when the platform measured the agent's model calls itself, as the fix page.
+    measured = (
+        f"\n\n{_MEASURED}" if request.get("measured_automatically") is True else ""
+    )
+    decided = _decided_section(tiers, verdict, request)
+    return "\n\n".join(
+        part
+        for part in (f"### Verdict: {standing}\n\n{table}{measured}", decided)
+        if part
+    )
+
+
+def _files_section(files: list[tuple[str, int, int]]) -> str:
+    if not files:
+        return ""
+    rows = "\n".join(
+        f"| {_code(path)} | +{added} | −{removed} |"
+        for path, added, removed in files[:_FILES_LISTED]
+    )
+    more = len(files) - _FILES_LISTED
+    tail = f"\n\nand {_plural(more, 'more file', 'more files')}" if more > 0 else ""
+    return (
+        f"### What changed\n\n| File | Added | Removed |\n|---|---|---|\n{rows}{tail}"
+    )
+
+
+def _fit(head: str, tail: str) -> str:
+    """The body under GitHub's size limit. Too long, the head is cut at a line and says
+    so; the link to the epoch and the closing line always stay."""
+    body = f"{head}\n\n{tail}" if head else tail
+    if len(body) <= _BODY_CHARS:
+        return body
+    note = "\n\n*Cut to fit GitHub's size limit. The epoch's page has all of it.*"
+    cut = head[: _BODY_CHARS - len(tail) - len(note) - len("\n</details>\n\n")]
+    cut = cut[: cut.rfind("\n")] if "\n" in cut else cut
+    if cut.count("<details>") > cut.count("</details>"):
+        cut += "\n</details>"
+    return f"{cut}{note}\n\n{tail}"
+
+
+def _why_section(candidate: AgentFixCandidate) -> str:
+    causes = _causes(candidate)
+    if not causes:
+        return ""
+    listed = "\n".join(f"- {_text(cause)}" for cause in causes)
+    return (
+        f"### Why\n\nThe diagnosis found these causes of the failing cases:\n\n{listed}"
+    )
+
+
+def _risks_section(candidate: AgentFixCandidate, verdict: dict) -> str:
+    """What the checks could not hold this change to, or flagged without refusing it."""
+    # The fix page's words for both (FixVerdict.jsx MustPassBreaks, flakyProtectedText).
+    lines = [
+        f"- {_must_pass_check(check)} passed less often, within normal noise, so it was"
+        " not counted."
+        for check in verdict.get("must_pass_within_noise") or []
+    ]
+    # Each protected case once, by its name, or by its key when the engine sent none.
+    flaky: dict[str, list[dict]] = {}
+    for row in (candidate.fix_run.report or {}).get("flaky_protected") or []:
+        flaky.setdefault(str(row.get("key")), []).append(row)
+    for key, rows in flaky.items():
+        name = _text(next((row["name"] for row in rows if row.get("name")), key))
+        checks = ", ".join(
+            f"its “{_text(row.get('sub_goal'))}” check passed {_text(row.get('passed'))}"
+            f" of {_text(row.get('runs'))} runs"
+            for row in rows
+        )
+        lines.append(
+            f"- Protected case “{name}” is flaky on the current version, so this epoch"
+            f" wasn't held to it: {checks}."
+        )
+    evals = _evals_note(candidate)
+    if not lines and not evals:
+        return "### What could still go wrong\n\nNothing the checks flagged."
+    return "\n\n".join(
+        part
+        for part in ("### What could still go wrong", "\n".join(lines), evals)
+        if part
+    )
+
+
+# The evidence-import page's words for each kind of source: one, many, and where from.
+_EVIDENCE_SOURCES = {
+    "session": ("session", "sessions", " from Observe"),
+    "call": ("call", "calls", " from Observe"),
+    "transcript": ("transcript", "transcripts", ""),
+    "dataset": ("dataset row", "dataset rows", ""),
+}
+
+
+def _plural(count: int, one: str, many: str) -> str:
+    return f"{count} {one if count == 1 else many}"
+
+
+def _evidence_origin(candidate: AgentFixCandidate) -> str:
+    """The evidence the fix started from: how many sources of each import's kind, each
+    one added as one case. Never an id, a source's name or its content."""
+    imports = (candidate.fix_run.request or {}).get("evidence") or []
+    if not imports:
+        return ""
+    lines = []
+    for one in imports:
+        cases = len(one.get("scenario_keys") or [])
+        kind = _EVIDENCE_SOURCES.get(str(one.get("source_kind")))
+        lines.append(
+            f"- {_plural(cases, kind[0], kind[1])}{kind[2]}"
+            if kind
+            else f"- {_plural(cases, 'imported case', 'imported cases')}"
+        )
+    listed = "\n".join(lines)
+    return f"### Evidence\n\nThis epoch started from imported evidence:\n\n{listed}"
+
+
+def _lines(value: str) -> str:
+    """Text of several lines, each as ``_line``; a blank line stays a paragraph break."""
+    return "\n".join(_line(line) for line in value.splitlines())
+
+
+def _notes_section(candidate: AgentFixCandidate) -> str:
+    """The engine's own summary, labelled: it describes only the candidate's last change."""
     summary = candidate.summary.strip()
-    first = summary.splitlines()[0] if summary else f"attempt {candidate.attempt}"
-    verdict = candidate.verdict or {}
-    reason = "; ".join(
-        part for part in (_evidence(verdict), verdict.get("reason")) if part
+    if not summary:
+        return ""
+    return (
+        "<details><summary>Notes from Epoch on the last change of Candidate"
+        f" {candidate.attempt}</summary>\n\n{_lines(summary)}\n\n</details>"
     )
+
+
+def _fix_link(candidate: AgentFixCandidate) -> str:
+    base = str(getattr(settings, "FRONTEND_BASE_URL", "") or "").rstrip("/")
+    if not base:
+        return ""
+    run = candidate.fix_run
+    # frontend/src/routes/sections/dashboard.jsx: simulate → environments/:envId →
+    # improvements/:fixId, the fix run's page.
+    return (
+        f"[Open this epoch on Future AGI]({base}/dashboard/simulate/environments/"
+        f"{run.environment_id}/improvements/{run.id})"
+    )
+
+
+def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
+    """The title and body: what the whole change does, the verdict it earned, the files it
+    changes and why, what could still go wrong, and where it came from. Both say so when
+    too few cases were held back to verify it, and when it ships with a known regression
+    on the user's reason."""
+    verdict = candidate.verdict or {}
+    # Not the engine's own reason: the checks below say the same in the page's words.
+    rates = _evidence(verdict)
     limited = limited_validation(candidate.fix_run)
     overridden = bool(candidate.override_reason)
-    proof = "Checked" if limited or overridden else "Proven"
-    body = "\n\n".join(
+    proof = "Checked" if limited or overridden else "Verified"
+    standing = (
+        "Known regression"
+        if overridden
+        else "Limited validation"
+        if limited
+        else "Verified"
+    )
+    files = _changed_files(patch)
+    head = "\n\n".join(
         part
         for part in (
             _override_note(candidate) if overridden else "",
-            _LIMITED_NOTE if limited else "",
-            summary,
-            f"{proof} by Fix my agent: {reason}" if reason else "",
-            "Opened by Future AGI Fix my agent.",
+            _limited_note(candidate) if limited else "",
+            f"{proof} by Epoch: {rates}" if rates else "",
+            _verdict_section(
+                verdict_tiers(candidate),
+                verdict,
+                standing,
+                candidate.fix_run.request or {},
+                candidate.fix_run.plan or {},
+            ),
+            _files_section(files),
+            _why_section(candidate),
+            _risks_section(candidate, verdict),
+            _evidence_origin(candidate),
+            _notes_section(candidate),
         )
         if part
     )
+    tail = "\n\n".join(
+        part
+        for part in (_fix_link(candidate), "Opened by Epoch on Future AGI.")
+        if part
+    )
+    body = _fit(head, tail)
     marks = ", ".join(
         mark
         for mark, applies in (
@@ -163,8 +694,7 @@ def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
         )
         if applies
     )
-    name = f"Fix my agent ({marks})" if marks else "Fix my agent"
-    return shorten(f"{name}: {first}", width=_TITLE_CHARS, placeholder="…"), body
+    return _title(candidate, files, marks), body
 
 
 def _push(
@@ -243,6 +773,22 @@ def _base_branch(repository: str, ref: str, token: str) -> str:
     if name and not ref.startswith("refs/tags/") and not _COMMIT.fullmatch(name):
         return name
     return _api("GET", f"/repos/{repository}", token).json()["default_branch"]
+
+
+def _ref_head(repository: str, ref: str, branch: str, token: str) -> str | None:
+    """The commit the agent's ref points at on GitHub now: a tag's commit, else the head
+    of ``branch``, the branch it runs from. None for a ref pinned to a commit, which never
+    moves."""
+    name = short_ref(ref)
+    if name and _COMMIT.fullmatch(name):
+        return None
+    if ref.startswith("refs/tags/"):
+        return _api("GET", f"/repos/{repository}/commits/{quote(name)}", token).json()[
+            "sha"
+        ]
+    return _api(
+        "GET", f"/repos/{repository}/git/ref/heads/{quote(branch, safe='/')}", token
+    ).json()["object"]["sha"]
 
 
 def _pull_request(

@@ -11,7 +11,7 @@ import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, TypedDict
 
 import structlog
 from django.core.cache import cache
@@ -35,6 +35,7 @@ from simulate.services.harness_readiness.catalogue import (
     Reading,
     targets,
 )
+from simulate.services.harness_readiness.children import children
 from simulate.services.harness_versioning import archives, assembly
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -63,8 +64,22 @@ _SANDBOX_SOURCES = frozenset(
 )
 
 
-# The per-tool and per-action certification an archive holds, and whether it was read.
-CertificationFiles = dict[str, list[Mapping[str, Any]]]
+class CertificationFiles(TypedDict, total=False):
+    """The per-tool and per-action certification an archive holds, its door files (None when absent) and whether
+    each could be read."""
+
+    tools: list[Mapping[str, Any]]
+    actions: list[Mapping[str, Any]]
+    routed: list[Mapping[str, Any]]
+    unobserved: list[Mapping[str, Any]]
+    worker_permissions: Mapping[str, Any] | None
+    door_outcome: Mapping[str, Any] | None
+    worker_limits: Mapping[str, Any] | None
+    actions_to_tools: Mapping[str, Any] | None
+    door_unreadable: bool
+    unreadable: bool
+
+
 _Read = tuple[CertificationFiles, bool]
 
 
@@ -89,6 +104,15 @@ class Evidence:
     unreadable: bool = False
     # The certificate itself: what made it (harness and framework versions) included.
     certificate: Mapping[str, Any] = field(default_factory=dict)
+    # What ALK sealed for the world's door: the root `door.json` (whether the door stands, on which surface, or why
+    # not), `worker-limits.json` and the tool proxy's `permissions.json` and `actions.json` (world action to tool);
+    # None when absent or not read.
+    worker_permissions: Mapping[str, Any] | None = None
+    door_outcome: Mapping[str, Any] | None = None
+    worker_limits: Mapping[str, Any] | None = None
+    actions_to_tools: Mapping[str, Any] | None = None
+    # A door file was sealed but could not be read: worker limits are not known.
+    door_unreadable: bool = False
 
 
 def pair_bundle(pairing: Pairing) -> HarnessAssembledBundle | None:
@@ -111,19 +135,47 @@ def certified(bundle: HarnessAssembledBundle | None) -> bool:
     )
 
 
-_FILES = ("tools", "actions", "routed", "unobserved")
+# Kept rows and cached reads from before the door files were read lack them, so they are read once more.
+_FILES_VERSION = assembly.CERTIFICATION_FILES_VERSION
+
+
+def _mapping(value: Any) -> Mapping[str, Any] | None:
+    return value if isinstance(value, Mapping) else None
+
+
+def _files_of(source: Any) -> CertificationFiles:
+    """The certification files a kept row or a read archive holds, each of its own shape."""
+    return {
+        "tools": _items(source, "tools"),
+        "actions": _items(source, "actions"),
+        "routed": _items(source, "routed"),
+        "unobserved": _items(source, "unobserved"),
+        "worker_permissions": _mapping(_get(source, "worker_permissions")),
+        "door_outcome": _mapping(_get(source, "door_outcome")),
+        "worker_limits": _mapping(_get(source, "worker_limits")),
+        "actions_to_tools": _mapping(_get(source, "actions_to_tools")),
+        "door_unreadable": bool(_get(source, "door_unreadable")),
+    }
+
+
+def _get(source: Any, name: str) -> Any:
+    return source.get(name) if isinstance(source, Mapping) else None
 
 
 def _certification_files(
     row: HarnessAssembledBundle | HarnessEnvironmentVersion, object_key: str
-) -> dict[str, Any]:
+) -> CertificationFiles:
     """The per-tool and per-action certification and tool routing of the archive at
     ``object_key``, kept on ``row``. A bundle stored since they are kept has them
     already; an older row has its archive read once, and keeps what was read. An
     archive that cannot be read is marked ``unreadable``."""
     kept = row.certification_files
-    if isinstance(kept, Mapping) and kept.get("object_key") == object_key:
-        return {name: _items(kept, name) for name in _FILES}
+    if (
+        isinstance(kept, Mapping)
+        and kept.get("object_key") == object_key
+        and kept.get("files_version") == _FILES_VERSION
+    ):
+        return _files_of(kept)
     files, readable = _read_once(object_key)
     if not readable:
         return {**files, "unreadable": True}
@@ -133,7 +185,11 @@ def _certification_files(
         else "archive_object_key"
     )
     type(row)._base_manager.filter(id=row.id, **{key_field: object_key}).update(
-        certification_files={"object_key": object_key, **files}
+        certification_files={
+            "object_key": object_key,
+            "files_version": _FILES_VERSION,
+            **files,
+        }
     )
     return files
 
@@ -145,7 +201,7 @@ def _read_once(object_key: str) -> _Read:
     when it does not come in time. An archive that cannot be read reads as holding
     neither, for a few minutes."""
     cache_key = (
-        "harness-readiness-certification:"
+        f"harness-readiness-certification:v{_FILES_VERSION}:"
         + hashlib.sha256(object_key.encode()).hexdigest()
     )
     cached = _cached_read(cache_key)
@@ -190,20 +246,29 @@ def _read_certification_files(object_key: str, cache_key: str) -> _Read:
     try:
         found = archives.stream_members(
             object_key,
-            {TOOL_CERTIFICATION, ACTION_CERTIFICATION, TOOL_ROUTING},
+            {
+                TOOL_CERTIFICATION,
+                ACTION_CERTIFICATION,
+                TOOL_ROUTING,
+                assembly.PERMISSIONS_FILE_PATH,
+                assembly.DOOR_OUTCOME_PATH,
+                assembly.WORKER_LIMITS_PATH,
+                assembly.ACTIONS_FILE_PATH,
+            },
             _MAX_CERTIFICATION_BYTES,
         )
-    except Exception as exc:  # noqa: BLE001 - storage, network or a truncated archive
+    except Exception as exc:
+        # Storage, network or a truncated archive.
         logger.warning(
             "harness_readiness_certification_unreadable",
             object_key=object_key,
             error=type(exc).__name__,
         )
-        unreadable: _Read = ({name: [] for name in _FILES}, False)
+        unreadable: _Read = (_files_of({}), False)
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
         return unreadable
     kept = assembly.certification_files(found, object_key)
-    read = ({name: kept[name] for name in _FILES}, True)
+    read: _Read = (_files_of(kept), True)
     cache.set(cache_key, read, timeout=_FILES_TTL_SECONDS)
     return read
 
@@ -252,6 +317,11 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
             unobserved=kept.get("unobserved") or files.get("unobserved", []),
             unreadable=bool(files.get("unreadable")),
             certificate=bundle.certificate or {},
+            worker_permissions=_mapping(files.get("worker_permissions")),
+            door_outcome=_mapping(files.get("door_outcome")),
+            worker_limits=_mapping(files.get("worker_limits")),
+            actions_to_tools=_mapping(files.get("actions_to_tools")),
+            door_unreadable=bool(files.get("door_unreadable")),
         )
     version = _certified_version(pairing.environment_version)
     data = _build_certification(version) if version is not None else None
@@ -263,7 +333,7 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
     files = (
         _certification_files(version, version.archive_object_key)
         if version.archive_layout == ArchiveLayout.COMBINED
-        else {}
+        else CertificationFiles()
     )
     tools = files.get("tools", [])
     return Evidence(
@@ -278,6 +348,11 @@ def read_evidence(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> Ev
         covers_suite=_covers_suite(version, pairing.suite_version),
         unreadable=bool(files.get("unreadable")),
         certificate=certificate if isinstance(certificate, Mapping) else {},
+        worker_permissions=_mapping(files.get("worker_permissions")),
+        door_outcome=_mapping(files.get("door_outcome")),
+        worker_limits=_mapping(files.get("worker_limits")),
+        actions_to_tools=_mapping(files.get("actions_to_tools")),
+        door_unreadable=bool(files.get("door_unreadable")),
     )
 
 
@@ -759,7 +834,7 @@ _RUNS_READ = 20
 _WHOLE_REPLY_KINDS = frozenset({"http", "callable", "command"})
 
 
-def _runs(pairing: Pairing) -> list[Any]:
+def recent_runs(pairing: Pairing) -> list[Any]:
     """The newest runs of the pairing's agent and environment version."""
     if pairing.agent_version is None:
         return []
@@ -777,7 +852,7 @@ def _runs(pairing: Pairing) -> list[Any]:
     )
 
 
-def _contract(pairing: Pairing) -> Mapping[str, Any]:
+def contract_of(pairing: Pairing) -> Mapping[str, Any]:
     contract = (pairing.environment_version.documents or {}).get("contract")
     return contract if isinstance(contract, Mapping) else {}
 
@@ -807,7 +882,7 @@ def _continuity(runs: list[Any]) -> Reading:
 
 
 def _streaming(pairing: Pairing) -> Reading:
-    contract = _contract(pairing)
+    contract = contract_of(pairing)
     interface = (contract.get("runtime") or {}).get("interface") or {}
     kind = str(interface.get("kind") or "") if isinstance(interface, Mapping) else ""
     if str(contract.get("modality") or "").lower() == "voice":
@@ -838,7 +913,7 @@ def _streaming(pairing: Pairing) -> Reading:
 
 
 def _audio(pairing: Pairing, runs: list[Any]) -> Reading:
-    if str(_contract(pairing).get("modality") or "").lower() != "voice":
+    if str(contract_of(pairing).get("modality") or "").lower() != "voice":
         return Reading(
             "not_applicable", "not_voice", "A chat connection carries no audio"
         )
@@ -903,10 +978,9 @@ def _cost(runs: list[Any]) -> Reading:
     )
 
 
-def observed(pairing: Pairing) -> dict[str, Reading]:
-    """What this agent's runs on this environment version show for the rows no check
+def observed(pairing: Pairing, runs: list[Any]) -> dict[str, Reading]:
+    """What this agent's ``runs`` on this environment version show for the rows no check
     measures; they hold no case and never lower the answer."""
-    runs = _runs(pairing)
     return {
         "continuity": _continuity(runs),
         "streaming": _streaming(pairing),
@@ -919,4 +993,5 @@ def observed(pairing: Pairing) -> dict[str, Reading]:
         ),
         "resume": _resume(runs),
         "cost": _cost(runs),
+        "children": children(contract_of(pairing).get("workers"), runs),
     }

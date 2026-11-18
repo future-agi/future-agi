@@ -681,6 +681,113 @@ class TestLaunchHit:
         assert "outcome" not in run.payload["metadata"]["assembly"]
 
 
+CAST = json.dumps(
+    {"actors": [{"id": "alex_vance", "name": "Alex Vance", "channel": "chat_message"}]}
+)
+
+
+class TestCast:
+    """A bundle sealed before its environment listed actors is certified again, never replayed without them."""
+
+    @pytest.mark.parametrize(
+        "sealed, outcome",
+        [({}, "miss"), ({"environment-bundle/actors.json": CAST}, "hit")],
+        ids=["sealed before the cast", "sealed with the cast"],
+    )
+    def test_a_cached_bundle_is_replayed_only_with_its_environment_s_actors(
+        self, user, workspace, storage, settings, sealed, outcome
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            f"asm-cast-{outcome}",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST, **sealed}),
+        )
+        run = _run(environment)
+
+        assert assembly.prepare_launch(run).outcome == outcome
+        assert (_row(environment).state == "ready") == (outcome == "hit")
+
+    def test_an_environment_without_actors_replays_its_bundle_as_before(
+        self, user, workspace, storage, settings
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(user, workspace, "asm-cast-none", storage)
+
+        assert assembly.prepare_launch(_run(environment)).hit
+
+    def _uncast(self, user, workspace, storage, settings, key):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        return _environment(
+            user,
+            workspace,
+            key,
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+
+    def test_a_bundle_is_certified_again_once_per_cast_even_when_its_new_seal_still_lacks_it(
+        self, user, workspace, storage, settings
+    ):
+        environment = self._uncast(user, workspace, storage, settings, "asm-cast-twice")
+        first = _run(environment, key="r1")
+        assert not assembly.prepare_launch(first).hit
+        attempt = register_attempt(
+            first.id, endpoint_base_url="https://platform.example.com"
+        ).attempt
+        first.refresh_from_db()
+        # The new seal has no actors.json either.
+        HostedHarnessGateway._sync_authoring_progress(attempt, _fill_sandbox())
+        assert _row(environment).state == "ready"
+
+        assert assembly.prepare_launch(_run(environment, key="r2")).hit
+
+    def test_of_two_launches_on_one_row_only_one_certifies_it_again(
+        self, user, workspace, storage, settings
+    ):
+        environment = self._uncast(user, workspace, storage, settings, "asm-cast-race")
+        seen_by_one, seen_by_other = _row(environment), _row(environment)
+
+        assert assembly._recertify(seen_by_one, "sha256:cast") is True
+        assert assembly._recertify(seen_by_other, "sha256:cast") is False
+
+    def test_with_certifying_off_a_bundle_sealed_before_the_cast_is_replayed_and_kept(
+        self, user, workspace, storage
+    ):
+        environment = _environment(
+            user,
+            workspace,
+            "asm-cast-off",
+            storage,
+            body=_sealed_authoring(**{"actors.json": CAST}),
+        )
+
+        assert assembly.prepare_launch(_run(environment)).hit
+        assert _row(environment).state == "ready"
+
+    def test_a_bundle_sealed_with_the_cast_is_opened_once(
+        self, user, workspace, storage, settings
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _environment(
+            user,
+            workspace,
+            "asm-cast-once",
+            storage,
+            body=_sealed_authoring(
+                **{"actors.json": CAST, "environment-bundle/actors.json": CAST}
+            ),
+        )
+        assert assembly.prepare_launch(_run(environment, key="r1")).hit
+
+        with patch.object(assembly, "_cached_files") as opened:
+            assert assembly.prepare_launch(_run(environment, key="r2")).hit
+
+        opened.assert_not_called()
+
+
 class TestTodaysPath:
     def _unassembled(self, setup, user, workspace, storage, settings):
         key = f"asm-today-{setup}"

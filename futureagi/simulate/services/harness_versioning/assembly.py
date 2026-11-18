@@ -43,6 +43,13 @@ TOOL_CERTIFICATION = "generic-harness/tool-certification.json"
 ACTION_CERTIFICATION = "generic-harness/action-certification.json"
 # Each tool call the qualification conversation made that reached the test world.
 TOOL_ROUTING = "generic-harness/tool-routing-observations.json"
+# The world door's sealed per-worker allow-lists.
+PERMISSIONS_FILE_PATH = "environment-bundle/generated/tool-proxy/permissions.json"
+# What ALK decided for this build: whether the door stands and on which surface, or why not; each worker's limits and
+# the workers each scenario relies on; and each sealed world action's tool.
+DOOR_OUTCOME_PATH = "environment-bundle/door.json"
+WORKER_LIMITS_PATH = "environment-bundle/worker-limits.json"
+ACTIONS_FILE_PATH = "environment-bundle/generated/tool-proxy/actions.json"
 SEALED_MANIFEST = "environment-bundle/manifest.json"
 BUNDLE_ROOT = "environment-bundle/"
 CERTIFY_JOB_PATH = "/work/certify-job.json"
@@ -201,6 +208,10 @@ def _json_object(body: bytes | None) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+# Bumped when the kept certification files gain a file: readiness reads an older row's archive once more.
+CERTIFICATION_FILES_VERSION = 3
+
+
 def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str, Any]:
     """The per-tool and per-action certification and the tool routing among a sealed
     bundle's files, with the key of the archive they are kept with."""
@@ -209,12 +220,29 @@ def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str
         values = (_json_object(files.get(path)) or {}).get(name)
         return [one for one in values or [] if isinstance(one, dict)]
 
+    door_paths = (
+        PERMISSIONS_FILE_PATH,
+        DOOR_OUTCOME_PATH,
+        WORKER_LIMITS_PATH,
+        ACTIONS_FILE_PATH,
+    )
     return {
         "object_key": object_key,
+        "files_version": CERTIFICATION_FILES_VERSION,
         "tools": items(TOOL_CERTIFICATION, "tools"),
         "actions": items(ACTION_CERTIFICATION, "actions"),
         "routed": items(TOOL_ROUTING, "tools"),
         "unobserved": items(TOOL_ROUTING, "unobserved"),
+        # Mappings, not lists: read by key, None when absent.
+        "worker_permissions": _json_object(files.get(PERMISSIONS_FILE_PATH)),
+        "door_outcome": _json_object(files.get(DOOR_OUTCOME_PATH)),
+        "worker_limits": _json_object(files.get(WORKER_LIMITS_PATH)),
+        "actions_to_tools": _json_object(files.get(ACTIONS_FILE_PATH)),
+        # A door file sealed but not a JSON object: worker limits read as not known, never as absent.
+        "door_unreadable": any(
+            files.get(path) and _json_object(files.get(path)) is None
+            for path in door_paths
+        ),
     }
 
 
@@ -556,6 +584,54 @@ def _cached_files(bundle: HarnessAssembledBundle) -> dict[str, bytes] | None:
     return kept
 
 
+def _predates_cast(
+    bundle: HarnessAssembledBundle, environment_version: HarnessEnvironmentVersion
+) -> str | None:
+    """The environment version's cast, by digest, when a cached bundle was sealed without it: replayed, its world has
+    no actor list, door or roster, so no actor ever comes in. None when it has the cast, has no cast to have, or was
+    already certified again for this cast. Whether it has the cast is found once per row and kept on it."""
+    actors = (environment_version.documents or {}).get("actor_digests") or {}
+    if not any(not str(key).startswith("#") for key in actors):
+        return None
+    cast = canonical_digest(actors)
+    certificate = bundle.certificate or {}
+    if certificate.get("sealed_cast") or certificate.get("recast") == cast:
+        return None
+    files = _cached_files(bundle)
+    if files is None:
+        return None
+    if BUNDLE_ROOT + "actors.json" not in files:
+        return cast
+    bundle.certificate = {**certificate, "sealed_cast": True}
+    HarnessAssembledBundle._base_manager.filter(
+        id=bundle.id, object_key=bundle.object_key
+    ).update(certificate=bundle.certificate, updated_at=timezone.now())
+    return None
+
+
+def _recertify(bundle: HarnessAssembledBundle, cast: str) -> bool:
+    """Send a ready row back to be certified for ``cast``, once: of launches racing on one row, only the one whose
+    update lands certifies it. The cast stays on the row through its fill, so it is never certified again for it."""
+    sent = (
+        HarnessAssembledBundle._base_manager.filter(
+            id=bundle.id,
+            object_key=bundle.object_key,
+            state=HarnessAssembledBundle.State.READY,
+        ).update(
+            **{**_RESET, "certificate": {"recast": cast}}, updated_at=timezone.now()
+        )
+        == 1
+    )
+    if sent:
+        logger.info(
+            "harness_bundle_cache",
+            outcome="recertify_for_cast",
+            bundle_id=str(bundle.id),
+            environment_id=str(bundle.job_id),
+        )
+    return sent
+
+
 def is_transient(exc: BaseException) -> bool:
     """A storage outage, which a later launch may not meet; anything else will recur."""
     if isinstance(exc, S3Error):
@@ -758,6 +834,14 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
         id=job.environment_version_id
     )
     suite_version = HarnessSuiteVersion._base_manager.get(id=job.suite_version_id)
+    # Sealed before its environment's actors: certified again once, so later runs replay a bundle that has them.
+    if (
+        hit
+        and certify_enabled()
+        and (cast := _predates_cast(bundle, environment_version))
+        and _recertify(bundle, cast)
+    ):
+        hit, certifies = False, True
 
     def key_for(cached_bundle: HarnessAssembledBundle | None) -> str:
         return assembled_key(
@@ -1236,6 +1320,8 @@ def fill_bundle(
             job.organization_id, bundle.job_id, bundle.assembly_key, body
         )
         archives.put_archive(object_key, body)
+        # The cast a row was certified again for stays on it.
+        recast = (bundle.certificate or {}).get("recast")
         filled = (
             HarnessAssembledBundle._base_manager.filter(id=bundle.id)
             .exclude(state=HarnessAssembledBundle.State.READY)
@@ -1245,7 +1331,7 @@ def fill_bundle(
                 sha256=archives.sha256_hex(body),
                 size=len(body),
                 bundle_digest=digest,
-                certificate=certificate,
+                certificate={**certificate, **({"recast": recast} if recast else {})},
                 certification_files=certification_files(sealed, object_key),
                 warnings=certify_warnings(sandbox),
                 built_by_attempt_id=attempt.id,

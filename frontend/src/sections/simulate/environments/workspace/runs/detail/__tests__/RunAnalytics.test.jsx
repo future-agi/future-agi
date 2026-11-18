@@ -419,6 +419,49 @@ describe("RunAnalytics", () => {
     ).toBeInTheDocument();
   });
 
+  it("reads No score on Calls passed only when the server marks the rate no_score", () => {
+    const passedCard = () => screen.getByText("Calls passed").parentElement;
+    const nothingYet = structuredClone(analytics);
+    nothingYet.dashboard.metrics[0] = {
+      ...nothingYet.dashboard.metrics[0],
+      value: null,
+      measured: 0,
+      no_score: false,
+    };
+    useRunAnalytics.mockReturnValue({ data: nothingYet, isPending: false, isError: false });
+    const { unmount } = render(<RunAnalytics executionId="execution-1" />);
+    expect(within(passedCard()).queryByText("No score")).not.toBeInTheDocument();
+    unmount();
+
+    const unscored = structuredClone(nothingYet);
+    unscored.dashboard.metrics[0].no_score = true;
+    useRunAnalytics.mockReturnValue({ data: unscored, isPending: false, isError: false });
+    render(<RunAnalytics executionId="execution-1" />);
+    expect(within(passedCard()).getByText("No score")).toBeInTheDocument();
+  });
+
+  it("headlines the goal outcome donut with the server's headline", () => {
+    const data = structuredClone(analytics);
+    const chart = data.dashboard.breakdowns.find(
+      (item) => item.key === "goal_outcome",
+    );
+    chart.headline = { label: "no_score", count: 3, share: 100 };
+    chart.segments = [
+      { label: "passed", count: 0, share: 0 },
+      { label: "no_score", count: 3, share: 100 },
+    ];
+    useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
+    render(<RunAnalytics executionId="execution-1" />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show detailed analytics" }),
+    );
+    const donut = screen.getByRole("region", {
+      name: "Goal outcome breakdown",
+    });
+    expect(within(donut).getByText("No score")).toBeInTheDocument();
+    expect(within(donut).getByText("100%")).toBeInTheDocument();
+  });
+
   it("renders when the response has no reliability block", () => {
     const data = structuredClone(analytics);
     delete data.reliability;

@@ -1,22 +1,55 @@
 import PropTypes from "prop-types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Autocomplete, Box, Stack, Typography, Button, TextField, Slider,
-  ToggleButton, ToggleButtonGroup,
+  Autocomplete,
+  Box,
+  Stack,
+  Typography,
+  Button,
+  TextField,
+  Slider,
+  ToggleButton,
+  ToggleButtonGroup,
 } from "@mui/material";
 
 import SideDrawer from "../../components/SideDrawer";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
-import { EDITOR_COPY, noiseKey, noiseValue, subTasksToText } from "./scenarioEditor.constants";
+import {
+  EDITOR_COPY,
+  noiseKey,
+  noiseValue,
+  subTasksToText,
+} from "./scenarioEditor.constants";
+import TestConditionsEditor from "./TestConditionsEditor";
+import StartingRecords from "./StartingRecords";
+import {
+  TEST_CONDITIONS_COPY,
+  fileFault,
+  storedFault,
+} from "./testConditions.constants";
 
 // The server names which fields may be written, in `scenario_editing`
 // (editable_fields + persona_fields), and which force a re-proof (rework_fields).
 // The drawer renders every field but disables the ones the server does not name,
 // so the read-only set is the server's answer, never a hardcoded list.
-const READ_ONLY_HINT = "Proved, so not editable: this was verified when the scenario was generated.";
+const READ_ONLY_HINT =
+  "Proved, so not editable: this was verified when the scenario was generated.";
 const REPROOF_HINT = "Editing this re-proves the scenario.";
 
-export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEditing, noiseOptions = [], levelLabels = {} }) {
+export default function ScenarioEditor({
+  open,
+  onClose,
+  row,
+  onSave,
+  scenarioEditing,
+  noiseOptions = [],
+  levelLabels = {},
+  env,
+}) {
+  const [saveError, setSaveError] = useState("");
+  // The server's problems with the test conditions, each naming the fault (`index`) and its field.
+  const [faultProblems, setFaultProblems] = useState([]);
+  const [saving, setSaving] = useState(false);
   const editableFields = useMemo(
     () => scenarioEditing?.editable_fields ?? [],
     [scenarioEditing],
@@ -36,7 +69,10 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
     [scenarioEditing],
   );
 
-  const canEdit = useCallback((field) => editableFields.includes(field), [editableFields]);
+  const canEdit = useCallback(
+    (field) => editableFields.includes(field),
+    [editableFields],
+  );
   const canEditPersona = useCallback(
     (field) => personaFields.includes(field),
     [personaFields],
@@ -48,7 +84,7 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
   const base = useMemo(() => {
     if (!row) return null;
     const p = row._raw?.persona || {};
-    const asList = (v) => (Array.isArray(v) ? v.join(", ") : (v ?? ""));
+    const asList = (v) => (Array.isArray(v) ? v.join(", ") : v ?? "");
     return {
       name: row.name ?? "",
       useCase: row.useCase ?? "",
@@ -59,6 +95,7 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
       maxTurns: row.maxTurns ?? "",
       backgroundNoise: noiseKey(row.backgroundNoise),
       keywords: asList(row.keywords),
+      faults: Array.isArray(row.faults) ? row.faults.map(storedFault) : [],
       persona: {
         name: p.name ?? "",
         ageGroup: p.age_group ?? "",
@@ -74,7 +111,11 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
   }, [row]);
 
   const [draft, setDraft] = useState(base || {});
-  useEffect(() => { if (base) setDraft(base); }, [base]);
+  useEffect(() => {
+    if (base) setDraft(base);
+    setSaveError("");
+    setFaultProblems([]);
+  }, [base]);
 
   // The amend ops for the fields that actually changed AND are writable, plus
   // whether any of them forces a re-proof. Drives both the Save-enabled state and
@@ -89,15 +130,35 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
       changedFields.push(field);
     };
 
-    if (canEdit("tests") && draft.tests !== base.tests) setField("tests", draft.tests);
-    if (canEdit("max_turns") && String(draft.maxTurns) !== String(base.maxTurns)) {
+    if (canEdit("tests") && draft.tests !== base.tests)
+      setField("tests", draft.tests);
+    if (
+      canEdit("max_turns") &&
+      String(draft.maxTurns) !== String(base.maxTurns)
+    ) {
       setField("max_turns", Number(draft.maxTurns) || 0);
     }
     if (canEdit("keywords") && draft.keywords !== base.keywords) {
-      setField("keywords", String(draft.keywords || "").split(",").map((k) => k.trim()).filter(Boolean));
+      setField(
+        "keywords",
+        String(draft.keywords || "")
+          .split(",")
+          .map((k) => k.trim())
+          .filter(Boolean),
+      );
     }
-    if (canEdit("background_noise") && draft.backgroundNoise !== base.backgroundNoise) {
+    if (
+      canEdit("background_noise") &&
+      draft.backgroundNoise !== base.backgroundNoise
+    ) {
       setField("background_noise", noiseValue(draft.backgroundNoise));
+    }
+    const filed = (faults) => (faults || []).map(fileFault);
+    if (
+      canEdit("faults") &&
+      JSON.stringify(filed(draft.faults)) !== JSON.stringify(filed(base.faults))
+    ) {
+      setField("faults", filed(draft.faults));
     }
 
     // Persona: one set_persona op carrying only the changed, writable fields.
@@ -117,7 +178,10 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
       const bv = base.persona?.[draftKey];
       if (dv === bv) continue;
       persona[serverKey] = LIST_KEYS.has(draftKey)
-        ? String(dv || "").split(",").map((s) => s.trim()).filter(Boolean)
+        ? String(dv || "")
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
         : dv;
       changedFields.push(serverKey);
     }
@@ -134,18 +198,40 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
   if (!row) return null;
 
   const set = (k) => (v) => setDraft((d) => ({ ...d, [k]: v }));
-  const setPersona = (k) => (v) => setDraft((d) => ({ ...d, persona: { ...(d.persona || {}), [k]: v } }));
+  const setPersona = (k) => (v) =>
+    setDraft((d) => ({ ...d, persona: { ...(d.persona || {}), [k]: v } }));
 
-  const save = () => {
-    if (!changes.length) return;
-    onSave({ changes, rework });
+  const save = async () => {
+    if (!changes.length || saving) return;
+    setSaveError("");
+    setFaultProblems([]);
+    setSaving(true);
+    // A refusal or failed save keeps the editor open with the edits in it.
+    const answer = await onSave({ changes, rework });
+    setSaving(false);
+    const refused = answer.refused.find((one) => one.field === "faults");
+    if (refused) {
+      // Placed under the fault and field each names; the receipt's one sentence only when it names none.
+      if (refused.problems.length) setFaultProblems(refused.problems);
+      else setSaveError(refused.why);
+      return;
+    }
+    if (answer.failed) return;
     onClose();
   };
 
   return (
     <SideDrawer open={open} onClose={onClose} width={620}>
       <Stack sx={{ height: "100%" }}>
-        <Box sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+        <Box
+          sx={{
+            px: 3,
+            py: 2,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
           <Typography sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}>
             {EDITOR_COPY.title}
           </Typography>
@@ -157,100 +243,214 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
         <Stack spacing={3} sx={{ flex: 1, overflow: "auto", p: 3 }}>
           <SectionHeader title={EDITOR_COPY.scenarioSection} />
           <TextField
-            size="small" label="Name" value={draft.name || ""} disabled
+            size="small"
+            label="Name"
+            value={draft.name || ""}
+            disabled
             helperText={READ_ONLY_HINT}
-            InputProps={{ sx: { fontFamily: "ui-monospace, Menlo, monospace" } }}
+            InputProps={{
+              sx: { fontFamily: "ui-monospace, Menlo, monospace" },
+            }}
           />
           <TextField
-            size="small" label="Use case" value={draft.useCase || ""} disabled
+            size="small"
+            label="Use case"
+            value={draft.useCase || ""}
+            disabled
             helperText={READ_ONLY_HINT}
           />
           <TextField
-            size="small" label="Branch" value={draft.branch || ""} disabled
+            size="small"
+            label="Branch"
+            value={draft.branch || ""}
+            disabled
             helperText={READ_ONLY_HINT}
           />
           <TextField
-            size="small" label="What the caller wants" multiline minRows={2}
-            value={draft.instruction || ""} disabled
+            size="small"
+            label="What the caller wants"
+            multiline
+            minRows={2}
+            value={draft.instruction || ""}
+            disabled
             helperText={READ_ONLY_HINT}
           />
           <TextField
-            size="small" label="Passes when" multiline minRows={2}
+            size="small"
+            label="Passes when"
+            multiline
+            minRows={2}
             value={draft.tests || ""}
             disabled={!canEdit("tests")}
             onChange={(e) => set("tests")(e.target.value)}
-            helperText={canEdit("tests")
-              ? "What a pass looks like. Evals grade against this."
-              : READ_ONLY_HINT}
+            helperText={
+              canEdit("tests")
+                ? "What a pass looks like. Evals grade against this."
+                : READ_ONLY_HINT
+            }
           />
           <TextField
-            size="small" label="Sub-goals" multiline minRows={3}
-            value={draft.subGoalsText || ""} disabled
+            size="small"
+            label="Sub-goals"
+            multiline
+            minRows={3}
+            value={draft.subGoalsText || ""}
+            disabled
             helperText={READ_ONLY_HINT}
           />
 
-          <SectionHeader title={EDITOR_COPY.personaSection} hint="Who is on the other end of the run." />
+          <SectionHeader
+            title={EDITOR_COPY.personaSection}
+            hint="Who is on the other end of the run."
+          />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
             <TextField
-              size="small" label="Name" fullWidth value={draft.persona?.name || ""} disabled
+              size="small"
+              label="Name"
+              fullWidth
+              value={draft.persona?.name || ""}
+              disabled
               helperText={READ_ONLY_HINT}
-              />
+            />
             <TextField
-              size="small" label="Age group" fullWidth value={draft.persona?.ageGroup || ""} disabled
+              size="small"
+              label="Age group"
+              fullWidth
+              value={draft.persona?.ageGroup || ""}
+              disabled
               helperText={READ_ONLY_HINT}
-              />
+            />
             <TextField
-              size="small" label="Gender" fullWidth value={draft.persona?.gender || ""} disabled
+              size="small"
+              label="Gender"
+              fullWidth
+              value={draft.persona?.gender || ""}
+              disabled
               helperText={READ_ONLY_HINT}
-              />
+            />
           </Stack>
           {[
             ["Accent", "accent", "accent"],
-            ["Communication style", "communicationStyle", "communication_style"],
+            [
+              "Communication style",
+              "communicationStyle",
+              "communication_style",
+            ],
             ["Personality", "personality", "personality"],
             ["Occupation", "occupation", "occupation"],
             ["Location", "location", "location"],
             ["Languages", "languages", "languages"],
           ]
-            .filter(([, , serverKey]) => serverKey !== "accent" || canEditPersona("accent"))
+            .filter(
+              ([, , serverKey]) =>
+                serverKey !== "accent" || canEditPersona("accent"),
+            )
             .map(([label, k, serverKey]) => (
               <PersonaField
-                key={serverKey} label={label} k={k} serverKey={serverKey} draft={draft}
-                onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields}
+                key={serverKey}
+                label={label}
+                k={k}
+                serverKey={serverKey}
+                draft={draft}
+                onChange={setPersona}
+                canEditPersona={canEditPersona}
+                reworkFields={reworkFields}
                 choices={scenarioEditing?.persona_choices?.[serverKey] ?? []}
                 multiple={serverKey === "languages"}
               />
             ))}
           <TextField
-            size="small" label="Keywords" value={draft.keywords || ""}
+            size="small"
+            label="Keywords"
+            value={draft.keywords || ""}
             disabled={!canEdit("keywords")}
             onChange={(e) => set("keywords")(e.target.value)}
-            helperText={canEdit("keywords") ? "Comma-separated, how the scenario is found." : READ_ONLY_HINT}
+            helperText={
+              canEdit("keywords")
+                ? "Comma-separated, how the scenario is found."
+                : READ_ONLY_HINT
+            }
           />
+
+          <SectionHeader
+            title={TEST_CONDITIONS_COPY.heading}
+            hint={canEdit("faults") ? REPROOF_HINT : READ_ONLY_HINT}
+          />
+          <TestConditionsEditor
+            faults={draft.faults || []}
+            onChange={(next) => set("faults")(next)}
+            env={env}
+            disabled={!canEdit("faults")}
+            error={saveError}
+            problems={faultProblems}
+          />
+          {env?.id && (
+            <StartingRecords envId={env.id} scenarioKey={row.scenarioKey} />
+          )}
 
           {(canEdit("max_turns") || canEdit("background_noise")) && (
             <>
-              <SectionHeader title={EDITOR_COPY.constraintsSection} hint="Editing these re-proves the scenario." />
+              <SectionHeader
+                title={EDITOR_COPY.constraintsSection}
+                hint="Editing these re-proves the scenario."
+              />
               {canEdit("max_turns") && (
                 <Box>
                   <Stack direction="row" alignItems="center" spacing={1}>
-                    <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium", flex: 1 }}>Max turns</Typography>
-                    <Typography sx={{ typography: "s1", fontVariantNumeric: "tabular-nums" }}>{draft.maxTurns ? `~${draft.maxTurns}` : "Default"}</Typography>
+                    <Typography
+                      sx={{
+                        typography: "s1",
+                        fontWeight: "fontWeightMedium",
+                        flex: 1,
+                      }}
+                    >
+                      Max turns
+                    </Typography>
+                    <Typography
+                      sx={{
+                        typography: "s1",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {draft.maxTurns ? `~${draft.maxTurns}` : "Default"}
+                    </Typography>
                   </Stack>
-                  <Slider size="small" min={2} max={20} value={Number(draft.maxTurns) || 0} onChange={(_, v) => set("maxTurns")(v)} />
+                  <Slider
+                    size="small"
+                    min={2}
+                    max={20}
+                    value={Number(draft.maxTurns) || 0}
+                    onChange={(_, v) => set("maxTurns")(v)}
+                  />
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                    How long the run is allowed to go before it is called off. {REPROOF_HINT}
+                    How long the run is allowed to go before it is called off.{" "}
+                    {REPROOF_HINT}
                   </Typography>
                 </Box>
               )}
               {canEdit("background_noise") && (
                 <Box>
-                  <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium", mb: 1 }}>Background noise</Typography>
+                  <Typography
+                    sx={{
+                      typography: "s1",
+                      fontWeight: "fontWeightMedium",
+                      mb: 1,
+                    }}
+                  >
+                    Background noise
+                  </Typography>
                   <ToggleButtonGroup
-                    size="small" exclusive fullWidth value={draft.backgroundNoise || ""}
+                    size="small"
+                    exclusive
+                    fullWidth
+                    value={draft.backgroundNoise || ""}
                     onChange={(_, v) => v && set("backgroundNoise")(v)}
                   >
-                    {noiseChoices.map((n) => <ToggleButton key={n} value={n}>{levelLabels[n] ?? n}</ToggleButton>)}
+                    {noiseChoices.map((n) => (
+                      <ToggleButton key={n} value={n}>
+                        {levelLabels[n] ?? n}
+                      </ToggleButton>
+                    ))}
                   </ToggleButtonGroup>
                 </Box>
               )}
@@ -259,14 +459,30 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
         </Stack>
 
         <Stack
-          direction="row" justifyContent="flex-end" spacing={1}
-          sx={{ px: 3, py: 1.5, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          direction="row"
+          justifyContent="flex-end"
+          spacing={1}
+          sx={{
+            px: 3,
+            py: 1.5,
+            borderTop: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
-          <Button onClick={onClose} size="small" variant="outlined" color="inherit">
+          <Button
+            onClick={onClose}
+            size="small"
+            variant="outlined"
+            color="inherit"
+          >
             {EDITOR_COPY.cancel}
           </Button>
           <Button
-            variant="contained" color="primary" size="small" disabled={!changes.length}
+            variant="contained"
+            color="primary"
+            size="small"
+            disabled={!changes.length || saving}
             onClick={save}
           >
             {EDITOR_COPY.save}
@@ -281,7 +497,7 @@ ScenarioEditor.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
   row: SCENARIO_SHAPE,
-  // Receives { changes, rework } — the amend ops for the changed writable fields.
+  // ({ changes, rework }) => Promise<{ refused, failed }>
   onSave: PropTypes.func,
   // The server's editability block; gates which fields are writable.
   scenarioEditing: PropTypes.shape({
@@ -293,29 +509,52 @@ ScenarioEditor.propTypes = {
   // Background-noise choices from the server field catalogue (values the agent uses).
   noiseOptions: PropTypes.arrayOf(PropTypes.string),
   levelLabels: PropTypes.object,
+  env: PropTypes.object,
 };
 
 // One persona field, gated by the server's persona_fields, choosing from the
 // server's persona_choices. The current value stays selectable even when the
 // server does not list it.
-function PersonaField({ label, k, serverKey, draft, onChange, canEditPersona, reworkFields, choices, multiple }) {
+function PersonaField({
+  label,
+  k,
+  serverKey,
+  draft,
+  onChange,
+  canEditPersona,
+  reworkFields,
+  choices,
+  multiple,
+}) {
   const editable = canEditPersona(serverKey);
   const reproof = reworkFields.includes(serverKey);
   const raw = draft.persona?.[k] || "";
   const value = multiple
-    ? String(raw).split(",").map((one) => one.trim()).filter(Boolean)
+    ? String(raw)
+        .split(",")
+        .map((one) => one.trim())
+        .filter(Boolean)
     : raw || null;
   const held = multiple ? value : value ? [value] : [];
   const options = [...choices, ...held.filter((one) => !choices.includes(one))];
   return (
     <Autocomplete
-      size="small" multiple={multiple} options={options} value={value}
-      disabled={!editable} disableClearable={!multiple}
-      onChange={(_, next) => onChange(k)(multiple ? next.join(", ") : next || "")}
+      size="small"
+      multiple={multiple}
+      options={options}
+      value={value}
+      disabled={!editable}
+      disableClearable={!multiple}
+      onChange={(_, next) =>
+        onChange(k)(multiple ? next.join(", ") : next || "")
+      }
       renderInput={(params) => (
         <TextField
-          {...params} label={label}
-          helperText={editable ? (reproof ? REPROOF_HINT : undefined) : READ_ONLY_HINT}
+          {...params}
+          label={label}
+          helperText={
+            editable ? (reproof ? REPROOF_HINT : undefined) : READ_ONLY_HINT
+          }
         />
       )}
     />
@@ -336,10 +575,20 @@ PersonaField.propTypes = {
 function SectionHeader({ title, hint }) {
   return (
     <Box>
-      <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium", color: "text.primary" }}>
+      <Typography
+        sx={{
+          typography: "m3",
+          fontWeight: "fontWeightMedium",
+          color: "text.primary",
+        }}
+      >
         {title}
       </Typography>
-      {hint && <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{hint}</Typography>}
+      {hint && (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {hint}
+        </Typography>
+      )}
     </Box>
   );
 }
