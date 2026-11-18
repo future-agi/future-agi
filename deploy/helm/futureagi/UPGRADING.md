@@ -29,13 +29,20 @@ Kubernetes transition: storage, controllers and recovery procedures differ.
 
 ### Check the collector admin address
 
-Before upgrading the collector, check `fiCollector.extraEnv.FI_ADMIN_ADDR` in
-both your saved release values and your new values. Older collectors ignored
-this override. Remove it or set it to the chart default (`:9464`): the pod
-readiness probe, Service and optional GKE health check all expect `/healthz`
-to be reachable on the pod IP at port 9464. A different port or a loopback-only
-bind leaves new pods unready. `HEALTHCHECK_URL` changes the Docker image check,
-not the chart's probes.
+A saved `fiCollector.extraEnv.FI_ADMIN_ADDR: ":9500"` now moves the collector's
+Pod listener, readiness probe, Service target and optional GKE health check
+together. Clients keep using Service port `9464`. With no override, the Pod also
+listens on `:9464`. If you manage a separate fixed-port load-balancer check,
+update it to match the Pod port.
+
+Before upgrading, check saved **and** new values. The chart accepts `:PORT`,
+`0.0.0.0:PORT` and `[::]:PORT` without changing the bind host. Choose an
+unprivileged port (1024–65535) other than the OTLP ports 4317 and 4318. It rejects
+loopback or other host-specific addresses rather than silently exposing them or
+rolling out an unreachable Pod. If a Pod-reachable listener is appropriate,
+replace such an override with `:PORT` or remove it to use the default; otherwise
+do not upgrade with this chart. `HEALTHCHECK_URL` is for the standalone Docker
+image check and does not configure Kubernetes probes.
 
 ## Prepare a signed release without changing the cluster
 
