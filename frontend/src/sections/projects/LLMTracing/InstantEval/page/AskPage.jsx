@@ -169,7 +169,11 @@ function Welcome({ onNew }) {
     <EmptyState
       icon="solar:chat-round-line-linear"
       title="Ask Jev a question about each row"
-      description="Open Traces, Sessions or Users, narrow the view to the rows you care about, then choose Evaluate → Ask a question. Jev answers for each row it reads, a sample of the view or every row. The first answers come in seconds and land on a timeline where the patterns show."
+      description="Jev answers your question for each row it reads, from a sample of a view or every row."
+      // Asking from a view (Evaluate → Ask a question) and the timeline are
+      // explained in the docs, not here.
+      docsHref="https://docs.futureagi.com/docs/observe/features/instant-eval"
+      docsLabel="How Ask Jev works"
       action={
         <Button
           variant="contained"
@@ -527,14 +531,18 @@ export default function AskPage() {
   // The composer stays mounted while its run starts, so a failed start
   // keeps the question as typed.
   const composer = isNew && (
+    // Fills the pane, so the composer's action row sits at its bottom from
+    // the start and the questions growing above it never move it.
     <Box
       sx={{
         px: 3,
         pt: 2.5,
-        pb: 4,
         maxWidth: 1180,
+        width: "100%",
         mx: "auto",
-        display: pending ? "none" : "block",
+        flexGrow: 1,
+        display: pending ? "none" : "flex",
+        flexDirection: "column",
       }}
     >
       {seedKey && !handedOff && (
@@ -550,7 +558,7 @@ export default function AskPage() {
           value={unit}
           onChange={(_, next) => next && switchUnit(next)}
           aria-label="What to ask about"
-          sx={{ mb: 2.5 }}
+          sx={{ mb: 2.5, alignSelf: "flex-start" }}
         >
           {UNIT_CHOICES.map((choice) => (
             <ToggleButton key={choice} value={choice}>
@@ -659,7 +667,21 @@ export default function AskPage() {
           })
         }
       />
-      <Box sx={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
+      <Box
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          overflowY: "auto",
+          ...(composer &&
+            !pending && {
+              display: "flex",
+              flexDirection: "column",
+              // A question box focused as it is added scrolls clear of the
+              // composer's pinned action row.
+              scrollPaddingBottom: 160,
+            }),
+        }}
+      >
         {startError && !isNew && (
           <Alert
             severity="error"

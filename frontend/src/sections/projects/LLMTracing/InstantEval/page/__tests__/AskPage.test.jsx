@@ -495,6 +495,12 @@ describe("a new question the server holds for its confirm", () => {
     expect(
       screen.getByText(/This reads 6,000 sessions: about 360 credits\./),
     ).toBeInTheDocument();
+    // Start is the one primary: Ask Jev, which would send it unconfirmed
+    // again, goes while the confirm is up, and Back is neutral.
+    expect(primaryButtons()).toEqual(["Start"]);
+    expect(screen.getByRole("button", { name: "Back" })).toHaveClass(
+      "MuiButton-outlined",
+    );
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
     });
@@ -590,6 +596,22 @@ describe("a new question the server holds for its confirm", () => {
   });
 });
 
+// The labels of the contained primary buttons on the page.
+const primaryButtons = () =>
+  screen
+    .queryAllByRole("button")
+    .filter((button) => button.classList.contains("MuiButton-containedPrimary"))
+    .map((button) => button.textContent.trim());
+
+// Every CSS rule emotion wrote for the element's own classes, media rules
+// included (jsdom does no layout, so the rules are what can be checked).
+function rulesFor(element) {
+  const names = Array.from(element.classList).map((name) => `.${name}`);
+  return Array.from(document.styleSheets)
+    .flatMap((sheet) => Array.from(sheet.cssRules, (rule) => rule.cssText))
+    .filter((text) => names.some((name) => text.includes(name)));
+}
+
 // jsdom can't match :focus-visible, so read the rule emotion wrote for the
 // element's own class.
 function focusRing(element) {
@@ -604,7 +626,7 @@ function focusRing(element) {
 }
 
 describe("the example questions", () => {
-  it("stay in place once one is picked, so the Ask button doesn't move", async () => {
+  it("stay shown once one is picked, the one asked disabled", async () => {
     renderAt(askLink(PROJECT, { unit: "sessions" }));
     await screen.findByText(/104,233 sessions in the Sessions view/);
     const [first, second] = EXAMPLES.sessions;
@@ -620,6 +642,111 @@ describe("the example questions", () => {
     expect(
       screen.getByRole("button", { name: second.question }),
     ).not.toHaveAttribute("aria-disabled");
+  });
+});
+
+describe("the composer's layout", () => {
+  it("keeps Ask Jev in a row pinned below the questions as they grow", async () => {
+    renderAt(askLink(PROJECT, { unit: "sessions" }));
+    await screen.findByText(/104,233 sessions in the Sessions view/);
+    const actions = screen.getByTestId("ask-actions");
+    const ask = () => within(actions).getByRole("button", { name: /^Ask Jev/ });
+    expect(ask()).toBeInTheDocument();
+    const [first, second] = EXAMPLES.sessions;
+    fireEvent.click(screen.getByRole("button", { name: first.question }));
+    fireEvent.click(screen.getByRole("button", { name: second.question }));
+    // A second example adds an editor above the row, not around it.
+    const editor = screen.getByRole("textbox", { name: "Question 2" });
+    expect(
+      editor.compareDocumentPosition(actions) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(actions.contains(editor)).toBe(false);
+    expect(ask()).toBeInTheDocument();
+    // Pinned once the page scrolls, and pushed to the pane's bottom (auto
+    // top margin) while it doesn't, so it starts where it stays.
+    const sticky = rulesFor(actions).join("\n");
+    expect(sticky).toMatch(/position:\s*sticky/);
+    expect(sticky).toMatch(/bottom:\s*0/);
+    expect(sticky).toMatch(/margin-top:\s*auto/);
+    // Nothing below the row to push it up: recent questions sit with the
+    // examples.
+    expect(actions.nextElementSibling).toBeNull();
+  });
+
+  it("puts the question before the count on a phone, in the page's order", async () => {
+    // A phone-width screen: MUI's down("sm") asks for a max-width.
+    const matchMedia = window.matchMedia;
+    window.matchMedia = (query) => ({
+      matches: /max-width/.test(query),
+      media: query,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    });
+    try {
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      const count = await screen.findByText(
+        /104,233 sessions in the Sessions view/,
+      );
+      const question = screen.getByRole("textbox", { name: "Question 1" });
+      // The DOM order, so Tab and screen readers follow what is drawn.
+      expect(
+        question.compareDocumentPosition(count) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    } finally {
+      window.matchMedia = matchMedia;
+    }
+  });
+
+  it("keeps the count before the question from the sm breakpoint up", async () => {
+    renderAt(askLink(PROJECT, { unit: "sessions" }));
+    const count = await screen.findByText(
+      /104,233 sessions in the Sessions view/,
+    );
+    const question = screen.getByRole("textbox", { name: "Question 1" });
+    expect(
+      count.compareDocumentPosition(question) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("moves focus to Start when a confirm takes Ask Jev's place, and back from Back", async () => {
+    fakes.estimate.mockResolvedValue({
+      ...ESTIMATE,
+      population: 20000,
+      choices: [
+        ...ESTIMATE.choices.slice(0, 4),
+        {
+          sample_size: null,
+          rows_to_read: 20000,
+          seconds_estimate: 4010,
+          needs_confirm: true,
+          allowed: true,
+        },
+      ],
+    });
+    renderAt(askLink(PROJECT, { unit: "sessions", filters: [] }));
+    fireEvent.click(await screen.findByRole("radio", { name: /All 20,000/ }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Question 1" }), {
+      target: { value: QUESTION },
+    });
+    // As a keyboard press (or a click in most browsers) would: the button
+    // has focus when it is pressed, then goes.
+    const ask = screen.getByRole("button", {
+      name: "Ask Jev about 20,000 sessions",
+    });
+    ask.focus();
+    fireEvent.click(ask);
+    expect(screen.getByRole("button", { name: "Start" })).toHaveFocus();
+    const back = screen.getByRole("button", { name: "Back" });
+    back.focus();
+    fireEvent.click(back);
+    expect(
+      screen.getByRole("button", { name: "Ask Jev about 20,000 sessions" }),
+    ).toHaveFocus();
   });
 });
 
@@ -776,6 +903,7 @@ describe("the Ask page", () => {
     expect(
       screen.getByText(/Read 20,000 sessions\? That is about 1,200 credits/),
     ).toBeInTheDocument();
+    expect(primaryButtons()).toEqual(["Start"]);
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
     });

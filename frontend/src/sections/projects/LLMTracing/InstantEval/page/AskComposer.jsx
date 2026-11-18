@@ -1,5 +1,5 @@
 import Section from "src/components/section";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -14,6 +14,8 @@ import {
   Stack,
   TextField,
   Typography,
+  useMediaQuery,
+  useTheme,
 } from "@mui/material";
 import { Link as RouterLink } from "react-router-dom";
 import Iconify from "src/components/iconify";
@@ -482,12 +484,20 @@ function ScopeCard({
                 key={key}
                 variant="rounded"
                 height={CHOICE_CARD_HEIGHT}
-                sx={{ flex: 1, minWidth: 240, borderRadius: "8px" }}
+                sx={{
+                  flex: { xs: "none", sm: 1 },
+                  minWidth: 240,
+                  borderRadius: "8px",
+                }}
               />
             ) : (
               <Box
                 key={key}
-                sx={{ flex: 1, minWidth: 240, height: CHOICE_CARD_HEIGHT }}
+                sx={{
+                  flex: { xs: "none", sm: 1 },
+                  minWidth: 240,
+                  height: CHOICE_CARD_HEIGHT,
+                }}
               />
             ),
           )}
@@ -732,6 +742,8 @@ export default function AskComposer({
   onAsk,
 }) {
   const meta = unitMeta(unit);
+  const theme = useTheme();
+  const phone = useMediaQuery(theme.breakpoints.down("sm"));
   const jev = useJevAvailability();
   const canRun = useCanStartRuns();
   // A sample size typed in, read before the scope's estimate is known so
@@ -985,8 +997,56 @@ export default function AskComposer({
     Boolean(estimate) &&
     !count;
 
+  const scopeCard = (
+    <ScopeCard
+      projectId={projectId}
+      unit={unit}
+      scope={scope}
+      from={seed?.label}
+      startedFrom={
+        seed ? seed.source || `the ${sourceViewTitle(unit)} view` : undefined
+      }
+      population={population}
+      onScopeChange={onScopeChange}
+      notice={scopeNotice}
+      onUseView={onUseView}
+      choice={choice}
+      sizes={sizes}
+      shownSize={shownSize}
+      custom={custom}
+      sizeNotice={sizeNotice}
+      onChoose={(next) => {
+        setSizeNotice(null);
+        setPicked(next);
+        if (next !== ALL) setLastSample(next);
+        // Custom… starts from the size shown, ready to edit.
+        if (next === CUSTOM && !customText)
+          setCustomText(String(shownSize ?? 1));
+        setFocusCustom(next === CUSTOM);
+        setConfirming(false);
+      }}
+      questions={filled}
+    />
+  );
+
+  // A confirm takes Ask Jev's place: focus moves to its Start, and back to
+  // Ask Jev from Back, rather than being dropped with the button pressed.
+  const confirmShown = Boolean((confirming && cost) || serverConfirm);
+  const confirmWasShown = useRef(confirmShown);
+  const askRef = useRef(null);
+  const startRef = useRef(null);
+  useEffect(() => {
+    if (confirmShown === confirmWasShown.current) return;
+    confirmWasShown.current = confirmShown;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    (confirmShown ? startRef : askRef).current?.focus();
+  }, [confirmShown]);
+
   return (
-    <Stack spacing={3} sx={{ maxWidth: 880 }}>
+    // Gaps rather than margins, so the action row's auto top margin can
+    // hold it at the bottom of the pane.
+    <Stack spacing={3} useFlexGap sx={{ maxWidth: 880, flexGrow: 1 }}>
       <Box>
         <Typography variant="m1" component="h1" sx={{ fontWeight: 600 }}>
           Ask Jev about these {meta.plural}
@@ -1019,35 +1079,7 @@ export default function AskComposer({
         </Alert>
       )}
 
-      <ScopeCard
-        projectId={projectId}
-        unit={unit}
-        scope={scope}
-        from={seed?.label}
-        startedFrom={
-          seed ? seed.source || `the ${sourceViewTitle(unit)} view` : undefined
-        }
-        population={population}
-        onScopeChange={onScopeChange}
-        notice={scopeNotice}
-        onUseView={onUseView}
-        choice={choice}
-        sizes={sizes}
-        shownSize={shownSize}
-        custom={custom}
-        sizeNotice={sizeNotice}
-        onChoose={(next) => {
-          setSizeNotice(null);
-          setPicked(next);
-          if (next !== ALL) setLastSample(next);
-          // Custom… starts from the size shown, ready to edit.
-          if (next === CUSTOM && !customText)
-            setCustomText(String(shownSize ?? 1));
-          setFocusCustom(next === CUSTOM);
-          setConfirming(false);
-        }}
-        questions={filled}
-      />
+      {!phone && scopeCard}
 
       <Stack spacing={1.25}>
         {questions.map((value, index) => (
@@ -1116,170 +1148,6 @@ export default function AskComposer({
         </Stack>
       </Box>
 
-      <Box sx={{ maxWidth: 432 }}>
-        <TextField
-          select
-          fullWidth
-          size="small"
-          label="Jev reads"
-          value={reads}
-          onChange={(event) => setReads(event.target.value)}
-          helperText={readOption(unit, reads).hint}
-          SelectProps={{
-            renderValue: (value) => readOption(unit, value).label,
-          }}
-        >
-          {readChoices.map((value) => (
-            <MenuItem key={value} value={value} sx={{ display: "block" }}>
-              <Typography variant="body2">
-                {readOption(unit, value).label}
-              </Typography>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                component="p"
-                sx={{ whiteSpace: "normal" }}
-              >
-                {readOption(unit, value).hint}
-              </Typography>
-            </MenuItem>
-          ))}
-        </TextField>
-      </Box>
-
-      {error && <Alert severity="error">{error}</Alert>}
-      {nothingInView && (
-        <Alert severity="info">
-          {population.handedOver
-            ? `None of the ${meta.plural} handed over can be read.`
-            : `No ${meta.plural} match this date range and these filters. Widen the date range or remove a filter.`}
-        </Alert>
-      )}
-
-      {confirming && cost && (
-        <Alert
-          severity="warning"
-          icon={<Iconify icon="solar:wallet-money-linear" width={20} />}
-          action={
-            <Stack direction="row" spacing={1}>
-              <Button
-                size="small"
-                variant="outlined"
-                color="inherit"
-                onClick={() => setConfirming(false)}
-              >
-                Back
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                disabled={starting}
-                onClick={() => ask(true)}
-              >
-                Start
-              </Button>
-            </Stack>
-          }
-        >
-          {cost.credits != null
-            ? `Read ${rowWords}? That is ${creditWords(cost.credits)} for ${questionWords}, and takes ${durationWords(cost.seconds)}.`
-            : `Read ${rowWords} for ${questionWords}? It takes ${durationWords(cost.seconds)}.`}{" "}
-          You can pause or cancel it while it runs.
-        </Alert>
-      )}
-
-      {serverConfirm && (
-        <Alert
-          severity="warning"
-          icon={<Iconify icon="solar:wallet-money-linear" width={20} />}
-          action={
-            <Stack direction="row" spacing={1}>
-              <Button size="small" onClick={onServerConfirmCancel}>
-                Back
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                disabled={starting}
-                onClick={onServerConfirm}
-              >
-                Start
-              </Button>
-            </Stack>
-          }
-        >
-          {/* The server's count, which can be more than the estimate here;
-              a user question's sessions are the most it can read. */}
-          {serverConfirm.credits != null
-            ? `This reads ${unit === "users" ? "up to " : ""}${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}: ${creditWords(serverConfirm.credits)}.`
-            : `This reads ${unit === "users" ? "up to " : ""}${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}.`}{" "}
-          Start it?
-        </Alert>
-      )}
-
-      <Box>
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled={
-            !canRun ||
-            !jev.available ||
-            jev.isLoading ||
-            starting ||
-            population.isLoading ||
-            population.isUpdating ||
-            costing ||
-            nothingInView ||
-            !cost?.allowed ||
-            confirming
-          }
-          onClick={() => ask(false)}
-          sx={{
-            "&:focus-visible": {
-              outline: "2px solid",
-              outlineColor: "border.focus",
-              outlineOffset: 2,
-            },
-          }}
-          startIcon={
-            starting ? (
-              <CircularProgress size={16} color="inherit" />
-            ) : (
-              <Iconify icon="solar:magic-stick-3-linear" width={18} />
-            )
-          }
-        >
-          {starting
-            ? "Starting…"
-            : population.isLoading || population.isUpdating
-              ? `Counting the ${meta.plural}…`
-              : cost
-                ? `Ask Jev about ${sampleSize ? "a sample of " : ""}${asked.toLocaleString()} ${
-                    asked === 1 ? meta.noun : meta.plural
-                  }`
-                : `Ask Jev`}
-        </Button>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          component="p"
-          sx={{ mt: 1, maxWidth: 640 }}
-        >
-          {canRun ? (
-            <>
-              Each question is saved as a Jev evaluator you can reuse or edit.
-              {billed ? " Every answer is billed as one eval run;" : ""}{" "}
-              TypeSafe bills its tokens to your own key.
-            </>
-          ) : (
-            VIEWER_CANT_RUN
-          )}
-        </Typography>
-      </Box>
-
       {recent.length > 0 && (
         <Box>
           <Typography
@@ -1315,6 +1183,203 @@ export default function AskComposer({
           </Stack>
         </Box>
       )}
+
+      {/* On a phone the count comes after the questions, in the page's
+          order too (not only drawn there), so a count that lands, fails or
+          wraps never moves the box being typed in, and Tab and screen
+          readers meet things in the order they are seen. */}
+      {phone && scopeCard}
+
+      <Box sx={{ maxWidth: 432 }}>
+        <TextField
+          select
+          fullWidth
+          size="small"
+          label="Jev reads"
+          value={reads}
+          onChange={(event) => setReads(event.target.value)}
+          helperText={readOption(unit, reads).hint}
+          SelectProps={{
+            renderValue: (value) => readOption(unit, value).label,
+          }}
+        >
+          {readChoices.map((value) => (
+            <MenuItem key={value} value={value} sx={{ display: "block" }}>
+              <Typography variant="body2">
+                {readOption(unit, value).label}
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                component="p"
+                sx={{ whiteSpace: "normal" }}
+              >
+                {readOption(unit, value).hint}
+              </Typography>
+            </MenuItem>
+          ))}
+        </TextField>
+      </Box>
+
+      {/* Pinned to the bottom of the page while the questions above grow
+          (another example, a category question's definitions), so Ask Jev
+          and its confirmations stay where they were. */}
+      <Stack
+        spacing={1.5}
+        data-testid="ask-actions"
+        sx={{
+          mt: "auto",
+          position: "sticky",
+          bottom: 0,
+          zIndex: 1,
+          bgcolor: "background.paper",
+          borderTop: 1,
+          borderColor: "divider",
+          py: 1.5,
+        }}
+      >
+        {error && <Alert severity="error">{error}</Alert>}
+        {nothingInView && (
+          <Alert severity="info">
+            {population.handedOver
+              ? `None of the ${meta.plural} handed over can be read.`
+              : `No ${meta.plural} match this date range and these filters. Widen the date range or remove a filter.`}
+          </Alert>
+        )}
+
+        {confirming && cost && (
+          <Alert
+            severity="warning"
+            icon={<Iconify icon="solar:wallet-money-linear" width={20} />}
+            action={
+              <Stack direction="row" spacing={1}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  onClick={() => setConfirming(false)}
+                >
+                  Back
+                </Button>
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  ref={startRef}
+                  disabled={starting}
+                  onClick={() => ask(true)}
+                >
+                  Start
+                </Button>
+              </Stack>
+            }
+          >
+            {cost.credits != null
+              ? `Read ${rowWords}? That is ${creditWords(cost.credits)} for ${questionWords}, and takes ${durationWords(cost.seconds)}.`
+              : `Read ${rowWords} for ${questionWords}? It takes ${durationWords(cost.seconds)}.`}{" "}
+            You can pause or cancel it while it runs.
+          </Alert>
+        )}
+
+        {serverConfirm && (
+          <Alert
+            severity="warning"
+            icon={<Iconify icon="solar:wallet-money-linear" width={20} />}
+            action={
+              <Stack direction="row" spacing={1}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  onClick={onServerConfirmCancel}
+                >
+                  Back
+                </Button>
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  ref={startRef}
+                  disabled={starting}
+                  onClick={onServerConfirm}
+                >
+                  Start
+                </Button>
+              </Stack>
+            }
+          >
+            {/* The server's count, which can be more than the estimate here;
+              a user question's sessions are the most it can read. */}
+            {serverConfirm.credits != null
+              ? `This reads ${unit === "users" ? "up to " : ""}${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}: ${creditWords(serverConfirm.credits)}.`
+              : `This reads ${unit === "users" ? "up to " : ""}${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}.`}{" "}
+            Start it?
+          </Alert>
+        )}
+
+        <Box>
+          {!confirmShown && (
+            <Button
+              ref={askRef}
+              size="small"
+              variant="contained"
+              color="primary"
+              disabled={
+                !canRun ||
+                !jev.available ||
+                jev.isLoading ||
+                starting ||
+                population.isLoading ||
+                population.isUpdating ||
+                costing ||
+                nothingInView ||
+                !cost?.allowed
+              }
+              onClick={() => ask(false)}
+              sx={{
+                "&:focus-visible": {
+                  outline: "2px solid",
+                  outlineColor: "border.focus",
+                  outlineOffset: 2,
+                },
+              }}
+              startIcon={
+                starting ? (
+                  <CircularProgress size={16} color="inherit" />
+                ) : (
+                  <Iconify icon="solar:magic-stick-3-linear" width={18} />
+                )
+              }
+            >
+              {starting
+                ? "Starting…"
+                : population.isLoading || population.isUpdating
+                  ? `Counting the ${meta.plural}…`
+                  : cost
+                    ? `Ask Jev about ${sampleSize ? "a sample of " : ""}${asked.toLocaleString()} ${
+                        asked === 1 ? meta.noun : meta.plural
+                      }`
+                    : `Ask Jev`}
+            </Button>
+          )}
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            component="p"
+            sx={{ mt: 1, maxWidth: 640 }}
+          >
+            {canRun ? (
+              <>
+                Each question is saved as a Jev evaluator you can reuse or edit.
+                {billed ? " Every answer is billed as one eval run;" : ""}{" "}
+                TypeSafe bills its tokens to your own key.
+              </>
+            ) : (
+              VIEWER_CANT_RUN
+            )}
+          </Typography>
+        </Box>
+      </Stack>
     </Stack>
   );
 }
