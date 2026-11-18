@@ -85,7 +85,7 @@ export const KIND_WORDS = {
   TOOL: "Tool call",
 };
 
-export const TAG_W = (k) => (k ? k.length * 6.2 + 6 : 0);
+export const TAG_W = (k) => (k ? k.length * 8 + 6 : 0);
 
 export const smallBtn = {
   height: 24,

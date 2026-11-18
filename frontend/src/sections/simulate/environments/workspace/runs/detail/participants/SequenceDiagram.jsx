@@ -79,6 +79,7 @@ export default function SequenceDiagram({
     sel: alpha(theme.palette.primary.main, 0.08),
     selLine: theme.palette.primary.main,
     hover: theme.palette.action.hover,
+    onColour: theme.palette.common.white,
   };
   const byN = Object.fromEntries(seq.steps.map((s) => [s.n, s]));
   const hasTools = seq.steps.some((s) => s.kind === "tool");
@@ -323,7 +324,7 @@ export default function SequenceDiagram({
           textAnchor="middle"
           fontSize="11"
           fontWeight="600"
-          fill={s.bad || s.refused ? "#fff" : c.paper}
+          fill={s.bad || s.refused ? c.onColour : c.paper}
         >
           {text}
         </text>
@@ -350,8 +351,8 @@ export default function SequenceDiagram({
   const kindTag = (k, color) =>
     k ? (
       <tspan
-        fontSize="9"
-        fontWeight="700"
+        fontSize="11"
+        fontWeight="600"
         letterSpacing="0.06em"
         fill={color || c.muted}
       >

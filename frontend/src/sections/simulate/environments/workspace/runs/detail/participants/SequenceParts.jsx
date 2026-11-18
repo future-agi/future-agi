@@ -134,8 +134,8 @@ export function Legend({ seq }) {
             <Typography
               component="span"
               sx={{
-                fontSize: 9,
-                fontWeight: 700,
+                fontSize: 11,
+                fontWeight: 600,
                 letterSpacing: "0.06em",
                 color: "text.secondary",
               }}
@@ -215,11 +215,8 @@ export function CopyLink({ url }) {
         onClick={copy}
         aria-label={C.copyLink}
         sx={{
-          width: 24,
-          height: 24,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: "6px",
         }}
       >
         <Iconify
