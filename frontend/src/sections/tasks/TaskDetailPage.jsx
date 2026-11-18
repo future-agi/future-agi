@@ -216,44 +216,18 @@ const TaskDetailPage = () => {
     onSettled: reconcileStatus,
   });
 
-  const { mutate: resumeTask, isPending: isResuming } = useMutation({
-    mutationFn: ({ start }) =>
-      axios.post(
-        endpoints.project.resumeEvalTask(taskId),
-        start ? { start: true } : {},
-      ),
+  const { mutate: resumeTask } = useMutation({
+    mutationFn: () => axios.post(endpoints.project.resumeEvalTask(taskId), {}),
     meta: { errorHandled: true },
-    // An accepted start is still pending until the worker reports running.
+    // pending (not running): resume re-queues, so the badge moves forward only.
     onMutate: () => optimisticStatus("pending"),
-    onError: (err, { start }, ctx) => {
+    onError: (_e, _v, ctx) => {
       rollbackStatus(ctx);
-      const code = err?.response?.data?.code || err?.code;
-      if (code === "eval_task_already_started") {
-        enqueueSnackbar(
-          "This task has already started. Refreshing its status.",
-          { variant: "info" },
-        );
-        return;
-      }
-      enqueueSnackbar(
-        getSafeActionErrorMessage(
-          err,
-          start
-            ? "Task start could not be confirmed. Try again."
-            : "Failed to resume task. It may have already finished.",
-        ),
-        { variant: "error" },
-      );
+      enqueueSnackbar("Failed to resume task. It may have already finished.", {
+        variant: "error",
+      });
     },
-    onSuccess: (response, { start }) =>
-      enqueueSnackbar(
-        start
-          ? response?.data?.result?.message === "Task start already accepted"
-            ? "Task start already accepted"
-            : "Task start accepted"
-          : "Task resumed",
-        { variant: "success" },
-      ),
+    onSuccess: () => enqueueSnackbar("Task resumed", { variant: "success" }),
     onSettled: reconcileStatus,
   });
 
@@ -489,7 +463,6 @@ const TaskDetailPage = () => {
   const status = (taskDetails.status || "").toLowerCase();
   const canPause = status === "running";
   const canResume = isResumableTaskStatus(status);
-  const canStart = status === "pending" && taskDetails.can_start === true;
   const linkedTraceSource = getLinkedTraceSource(taskDetails);
 
   // A re-run mid-flight would race the live run.
@@ -522,19 +495,15 @@ const TaskDetailPage = () => {
           Pause
         </Button>
       )}
-      {(canResume || canStart) && (
-        <LoadingButton
+      {canResume && (
+        <Button
           variant="outlined"
           size="small"
-          onClick={() => resumeTask({ start: canStart })}
-          loading={isResuming}
-          // A save submits its own rerun before it settles; starting while one is
-          // in flight would race it.
-          disabled={!canEditTask || isResuming || isUpdating}
+          onClick={() => resumeTask()}
           startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
         >
-          {canStart ? "Start task" : "Resume"}
-        </LoadingButton>
+          Resume
+        </Button>
       )}
       <CustomTooltip
         show={!!rerunBlockedReason}
@@ -547,7 +516,7 @@ const TaskDetailPage = () => {
             size="small"
             onClick={() => openConfirm("rerun")}
             loading={isUpdating}
-            disabled={!!rerunBlockedReason || isResuming}
+            disabled={!!rerunBlockedReason}
             startIcon={<Iconify icon="solar:restart-linear" width={14} />}
           >
             Re-run
@@ -741,7 +710,7 @@ const TaskDetailPage = () => {
               size="small"
               onClick={() => openConfirm("save")}
               loading={isUpdating}
-              disabled={!canEditTask || isResuming}
+              disabled={!canEditTask}
             >
               Save
             </LoadingButton>
