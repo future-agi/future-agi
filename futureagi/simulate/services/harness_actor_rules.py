@@ -215,6 +215,8 @@ def actor_rules(files: dict[str, bytes]) -> ActorRules:
 KNOWLEDGE_ROLES = "knowledge/roles.json"
 FileRole = Literal["policy", "seed_records", "evaluator_only"]
 FILE_ROLES: tuple[FileRole, ...] = ("policy", "seed_records", "evaluator_only")
+# The role a file with a role the platform does not know is read as: the safe side, as the harness reads it.
+UNKNOWN_ROLE: FileRole = "evaluator_only"
 
 
 def file_roles(files: dict[str, bytes]) -> dict[str, FileRole]:
@@ -228,14 +230,15 @@ def file_roles(files: dict[str, bytes]) -> dict[str, FileRole]:
         body = None
     roles: dict[str, FileRole] = {}
     for path, role in body.items() if isinstance(body, dict) else []:
-        name = str(path)
+        # Spelled as the harness reads it: surrounding spaces and a leading `./` are not part of the path.
+        name = str(path).strip().removeprefix("./")
         if (
             not name.startswith("knowledge/")
             or ".." in name.split("/")
             or name == KNOWLEDGE_ROLES
         ):
             continue
-        roles[name] = role if role in FILE_ROLES else "evaluator_only"
+        roles[name] = role if role in FILE_ROLES else UNKNOWN_ROLE
     return roles
 
 

@@ -135,3 +135,17 @@ def test_an_unknown_or_unreadable_roles_file_hides_or_ignores_as_the_harness_doe
         == {}
     )
     assert "a.md" in harness_actor_rules.actor_rules(files)["evaluator_only"]["files"]
+
+
+def test_a_role_path_is_read_as_the_harness_spells_it():
+    """Review round 1 nit: surrounding spaces and a leading `./` are not part of the path, on both sides."""
+    files = {
+        harness_actor_rules.KNOWLEDGE_ROLES: json.dumps(
+            {" knowledge/a.md ": "policy", "./knowledge/b.md": "evaluator_only"}
+        ).encode()
+    }
+
+    assert harness_actor_rules.file_roles(files) == {
+        "knowledge/a.md": "policy",
+        "knowledge/b.md": "evaluator_only",
+    }
