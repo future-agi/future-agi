@@ -9,6 +9,10 @@ from uuid import uuid4
 import pytest
 
 from tracer.services.derived_metrics import reads
+from tracer.tests.metric_read_fixtures import (  # noqa: F401
+    ninety_day_source_policy,
+    retained_sql_case,
+)
 from tracer.tests.test_derived_metric_parts import assert_same
 from tracer.tests.test_derived_metric_publication_clickhouse import (  # noqa: F401
     metric_ch,
@@ -80,12 +84,13 @@ def test_periods_keep_independent_scopes_and_all_ci_fields(
     assert all(row["status"] == "ok" for row in rows)
 
 
+@pytest.mark.django_db
 @pytest.mark.parametrize("text", ["sum(y)", "ratio(y, x)", "mean(y > 0)"])
 @pytest.mark.parametrize("design", ["closed", "live", "unweighted"])
 def test_stored_cohorts_keep_the_oracle_and_backfill_invariant_ci(
-    publication_store, text, design
+    publication_store, text, design, retained_sql_case
 ):
-    scope, metric, definition, attempt, manifest = case(text)
+    scope, metric, definition, attempt, manifest = retained_sql_case(text)
     definition.cohort_key = "region"
     values = [0, 0, 0, 1, 1, 1, 2, 2, 3, 4, 0, 1]
     probability = 1 if design == "unweighted" else 0.5

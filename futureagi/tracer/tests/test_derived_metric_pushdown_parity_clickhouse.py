@@ -1715,11 +1715,13 @@ def test_bucket_window_raw_history_parity_and_writer_paths(
         SimpleNamespace(project_id=project, keepalive=lambda: None), store, org_id=org
     )
     attempt = SimpleNamespace(
+        purpose="incremental",
+        source_ceilings={"retention_floor": (AT - timedelta(days=1)).isoformat()},
         ledger_chunks=SimpleNamespace(
             filter=lambda **_: [
                 SimpleNamespace(payload=[{"bucket_start": AT.isoformat()}]),
             ]
-        )
+        ),
     )
     definition = SimpleNamespace(metric_id=metric, version=1)
     captured = []

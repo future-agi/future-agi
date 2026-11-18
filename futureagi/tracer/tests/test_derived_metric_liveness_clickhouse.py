@@ -12,6 +12,7 @@ from tracer.services.clickhouse import v2
 from tracer.services.derived_metrics import admission, backfill, reads
 from tracer.services.derived_metrics.publication import ClickHousePublicationStore
 from tracer.services.derived_metrics.queries import Scope
+from tracer.tests.metric_read_fixtures import ninety_day_source_policy  # noqa: F401
 from tracer.tests.test_derived_metric_backfill import make_version
 from tracer.tests.test_derived_metric_publication_clickhouse import (  # noqa: F401
     live_writer,
@@ -21,6 +22,7 @@ from tracer.tests.test_derived_metric_publication_clickhouse import (  # noqa: F
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("ninety_day_source_policy")
 @pytest.mark.parametrize("definition_count", [1, 3])
 def test_review_sized_initial_history_finishes_in_bounded_reservations(
     live_writer, workspace, observe_project, settings, monkeypatch, definition_count
@@ -100,8 +102,6 @@ def test_review_sized_initial_history_finishes_in_bounded_reservations(
         return freeze_select(self, *args, **kwargs)
 
     monkeypatch.setattr(ClickHousePublicationStore, "freeze_select", unlocked_freeze)
-    settings.METRICS_RETENTION_DAYS_PROVIDER = "test.current_policy"
-    monkeypatch.setattr(admission, "import_string", lambda path: lambda org: 90)
     native = store.client.connection
     monkeypatch.setattr(
         v2,
@@ -150,6 +150,7 @@ def test_review_sized_initial_history_finishes_in_bounded_reservations(
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("ninety_day_source_policy")
 def test_large_initial_history_yields_after_checkpoint_and_resumes_next_reservation(
     live_writer, workspace, observe_project, settings, monkeypatch
 ):
@@ -157,8 +158,6 @@ def test_large_initial_history_yields_after_checkpoint_and_resumes_next_reservat
 
     settings.METRICS_ENABLED = 1
     settings.METRICS_MAX_CONCURRENT_PROJECTS = 1
-    settings.METRICS_RETENTION_DAYS_PROVIDER = "test.current_policy"
-    monkeypatch.setattr(admission, "import_string", lambda path: lambda org: 90)
     store = live_writer.store
     store.execute("ALTER TABLE spans ADD COLUMN observation_type String DEFAULT ''")
     native = store.client.connection
@@ -334,7 +333,12 @@ def test_bucket_batch_overflow_splits_without_duplicate_output(
     monkeypatch.setattr(writer, "_anonymous_bucket_parts", bounded_capture)
     writer.refresh(
         ChangeBatch(
-            (), tuple(UnitKey("conversation", str(s)) for s in sessions), (), (), (), {}
+            (),
+            tuple(UnitKey("conversation", str(s)) for s in sessions),
+            (),
+            (),
+            (),
+            {"watermark_ns": int(now.timestamp()) * 10**9},
         ),
         [definition],
         scope,
@@ -417,7 +421,12 @@ def test_real_bucket_budget_overflow_subdivides_under_unchanged_cap(
     monkeypatch.setattr(writer, "_anonymous_bucket_parts", observed_capture)
     head = writer.refresh(
         ChangeBatch(
-            (), tuple(UnitKey("conversation", str(s)) for s in sessions), (), (), (), {}
+            (),
+            tuple(UnitKey("conversation", str(s)) for s in sessions),
+            (),
+            (),
+            (),
+            {"watermark_ns": int(now.timestamp()) * 10**9},
         ),
         [definition],
         scope,

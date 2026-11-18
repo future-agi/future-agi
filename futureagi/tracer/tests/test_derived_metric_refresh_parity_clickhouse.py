@@ -170,11 +170,11 @@ def test_live_active_and_draft_versions_keep_distinct_immutable_filter_membershi
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("anchor_age_hours", [18, 72], ids=["retained", "expired"])
 @pytest.mark.parametrize("still_matches", [True, False])
 def test_saved_filters_never_supply_the_conversation_anchor_or_arrival_clock(
-    live_writer, workspace, observe_project, still_matches
+    live_writer, workspace, observe_project, still_matches, anchor_age_hours
 ):
-    from tracer.tests.test_derived_metric_publication_clickhouse import current_fields
     from tracer.tests.test_derived_metric_retention_clickhouse import anonymous_parts
 
     writer, now = live_writer, timezone.now().replace(microsecond=0)
@@ -203,17 +203,57 @@ def test_saved_filters_never_supply_the_conversation_anchor_or_arrival_clock(
 
     seed("recent", now - timedelta(hours=12), "included", 1)
     change = ChangeBatch(
-        (), (UnitKey("conversation", str(session)),), (), (), (), {"watermark_ns": 1}
+        (),
+        (UnitKey("conversation", str(session)),),
+        (),
+        (),
+        (),
+        {"watermark_ns": int(now.timestamp()) * 10**9},
     )
     kwargs = {"start": now - timedelta(days=4), "end": now, "as_of": now}
     writer.refresh(change, [definition], scope, **kwargs)
-    seed("earlier-filtered-out", now - timedelta(days=3), "excluded", 1)
+    seed(
+        "earlier-filtered-out",
+        now - timedelta(hours=anchor_age_hours),
+        "excluded",
+        1,
+    )
     if not still_matches:
         seed("recent", now - timedelta(hours=12), "excluded", 2)
+    # Independent source truth: filter membership cannot move the unit's anchor
+    # or last arrival. An expired conversation must not survive anonymously.
+    anchor, arrival, members, total = writer.store.execute(
+        "SELECT min(start_time), max(updated_at), countIf(model = 'included'), "
+        "sumIf(attrs_number['resolved'], model = 'included') FROM spans FINAL "
+        "WHERE project_id = %(project_id)s AND org_id = %(org_id)s "
+        "AND trace_session_id = toUUID(%(session)s)",
+        {**scope.parameters(), "session": str(session)},
+    )[0]
+    assert anchor == now - timedelta(hours=anchor_age_hours)
+    assert arrival == now - timedelta(hours=12)
+    assert members == int(still_matches)
+    retained = anchor >= now - timedelta(days=1)
+    expected = [(str(session), total / members, anchor)] if retained and members else []
     head = writer.refresh(change, [definition], scope, **kwargs)
-    assert current_fields(writer, head) == []
-    parts = anonymous_parts(writer, head)
-    assert [r[1:] for r in parts] == ([(1, 4.0, 1.0)] if still_matches else [])
+    sql, params = committed_rows_select(
+        FIELD_VALUES, head, org_id=scope.organization, project_id=scope.project
+    )
+    assert (
+        writer.store.execute(
+            f"SELECT unit_id, value_number, unit_start FROM ({sql}) WHERE is_deleted = 0",
+            params,
+        )
+        == expected
+    )
+    assert anonymous_parts(writer, head) == []
+    sql, params = committed_rows_select(
+        BUCKET_TOTALS, head, org_id=scope.organization, project_id=scope.project
+    )
+    assert writer.store.execute(
+        f"SELECT sum(unit_count), sum(weighted_n), sum(weighted_d) FROM ({sql}) "
+        "WHERE is_deleted = 0",
+        params,
+    ) == [(len(expected), total if expected else 0.0, float(len(expected)))]
 
 
 @pytest.mark.django_db(transaction=True)

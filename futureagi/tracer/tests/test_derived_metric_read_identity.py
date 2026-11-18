@@ -1,9 +1,12 @@
-"""DB-free wire/identity controls; only storage reads are substituted."""
+# ruff: noqa: F811 -- shared PostgreSQL policy fixture
+"""Wire/identity controls with real PG admission; CH result rows are substituted."""
 
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 from uuid import UUID
+
+import pytest
 
 from tracer.serializers.dashboard import DashboardTimeRangeSerializer
 from tracer.serializers.derived_metric import (
@@ -16,13 +19,52 @@ from tracer.services.derived_metrics import contributors, service
 from tracer.services.derived_metrics.cursor import decode_result_cursor
 from tracer.services.derived_metrics.errors import MetricInputError
 from tracer.services.derived_metrics.queries import QUERY_SETTINGS
+from tracer.tests.metric_read_fixtures import ninety_day_source_policy  # noqa: F401
 from tracer.tests.test_derived_metric_dashboard_context import (
     produce,
     saved_observation,
 )
 
 
+@pytest.fixture
+def persisted_identity_runs(
+    ninety_day_source_policy, workspace, observe_project, monkeypatch
+):
+    from django.utils import timezone as clock
+
+    from tracer.models.derived_metric import DerivedMetricVersion
+
+    original = saved_observation
+    monkeypatch.setattr(clock, "now", lambda: datetime(2026, 10, 26, 0, 2, tzinfo=UTC))
+
+    def saved():
+        run, row, config = original()
+        metric, definition = run.definition.metric, run.definition
+        metric.organization = workspace.organization
+        metric.workspace = workspace
+        metric.project = observe_project
+        metric.save()
+        created = definition.created_at
+        definition.save()
+        DerivedMetricVersion.objects.filter(pk=definition.pk).update(created_at=created)
+        definition.created_at = created
+        run.as_of = run.window_end + timedelta(minutes=1)
+        run.snapshot_id = UUID(int=6)
+        run.completed_at = run.as_of + timedelta(minutes=1)
+        run.save()
+        return run, row, config
+
+    monkeypatch.setattr(__name__ + ".saved_observation", saved)
+
+
+def persist_read_identity(run):
+    # Each scenario represents a committed namespace, including the last good
+    # result during recomputation. Keep the real snapshot_read checks enabled.
+    run.save(update_fields=["status", "snapshot_id", "result_id", "completed_at"])
+
+
 def read_fixture(run, row, *, rollup="overall", after="", limit=50, extra=False):
+    persist_read_identity(run)
     raw = {
         **row,
         "ci_status": "not_estimable",
@@ -60,8 +102,6 @@ def wire_fixture():
     run.created_at = run.as_of
     run.completed_at = run.as_of + timedelta(minutes=1)
     run.snapshot_id = UUID(int=6)
-    run.definition.metric.organization_id = UUID(int=7)
-    run.definition.metric.workspace_id = UUID(int=8)
     wire_run = DerivedMetricRunSerializer(run).data
     old_page, _ = read_fixture(run, row)
     session_page, _ = read_fixture(
@@ -102,6 +142,8 @@ def legacy_contract(actual, expected):
     return actual
 
 
+@pytest.mark.django_db
+@pytest.mark.usefixtures("persisted_identity_runs")
 def test_committed_identity_wire_fixture_matches_actual_producers():
     import json
     from pathlib import Path
@@ -116,6 +158,8 @@ def test_committed_identity_wire_fixture_matches_actual_producers():
     assert actual["run"]["kind"] == "run"
 
 
+@pytest.mark.django_db
+@pytest.mark.usefixtures("persisted_identity_runs")
 def test_identity_applies_to_all_rollups_and_cursors_without_extra_reads():
     run, row, _ = saved_observation()
     for status in ("queued", "running", "failed", "complete"):
@@ -131,6 +175,7 @@ def test_identity_applies_to_all_rollups_and_cursors_without_extra_reads():
             assert following["result_id"] == page["result_id"]
     # A cursor for R1 is never repurposed for R2, and rejection precedes CH.
     run.result_id = UUID(int=5)
+    persist_read_identity(run)
     client = Mock()
     with (
         patch.object(service, "get_clickhouse_client", return_value=client),
@@ -145,6 +190,8 @@ def test_identity_applies_to_all_rollups_and_cursors_without_extra_reads():
     client.execute.assert_not_called()
 
 
+@pytest.mark.django_db
+@pytest.mark.usefixtures("persisted_identity_runs")
 def test_identity_is_required_for_persisted_pages_not_preview():
     page = wire_fixture()["old_page"]
     for identity in (None, "", "not-a-uuid"):
@@ -158,6 +205,7 @@ def test_identity_is_required_for_persisted_pages_not_preview():
 
 
 def contributor_fixture(run):
+    persist_read_identity(run)
     diagnostics = {
         "unit_count": 3,
         "valid_count": 2,
@@ -200,6 +248,8 @@ def contributor_fixture(run):
     return page, client
 
 
+@pytest.mark.django_db
+@pytest.mark.usefixtures("persisted_identity_runs")
 def test_contributor_identity_is_the_persisted_value_identity():
     run, _, _ = saved_observation()
     run.snapshot_id = UUID(int=6)

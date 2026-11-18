@@ -12,6 +12,10 @@ import pytest
 from tracer.services.derived_metrics import reads
 from tracer.services.derived_metrics.formula import compile_formula
 from tracer.services.derived_metrics.queries import aggregate_select
+from tracer.tests.metric_read_fixtures import (  # noqa: F401
+    ninety_day_source_policy,
+    retained_sql_case,
+)
 from tracer.tests.test_derived_metric_parts import assert_same, by_group, rows_as_dicts
 from tracer.tests.test_derived_metric_publication_clickhouse import (  # noqa: F401
     metric_ch,
@@ -26,14 +30,15 @@ from tracer.tests.test_derived_metric_reads_clickhouse import (
 from tracer.tests.test_derived_metric_uncertainty import insert_units, reference, unit
 
 
+@pytest.mark.django_db
 @pytest.mark.parametrize(
     "text", ["mean(y)", "sum(y)", "ratio(y, x)", "mean(y > 0)", "count_if(y > 0)"]
 )
 @pytest.mark.parametrize("separate_strata", [False, True])
 def test_requested_domain_matches_direct_units_and_centered_oracle(
-    publication_store, text, separate_strata
+    publication_store, text, separate_strata, retained_sql_case
 ):
-    scope, metric, definition, attempt, manifest = case(text)
+    scope, metric, definition, attempt, manifest = retained_sql_case(text)
     definition.cohort_key = "region"
     units = []
     values = [0, 1, 0, 1] if "> 0" in text else [0, 1, 2, 3]
@@ -142,8 +147,11 @@ def test_requested_domain_matches_direct_units_and_centered_oracle(
     assert_same({key: trend[0][key] for key in expected_point}, expected_point)
 
 
-def test_dimension_projection_combines_only_unrequested_dimensions(publication_store):
-    scope, metric, definition, attempt, manifest = case("mean(y)")
+@pytest.mark.django_db
+def test_dimension_projection_combines_only_unrequested_dimensions(
+    publication_store, retained_sql_case
+):
+    scope, metric, definition, attempt, manifest = retained_sql_case("mean(y)")
     definition.group_dims = ["region", "tier"]
     units = []
     for index in range(8):

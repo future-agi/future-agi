@@ -179,7 +179,10 @@ def sketch_case(request, live_writer, workspace, observe_project, user):
     )
     metric.active_version = definition
     metric.save(update_fields=["active_version"])
-    end = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # End on a fully settled day even if this fixture runs just after midnight.
+    end = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
+        days=1
+    )
     start = end - timedelta(days=2)
     dirty = [start + timedelta(minutes=15 * i) for i in range(buckets)]
     attempt = live_writer.begin(
@@ -208,7 +211,11 @@ def sketch_case(request, live_writer, workspace, observe_project, user):
     live_writer._freeze_buckets(
         attempt, None, definition, overlay, bound, complete_fields=True
     )
-    live_writer.seal(attempt)
+    # This synthetic source is exhausted through now, not the epoch. Persist
+    # the consumed cut through the same publication protocol as a real capture.
+    live_writer.seal(
+        attempt, cursors={"watermark_ns": int(timezone.now().timestamp()) * 10**9}
+    )
     live_writer.stage_and_publish(attempt)
     # Capture from checkpoints as well as immutable deltas.
     live_writer.compact()

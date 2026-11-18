@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import pytest
 from django.utils import timezone
-from simulate.models.agent_definition import AgentDefinition
 
+from simulate.models.agent_definition import AgentDefinition
 from tracer.models.derived_metric import (
     DerivedMetric,
     DerivedMetricRun,
@@ -184,11 +184,9 @@ def test_continuous_dispatch_does_not_lease_or_enqueue_stored_hidden_project(
     assert hidden_state.fencing_epoch == 0, "scheduler leased hidden simulation work"
     assert hidden_state.lease_token is None
     assert hidden_state.last_started_at is None
-    if enabled:
-        assert count == 1
-        assert [p["project_id"] for p in payloads] == [str(visible.pk)]
-        assert visible_state.fencing_epoch == 1
-    else:
-        assert count == 0
-        assert payloads == []
-        assert visible_state.fencing_epoch == 0
+    # Rollout-off still schedules source-retention work for visible projects;
+    # it must never compute fresh metrics or admit hidden simulation projects.
+    assert count == 1
+    assert [p["project_id"] for p in payloads] == [str(visible.pk)]
+    assert visible_state.fencing_epoch == 1
+    assert [p["purpose"] for p in payloads] == ["incremental" if enabled else "expiry"]

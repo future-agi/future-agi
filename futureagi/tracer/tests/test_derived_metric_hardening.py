@@ -107,6 +107,26 @@ def clean_admission_cache():
 
 
 @pytest.fixture
+def native_run_database(metric_ch, monkeypatch):
+    # Native submission now owns a separate no-reconnect connection. Point its
+    # configuration at the seeded isolated database, not the empty default DB.
+    from tracer.services.clickhouse import v2
+
+    native = metric_ch.connection
+    monkeypatch.setattr(
+        v2,
+        "get_v2_config",
+        lambda: {
+            "host": native.host,
+            "tcp_port": native.port,
+            "user": native.user,
+            "password": native.password,
+            "database": native.database,
+        },
+    )
+
+
+@pytest.fixture
 def saved(auth_client, observe_project, enabled_metrics):
     response = auth_client.post(ROOT, span_body(observe_project), format="json")
     assert response.status_code == 201, response.data
@@ -204,7 +224,8 @@ def seed_two_sessions(client, scope, when):
 # --- MET-2: a failed delivery is retried by the scheduler -------------------------
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("native_run_database")
 def test_failed_delivery_is_retried_after_the_alert_window_and_stays_deduplicated(
     auth_client, observe_project, workspace, saved, scope, metric_ch
 ):
@@ -255,7 +276,8 @@ def test_failed_delivery_is_retried_after_the_alert_window_and_stays_deduplicate
     assert monitor.last_derived_run_id == run.id
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("native_run_database")
 def test_scheduler_does_not_reemit_an_earlier_run_after_a_later_one(
     auth_client, observe_project, workspace, saved, scope, metric_ch
 ):
@@ -946,18 +968,63 @@ def test_preview_uses_a_tighter_server_side_budget_than_a_persisted_run(
     assert service.PREVIEW_LEASE_SECONDS > PREVIEW_QUERY_SETTINGS["max_execution_time"]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("native_run_database")
 def test_persisted_runs_keep_their_own_budget(auth_client, saved, scope, metric_ch):
+    from tracer.services.derived_metrics import snapshots
+
     seed_two_sessions(metric_ch, scope, timezone.now() - timedelta(hours=1))
     spy = SpyClient(metric_ch)
-    with patch("tracer.views.derived_metric._enqueue"), using(spy):
-        run = auth_client.post(f"{ROOT}{saved['id']}/runs/", window(), format="json")
-        execute_run(run.data["id"])
+    native_statements = []
+    snapshot_store = snapshots.snapshot_store
+
+    @contextmanager
+    def recorded_store():
+        with snapshot_store() as store:
+            execute = store.client.execute
+
+            def recorded_execute(sql, *args, **kwargs):
+                native_statements.append((sql, kwargs.get("settings")))
+                return execute(sql, *args, **kwargs)
+
+            with patch.object(store.client, "execute", side_effect=recorded_execute):
+                yield store
+
+    with (
+        patch("tracer.views.derived_metric._enqueue"),
+        patch.object(snapshots, "snapshot_store", recorded_store),
+        using(spy),
+    ):
+        response = auth_client.post(
+            f"{ROOT}{saved['id']}/runs/", window(), format="json"
+        )
+        execute_run(response.data["id"])
+        run = DerivedMetricRun.objects.get(pk=response.data["id"])
+        assert service.read_results(run)["results"][0]["value"] == 0.5
     assert spy.settings and PREVIEW_QUERY_SETTINGS not in spy.settings
     assert all(
         used in (QUERY_SETTINGS, {**QUERY_SETTINGS, "max_threads": 1})
         for used in spy.settings
     )
+    writes = [
+        (sql, used)
+        for sql, used in native_statements
+        if sql.startswith("INSERT INTO derived_metric_")
+    ]
+    # One frozen-input write, five rollups and the commit; observing only the
+    # notification reader cannot establish the native computation's budget.
+    assert len(writes) == 7
+    for sql, used in writes:
+        private = sql.startswith("INSERT INTO derived_metric_inputs")
+        assert used == {
+            **QUERY_SETTINGS,
+            "max_threads": 1,
+            "enable_analyzer": 0,
+            "log_queries": 0 if private else 1,
+        }
+    for _, used in native_statements:
+        for name in ("max_execution_time", "max_memory_usage", "max_threads"):
+            assert 0 < used[name] <= QUERY_SETTINGS[name]
 
 
 @pytest.mark.django_db
