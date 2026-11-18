@@ -106,7 +106,7 @@ func TestLeftoverLocationHeaderAddsNoUplift(t *testing.T) {
 	srv, instances := vertexInstances(t)
 	db := testModelDBPtr()
 	cost := costplugin.New(true, db.Load, nil, nil)
-	cost.SetPriceTables(srv.PriceTableName)
+	cost.SetPriceTables(srv.ServedPriceTableName)
 	cost.SetCachedTokensInPrompt(srv.CachedTokensInPrompt)
 
 	for _, tc := range []struct {
@@ -133,7 +133,11 @@ func TestLeftoverLocationHeaderAddsNoUplift(t *testing.T) {
 			if tc.org != "" {
 				rc.Metadata[tenant.MetadataKeyOrgID] = tc.org
 			}
-			noteServedVertexLocation(rc, instances[tc.name])
+			// What the chat handlers record about the instance that served.
+			served := instances[tc.name]
+			noteServedVertexLocation(rc, served)
+			pinPriceTable(rc, served)
+			rc.ServedBy = served
 			if res := cost.ProcessResponse(context.Background(), rc); res.Error != nil {
 				t.Fatalf("cost step failed: %v", res.Error)
 			}
@@ -216,7 +220,7 @@ func vertexChainServer(t *testing.T, upstreamURL, location string, orgInstance b
 
 	cost := costplugin.New(true, db.Load, nil, nil)
 	srv := New(cfg, "", registry, pipeline.NewEngine(cost), nil, nil, nil, nil, db, store, nil)
-	cost.SetPriceTables(srv.PriceTableName)
+	cost.SetPriceTables(srv.ServedPriceTableName)
 	cost.SetCachedTokensInPrompt(srv.CachedTokensInPrompt)
 	srv.ready.Store(true)
 
@@ -391,7 +395,7 @@ func vertexRoutingServer(t *testing.T, upstreamURL string, instances []vertexIns
 	}
 	cost := costplugin.New(true, db.Load, nil, nil)
 	srv := New(cfg, "", registry, pipeline.NewEngine(cost), nil, nil, nil, nil, db, tenant.NewStore(), nil)
-	cost.SetPriceTables(srv.PriceTableName)
+	cost.SetPriceTables(srv.ServedPriceTableName)
 	cost.SetCachedTokensInPrompt(srv.CachedTokensInPrompt)
 	srv.ready.Store(true)
 	return srv

@@ -89,9 +89,27 @@ func TestCachedTokensInPromptComesFromTheProvider(t *testing.T) {
 		{"org-2", "openai", false},
 		{"", "missing", false},
 	} {
-		if got := srv.CachedTokensInPrompt(tc.orgID, tc.providerID); got != tc.want {
+		rc := &models.RequestContext{Provider: tc.providerID, Metadata: map[string]string{}}
+		if tc.orgID != "" {
+			// The org's own instance served the request.
+			rc.Metadata["org_id"] = tc.orgID
+			rc.Metadata["org_provider"] = "true"
+		}
+		if got := srv.CachedTokensInPrompt(rc); got != tc.want {
 			t.Errorf("CachedTokensInPrompt(%q, %q) = %v, want %v", tc.orgID, tc.providerID, got, tc.want)
 		}
+	}
+
+	// The instance that served decides, not the org's own one: org-2 has its
+	// own "openai", but the operator's official instance answered.
+	operator, ok := srv.registry.GetProvider("openai")
+	if !ok {
+		t.Fatal("operator openai not registered")
+	}
+	rc := &models.RequestContext{Provider: "openai", ServedBy: operator,
+		Metadata: map[string]string{"org_id": "org-2", "org_provider": "true"}}
+	if !srv.CachedTokensInPrompt(rc) {
+		t.Error("CachedTokensInPrompt = false for a request the operator's official instance served, want true")
 	}
 }
 
@@ -99,7 +117,7 @@ func TestCachedPriceByServingProvider(t *testing.T) {
 	srv := cachedProvidersServer(t)
 	db := testModelDBPtr()
 	cost := costplugin.New(true, db.Load, nil, nil)
-	cost.SetPriceTables(srv.PriceTableName)
+	cost.SetPriceTables(srv.ServedPriceTableName)
 	cost.SetProviderTypes(srv.ProviderType)
 	cost.SetCachedTokensInPrompt(srv.CachedTokensInPrompt)
 
@@ -158,7 +176,7 @@ func cachedCostServer(t *testing.T, id string, pc config.ProviderConfig) *Server
 	}
 	cost := costplugin.New(true, db.Load, nil, nil)
 	srv := New(cfg, "", registry, pipeline.NewEngine(cost), nil, nil, nil, nil, db, nil, nil)
-	cost.SetPriceTables(srv.PriceTableName)
+	cost.SetPriceTables(srv.ServedPriceTableName)
 	cost.SetProviderTypes(srv.ProviderType)
 	cost.SetCachedTokensInPrompt(srv.CachedTokensInPrompt)
 	srv.ready.Store(true)

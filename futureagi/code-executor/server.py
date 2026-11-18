@@ -80,6 +80,8 @@ FALLBACK_ENV = {
     "MKL_NUM_THREADS": "1",
     "NUMEXPR_NUM_THREADS": "1",
     "MALLOC_ARENA_MAX": "2",
+    # Non-secret deployment policy; never accept this from evaluation inputs.
+    "LINK_EVAL_ALLOWED_HOSTS": os.environ.get("LINK_EVAL_ALLOWED_HOSTS", ""),
 }
 
 
@@ -208,6 +210,8 @@ def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
             "/",  # Bind-mount root read-only (includes /sandbox/scripts)
             "-T",
             "/tmp:size=16777216",  # Writable tmpfs at /tmp (16MB)
+            "--env",
+            "LINK_EVAL_ALLOWED_HOSTS=" + os.environ.get("LINK_EVAL_ALLOWED_HOSTS", ""),
             "--",
             PYTHON_PATH,
             "-I",

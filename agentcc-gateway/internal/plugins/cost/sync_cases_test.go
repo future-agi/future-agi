@@ -1,0 +1,180 @@
+package cost
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/futureagi/agentcc-gateway/internal/modeldb"
+	"github.com/futureagi/agentcc-gateway/internal/models"
+)
+
+// syncCase is one real request priced through the whole cost step: 1M prompt
+// tokens and 100k completion tokens at a fixed instant.
+type syncCase struct {
+	name           string
+	model          string
+	provider       string
+	table          string // the price table the serving instance states
+	configuredType string // the type the serving instance's config records
+	at             time.Time
+	override       map[string]modeldb.ModelOverride
+	want           string
+}
+
+var (
+	syncT26 = time.Date(2026, 12, 15, 12, 0, 0, 0, time.UTC)
+	syncT27 = time.Date(2027, 1, 15, 12, 0, 0, 0, time.UTC)
+)
+
+func syncInput(v float64) *float64 { return &v }
+
+// The cases priced the same before the dev merge on the side that owned each
+// rule, and after it. Each request is priced by exactly one key and one rule:
+// the price key picks the entry, and only then does the reseller rule decide
+// whether a Google Gemini Flash entry is billed at a reseller's own price.
+var syncCases = []syncCase{
+	{name: "plain model", model: "gpt-4o", provider: "openai", at: syncT26, want: "3.500000"},
+	{name: "reseller-prefixed name, the reseller's own entry", model: "google/gemini-3.6-flash", provider: "perplexity", table: "perplexity", at: syncT26, want: "2.250000"},
+	{name: "dated Flash row, 2026", model: "gemini-3.7-flash", provider: "gemini", table: "gemini", at: syncT26, want: "1.125000"},
+	{name: "dated Flash row, 2027", model: "gemini-3.7-flash", provider: "gemini", table: "gemini", at: syncT27, want: "2.250000"},
+	{name: "operator input override on a dated row, 2027", model: "gemini/gemini-3.7-flash", provider: "gemini", table: "gemini", at: syncT27,
+		override: map[string]modeldb.ModelOverride{"gemini/gemini-3.7-flash": {Pricing: &modeldb.PricingOverride{InputPerToken: syncInput(1e-6)}}},
+		want:     "1.750000"},
+	{name: "served-instance price table (vertex_ai_global serves vertex_ai)", model: "gemini-3.7-flash", provider: "vertex_ai_global", table: "vertex_ai", at: syncT27, want: "2.250000"},
+	{name: "reseller own price from 2027 (deepinfra)", model: "gemini-3.7-flash", provider: "di", configuredType: "deepinfra", at: syncT27, want: "1.125000"},
+}
+
+// syncSwitch is the last instant of 2026 and the first of 2027, UTC.
+var (
+	syncLast26  = time.Date(2026, 12, 31, 23, 59, 59, 999999999, time.UTC)
+	syncFirst27 = time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+)
+
+// syncMoreCases are the reseller cells the reseller rule pins (each reseller
+// and version, by the reseller's own provider ID, on either side of the
+// switch), the switch instant itself, and operator overrides on dated rows.
+func syncMoreCases() []syncCase {
+	var out []syncCase
+	for _, r := range []string{"github_copilot", "aihubmix", "deepinfra", "openrouter", "perplexity"} {
+		for _, v := range []string{"3.6", "3.7", "3.8"} {
+			model := "gemini-" + v + "-flash"
+			out = append(out,
+				syncCase{name: r + " " + model + " Dec 2026", model: model, provider: r, at: syncT26},
+				syncCase{name: r + " " + model + " Jan 2027", model: model, provider: r, at: syncT27})
+		}
+	}
+	out = append(out,
+		syncCase{name: "switch: last instant of 2026", model: "gemini-3.7-flash", provider: "gemini", table: "gemini", at: syncLast26},
+		syncCase{name: "switch: first instant of 2027", model: "gemini-3.7-flash", provider: "gemini", table: "gemini", at: syncFirst27},
+		syncCase{name: "output override on a dated row, Dec 2026", model: "gemini/gemini-3.7-flash", provider: "gemini", table: "gemini", at: syncT26,
+			override: map[string]modeldb.ModelOverride{"gemini/gemini-3.7-flash": {Pricing: &modeldb.PricingOverride{OutputPerToken: syncInput(1e-5)}}}},
+		syncCase{name: "output override on a dated row, Jan 2027", model: "gemini/gemini-3.7-flash", provider: "gemini", table: "gemini", at: syncT27,
+			override: map[string]modeldb.ModelOverride{"gemini/gemini-3.7-flash": {Pricing: &modeldb.PricingOverride{OutputPerToken: syncInput(1e-5)}}}},
+	)
+	return out
+}
+
+// syncMoreWant is what each of syncMoreCases bills, the same on the stack
+// before the dev merge (the dev column of the PR's table differs from 2027 on,
+// where the stack's 2027 rows and reseller rule apply).
+var syncMoreWant = map[string]string{
+	"github_copilot gemini-3.6-flash Dec 2026": "1.125000",
+	"github_copilot gemini-3.6-flash Jan 2027": "2.250000",
+	"github_copilot gemini-3.7-flash Dec 2026": "1.125000",
+	"github_copilot gemini-3.7-flash Jan 2027": "1.125000",
+	"github_copilot gemini-3.8-flash Dec 2026": "1.125000",
+	"github_copilot gemini-3.8-flash Jan 2027": "1.125000",
+	"aihubmix gemini-3.6-flash Dec 2026":       "1.125000",
+	"aihubmix gemini-3.6-flash Jan 2027":       "2.250000",
+	"aihubmix gemini-3.7-flash Dec 2026":       "1.125000",
+	"aihubmix gemini-3.7-flash Jan 2027":       "1.125000",
+	"aihubmix gemini-3.8-flash Dec 2026":       "1.125000",
+	"aihubmix gemini-3.8-flash Jan 2027":       "2.250000",
+	"deepinfra gemini-3.6-flash Dec 2026":      "1.125000",
+	"deepinfra gemini-3.6-flash Jan 2027":      "2.250000",
+	"deepinfra gemini-3.7-flash Dec 2026":      "1.125000",
+	"deepinfra gemini-3.7-flash Jan 2027":      "1.125000",
+	"deepinfra gemini-3.8-flash Dec 2026":      "1.125000",
+	"deepinfra gemini-3.8-flash Jan 2027":      "2.250000",
+	"openrouter gemini-3.6-flash Dec 2026":     "1.125000",
+	"openrouter gemini-3.6-flash Jan 2027":     "1.125000",
+	"openrouter gemini-3.7-flash Dec 2026":     "1.125000",
+	"openrouter gemini-3.7-flash Jan 2027":     "1.125000",
+	"openrouter gemini-3.8-flash Dec 2026":     "1.125000",
+	"openrouter gemini-3.8-flash Jan 2027":     "1.125000",
+	"perplexity gemini-3.6-flash Dec 2026":     "1.125000",
+	"perplexity gemini-3.6-flash Jan 2027":     "2.250000",
+	"perplexity gemini-3.7-flash Dec 2026":     "1.125000",
+	"perplexity gemini-3.7-flash Jan 2027":     "1.125000",
+	"perplexity gemini-3.8-flash Dec 2026":     "1.125000",
+	"perplexity gemini-3.8-flash Jan 2027":     "1.125000",
+	"switch: last instant of 2026":             "1.125000",
+	"switch: first instant of 2027":            "2.250000",
+	"output override on a dated row, Dec 2026": "1.750000",
+	"output override on a dated row, Jan 2027": "2.500000",
+}
+
+func TestTheDevMergeKeepsEveryPricingRule(t *testing.T) {
+	more := syncMoreCases()
+	for i := range more {
+		more[i].want = syncMoreWant[more[i].name]
+	}
+	for _, c := range append(append([]syncCase{}, syncCases...), more...) {
+		t.Run(c.name, func(t *testing.T) {
+			db := modeldb.New(modeldb.BundledModels, c.override)
+			p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
+			p.now = clockAt(c.at)
+			table, provider, configuredType := c.table, c.provider, c.configuredType
+			p.SetPriceTables(func(rc *models.RequestContext) string {
+				if rc.Provider == provider {
+					return table
+				}
+				return ""
+			})
+			p.SetProviderTypes(func(rc *models.RequestContext) string {
+				if rc.Provider == provider {
+					return configuredType
+				}
+				return ""
+			})
+			rc := newRC(c.model, 1_000_000, 100_000)
+			rc.Provider = c.provider
+			p.ProcessResponse(context.Background(), rc)
+			got := rc.Metadata["cost"]
+			t.Logf("SYNCCASE %s | %s", c.name, got)
+			if c.want == "" || got != c.want {
+				t.Errorf("cost = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// The price key and the reseller rule never price one request twice: the key
+// picks the entry, and the reseller rule acts only when that entry is one of
+// Google's own Gemini Flash keys.
+func TestTheKeyAndTheResellerRuleEachPriceOnce(t *testing.T) {
+	db := modeldb.New(modeldb.BundledModels, nil)
+	for _, c := range []struct {
+		name, model, provider, table, configuredType string
+		at                                           time.Time
+		wantKey, wantOwn                             string
+		wantKeep                                     bool
+	}{
+		// The key already names Perplexity's own entry: the rule keeps its price as listed.
+		{"perplexity, own entry by key", "google/gemini-3.6-flash", "perplexity", "perplexity", "", syncT26, "perplexity/google/gemini-3.6-flash", "", true},
+		// Google's own key, then the reseller rule bills DeepInfra's entry from 2027.
+		{"deepinfra, own entry by rule", "gemini-3.7-flash", "di", "", "deepinfra", syncT27, "gemini-3.7-flash", "deepinfra/google/gemini-3.7-flash", false},
+		// Google's own provider: neither moves it off the dated row.
+		{"google", "gemini-3.7-flash", "gemini", "gemini", "", syncT27, "gemini-3.7-flash", "", false},
+	} {
+		key := db.PriceKey(c.model, c.provider, c.table)
+		if key != c.wantKey {
+			t.Errorf("%s: PriceKey = %q, want %q", c.name, key, c.wantKey)
+		}
+		own, keep := resellerPrice(db, key, c.provider, c.table, c.configuredType, c.at)
+		if own != c.wantOwn || keep != c.wantKeep {
+			t.Errorf("%s: resellerPrice = (%q, %v), want (%q, %v)", c.name, own, keep, c.wantOwn, c.wantKeep)
+		}
+	}
+}

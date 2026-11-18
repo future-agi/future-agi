@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import tarfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import timedelta
 from functools import partial
 from itertools import zip_longest
@@ -223,14 +223,21 @@ def runs_as_wanted_agent(
 
 
 def _chat_lease(
-    conversation: HostedHarnessConversation, *, live: bool = False
+    conversation: HostedHarnessConversation,
+    *,
+    live: bool = False,
+    lock: bool = False,
 ) -> HostedHarnessConversationLease | None:
-    """The conversation's own sandbox lease, not released (nor expired, if live)."""
+    """The conversation's own sandbox lease, not released (nor expired, if live).
+
+    With ``lock`` the row is locked until the transaction ends; the caller holds the
+    conversation's lock already (the order is conversation, then lease).
+    """
     gone = HostedHarnessConversationLease.State
+    leases = HostedHarnessConversationLease.no_workspace_objects
     return (
-        HostedHarnessConversationLease.no_workspace_objects.filter(
-            conversation=conversation, attempt__isnull=True
-        )
+        (leases.select_for_update() if lock else leases)
+        .filter(conversation=conversation, attempt__isnull=True)
         .exclude(state__in=(gone.RELEASED, gone.EXPIRED) if live else (gone.RELEASED,))
         .first()
     )
@@ -444,9 +451,15 @@ def close_nudge(
     summary: dict | None = None,
     turn_event: Any = None,
     restore: bool = True,
+    lease_fence: tuple[Any, str] | None = None,
 ) -> None:
     """The one closer of a queued or running rebuild; the caller holds the
-    environment and the nudge."""
+    environment and the nudge.
+
+    ``lease_fence`` is the ``(id, provider_ref)`` of the chat sandbox lease this close
+    ends; the clean-up after the commit expires only that lease, so a restart that
+    claimed the chat meanwhile keeps its claim.
+    """
     snapshot = dict(nudge.draft_snapshot or {})
     started = bool(snapshot.get("taken_at"))
     if started and state != State.APPLIED and restore:
@@ -478,14 +491,24 @@ def close_nudge(
             _after_close,
             str(locked.id),
             dispatched=bool(nudge.command_message_id),
+            fence=lease_fence,
         )
     )
 
 
-def _expire_chat_lease(conversation: HostedHarnessConversation) -> str:
-    """Expire the conversation's own sandbox lease; its provider ref, if it had one."""
+def _expire_chat_lease(
+    conversation: HostedHarnessConversation,
+    fence: tuple[Any, str] | None = None,
+) -> str:
+    """Expire the conversation's own sandbox lease; its provider ref, if it had one.
+
+    With ``fence`` (the ``(id, provider_ref)`` a close saw), a lease claimed anew since
+    is left alone: nothing is expired, and no ref is returned to stop.
+    """
     lease = _chat_lease(conversation)
     if lease is None:
+        return ""
+    if fence is not None and (lease.id, str(lease.provider_ref or "")) != fence:
         return ""
     HostedHarnessConversationLease.no_workspace_objects.filter(id=lease.id).update(
         state=HostedHarnessConversationLease.State.EXPIRED, updated_at=timezone.now()
@@ -501,50 +524,78 @@ def _start_runtime(conversation_id: str) -> None:
     schedule_conversation_runtime(conversation_id, _public_base_url(None))
 
 
-def _after_close(environment_id: str, *, dispatched: bool) -> None:
-    """Hand the chat back: its sandbox stops, and it restarts for waiting messages."""
+def hand_back_chat(
+    environment_id: str, fence: tuple[Any, str] | None = None
+) -> tuple[str, str, bool] | None:
+    """End the turn the environment's chat is running for a platform message that was
+    withdrawn: its sandbox lease expires, so the sandbox can post nothing more, and the
+    reply it was streaming is closed. The conversation's id, the sandbox's provider ref
+    (blank without one) and whether other messages wait for a new sandbox; None without a
+    conversation. The caller stops the sandbox and starts one for the waiting messages.
+    With ``fence``, a lease claimed anew since the close saw it is left alone."""
     from simulate.services.hosted_harness_conversation import (
         _ACTIVE_CONVERSATION_STATES,
         _unacked_commands,
         settle_interrupted_turn,
     )
+
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.select_for_update()
+            .filter(job_id=environment_id)
+            .first()
+        )
+        if conversation is None:
+            return None
+        ref = _expire_chat_lease(conversation, fence)
+        waiting = _unacked_commands(conversation).exists()
+        if conversation.state in _ACTIVE_CONVERSATION_STATES:
+            # The withdrawn message's turn (or its sandbox's start) is over.
+            settle_interrupted_turn(conversation)
+            conversation.state = (
+                HostedHarnessConversation.State.STARTING
+                if waiting
+                else HostedHarnessConversation.State.COLD
+            )
+            conversation.active_invocation_id = None
+            conversation.save(
+                update_fields=["state", "active_invocation_id", "updated_at"]
+            )
+    return str(conversation.id), ref, waiting
+
+
+def _after_close(
+    environment_id: str,
+    *,
+    dispatched: bool,
+    fence: tuple[Any, str] | None = None,
+) -> None:
+    """Hand the chat back: its sandbox stops, and it restarts for waiting messages."""
     from simulate.tasks import harness_nudges as tasks
 
     try:
         if dispatched:
-            with transaction.atomic():
-                conversation = (
-                    HostedHarnessConversation.no_workspace_objects.select_for_update()
-                    .filter(job_id=environment_id)
-                    .first()
-                )
-                if conversation is None:
-                    return
-                ref = _expire_chat_lease(conversation)
-                waiting = _unacked_commands(conversation).exists()
-                if conversation.state in _ACTIVE_CONVERSATION_STATES:
-                    # The rebuild's turn (or its sandbox's start) is over.
-                    settle_interrupted_turn(conversation)
-                    conversation.state = (
-                        HostedHarnessConversation.State.STARTING
-                        if waiting
-                        else HostedHarnessConversation.State.COLD
-                    )
-                    conversation.active_invocation_id = None
-                    conversation.save(
-                        update_fields=["state", "active_invocation_id", "updated_at"]
-                    )
+            handed = hand_back_chat(environment_id, fence)
+            if handed is None:
+                return
+            conversation_id, ref, waiting = handed
             if ref:
-                tasks.schedule_sandbox_stop(str(conversation.id), ref)
+                try:
+                    tasks.schedule_sandbox_stop(conversation_id, ref)
+                except Exception:  # noqa: BLE001 - the sandbox still dies at its idle limit
+                    logger.exception(
+                        "harness_nudge_sandbox_stop_failed conversation=%s",
+                        conversation_id,
+                    )
             if nudges._head(environment_id) is None:
                 return
             if waiting:
                 try:
-                    _start_runtime(str(conversation.id))
+                    _start_runtime(conversation_id)
                 except Exception:  # noqa: BLE001 - the recovery sweep starts it
                     logger.exception(
                         "harness_nudge_runtime_schedule_failed conversation=%s",
-                        conversation.id,
+                        conversation_id,
                     )
         if nudges._head(environment_id) is not None:
             tasks.schedule_nudge_check_task(environment_id)
@@ -1106,6 +1157,13 @@ def on_turn_event(
         ):
             # Its turn is over: the sandbox stops and chat restarts as the agent wanted.
             _after_close(str(conversation.job_id), dispatched=True)
+        elif (
+            nudge is None
+            and kind == "turn_completed"
+            and command is not None
+            and (command.payload or {}).get("from_platform") is True
+        ):
+            stop_after_platform_turn(conversation_id)
         if (
             kind != "turn_started"
             and HarnessNudge.no_workspace_objects.filter(
@@ -1119,6 +1177,44 @@ def on_turn_event(
         logger.exception(
             "harness_nudge_turn_event_failed conversation=%s", conversation_id
         )
+
+
+def stop_after_platform_turn(conversation_id: str) -> None:
+    """The platform's own turn (the build's check) is over: chat's own sandbox stops
+    now unless a person is using the chat. A turn in an attempt's sandbox changes
+    nothing; that sandbox is the attempt's to clean up."""
+    from simulate.services.hosted_harness_conversation import settle_stop_only_queue
+    from simulate.tasks import harness_nudges as tasks
+
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.select_for_update()
+            .filter(id=conversation_id)
+            .first()
+        )
+        if conversation is None:
+            return
+        if _chat_lease(conversation, live=True) is None:
+            return
+        if conversation.blocking_input is None:
+            # A Stop sent after the turn's last poll has nothing left to stop.
+            settle_stop_only_queue(conversation)
+        if not _chat_idle(conversation):
+            return
+        ref = _expire_chat_lease(conversation)
+        conversation.state = HostedHarnessConversation.State.COLD
+        conversation.save(update_fields=["state", "updated_at"])
+    logger.info(
+        "harness_platform_turn_sandbox_stopped conversation=%s", conversation_id
+    )
+    if ref:
+        try:
+            tasks.schedule_sandbox_stop(conversation_id, ref)
+        except Exception:  # noqa: BLE001 - the sandbox still dies at its provider's limit
+            logger.exception(
+                "harness_platform_turn_sandbox_stop_failed conversation=%s",
+                conversation_id,
+            )
 
 
 def end_nudge_turn(
@@ -1426,7 +1522,9 @@ def _report(
         secret_texts,
         [
             len(text) >= cap + CREDENTIAL_VALUE_MAX_CHARS
-            for text, (_part, _at, _text, cap) in zip(secret_texts, secret_parts)
+            for text, (_part, _at, _text, cap) in zip(
+                secret_texts, secret_parts, strict=False
+            )
         ],
     )
     report: dict[str, Any] = {
@@ -1792,18 +1890,54 @@ def _close_if_open(
     error: dict | None = None,
     states: tuple = OPEN,
     turn_event: Any = None,
+    still: Callable[[HarnessNudge, HostedHarnessConversation | None, Any], bool]
+    | None = None,
 ) -> None:
-    """Fail the rebuild under the locks if it is still in ``states``."""
+    """Fail the rebuild under the locks if it is still in ``states``.
+
+    With ``still``, the reason to close is checked again under the locks, against
+    the locked conversation, and the rebuild is left open if it no longer holds.
+    """
+    lease_fence = None
     with transaction.atomic():
         locked = nudges._head(environment_id, lock=True)
         nudge = _lock_nudge(locked, nudge_id) if locked is not None else None
         if nudge is not None and nudge.state in states:
+            if still is not None:
+                conversation = (
+                    HostedHarnessConversation.no_workspace_objects.select_for_update()
+                    .filter(job_id=environment_id)
+                    .first()
+                )
+                # The lease is locked after the conversation (the order restarts and
+                # renewals keep), so what ``still`` reads of it can't change until
+                # this commits.
+                lease = (
+                    _chat_lease(conversation, lock=True)
+                    if conversation is not None
+                    else None
+                )
+                now = timezone.now()
+                if not still(nudge, conversation, now):
+                    return
+                if lease is not None:
+                    lease_fence = (lease.id, str(lease.provider_ref or ""))
+                    if _lease_lapsed(lease, now):
+                        # Ended here, not after the commit, so a renewal waiting on
+                        # the lock finds it expired and can't revive it.
+                        HostedHarnessConversationLease.no_workspace_objects.filter(
+                            id=lease.id
+                        ).update(
+                            state=HostedHarnessConversationLease.State.EXPIRED,
+                            updated_at=now,
+                        )
             close_nudge(
                 nudge,
                 locked=locked,
                 state=State.FAILED,
                 error=error or {"code": code},
                 turn_event=turn_event,
+                lease_fence=lease_fence,
             )
 
 
@@ -1824,6 +1958,47 @@ def _no_runtime(conversation: HostedHarnessConversation | None, now: Any) -> boo
     return not runtime_is_live(lease, now=now) and not runtime_start_pending(
         lease, now=now
     )
+
+
+def _sandbox_gone(conversation: HostedHarnessConversation | None, now: Any) -> bool:
+    """The rebuild's own chat sandbox is past its lease and has gone quiet.
+
+    After ``expires_at`` the sandbox can't reach the platform (auth refuses it) and
+    the provider deletes it, so that sandbox can't finish the turn. The heartbeat must
+    also be stale, so a renewal already in flight, or a clock that runs ahead, can't
+    end a live turn.
+    """
+    lease = _chat_lease(conversation) if conversation is not None else None
+    return _lease_lapsed(lease, now)
+
+
+def _lease_lapsed(lease: HostedHarnessConversationLease | None, now: Any) -> bool:
+    """The lease is past ``expires_at`` (equal counts as past) and its heartbeat is
+    stale (older than ``RUNTIME_STALE_SECONDS``; exactly that old is not)."""
+    from simulate.services.hosted_harness_conversation import RUNTIME_STALE_SECONDS
+
+    if lease is None or lease.expires_at > now:
+        return False
+    return lease.heartbeat_at is None or (
+        now - lease.heartbeat_at > timedelta(seconds=RUNTIME_STALE_SECONDS)
+    )
+
+
+def _rebuild_stuck(
+    nudge: HarnessNudge, conversation: HostedHarnessConversation | None, now: Any
+) -> bool:
+    """A running rebuild whose turn can no longer end on its own."""
+    if (
+        conversation is not None
+        and (nudge.draft_snapshot or {}).get("turn_sequence") is not None
+    ):
+        return False
+    taken = _taken_at(nudge)
+    if taken is None:
+        return False
+    if now - taken > NUDGE_STUCK_AFTER and _no_runtime(conversation, now):
+        return True
+    return _sandbox_gone(conversation, now)
 
 
 def check_nudges(environment_id: Any) -> None:
@@ -1877,13 +2052,8 @@ def check_nudges(environment_id: Any) -> None:
             else:
                 finish_nudge_turn(str(conversation.id), sequence)
         return
-    taken = _taken_at(nudge)
-    if (
-        taken is not None
-        and now - taken > NUDGE_STUCK_AFTER
-        and _no_runtime(conversation, now)
-    ):
-        _close_if_open(environment_id, nudge.id, "rebuild_stuck")
+    if _rebuild_stuck(nudge, conversation, now):
+        _close_if_open(environment_id, nudge.id, "rebuild_stuck", still=_rebuild_stuck)
 
 
 def _fair(rows: Any, limit: int) -> list[Any]:
@@ -1915,8 +2085,16 @@ def tick_nudges(*, limit: int = 200) -> dict[str, int]:
     HarnessNudge.no_workspace_objects.filter(
         job_id__in=environments, state__in=OPEN
     ).update(updated_at=now)
-    for environment_id in environments:
-        tasks.schedule_nudge_check_task(environment_id)
+    for position, environment_id in enumerate(environments):
+        try:
+            tasks.schedule_nudge_check_task(environment_id)
+        except Exception:  # noqa: BLE001 - the next tick checks the rest
+            logger.exception(
+                "harness_nudge_tick_schedule_failed environment=%s skipped=%d",
+                environment_id,
+                len(environments) - position - 1,
+            )
+            break
     # A retry that finds the environment still busy re-records it: it waits a while.
     versions = _fair(
         HarnessAgentVersionRuntime.no_workspace_objects.filter(

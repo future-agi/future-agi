@@ -18,8 +18,8 @@ import (
 // count their cached tokens inside the prompt.
 func vertexPlugin(db func() *modeldb.ModelDB, store *tenant.Store, aliases map[string]float64, at time.Time) *Plugin {
 	p := New(true, db, store, aliases)
-	p.SetPriceTables(func(_, id string) string {
-		switch id {
+	p.SetPriceTables(func(rc *models.RequestContext) string {
+		switch rc.Provider {
 		case "vertex":
 			return "vertex_ai"
 		case "google":
@@ -27,7 +27,7 @@ func vertexPlugin(db func() *modeldb.ModelDB, store *tenant.Store, aliases map[s
 		}
 		return ""
 	})
-	p.SetCachedTokensInPrompt(func(_, id string) bool { return id == "vertex" || id == "google" })
+	p.SetCachedTokensInPrompt(func(rc *models.RequestContext) bool { return rc.Provider == "vertex" || rc.Provider == "google" })
 	if !at.IsZero() {
 		p.now = clockAt(at)
 	}
@@ -342,8 +342,8 @@ func TestVertexUpliftLeavesOtherProvidersAlone(t *testing.T) {
 	})
 	t.Run("reseller", func(t *testing.T) {
 		p := vertexPlugin(bundledDB(), nil, nil, t27)
-		p.SetProviderTypes(func(_, id string) string {
-			if id == "di" {
+		p.SetProviderTypes(func(rc *models.RequestContext) string {
+			if rc.Provider == "di" {
 				return "deepinfra"
 			}
 			return ""

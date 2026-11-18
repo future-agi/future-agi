@@ -48,7 +48,7 @@ const TranscriptPreviewCell = (params) => {
     return (
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, color: "text.disabled", px: 2 }}
+        sx={{ fontSize: 12, color: "text.disabled", px: 2 }}
       >
         -
       </Typography>
@@ -89,7 +89,7 @@ const TranscriptPreviewCell = (params) => {
         <Typography
           variant="body2"
           noWrap
-          sx={{ fontSize: 13, color: "text.secondary" }}
+          sx={{ fontSize: 12, color: "text.secondary" }}
         >
           {truncated}
         </Typography>

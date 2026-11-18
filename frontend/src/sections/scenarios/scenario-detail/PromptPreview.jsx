@@ -158,7 +158,7 @@ const PromptPreview = ({ scenario }) => {
                 paddingX: 2,
                 paddingY: "12px",
                 backgroundColor: "background.default",
-                fontSize: "13px",
+                fontSize: "12px",
               }}
             >
               <MarkdownWithVariableHighlight

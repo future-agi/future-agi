@@ -264,7 +264,7 @@ def test_hosted_recording_artifacts_surface_in_detail_recording_shape(simulation
             "recording_stereo": {"url": "https://media.example/stereo.wav"},
             "recording_customer": {"url": "https://media.example/customer.wav"},
             "recording_assistant": {"url": "https://media.example/assistant.wav"},
-        }
+        },
     }
 
     recordings = CallExecutionDetailSerializer(
@@ -281,7 +281,9 @@ def test_hosted_recording_artifacts_surface_in_detail_recording_shape(simulation
 
 
 @pytest.mark.django_db
-def test_explicit_voice_call_type_wins_over_stale_text_agent_definition(simulation_tree):
+def test_explicit_voice_call_type_wins_over_stale_text_agent_definition(
+    simulation_tree,
+):
     call_execution = simulation_tree["call_execution"]
     agent_definition = call_execution.test_execution.run_test.agent_definition
     agent_definition.agent_type = AgentDefinition.AgentTypeChoices.TEXT
@@ -300,7 +302,6 @@ def test_explicit_voice_call_type_wins_over_stale_text_agent_definition(simulati
     }
 
 
-
 @pytest.mark.django_db
 def test_call_detail_exposes_harness_outcome_separately_from_transport(
     simulation_tree,
@@ -313,6 +314,7 @@ def test_call_detail_exposes_harness_outcome_separately_from_transport(
 
     assert data["status"] == CallExecution.CallStatus.COMPLETED
     assert data["harness_outcome_status"] == "error"
+
 
 @pytest.mark.django_db
 def test_get_eval_metrics_skips_missing_config(simulation_tree, eval_configs):
@@ -923,9 +925,7 @@ def _seed_run_detail_columns(test_execution, live, deleted):
 
 def _eval_column_ids(column_order):
     return [
-        str(col.get("id"))
-        for col in column_order
-        if col.get("type") == "evaluation"
+        str(col.get("id")) for col in column_order if col.get("type") == "evaluation"
     ]
 
 
@@ -1239,9 +1239,7 @@ def test_run_detail_filters_on_a_removed_evals_column(
         str(graded_one.id),
         str(graded_two.id),
     }
-    assert str(ungraded.id) not in {
-        str(row["id"]) for row in response.data["results"]
-    }
+    assert str(ungraded.id) not in {str(row["id"]) for row in response.data["results"]}
     assert response.data["count"] == 2
 
 
@@ -1291,14 +1289,10 @@ def test_late_added_eval_column_appears_only_after_it_has_been_evaluated(
     orig_b = three_eval_configs["orig_b"]
     late_add = three_eval_configs["late_add"]
 
-    response_before = auth_client.get(
-        f"/simulate/test-executions/{test_execution.id}/"
-    )
+    response_before = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
     assert response_before.status_code == 200
     eval_cols_before = [
-        c
-        for c in response_before.data["column_order"]
-        if c.get("type") == "evaluation"
+        c for c in response_before.data["column_order"] if c.get("type") == "evaluation"
     ]
     assert [str(c["id"]) for c in eval_cols_before] == [
         str(orig_a.id),
@@ -1312,14 +1306,10 @@ def test_late_added_eval_column_appears_only_after_it_has_been_evaluated(
     }
     call_execution.save(update_fields=["eval_outputs"])
 
-    response_after = auth_client.get(
-        f"/simulate/test-executions/{test_execution.id}/"
-    )
+    response_after = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
     assert response_after.status_code == 200
     eval_cols_after = [
-        c
-        for c in response_after.data["column_order"]
-        if c.get("type") == "evaluation"
+        c for c in response_after.data["column_order"] if c.get("type") == "evaluation"
     ]
     assert [str(c["id"]) for c in eval_cols_after] == [
         str(orig_a.id),
@@ -1627,9 +1617,7 @@ class TestCSVExportRowFormat:
         assert tricky_row["Live Eval"] == "Passed"
         assert tricky_row["Live Eval_reason"] == "clean, tidy"
 
-    def test_csv_export_masks_sensitive_fields(
-        self, auth_client, simulation_tree
-    ):
+    def test_csv_export_masks_sensitive_fields(self, auth_client, simulation_tree):
         call_execution = simulation_tree["call_execution"]
         call_execution.call_metadata = {
             "api_key": "sk-should-not-leak-1234",
@@ -1659,9 +1647,7 @@ class TestCSVExportRowFormat:
                 f"Sensitive value {banned_value!r} leaked into export body"
             )
 
-    def test_csv_export_other_workspace_returns_404(
-        self, auth_client, user
-    ):
+    def test_csv_export_other_workspace_returns_404(self, auth_client, user):
         other_org = Organization.objects.create(name="Other Org For Export")
         other_workspace = Workspace.no_workspace_objects.create(
             name="Other Org Default Workspace",
@@ -1746,15 +1732,11 @@ class TestRunTestComponentsPatch:
         assert response.status_code == status.HTTP_200_OK
         run_test.refresh_from_db()
         assert run_test.simulator_agent_id == new_simulator_agent.id
-        scenario_ids_on_run = list(
-            run_test.scenarios.values_list("id", flat=True)
-        )
+        scenario_ids_on_run = list(run_test.scenarios.values_list("id", flat=True))
         # The view uses .set() which replaces the m2m contents.
         assert scenario_ids_on_run == [new_scenario.id]
 
-    def test_components_patch_other_workspace_returns_404(
-        self, auth_client, user
-    ):
+    def test_components_patch_other_workspace_returns_404(self, auth_client, user):
         """PATCH against a sibling-organization RunTest must 404 and must not mutate the foreign row."""
         other_org = Organization.objects.create(name="Other Org For Components")
         other_workspace = Workspace.no_workspace_objects.create(
@@ -1791,9 +1773,7 @@ class TestRunTestComponentsPatch:
         other_run_test.refresh_from_db()
         assert other_run_test.simulator_agent_id == original_simulator_id
         assert (
-            RunTestScenariosThrough.objects.filter(
-                runtest_id=other_run_test.id
-            ).count()
+            RunTestScenariosThrough.objects.filter(runtest_id=other_run_test.id).count()
             == original_through_count
         )
 
@@ -1860,9 +1840,7 @@ class TestSDKCodeContent:
         )
         other_run_test = other["run_test"]
 
-        response = auth_client.get(
-            self.URL.format(run_test_id=other_run_test.id)
-        )
+        response = auth_client.get(self.URL.format(run_test_id=other_run_test.id))
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         body = response.content.decode()

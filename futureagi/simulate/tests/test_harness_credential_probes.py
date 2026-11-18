@@ -228,7 +228,7 @@ def test_livekit_target_probe_reports_rejected_credentials(status):
 
     assert result is not None and result.ok is False
     assert result.message == (
-        "LiveKit rejected LIVEKIT_API_KEY + LIVEKIT_API_SECRET " f"(HTTP {status})"
+        f"LiveKit rejected LIVEKIT_API_KEY + LIVEKIT_API_SECRET (HTTP {status})"
     )
     assert [method for method, _ in calls] == ["CreateRoom"]
 
@@ -346,3 +346,144 @@ def test_preflight_does_not_dispatch_a_livekit_agent_built_from_source(
 ):
     assert _preflight_credential_probe(_livekit_preflight_payload(mode=None)) == []
     probe_agent.assert_not_called()
+
+
+# LiveKit's ElevenLabs plugin reads ELEVEN_API_KEY, while the agent-learning-kit used to
+# ask for ELEVENLABS_API_KEY. Either name is checked; when both are supplied, each is.
+
+
+@pytest.mark.parametrize(
+    "values, used",
+    [
+        ({"ELEVEN_API_KEY": "eleven-key"}, "ELEVEN_API_KEY"),
+        ({"ELEVENLABS_API_KEY": "labs-key"}, "ELEVENLABS_API_KEY"),
+    ],
+)
+@patch("simulate.services.harness_credential_probes.requests.request")
+def test_the_elevenlabs_probe_checks_either_key_name(request, values, used):
+    from simulate.services.harness_credential_probes import probe_all
+
+    request.return_value = Mock(status_code=401)
+
+    results = [
+        result for result in probe_all(values) if result.provider == "elevenlabs"
+    ]
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].aliases == (used,)
+    assert results[0].message == f"ElevenLabs rejected {used} (HTTP 401)"
+    assert request.call_count == 1
+    assert request.call_args.kwargs["headers"] == {"xi-api-key": values[used]}
+
+
+def test_the_elevenlabs_probe_waits_for_a_key():
+    from simulate.services.harness_credential_probes import PROVIDER_PROBES
+
+    assert not PROVIDER_PROBES["elevenlabs"].applies({"ELEVEN_API_KEY": "  "})
+    assert not PROVIDER_PROBES["elevenlabs"].applies({})
+    # A provider that needs its names together still needs all of them.
+    assert not PROVIDER_PROBES["livekit"].applies(
+        {"LIVEKIT_URL": "wss://x", "LIVEKIT_API_KEY": "k"}
+    )
+
+
+@pytest.mark.parametrize(
+    "statuses, ok, message",
+    [
+        ((200, 200), True, "ElevenLabs accepted ELEVEN_API_KEY and ELEVENLABS_API_KEY"),
+        ((200, 401), False, "ElevenLabs rejected ELEVENLABS_API_KEY (HTTP 401)"),
+        ((401, 200), False, "ElevenLabs rejected ELEVEN_API_KEY (HTTP 401)"),
+        (
+            (401, 401),
+            False,
+            "ElevenLabs rejected ELEVEN_API_KEY (HTTP 401); "
+            "ElevenLabs rejected ELEVENLABS_API_KEY (HTTP 401)",
+        ),
+    ],
+)
+@patch("simulate.services.harness_credential_probes.requests.request")
+def test_the_elevenlabs_probe_checks_each_name_supplied(request, statuses, ok, message):
+    from simulate.services.harness_credential_probes import probe_all
+
+    request.side_effect = [Mock(status_code=status) for status in statuses]
+
+    [result] = [
+        result
+        for result in probe_all(
+            {"ELEVEN_API_KEY": "eleven-key", "ELEVENLABS_API_KEY": "labs-key"}
+        )
+        if result.provider == "elevenlabs"
+    ]
+
+    assert (result.ok, result.message) == (ok, message)
+    assert [call.kwargs["headers"] for call in request.call_args_list] == [
+        {"xi-api-key": "eleven-key"},
+        {"xi-api-key": "labs-key"},
+    ]
+    if not ok:
+        # Every rejected name is named, so the form points at each row to fix.
+        rejected = tuple(
+            name
+            for name, status in zip(
+                ("ELEVEN_API_KEY", "ELEVENLABS_API_KEY"), statuses, strict=True
+            )
+            if status != 200
+        )
+        assert result.aliases == rejected
+
+
+@pytest.mark.parametrize("status, ok", [(200, True), (401, False)])
+@patch("simulate.services.harness_credential_probes.requests.request")
+def test_the_same_elevenlabs_key_under_both_names_is_checked_once(request, status, ok):
+    from simulate.services.harness_credential_probes import probe_all
+
+    request.return_value = Mock(status_code=status)
+
+    [result] = [
+        result
+        for result in probe_all(
+            {"ELEVEN_API_KEY": "one-key", "ELEVENLABS_API_KEY": "one-key"}
+        )
+        if result.provider == "elevenlabs"
+    ]
+
+    assert request.call_count == 1
+    assert result.ok is ok
+    assert result.aliases == ("ELEVEN_API_KEY", "ELEVENLABS_API_KEY")
+
+
+@patch("simulate.services.harness_credential_probes.requests.request")
+def test_a_shared_rejected_elevenlabs_key_names_both_names_in_its_message(request):
+    from simulate.services.harness_credential_probes import probe_all
+
+    request.return_value = Mock(status_code=401)
+
+    [result] = [
+        result
+        for result in probe_all({"ELEVEN_API_KEY": "one-key", "ELEVENLABS_API_KEY": "one-key"})
+        if result.provider == "elevenlabs"
+    ]
+
+    assert result.message == "ElevenLabs rejected ELEVEN_API_KEY + ELEVENLABS_API_KEY (HTTP 401)"
+
+
+@patch("simulate.services.harness_credential_probes.requests.request")
+def test_only_a_rejected_elevenlabs_name_is_marked_wrong(request):
+    # A timeout says nothing about the key: that name is reported, not marked to fix.
+    import requests
+
+    from simulate.services.harness_credential_probes import probe_all
+
+    request.side_effect = [Mock(status_code=401), requests.ConnectionError("down")]
+
+    [result] = [
+        result
+        for result in probe_all({"ELEVEN_API_KEY": "eleven-key", "ELEVENLABS_API_KEY": "labs-key"})
+        if result.provider == "elevenlabs"
+    ]
+
+    assert result.ok is False
+    assert result.aliases == ("ELEVEN_API_KEY",)
+    assert "ElevenLabs rejected ELEVEN_API_KEY (HTTP 401)" in result.message
+    assert "unreachable" in result.message

@@ -819,7 +819,7 @@ const CreateScenarioView = () => {
                   target="_blank"
                   rel="noopener noreferrer"
                   fontWeight="fontWeightMedium"
-                  fontSize="13px"
+                  fontSize="12px"
                   sx={{ textDecoration: "underline" }}
                 >
                   Learn more

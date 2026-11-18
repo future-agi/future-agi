@@ -34,7 +34,7 @@ func TestParseLiteLLM_BasicChat(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestParseLiteLLM_SkipsSampleSpec(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestParseLiteLLM_ImageModel(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestParseLiteLLM_ModeMapping(t *testing.T) {
 				}
 			}`)
 
-			models, err := parseLiteLLM(data)
+			models, err := parseLiteLLM(data, false)
 			if err != nil {
 				t.Fatalf("parseLiteLLM error: %v", err)
 			}
@@ -251,7 +251,7 @@ func TestParseLiteLLM_ProviderPrefixStripped(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestParseLiteLLM_SkipsZeroPricingChat(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestParseLiteLLM_ProviderNormalization(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestParseLiteLLM_MaxTokensFallback(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestParseLiteLLM_MaxTokensFallback(t *testing.T) {
 }
 
 func TestParseLiteLLM_ActualFile(t *testing.T) {
-	models, err := parseLiteLLM(liteLLMData)
+	models, err := parseLiteLLM(liteLLMData, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM on actual file: %v", err)
 	}
@@ -469,7 +469,7 @@ func TestParseLiteLLMRegionalUplift(t *testing.T) {
 			"litellm_provider": "vertex_ai-language-models",
 			"mode": "chat"
 		}
-	}`))
+	}`), true)
 	if err != nil {
 		t.Fatalf("parseLiteLLM: %v", err)
 	}

@@ -115,7 +115,7 @@ const FunctionDefinition = ({ toolDefinitions = [] }) => {
                         <Typography
                           sx={{
                             padding: 1.5,
-                            fontSize: "13px",
+                            fontSize: "12px",
                             backgroundColor: "background.neutral",
                           }}
                         >
@@ -166,7 +166,7 @@ const FunctionDefinition = ({ toolDefinitions = [] }) => {
                         <Typography
                           sx={{
                             padding: 1.5,
-                            fontSize: "13px",
+                            fontSize: "12px",
                             backgroundColor: "background.neutral",
                           }}
                         >

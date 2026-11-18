@@ -467,7 +467,7 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
       }}
     >
       <AccordionSummary
-        sx={{ color: "text.primary", fontWeight: "500", fontSize: "13px" }}
+        sx={{ color: "text.primary", fontWeight: "500", fontSize: "12px" }}
       >
         {column}
       </AccordionSummary>

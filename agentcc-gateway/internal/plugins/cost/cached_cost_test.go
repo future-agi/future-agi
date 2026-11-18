@@ -104,15 +104,15 @@ func (s scenario) run(t *testing.T, gate, details bool) *models.RequestContext {
 	}
 	p := New(true, db, nil, s.aliases)
 	if s.tables != "" {
-		p.SetPriceTables(func(_, _ string) string { return s.tables })
+		p.SetPriceTables(func(*models.RequestContext) string { return s.tables })
 	}
 	if s.provType != "" {
-		p.SetProviderTypes(func(_, _ string) string { return s.provType })
+		p.SetProviderTypes(func(*models.RequestContext) string { return s.provType })
 	}
 	if !s.at.IsZero() {
 		p.now = clockAt(s.at)
 	}
-	p.SetCachedTokensInPrompt(func(_, id string) bool { return gate && id == s.provider })
+	p.SetCachedTokensInPrompt(func(rc *models.RequestContext) bool { return gate && rc.Provider == s.provider })
 
 	usage := *s.usage(t)
 	if !details {
@@ -225,7 +225,7 @@ func TestCachedPriceOnlyForCheckedProviders(t *testing.T) {
 	t.Run("empty-provider", func(t *testing.T) {
 		p := newP()
 		calls := 0
-		p.SetCachedTokensInPrompt(func(_, _ string) bool { calls++; return true })
+		p.SetCachedTokensInPrompt(func(*models.RequestContext) bool { calls++; return true })
 		if got := cost(p, "", ""); got != "0.008015" {
 			t.Errorf("cost = %q, want 0.008015", got)
 		}
@@ -235,14 +235,14 @@ func TestCachedPriceOnlyForCheckedProviders(t *testing.T) {
 	})
 	t.Run("func-false", func(t *testing.T) {
 		p := newP()
-		p.SetCachedTokensInPrompt(func(_, _ string) bool { return false })
+		p.SetCachedTokensInPrompt(func(*models.RequestContext) bool { return false })
 		if got := cost(p, "openai", ""); got != "0.008015" {
 			t.Errorf("cost = %q, want 0.008015", got)
 		}
 	})
 	t.Run("func-true", func(t *testing.T) {
 		p := newP()
-		p.SetCachedTokensInPrompt(func(_, _ string) bool { return true })
+		p.SetCachedTokensInPrompt(func(*models.RequestContext) bool { return true })
 		if got := cost(p, "openai", ""); got != "0.005615" {
 			t.Errorf("cost = %q, want 0.005615", got)
 		}
@@ -250,7 +250,10 @@ func TestCachedPriceOnlyForCheckedProviders(t *testing.T) {
 	t.Run("org", func(t *testing.T) {
 		p := newP()
 		var askedOrg, askedProvider string
-		p.SetCachedTokensInPrompt(func(org, id string) bool { askedOrg, askedProvider = org, id; return true })
+		p.SetCachedTokensInPrompt(func(rc *models.RequestContext) bool {
+			askedOrg, askedProvider = rc.Metadata[tenant.MetadataKeyOrgID], rc.Provider
+			return true
+		})
 		cost(p, "openai", "org-1")
 		if askedOrg != "org-1" || askedProvider != "openai" {
 			t.Errorf("the gate was asked for org %q provider %q, want org-1 and openai", askedOrg, askedProvider)
@@ -274,7 +277,7 @@ const aboveWarning = "more cached prompt tokens than prompt tokens"
 func TestCachedPriceAbovePromptIsNotDiscounted(t *testing.T) {
 	buf := logCapture(t)
 	p := New(true, cachedRatesDB(), nil, nil)
-	p.SetCachedTokensInPrompt(func(_, id string) bool { return id == "openai" })
+	p.SetCachedTokensInPrompt(func(rc *models.RequestContext) bool { return rc.Provider == "openai" })
 
 	price := func(model string, prompt, cached int) *models.RequestContext {
 		rc := newRC(model, prompt, 10)
@@ -322,7 +325,7 @@ func TestCachedPriceAbovePromptIsNotDiscounted(t *testing.T) {
 	t.Run("cap", func(t *testing.T) {
 		buf := logCapture(t)
 		p := New(true, cachedRatesDB(), nil, nil)
-		p.SetCachedTokensInPrompt(func(_, _ string) bool { return true })
+		p.SetCachedTokensInPrompt(func(*models.RequestContext) bool { return true })
 		for i := 0; i < maxUnpricedWarnings+5; i++ {
 			rc := newRC("gpt-4o", 100, 10)
 			rc.Response.Usage = usageWithCached(100, 10, 1000)
@@ -470,7 +473,7 @@ func TestCachedPriceAliasFactorAndOrgPrice(t *testing.T) {
 			CustomPricing: map[string]*tenant.CustomPricing{"gpt-4o": {InputPerMTok: 1.0, OutputPerMTok: 1.0}},
 		}})
 		p := New(true, cachedRatesDB(), store, nil)
-		p.SetCachedTokensInPrompt(func(_, _ string) bool { return true })
+		p.SetCachedTokensInPrompt(func(*models.RequestContext) bool { return true })
 		rc := newRC("gpt-4o", 0, 0)
 		rc.Response.Usage = decodeChat(t, openAIChatBody)
 		rc.Provider = "openai"
