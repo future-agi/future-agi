@@ -11,6 +11,7 @@ import {
   runColor,
   runStateFor,
 } from "src/sections/simulate/environments/workspace/runs/runs.constants";
+import { TRIAL_UNDER_WAY } from "src/sections/simulate/environments/workspace/runs/detail/trialChanges.constants";
 import { fetchRunCalls, runSummaryKey } from "./runCalls";
 
 /**
@@ -762,9 +763,14 @@ export function useCallWorkers(
         ? COLLECTING_WORKERS
         : null),
     // A status change re-reads the same call: its record stays shown meanwhile, never another call's or attempt's.
+    // A call that is under way again after it ended was rerun in place (same id, no attempt id): a new attempt.
     placeholderData: (previous, previousQuery) =>
       previousQuery?.queryKey[1] === callExecutionId &&
-      previousQuery?.queryKey[3] === attempt
+      previousQuery?.queryKey[3] === attempt &&
+      !(
+        TRIAL_UNDER_WAY.has(callStatus) &&
+        !TRIAL_UNDER_WAY.has(previousQuery?.queryKey[2])
+      )
         ? previous
         : undefined,
     enabled: !!callExecutionId,
