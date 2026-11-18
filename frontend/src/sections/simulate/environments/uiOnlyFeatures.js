@@ -111,6 +111,11 @@ export const UI_ONLY_FEATURES = Object.freeze({
     label: "Delete eval column",
     ask: "removing one evaluation's results from a run",
   },
+  environmentSources: {
+    label: "Environment files",
+    ask: "per-file state (reading, rows rejected, can't read, not supported), the parsed table or text preview with rejected rows, per-column personal data handling, tool, actor and scenario proposals cited to the file, and whether a Knowledge base file changed since it was added",
+    note: "UI only: files are read from sample data and nothing reaches the environment.",
+  },
   environmentSettings: {
     label: "Environment settings",
     ask: "editing simulation defaults, egress, environment variables and the simulated user's model",
