@@ -56,8 +56,8 @@ def _copy(version, model, **changes):
     fields.update(
         version_number=(version.version_number or 0) + 100,
         hash=version.hash[:-4] + "next",
-        **changes,
     )
+    fields.update(changes)
     return model._base_manager.create(**fields)
 
 
