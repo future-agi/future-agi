@@ -18,7 +18,7 @@ import BuildEnvironmentButton from "./BuildEnvironmentButton";
 import { canFollow, isBehind, policyLabel } from "./environmentPolicy";
 import { Card, LineSkeleton, Row } from "./bits";
 import { MONO, ago, rateTone } from "./format";
-import { isRunning, pairLabel } from "./runModel";
+import { isRunning, pairLabel, unratedOf } from "./runFacts";
 import useAgentRoute from "./useAgentRoute";
 
 const COLUMNS = ["Environment", "Testing", "Last result", "Status", ""];
@@ -36,6 +36,7 @@ function LastResult({ env }) {
     );
   }
   const rest = [
+    isRunning(run) ? null : unratedOf(run) || null,
     pairLabel(run),
     run.completedAt ? ago(run.completedAt) : `started ${ago(run.startedAt)}`,
   ].filter(Boolean);

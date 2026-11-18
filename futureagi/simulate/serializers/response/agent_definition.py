@@ -8,7 +8,6 @@ from simulate.serializers.harness_environment import (
     HarnessRunSummarySerializer,
     RunEnvironmentRefSerializer,
 )
-from simulate.services.agent_overview import observe_project
 from tfc.permissions.utils import cached_is_read_only_user
 
 MASKED_CREDENTIAL_VALUE = "********"
@@ -244,6 +243,8 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
         serializer_or_field=ObserveProjectRefSerializer(allow_null=True)
     )
     def get_observe_project(self, obj) -> dict[str, str] | None:
+        from simulate.services.agent_overview import observe_project
+
         return observe_project(obj, getattr(obj, "_agent_kind", None))
 
     def get_latest_version(self, obj):

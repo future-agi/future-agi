@@ -16,6 +16,7 @@ from model_hub.models.ai_model import AIModel
 from simulate.models import (
     AgentDefinition,
     AgentVersion,
+    CallExecution,
     HarnessAgentVersionRuntime,
     HarnessEnvironmentVersion,
     HostedHarnessAttempt,
@@ -23,6 +24,7 @@ from simulate.models import (
     HostedHarnessReceipt,
     HostedHarnessScenario,
     RunTest,
+    Scenarios,
     TestExecution,
 )
 from simulate.models.agent_definition import ProviderCredentials
@@ -313,7 +315,19 @@ def test_runs_list_environment_and_simulate_runs_newest_first(
         "partial": None,
         "outcome_passed": None,
         "outcome_failed": None,
+        "outcome_errored": None,
         "outcome_skipped": None,
+        "outcome_no_score": None,
+        # A run without receipts has no counts here: no verdict and no rate.
+        "outcome_status": None,
+        "pass_rate": None,
+        "scored": None,
+        # Its trials as the run's own page reads them: none ran to a verdict yet.
+        "trials_passed": 0,
+        "trials_evaluated": 0,
+        "trials_inconclusive": 0,
+        "trials_excluded_not_comparable": 0,
+        "trial_pass_rate": None,
         "started_at": None,
         "completed_at": None,
     }
@@ -322,11 +336,19 @@ def test_runs_list_environment_and_simulate_runs_newest_first(
         2,
         {"id": str(environment.id), "name": "env-1"},
     )
+    # outcome_failed counts failed plus errored receipts, as on dev; outcome_errored says how many errored.
     assert (
         runs[1]["outcome_passed"],
         runs[1]["outcome_failed"],
+        runs[1]["outcome_errored"],
         runs[1]["outcome_skipped"],
-    ) == (2, 2, 1)
+    ) == (2, 2, 1, 1)
+    # The verdict and rate come with the run: anything errored fails it, and the rate is 2 of 5, as on dev.
+    assert (runs[1]["outcome_status"], runs[1]["pass_rate"], runs[1]["scored"]) == (
+        "failed",
+        40,
+        5,
+    )
     assert (runs[2]["run_number"], runs[2]["agent_version"]) == (
         1,
         {"id": str(version.id), "version_number": version.version_number},
@@ -1313,3 +1335,33 @@ def test_a_queued_build_without_a_test_yet_still_holds_its_agent(
     for row in (queued, version):
         row.refresh_from_db()
         assert row.deleted is False
+
+
+@pytest.mark.django_db
+def test_a_simulate_run_shows_no_pass_rate_even_with_finished_calls(
+    auth_client, organization, workspace
+):
+    agent = _agent(organization, workspace, "No receipts")
+    legacy = _execution(_run_test(agent, "Old suite"), 5)
+    scenario = Scenarios.objects.create(
+        name="Old scenario",
+        source="test",
+        organization=organization,
+        workspace=workspace,
+    )
+    for call_status in (
+        CallExecution.CallStatus.COMPLETED,
+        CallExecution.CallStatus.FAILED,
+    ):
+        CallExecution.objects.create(
+            test_execution=legacy, scenario=scenario, status=call_status
+        )
+
+    [run] = auth_client.get(f"{AGENTS}{agent.id}/runs/").json()["results"]
+
+    # No counts for a run without receipts, so no verdict and no rate, whatever its calls did.
+    assert (run["outcome_status"], run["pass_rate"], run["scored"]) == (
+        None,
+        None,
+        None,
+    )

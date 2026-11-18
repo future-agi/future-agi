@@ -1,12 +1,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Button, Stack } from "@mui/material";
-import {
-  useNavigate,
-  useParams,
-  useMatch,
-  Outlet,
-} from "react-router-dom";
+import { useNavigate, useParams, useMatch, Outlet } from "react-router-dom";
 
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { paths } from "src/routes/paths";
@@ -65,18 +60,23 @@ const IMPROVEMENT_PATTERN = {
   end: false,
 };
 
-
 // Why the platform left observability off; the Environment builds either way.
 function refusalReason(refusal) {
-  if (refusal.code === "agent_not_stored") return "the agent's code could not be read";
+  if (refusal.code === "agent_not_stored")
+    return "the agent's code could not be read";
   if (refusal.code === "bound") {
     return "the run uses an existing agent; turn it on from the agent page";
   }
-  const details = refusal.details && typeof refusal.details === "object" ? refusal.details : {};
+  const details =
+    refusal.details && typeof refusal.details === "object"
+      ? refusal.details
+      : {};
   const messages = Object.values(details)
     .map((list) => (Array.isArray(list) ? list[0] : undefined))
     .filter((message) => typeof message === "string" && message);
-  return messages.length ? messages.join("; ") : "the project could not be created";
+  return messages.length
+    ? messages.join("; ")
+    : "the project could not be created";
 }
 
 /**
@@ -101,11 +101,13 @@ export default function EnvironmentWorkspace() {
   // an add.
   // Shares the ["harness-environment", id] cache the Evals tab already uses.
   const backed = source === "harness";
-  const evalDetailQuery = useQuery(harnessEnvironmentQuery(envId, { enabled: backed }));
+  const evalDetailQuery = useQuery(
+    harnessEnvironmentQuery(envId, { enabled: backed }),
+  );
   // The scenario count comes from the detail, not the client store
   // (seeded once, so it would stay at the first set of scenarios).
   const backedScenarioCount = backed
-    ? (evalDetailQuery.data?.overview?.scenario_count ?? undefined)
+    ? evalDetailQuery.data?.overview?.scenario_count ?? undefined
     : undefined;
   // While the job is still deriving, the harness bootstrap is only a placeholder
   // (an endpoint-agent stub with whatever scenarios the run has emitted so far, if
@@ -132,16 +134,17 @@ export default function EnvironmentWorkspace() {
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
   const pendingSubmission = useRef(null);
-  // The run awaiting its version picks: { ids, trials, initialPicks }.
+  // { ids, trials, initialPicks, seed } of the run awaiting version picks.
   const [runDialog, setRunDialog] = useState(null);
   const runMutation = useMutation({
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
     // the changed `picks` are sent.
-    mutationFn: async ({ ids, trials, picks, resolved }) => {
+    mutationFn: async ({ ids, trials, picks, resolved, seed }) => {
       // Run-all reads the keys from the server list: the bootstrap
       // `envState.scenarios` is seeded once and keeps a key an amend dropped.
-      const scenarioIds = ids === undefined ? await listAllScenarioKeys(env.id) : ids;
+      const scenarioIds =
+        ids === undefined ? await listAllScenarioKeys(env.id) : ids;
       const selection = JSON.stringify([
         env.id,
         scenarioIds,
@@ -149,6 +152,7 @@ export default function EnvironmentWorkspace() {
         resolved?.agent ?? picks?.agent ?? null,
         resolved?.environment ?? picks?.environment ?? null,
         resolved?.suite ?? picks?.suite ?? null,
+        seed ?? null,
       ]);
       if (pendingSubmission.current?.selection !== selection) {
         pendingSubmission.current = {
@@ -162,6 +166,7 @@ export default function EnvironmentWorkspace() {
         trials || 1,
         pendingSubmission.current.key,
         picks,
+        seed,
       );
     },
     onSuccess: (run) => {
@@ -194,17 +199,17 @@ export default function EnvironmentWorkspace() {
   });
   // With versioning on, a run first asks which versions to use; a re-run
   // pre-selects the versions it ran with.
-  const startRun = (ids, trials, { initialPicks } = {}) => {
+  const startRun = (ids, trials, { initialPicks, seed } = {}) => {
     if (source !== "harness") {
       navigate(runSimulationTarget(env));
       return;
     }
     if (env?.versioning?.enabled) {
       runMutation.reset();
-      setRunDialog({ ids, trials, initialPicks });
+      setRunDialog({ ids, trials, initialPicks, seed });
       return;
     }
-    runMutation.mutate({ ids, trials });
+    runMutation.mutate({ ids, trials, seed });
   };
   const runDialogEl = runDialog && (
     <RunDialog
@@ -213,9 +218,16 @@ export default function EnvironmentWorkspace() {
       scenarioIds={runDialog.ids}
       trials={runDialog.trials || 1}
       initialPicks={runDialog.initialPicks}
+      initialSeed={runDialog.seed}
       onClose={() => setRunDialog(null)}
-      onSubmit={(picks, ids, resolved) =>
-        runMutation.mutate({ ids, trials: runDialog.trials, picks, resolved })
+      onSubmit={(picks, ids, resolved, seed) =>
+        runMutation.mutate({
+          ids,
+          trials: runDialog.trials,
+          picks,
+          resolved,
+          seed,
+        })
       }
       submitting={runMutation.isPending}
       error={runMutation.error}
@@ -284,7 +296,9 @@ export default function EnvironmentWorkspace() {
               variant="contained"
               color="primary"
               size="small"
-              onClick={() => navigate(paths.dashboard.simulate.environments.root)}
+              onClick={() =>
+                navigate(paths.dashboard.simulate.environments.root)
+              }
             >
               {WORKSPACE_COPY.notFound.action}
             </Button>
@@ -305,14 +319,20 @@ export default function EnvironmentWorkspace() {
           body={WORKSPACE_COPY.loadError.body}
           action={
             <Stack direction="row" spacing={1}>
-              <Button variant="outlined" size="small" onClick={() => refetch?.()}>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => refetch?.()}
+              >
                 {WORKSPACE_COPY.loadError.retry}
               </Button>
               <Button
                 variant="contained"
                 color="primary"
                 size="small"
-                onClick={() => navigate(paths.dashboard.simulate.environments.root)}
+                onClick={() =>
+                  navigate(paths.dashboard.simulate.environments.root)
+                }
               >
                 {WORKSPACE_COPY.notFound.action}
               </Button>
@@ -339,12 +359,23 @@ export default function EnvironmentWorkspace() {
   // goes Live, at which point buildStatus flips and the branch below takes over.
   if (building || buildFailed) {
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          minHeight: 0,
+        }}
+      >
         <WorkspaceHeader
           env={env}
           envState={envState}
           canRun={false}
-          runBlockedReason={buildFailed ? WORKSPACE_COPY.failedTooltip : WORKSPACE_COPY.buildingTooltip}
+          runBlockedReason={
+            buildFailed
+              ? WORKSPACE_COPY.failedTooltip
+              : WORKSPACE_COPY.buildingTooltip
+          }
           locked
         />
         {creditBanner}
@@ -373,7 +404,14 @@ export default function EnvironmentWorkspace() {
   // A fix (improvement) opens as its own full page too, like a run.
   if (improvementMatch) {
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          minHeight: 0,
+        }}
+      >
         <Suspense fallback={<LoadingScreen />}>
           <Outlet context={{ env, envState, backed }} />
         </Suspense>
@@ -383,7 +421,14 @@ export default function EnvironmentWorkspace() {
 
   if (executionMatch) {
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          minHeight: 0,
+        }}
+      >
         {/* A client/template env (no backend) can still reach this route — e.g.
             the `?mockRuns=1` QA switch mints run history for any env. `env`
             alone doesn't say whether a backend exists, so `backed` (same
@@ -428,10 +473,12 @@ export default function EnvironmentWorkspace() {
     canRunHeader(
       source,
       env,
-      backedScenarioCount != null ? !!envState.agent && backedScenarioCount > 0 : canRun,
+      backedScenarioCount != null
+        ? !!envState.agent && backedScenarioCount > 0
+        : canRun,
     );
-  const runReason = (reason) => (roleCanRun ? reason : WORKSPACE_COPY.viewer.run);
-
+  const runReason = (reason) =>
+    roleCanRun ? reason : WORKSPACE_COPY.viewer.run;
 
   // A scenario selection on the Scenarios tab owns the primary Run — the header
   // yields its Run/Repeats while one is active ("one primary at a time").
@@ -459,7 +506,8 @@ export default function EnvironmentWorkspace() {
   // rename shows
   // everywhere the moment it lands, not only in the Settings field.
   const backedName = evalDetailQuery.data?.overview?.name;
-  const displayEnv = env && backed && backedName ? { ...env, name: backedName } : env;
+  const displayEnv =
+    env && backed && backedName ? { ...env, name: backedName } : env;
 
   // Overview summary tiles need the detail's real counts: the job poll (which
   // drives
@@ -469,9 +517,12 @@ export default function EnvironmentWorkspace() {
   const overviewCounts =
     backed && backedDetail
       ? {
-          scenarios: backedDetail.overview?.scenario_count ?? backedDetail.scenarios?.length,
+          scenarios:
+            backedDetail.overview?.scenario_count ??
+            backedDetail.scenarios?.length,
           evaluations:
-            backedDetail.overview?.evaluations_count ?? backedDetail.evaluations?.selected?.length,
+            backedDetail.overview?.evaluations_count ??
+            backedDetail.evaluations?.selected?.length,
           runs: backedDetail.overview?.runs_count,
           hardRules: backedDetail.contract?.hard_constraints?.length,
         }
@@ -493,9 +544,13 @@ export default function EnvironmentWorkspace() {
   const graphData =
     backed && backedDetail
       ? {
-          tools: (backedDetail.contract?.tools ?? []).map((t) => t?.name).filter(Boolean),
+          tools: (backedDetail.contract?.tools ?? [])
+            .map((t) => t?.name)
+            .filter(Boolean),
           flows: backedDetail.contract?.real_use_cases ?? [],
-          personas: (backedDetail.world?.personas ?? []).map((p) => p?.name).filter(Boolean),
+          personas: (backedDetail.world?.personas ?? [])
+            .map((p) => p?.name)
+            .filter(Boolean),
           guardrails: backedDetail.contract?.hard_constraints ?? [],
         }
       : undefined;
@@ -514,12 +569,28 @@ export default function EnvironmentWorkspace() {
       : null;
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+      }}
+    >
       <WorkspaceHeader
         env={displayEnv}
         envState={envState}
         canRun={runnable && !runMutation.isPending && !detailBlock}
-        runBlockedReason={runReason(detailBlock || blockedReason(envState, env, backed, runMutation.isPending, backedScenarioCount))}
+        runBlockedReason={runReason(
+          detailBlock ||
+            blockedReason(
+              envState,
+              env,
+              backed,
+              runMutation.isPending,
+              backedScenarioCount,
+            ),
+        )}
         locked={locked}
         backed={source === "harness"}
         onFork={onFork}
@@ -531,7 +602,9 @@ export default function EnvironmentWorkspace() {
       {refusalLine}
 
       <SystemBanners env={env} />
-      {!detailLoading && !detailFailed && <VersionBar env={env} envState={envState} />}
+      {!detailLoading && !detailFailed && (
+        <VersionBar env={env} envState={envState} />
+      )}
       <DraftBar
         env={env}
         busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
@@ -561,6 +634,7 @@ export default function EnvironmentWorkspace() {
               stopping={chat.stopping}
               frozen={!envLive || chat.frozen}
               frozenReason={!envLive ? CONSOLE_COPY.frozen : chat.frozenReason}
+              answerWithOptions={chat.answerWithOptions}
               onCollapse={collapse}
               collapseRef={collapseRef}
               active={open}
@@ -575,7 +649,11 @@ export default function EnvironmentWorkspace() {
               action={
                 // While the retry is in flight the query is no longer in error,
                 // so the loading state below takes over from this one.
-                <Button variant="outlined" size="small" onClick={() => evalDetailQuery.refetch()}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => evalDetailQuery.refetch()}
+                >
                   {WORKSPACE_COPY.detailError.retry}
                 </Button>
               }
@@ -583,25 +661,33 @@ export default function EnvironmentWorkspace() {
           ) : detailLoading ? (
             <LoadingScreen />
           ) : (
-          <WorkspacePanels
-            env={displayEnv}
-            envState={envState}
-            serverEnvState={serverEnvState}
-            patch={patch}
-            tab={activeTab}
-            onTabChange={onTabChange}
-            locked={locked}
-            backed={source === "harness"}
-            onFork={onFork}
-            gapsByTab={gapsByTab(env, serverEnvState)}
-            counts={counts(serverEnvState, backedScenarioCount)}
-            overviewCounts={overviewCounts}
-            overviewWorld={overviewWorld}
-            graphData={graphData}
-            onStartRun={startRun}
-            canRun={runnable && !runMutation.isPending}
-            runBlockedReason={runReason(blockedReason(envState, env, backed, runMutation.isPending, backedScenarioCount))}
-          />
+            <WorkspacePanels
+              env={displayEnv}
+              envState={envState}
+              serverEnvState={serverEnvState}
+              patch={patch}
+              tab={activeTab}
+              onTabChange={onTabChange}
+              locked={locked}
+              backed={source === "harness"}
+              onFork={onFork}
+              gapsByTab={gapsByTab(env, serverEnvState)}
+              counts={counts(serverEnvState, backedScenarioCount)}
+              overviewCounts={overviewCounts}
+              overviewWorld={overviewWorld}
+              graphData={graphData}
+              onStartRun={startRun}
+              canRun={runnable && !runMutation.isPending}
+              runBlockedReason={runReason(
+                blockedReason(
+                  envState,
+                  env,
+                  backed,
+                  runMutation.isPending,
+                  backedScenarioCount,
+                ),
+              )}
+            />
           )}
         </ChatSplitPane>
       </Box>
@@ -614,7 +700,12 @@ export default function EnvironmentWorkspace() {
 // yields its primary Run to the Scenarios tab's selection bar while rows are
 // checked (selectionActive). The bus fires the current value on subscribe.
 function useScenarioSelection() {
-  const [selection, setSelection] = useState({ ids: [], rows: [], count: 0, all: false });
+  const [selection, setSelection] = useState({
+    ids: [],
+    rows: [],
+    count: 0,
+    all: false,
+  });
   useEffect(() => subscribeScenarioSelection(setSelection), []);
   return selection;
 }

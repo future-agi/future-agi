@@ -69,6 +69,13 @@ const TESTED = {
     ...ENVIRONMENT_RUN,
     outcome_passed: 8,
     outcome_failed: 2,
+    pass_rate: 80,
+    scored: 10,
+    trials_passed: 8,
+    trials_evaluated: 10,
+    trials_inconclusive: 0,
+    trials_excluded_not_comparable: 0,
+    trial_pass_rate: 80,
     completed_at: twoHoursAgo,
   }),
 };

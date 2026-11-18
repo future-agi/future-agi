@@ -12638,8 +12638,8 @@ def run_evaluation_task(evaluation_data):
 
         futures = {}
         failed_metric_ids = set()
-        success_counts = defaultdict(int)
-        reporting_inputs = {}
+        success_counts: defaultdict[str, int] = defaultdict(int)
+        reporting_inputs: dict[str, tuple[Any, Any]] = {}
         with ThreadPoolExecutor(max_workers=5) as executor:
             for metric_id in metric_ids:
                 metric = metric_map.get(str(metric_id))

@@ -919,6 +919,38 @@ def test_authoring_stage_outputs_exposes_generic_certification_evidence():
     assert certification["data"]["certificate"]["fingerprint"] == "sha256:test"
 
 
+def test_call_actor_stage_output_keeps_actors_without_a_channel():
+    from simulate.services.hosted_harness_gateway import (
+        authoring_stage_outputs_from_archive,
+    )
+
+    actors = {
+        "actors": [
+            {"id": "spouse", "name": "Sam", "channel": "audio_mix"},
+            {
+                "id": "claims_supervisor",
+                "name": "Dana Brooks",
+                "permitted_actions": ["approvals.put"],
+            },
+        ]
+    }
+    body = io.BytesIO()
+    with tarfile.open(fileobj=body, mode="w:gz") as archive:
+        payload = json.dumps(actors).encode()
+        member = tarfile.TarInfo("actors.json")
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+
+    outputs = authoring_stage_outputs_from_archive(body.getvalue())
+
+    listing = next(item for item in outputs if item["kind"] == "call_actors")
+    assert [one["id"] for one in listing["data"]["call_actors"]] == [
+        "spouse",
+        "claims_supervisor",
+    ]
+    assert listing["summary"] == "2 actors"
+
+
 def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
     (tmp_path / "contract.json").write_text("{}", encoding="utf-8")
 
@@ -1907,8 +1939,9 @@ def test_daytona_permanent_provider_rejection_fails_without_retry(organization):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("unrestricted", [False, True])
 def test_daytona_launch_uploads_contract_files_and_starts_one_session(
-    organization, settings, monkeypatch
+    organization, settings, monkeypatch, unrestricted
 ):
     payload = _payload()
     payload["source"] = {
@@ -1925,6 +1958,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
     settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    settings.ALK_HOSTED_EGRESS_UNRESTRICTED = unrestricted
     simulator_values = {
         "ALK_HARNESS": "vertex-gemini",
         "ALK_HARNESS_MODEL": "gemini-3.7-flash",
@@ -1979,6 +2013,10 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
+    assert (
+        client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
+        == "gemini-3.7-flash"
+    )
     assert job.conversation.messages.get().content.startswith(
         "Build the test environment"
     )
@@ -1992,7 +2030,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "if [ -f /work/authoring.tar.gz ]; then mkdir -p /work/authoring"
         in prepare_command
     )
-    assert client.params.unrestricted_egress is False
+    assert client.params.unrestricted_egress is unrestricted
     assert set(client.params.allowed_domains) == {
         "agent.example.com",
         "*.vapi.ai",
@@ -2000,6 +2038,9 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "ingest.example.com",
         "platform.example.com",
     }
+    # Controlled egress: the harness points the agent at a proxy that refuses every host outside this list.
+    allowed = dispatched["metadata"].get("egress_allowed_hosts")
+    assert allowed == (None if unrestricted else sorted(client.params.allowed_domains))
 
 
 @pytest.mark.django_db
@@ -4242,7 +4283,7 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     gateway.client = client
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: {},
+        lambda: {"ALK_HARNESS_MODEL": "gemini-3.7-flash"},
     )
     barrier = Barrier(2)
 
@@ -4266,6 +4307,10 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     assert states == ["starting", "starting"]
     assert client.sandbox.process.sessions == [_CHAT_SESSION]
     assert "hosted_chat_entrypoint" in client.sandbox.process.session_request.command
+    assert (
+        client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
+        == "gemini-3.7-flash"
+    )
     # A build runs as a chat turn: its spend is in the chat's ledger, which the attempt's
     # cleanup reads.
     assert (

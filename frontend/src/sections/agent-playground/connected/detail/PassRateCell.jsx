@@ -2,11 +2,11 @@ import PropTypes from "prop-types";
 import React from "react";
 import { Box, Stack, Typography } from "@mui/material";
 import { rateTone } from "./format";
-import { isRunning } from "./runModel";
+import { isRunning, unratedOf } from "./runFacts";
 
-export function PassRateCell({ run }) {
+export default function PassRateCell({ run }) {
   const rate = isRunning(run) ? null : run.passRate;
-  const measured = (run.passed ?? 0) + (run.failed ?? 0) + (run.skipped ?? 0);
+  const unrated = isRunning(run) ? "" : unratedOf(run);
   return (
     <Stack
       direction="row"
@@ -42,7 +42,8 @@ export function PassRateCell({ run }) {
           typography: "s3",
           fontWeight: 500,
           fontVariantNumeric: "tabular-nums",
-          width: 76,
+          minWidth: 76,
+          whiteSpace: "nowrap",
           textAlign: "right",
           color: rate == null ? "text.disabled" : rateTone(rate),
         }}
@@ -53,7 +54,15 @@ export function PassRateCell({ run }) {
             component="span"
             sx={{ color: "text.subtitle", fontWeight: 400 }}
           >
-            {` ${run.passed}/${measured}`}
+            {` ${run.trialsPassed}/${run.trialsEvaluated}`}
+          </Box>
+        )}
+        {unrated && (
+          <Box
+            component="span"
+            sx={{ color: "text.subtitle", fontWeight: 400 }}
+          >
+            {` · ${unrated}`}
           </Box>
         )}
       </Typography>
