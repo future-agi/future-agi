@@ -30,6 +30,7 @@ from tracer.tests._ch_seed import (
     seed_ch_trace_sessions,
     truncate_ch_spans,
 )
+from tracer.tests.usage_guard import no_new_usage  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
