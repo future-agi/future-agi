@@ -8,13 +8,7 @@ from rest_framework import status
 
 from model_hub.models.evals_metric import EvalTemplate
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import (
-    EvalTask,
-    EvalTaskLogger,
-    EvalTaskStatus,
-    RowType,
-    RunType,
-)
+from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
 
 _UPDATE = "/tracer/eval-task/update_eval_task/"
 
@@ -222,10 +216,6 @@ class TestCutoverEdit:
 @pytest.mark.integration
 @pytest.mark.django_db
 class TestCutoverUnpause:
-    @pytest.fixture(autouse=True)
-    def previous_run(self, historical_task):
-        EvalTaskLogger.objects.create(eval_task=historical_task)
-
     def test_unpause_restarts_workflow(self, auth_client, historical_task, spy):
         historical_task.status = EvalTaskStatus.PAUSED
         historical_task.save(update_fields=["status"])

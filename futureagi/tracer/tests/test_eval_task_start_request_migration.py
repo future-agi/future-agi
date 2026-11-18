@@ -2,7 +2,7 @@
 
 import pytest
 from django.db import connection
-from django.db.migrations import CreateModel
+from django.db.migrations import AddField, CreateModel
 from django.db.migrations.executor import MigrationExecutor
 
 from tracer.models.eval_task import EvalTask, EvalTaskStartRequest
@@ -17,12 +17,16 @@ def test_forward_migration_leaves_existing_tasks_without_an_intent(eval_task):
     targets = executor.loader.graph.leaf_nodes()
     migration = executor.loader.graph.nodes[CURRENT]
     assert migration.dependencies == [PREVIOUS]
-    (operation,) = migration.operations
+    marker, operation = migration.operations
+    assert isinstance(marker, AddField)
+    assert marker.name == "instant_paused_before_start_at"
+    assert marker.field.null
     assert isinstance(operation, CreateModel)
     assert operation.name == "EvalTaskStartRequest"
     table = EvalTaskStartRequest._meta.db_table
     task = EvalTask.objects.using("default").filter(pk=eval_task.pk)
     before = task.values().get()
+    assert before[marker.name] is None
     try:
         executor.migrate([PREVIOUS])
         assert table not in connection.introspection.table_names()

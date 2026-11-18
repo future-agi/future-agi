@@ -75,6 +75,8 @@ class EvalTask(BaseModel):
     )
     start_time = models.DateTimeField(blank=True, null=True)
     end_time = models.DateTimeField(blank=True, null=True)
+    # Set only at Instant Pause, cleared only by an explicit new submission.
+    instant_paused_before_start_at = models.DateTimeField(null=True, editable=False)
     # Forward watermark for continuous tasks: every in-scope row created at/before
     # this point has been materialized. The reconciler reads it as the lower
     # ``created_at`` bound (so a continuous task never backfills history that
@@ -132,6 +134,8 @@ class EvalTaskStartRequest(models.Model):
     attempts = models.PositiveSmallIntegerField(default=0)
     first_reserved_at = models.DateTimeField(null=True)
     admitted_run_id = models.UUIDField(null=True)
+    # A Re-run retires this create without rewriting its terminal outcome.
+    superseded_at = models.DateTimeField(null=True, editable=False)
     state = models.CharField(
         max_length=12, choices=State.choices, default=State.PENDING
     )

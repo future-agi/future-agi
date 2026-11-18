@@ -9,6 +9,11 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.AddField(
+            model_name="evaltask",
+            name="instant_paused_before_start_at",
+            field=models.DateTimeField(editable=False, null=True),
+        ),
         migrations.CreateModel(
             name="EvalTaskStartRequest",
             fields=[
@@ -25,6 +30,7 @@ class Migration(migrations.Migration):
                 ("attempts", models.PositiveSmallIntegerField(default=0)),
                 ("first_reserved_at", models.DateTimeField(null=True)),
                 ("admitted_run_id", models.UUIDField(null=True)),
+                ("superseded_at", models.DateTimeField(editable=False, null=True)),
                 (
                     "state",
                     models.CharField(

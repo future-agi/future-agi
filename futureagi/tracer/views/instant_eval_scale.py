@@ -61,7 +61,10 @@ from tracer.serializers.filters import SessionFilterListField
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_summary as summary_service
 from tracer.services import instant_eval_users as users_service
-from tracer.services.eval_tasks.start_requests import resume_block_reason
+from tracer.services.eval_tasks.start_requests import (
+    record_pending_instant_pause,
+    start_refusal,
+)
 from tracer.services.instant_eval_run import (
     ACTIVE,
     DEFAULT_SAMPLE,
@@ -86,6 +89,7 @@ from tracer.services.instant_eval_run import (
     compute_summary,
     credits_per_answer,
     max_rows,
+    summary_with_start_decision,
     with_primary_evals,
 )
 from tracer.services.user_filter_capabilities import (
@@ -1167,7 +1171,7 @@ def _load(request, params, gm):
     if project is None:
         return None, gm.not_found("Project not found")
     task = with_primary_evals(
-        EvalTask.objects.filter(
+        EvalTask.objects.using("default").filter(
             id=params["eval_task_id"], project=project, deleted=False
         )
     ).first()
@@ -1326,6 +1330,11 @@ class InstantEvalSummaryView(InstantEvalLicenseRequired, APIView):
         if run.last_tz != view.tz.key:
             InstantEvalRun.objects.filter(id=run.id).update(last_tz=view.tz.key)
         status = _status(task, run)
+        refusal = start_refusal(task)
+
+        def respond(payload):
+            return self._etagged(request, summary_with_start_decision(task, payload, refusal))
+
         live = status in ACTIVE
         # A finished run's summary never changes. A live run is counted again
         # at most every few seconds, shared by everyone watching it, so
@@ -1342,16 +1351,16 @@ class InstantEvalSummaryView(InstantEvalLicenseRequired, APIView):
             else:
                 fresh = not live or age < max_age
             if fresh:
-                return self._etagged(request, cached["payload"])
+                return respond(cached["payload"])
             stale = stale or cached
         # One request counts at a time (per run, time zone and questions);
         # the others show the last count rather than count it again.
         lock = "ie-summary-lock:" + _summary_key(task, run, status, view)
         counting = cache.add(lock, 1, 30)
         if not counting and stale is not None:
-            return self._etagged(request, stale["payload"])
+            return respond(stale["payload"])
         try:
-            payload = compute_summary(task, run, view, questions, price)
+            payload = compute_summary(task, run, view, questions, price, refusal)
         except summary_service.BadFilter as exc:
             return self._gm.bad_request(str(exc))
         except Exception:
@@ -1362,7 +1371,7 @@ class InstantEvalSummaryView(InstantEvalLicenseRequired, APIView):
         finally:
             if counting:
                 cache.delete(lock)
-        return self._etagged(request, payload)
+        return respond(payload)
 
     def _etagged(self, request, payload):
         body = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
@@ -1605,11 +1614,16 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
                 InstantEvalRun.objects.filter(id=run.id).update(
                     answers_version=F("answers_version") + 1
                 )
-            if not EvalTask.objects.filter(pk=task.pk, status__in=ACTIVE).update(
-                status=EvalTaskStatus.PAUSED
-            ):
+            current = (
+                EvalTask.objects.select_for_update(of=("self",))
+                .filter(pk=task.pk, status__in=ACTIVE)
+                .first()
+            )
+            if current is None:
                 transaction.set_rollback(True)
                 return self._gm.bad_request("Only a running run can be paused.")
+            record_pending_instant_pause(current)
+            EvalTask.objects.filter(pk=current.pk).update(status=EvalTaskStatus.PAUSED)
             EvalTaskStartRequest.void_for_tasks([task.pk])
         try:
             signal_pause_eval_task_workflow(task.id)
@@ -1627,6 +1641,8 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
     def _resume(self, request, task, run, data):
         if run is not None and run.cancelled_at:
             return self._cancelled()
+        if refusal := start_refusal(task):
+            return self._gm.bad_request(refusal.instant)
         resumable = task.status in RESUMABLE_TASK_STATUSES
         if not resumable and run is not None:
             # A run that stopped before finishing: its workflow is gone while
@@ -1640,10 +1656,6 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             return self._gm.bad_request(
                 f"The run is {task.status}; only a paused or stopped run can be resumed."
             )
-        if task.status not in ACTIVE and (
-            reason := resume_block_reason(task, instant=True)
-        ):
-            return self._gm.bad_request(reason)
         if busy := self._busy(request, task):
             return busy
         # Checked again: the key may have gone since the run started.

@@ -24,6 +24,7 @@ from tracer.models.eval_task import EvalTask, EvalTaskStatus
 from tracer.models.instant_eval import InstantEvalRun
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_summary as summary_service
+from tracer.services.eval_tasks.start_requests import Refusal, start_refusal
 
 logger = structlog.get_logger(__name__)
 
@@ -246,52 +247,15 @@ def _workflow_gone(task) -> bool:
     from tfc.temporal.eval_tasks.client import (
         WF_ABSENT,
         WF_CLOSED,
-        WF_LEGACY_CLOSED,
         describe_eval_task_workflow_sync,
     )
-
-    from tracer.services.eval_tasks.start_requests import (
-        control_intent,
-        has_recorded_work,
-    )
-
-    intent = control_intent(task)
-    if intent and not has_recorded_work(task, intent=intent):
-        if intent["watched"]:
-            return False  # create alone owns this handoff
-        # A gated execution may have closed without ever being admitted.
-        # Only an independent drain (e.g. a later Re-run) proves prior work.
-        try:
-            return describe_eval_task_workflow_sync(
-                task.id, timeout=5, distinguish_legacy=True
-            ) == WF_LEGACY_CLOSED
-        except Exception:
-            return False
-    if (
-        intent
-        and intent["watched"]
-        and intent["admitted_run_id"]
-        and task.continuous_cursor is None
-        and not (task.filters or {}).get(rows_service.RUN_MARKER)
-    ):
-        # A summary read doesn't take over a live create awaiting progress.
-        from tracer.models.observation_span import EvalLogger
-
-        entries = EvalLogger.all_objects.using("default").filter(
-            eval_task_id=str(task.pk)
-        )
-        if not entries.exists():
-            return False
 
     key = f"ie-wf-gone:{task.id}"
     known = cache.get(key)
     if known is not None:
         return known
     try:
-        history = describe_eval_task_workflow_sync(task.id)
-        gone = history == WF_CLOSED or (
-            history == WF_ABSENT and has_recorded_work(task, intent=intent)
-        )
+        gone = describe_eval_task_workflow_sync(task.id) in (WF_ABSENT, WF_CLOSED)
     except Exception:
         logger.warning("instant_eval_describe_failed", task_id=str(task.id))
         gone = False
@@ -420,6 +384,33 @@ def _stalled(task, status: str, data: dict, progress: dict) -> bool:
     return now_ms - quiet_since > STALL_AFTER_S * 1000 and _workflow_gone(task)
 
 
+def summary_with_start_decision(task, payload, refusal: Refusal | None):
+    """Apply today's controls even to a cached count of yesterday's answers.
+
+    `stalled` and `paused` both offer Resume. For a refused stopped run, use
+    Ask's existing `failed` presentation (Retry / Run again / Recreate). This
+    changes neither the saved task status nor its answer/failure counts.
+    """
+    if refusal is None or payload["status"] == "cancelled":
+        return payload
+    if refusal.code in ("watching", "accepted"):
+        if task.status in ACTIVE:
+            # Only the create reconciler can settle an unconfirmed start.
+            return {**payload, "status": task.status}
+        if payload["status"] == EvalTaskStatus.COMPLETED:
+            return payload  # A genuine empty completion isn't a failed start.
+    if refusal.code == "pending" and payload["status"] != STALLED:
+        # A normal Pending start is still picking, not a failed workflow.
+        return payload
+    return {
+        **payload,
+        "status": EvalTaskStatus.FAILED,
+        "preparing": False,
+        "sample": {**payload["sample"], "can_extend": False},
+        "failure": {"message": refusal.instant, "every": True, "ai_providers": False},
+    }
+
+
 def _summary_key(task, run, status: str, view) -> str:
     raw = (
         f"{task.id}:{status}:{run.answers_version}:{view.unit}:"
@@ -428,7 +419,7 @@ def _summary_key(task, run, status: str, view) -> str:
     return "ie-summary:v10:" + hashlib.sha1(raw.encode()).hexdigest()
 
 
-def _summary_payload(task, run, view, questions, price: float | None) -> dict:
+def _summary_payload(task, run, view, questions, price, refusal: Refusal | None) -> dict:
     """The run's summary; ``price`` is credits per answer, None where the
     run isn't billed."""
     data = summary_service.summary(view)
@@ -445,7 +436,10 @@ def _summary_payload(task, run, view, questions, price: float | None) -> dict:
     elif unpicked and status == "cancelled":
         data.update(total=requested, not_read=requested)
     data["preparing"] = preparing
-    if _stalled(task, status, data, progress):
+    # History is part of dev's stall display, not a way to decide a
+    # recorded request. An uncertain create must not wait on a second RPC.
+    check_stall = status not in ACTIVE or refusal is None or refusal.code == "pending"
+    if check_stall and _stalled(task, status, data, progress):
         status = STALLED
     in_flight = None
     if status == EvalTaskStatus.PAUSED:
@@ -554,7 +548,9 @@ def _checked_key(run) -> str:
     return f"ie-answers-checked:{run.eval_task_id}:{run.answers_version}"
 
 
-def compute_summary(task, run, view, questions, price: float | None) -> dict:
+def compute_summary(
+    task, run, view, questions, price: float | None, refusal: Refusal | None = None
+) -> dict:
     """Count a run, copying its answers over first if they weren't recorded
     as they landed (or, once it has finished, if any were missed), and keep
     the result: for a day once the run has finished."""
@@ -567,7 +563,7 @@ def compute_summary(task, run, view, questions, price: float | None) -> dict:
     ensure_synced(run, check=check)
     if check:
         cache.set(_checked_key(run), 1, ANSWERS_CHECKED_TTL)
-    payload = _summary_payload(task, run, view, questions, price)
+    payload = _summary_payload(task, run, view, questions, price, refusal)
     finished = payload["status"] not in (*ACTIVE, STALLED, PAUSING)
     cache.set(
         _summary_key(task, run, payload["status"], view),
@@ -587,4 +583,4 @@ def prewarm_summary(task_id) -> None:
     if run is None:
         return
     view, questions = _view(task, run, {"tz": run.last_tz or "UTC"})
-    compute_summary(task, run, view, questions, credits_per_answer())
+    compute_summary(task, run, view, questions, credits_per_answer(), start_refusal(task))

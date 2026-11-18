@@ -153,7 +153,9 @@ def test_reconcile_unconfirmed_create(
         check(intent, "exhausted", 1)
         assert intent.last_outcome == "execution_closed_without_progress"
         assert task.status == "failed"
-        reason = service.start_request_error(task)
+        refusal = service.start_refusal(task)
+        assert refusal is not None and refusal.log_message is not None
+        reason = refusal.log_message
         assert "ended before evaluation began" in reason and "Resume" not in reason
         refused = auth_client.post(
             f"{_CREATE}unpause_eval_task/?eval_task_id={intent.pk}"
@@ -253,14 +255,15 @@ def test_second_failure_needs_negative_describe_before_exhaustion(
     logs = auth_client.get(f"{_CREATE}get_eval_task_logs/", {"eval_task_id": intent.pk})
     assert logs.json()["result"]["error_groups"] == []
 
-    # If the new run really started and was paused, history belongs to the
-    # ungated replacement, not to the still-immutable original create.
+    # A recorded explicit submission retires only the refusal; the original
+    # create outcome stays auditable and no Temporal probe is necessary.
+    assert intent.superseded_at is not None
     EvalTask.objects.filter(pk=intent.pk).update(status="paused")
-    describe.return_value = client.WF_LEGACY_CLOSED
+    describe.reset_mock()
     start.reset_mock()
     resumed = auth_client.post(f"{_CREATE}unpause_eval_task/?eval_task_id={intent.pk}")
     assert resumed.status_code == 200, resumed.content
-    describe.assert_called_with(intent.pk, timeout=5, distinguish_legacy=True)
+    describe.assert_not_called()
     start.assert_called_once_with(intent.task, replace_existing=True)
     check(intent, "start_failed", 2)
 
@@ -636,7 +639,7 @@ def test_acknowledged_execution_closes_before_next_check(
         assert intent.last_outcome == "execution_progress"
         assert task.status == "completed"
         assert not EvalLogger.all_objects.filter(eval_task_id=str(task.pk)).exists()
-        assert service.start_request_error(task) is None
+        assert service.start_refusal(task) is None
     else:
         check(intent, "exhausted", 1)
         assert intent.last_outcome == "execution_closed_without_progress"
@@ -691,9 +694,9 @@ def test_admission_is_watched_until_work_or_confirmed_closure(
             f"{_CREATE}get_eval_task_logs/", {"eval_task_id": intent.pk}
         )
         assert logs.status_code == 200, logs.content
-        groups = logs.json()["result"]["error_groups"]
-        assert "ended before evaluation began" in groups[0]["sample"]
-        assert service.resume_block_reason(tasks.get()) is None
+        # Admission distinguishes this closure from a failed first start.
+        assert logs.json()["result"]["error_groups"] == []
+        assert service.start_refusal(tasks.get()) is None
     else:
         if next_event == "cursor":
             tasks.update(continuous_cursor=timezone.now())
@@ -722,7 +725,9 @@ def test_absent_beyond_history_never_retransmits(intent, transport, no_new_usage
     assert intent.last_outcome == "unconfirmed_beyond_history"
     task = EvalTask.objects.get(pk=intent.pk)
     assert task.status == "pending"
-    reason = service.start_request_error(task)
+    refusal = service.start_refusal(task)
+    assert refusal is not None and refusal.log_message is not None
+    reason = refusal.log_message
     assert "No workflow history" in reason
     assert "Re-run" not in reason and "Resume" not in reason
     start.assert_called_once()
@@ -1141,11 +1146,18 @@ def test_legacy_delivery_recovers_a_run_interrupted_before_its_first_entry(
         enqueue = Mock()
         monkeypatch.setattr(process_eval_task, "delay", enqueue)
         eval_task_cron._original_func()
-        enqueue.assert_called_once_with(eval_task.pk)
+        if marked_running:
+            enqueue.assert_called_once_with(eval_task.pk)
+        else:
+            enqueue.assert_not_called()  # Pending is not a legacy delivery request.
         start.assert_not_called()
     else:
         process_eval_task._original_func(str(eval_task.pk))
-        start.assert_called_once_with(eval_task)  # coalesce, never replace
+        if marked_running:
+            start.assert_called_once_with(eval_task)  # coalesce, never replace
+        else:
+            start.assert_not_called()
+    describe.assert_not_called()
 
 
 @pytest.mark.parametrize("evidence", ["retired_logger", "independent_closed_history"])

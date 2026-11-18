@@ -585,16 +585,15 @@ def test_paused_reserved_create_completing_fenced_is_not_a_previous_run(
     )
     assert plain.status_code == 400
     assert not started
-    # A later explicit Re-run uses an ungated drain type. Positive history
-    # for that drain (unlike the fenced create) can establish a genuine pause.
-    from tracer.services.eval_tasks.start_requests import resume_block_reason
+    # Even independent workflow history isn't a recorded explicit submission.
+    from tracer.services.eval_tasks.start_requests import start_refusal
 
     monkeypatch.setattr(
-        client, "describe_eval_task_workflow_sync",
-        lambda *a, **kw: client.WF_LEGACY_CLOSED if kw["distinguish_legacy"] else None,
+        client, "describe_eval_task_workflow_sync", lambda *a, **kw: client.WF_LEGACY_CLOSED
     )
     task.refresh_from_db()
-    assert resume_block_reason(task) is None
+    refusal = start_refusal(task)
+    assert refusal is not None and refusal.code == "revoked"
 
 
 @pytest.mark.django_db
@@ -638,7 +637,7 @@ def test_worker_picker_cursor_without_entries_is_resumable(
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("history", ["closed", "absent", TimeoutError()])
-def test_pending_legacy_summary_needs_positive_history_to_resume(
+def test_pending_legacy_summary_is_not_a_request_to_resume(
     auth_client, observe_project, yes_no, started, monkeypatch, no_new_usage, history
 ):
     from unittest.mock import Mock
@@ -662,13 +661,9 @@ def test_pending_legacy_summary_needs_positive_history_to_resume(
 
     response = _control(auth_client, observe_project, task, "resume")
 
-    probe.assert_called_once_with(task.pk)
-    if history == "closed":
-        assert response.status_code == 200, response.content
-        assert started == [(str(task.pk), {"replace_existing": True})]
-    else:
-        assert response.status_code == 400, response.content
-        assert not started
+    probe.assert_not_called()
+    assert response.status_code == 400, response.content
+    assert not started
     assert not EvalLogger.all_objects.filter(eval_task_id=str(task.pk)).exists()
 
 
@@ -1417,8 +1412,8 @@ def _no_rows_read(monkeypatch):
     [
         ("failed", EvalTaskStatus.FAILED, "instant_eval_paused"),
         ("paused", EvalTaskStatus.PAUSED, "instant_eval_paused"),
-        # It says pending, but its workflow is gone.
-        ("workflow-gone", EvalTaskStatus.PENDING, "instant_eval_still_answering"),
+        # The worker marked it Running but never picked its first row.
+        ("workflow-gone", EvalTaskStatus.RUNNING, "instant_eval_still_answering"),
     ],
     ids=["failed", "paused", "workflow-gone"],
 )
@@ -1439,11 +1434,6 @@ def test_a_run_stopped_before_its_first_step_is_priced_for_every_row_it_asked_fo
     credits for all 6, not for the none it holds, and reading more resumes
     it first."""
     _credit_cap(monkeypatch)
-    # Temporal accepted the original start, even if the caller lost its reply.
-    monkeypatch.setattr(
-        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
-        lambda *args, **kwargs: "closed",
-    )
     with monkeypatch.context() as m:
         if stopped == "failed":
             m.setattr(
@@ -1453,6 +1443,8 @@ def test_a_run_stopped_before_its_first_step_is_priced_for_every_row_it_asked_fo
         result = _start(auth_client, observe_project, [yes_no], sample_size=6)
     assert result.status_code == status.HTTP_200_OK, result.json()
     task = EvalTask.objects.get(id=result.json()["result"]["task_id"])
+    if stopped in ("paused", "workflow-gone"):
+        EvalTask.objects.filter(pk=task.pk).update(status=EvalTaskStatus.RUNNING)
     if stopped == "paused":
         paused = _control(auth_client, observe_project, task, "pause")
         assert paused.status_code == status.HTTP_200_OK, paused.json()
@@ -1503,10 +1495,6 @@ def test_a_user_question_stopped_before_its_first_step_is_priced_at_five_session
     reading the users' sessions to count them."""
     users = [str(uuid.uuid4()) for _ in range(3)]
     _credit_cap(monkeypatch)
-    monkeypatch.setattr(
-        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
-        lambda *args, **kwargs: "closed",
-    )
     with monkeypatch.context() as m:
         m.setattr(
             "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync",
@@ -1804,8 +1792,9 @@ def test_a_run_whose_workflow_vanished_before_it_picked_its_rows_stalls(
     s = _summary(auth_client, observe_project, task)
     assert (s["status"], s["preparing"]) == ("pending", True)
 
-    # Its workflow is gone: stalled, with every row still to read.
-    workflow["state"] = "closed"  # Positive history, despite no picked rows yet.
+    # A worker that reached Running before it vanished is still resumable.
+    EvalTask.objects.filter(pk=task.pk).update(status=EvalTaskStatus.RUNNING)
+    workflow["state"] = "closed"
     cache.clear()
     s = _summary(auth_client, observe_project, task)
     assert (s["status"], s["preparing"]) == ("stalled", True)
@@ -3385,7 +3374,8 @@ def test_a_run_stopped_before_it_picked_its_rows_counts_every_row_it_asked_for(
 ):
     """Paused 2 s after Start, while its first step still picked the rows,
     a run read "Paused · 0 of 0 read" with no Resume: it holds no rows yet,
-    so it counted none. It asked for 6, and resuming reads all 6."""
+    so it counted none. It asked for 6; keep that scope even when the
+    new-question path, not Resume, is the only way forward."""
     result = _start(auth_client, observe_project, [yes_no], sample_size=6)
     task = EvalTask.objects.get(id=result.json()["result"]["task_id"])
     stopped = _control(auth_client, observe_project, task, action)
@@ -3394,7 +3384,9 @@ def test_a_run_stopped_before_it_picked_its_rows_counts_every_row_it_asked_for(
 
     s = _summary(auth_client, observe_project, task)
     if action == "pause":
-        assert (s["status"], s["preparing"]) == ("paused", True)
+        # The run is saved, not resumable: Ask offers the new-question path.
+        assert (s["status"], s["preparing"]) == ("failed", False)
+        assert "paused before it started" in s["failure"]["message"]
         assert (s["total"], s["pending"], s["not_read"]) == (6, 6, 0)
     else:
         assert (s["status"], s["preparing"]) == ("cancelled", False)

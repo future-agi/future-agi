@@ -114,10 +114,6 @@ def test_legacy_conversion_starts_at_the_conversion(
     monkeypatch.setattr(timezone, "now", lambda: clock["now"])
     try:
         if route == "resume_failed":
-            monkeypatch.setattr(
-                "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
-                lambda *a, **kw: "closed",
-            )
             response = auth_client.post(
                 f"{UNPAUSE}?eval_task_id={eval_task.pk}", {}, format="json"
             )

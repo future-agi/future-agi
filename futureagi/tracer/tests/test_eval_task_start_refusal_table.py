@@ -23,11 +23,13 @@ from tracer.tests.test_instant_eval_scale import (
     _answer,
     _control,
     _summary,
-    fake_view,  # noqa: F401
-    instant_eval_enabled,  # noqa: F401
-    started,  # noqa: F401
-    yes_no,  # noqa: F401
 )
+from tracer.tests.test_instant_eval_scale import fake_view as fake_view
+from tracer.tests.test_instant_eval_scale import (
+    instant_eval_enabled as instant_eval_enabled,
+)
+from tracer.tests.test_instant_eval_scale import started as started
+from tracer.tests.test_instant_eval_scale import yes_no as yes_no
 from tracer.utils.eval_tasks import _bridge_retired_dispatcher
 from tracer.views.instant_eval_scale import _prepared_run
 
@@ -37,6 +39,7 @@ CLOSED = "The workflow ended before evaluation began. Your task is saved."
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("fake_view", "no_new_usage")
 @pytest.mark.parametrize(
     "state,admitted,artifact,event,status,plain,instant,bridge,logs,ask",
     [
@@ -54,11 +57,13 @@ CLOSED = "The workflow ended before evaluation began. Your task is saved."
         pytest.param("claimed", False, None, None, "pending", 400, 400, False, None, "pending", id="claimed-sending"),
         pytest.param("accepted", False, None, None, "pending", 400, 400, False, None, "pending", id="accepted-awaiting-worker"),
         pytest.param("accepted", True, None, None, "running", 400, 400, False, None, "running", id="admitted-awaiting-work"),
+        pytest.param("accepted", True, None, "settled", "running", 400, 200, True, None, "stalled", id="admitted-sender-has-settled"),
+        pytest.param("accepted", True, "picker", None, "running", 400, 200, False, None, "stalled", id="watched-with-work-bridge-still-yields"),
         # Worker-only progress, a successful admission, or a recorded new run
         # makes a terminal create failure inapplicable. A detail PATCH doesn't.
         pytest.param("start_failed", False, None, "convert", "running", 400, 400, False, FAILED, "failed", id="r8-1-conversion-floor-and-status-are-not-work"),
         pytest.param("start_failed", False, None, "rename", "failed", 400, 400, False, FAILED, "failed", id="r8-4-rename-with-later-last-run"),
-        pytest.param("start_failed", False, None, None, "failed", 400, 400, False, FAILED, "failed", id="r8-5-named-display-row-does-not-offer-resume"),
+        pytest.param("start_failed", False, None, "named-trace", "failed", 400, 400, False, FAILED, "failed", id="r8-5-named-display-row-does-not-offer-resume"),
         pytest.param("exhausted", False, None, None, "paused", 400, 400, False, CLOSED, "failed", id="paused-status-does-not-erase-closure"),
         pytest.param("exhausted", True, None, None, "failed", 200, 200, False, None, "stalled", id="admission-is-independent"),
         pytest.param("exhausted", False, "logger", None, "running", 400, 200, True, None, "stalled", id="retired-worker-logger"),
@@ -66,31 +71,57 @@ CLOSED = "The workflow ended before evaluation began. Your task is saved."
         pytest.param("start_failed", False, "entry", None, "failed", 200, 200, False, None, "stalled", id="worker-entry"),
         pytest.param("start_failed", False, "entry", "rerun", "failed", 200, 200, False, None, "stalled", id="r7-1-rerun-pause-resume-503"),
         pytest.param("exhausted", False, None, "rerun", "paused", 200, 200, False, None, "paused", id="rerun-record-survives-without-history-or-work"),
+        pytest.param("exhausted", False, None, None, "pending", 400, 400, False, CLOSED, "failed", id="pending-status-cannot-reopen-exhaustion"),
+        pytest.param("start_failed", False, None, "worker-end", "failed", 400, 400, False, FAILED, "failed", id="end-time-alone-is-not-worker-evidence"),
+        pytest.param("start_failed", False, None, "rerun", "pending", 400, 400, False, None, "failed", id="explicit-rerun-pending-is-not-for-redelivery"),
         pytest.param("void", False, None, None, "paused", 400, 400, False, None, "failed", id="revoked-before-worker-admission"),
     ],
 )
 def test_start_refusal_table(
-    auth_client, observe_project, yes_no, fake_view, started, monkeypatch,
+    auth_client,
+    observe_project,
+    yes_no,  # noqa: F811 (fixture)
+    started,  # noqa: F811 (fixture)
+    monkeypatch,
     state, admitted, artifact, event, status, plain, instant, bridge, logs, ask,
 ):
     cache.clear()
     rid = str(UUID(int=1))
+    unit = "traces" if event == "named-trace" else "sessions"
+    if event == "named-trace":
+        yes_no.config["instant_eval"]["unit"] = unit
+        yes_no.save(update_fields=["config"])
     task = EvalTask.objects.create(
-        project=observe_project, row_type="sessions", run_type="historical",
+        project=observe_project, row_type=unit, run_type="historical",
         status="failed" if state in ("exhausted", "start_failed") else "pending",
-        filters={"session_id": [rid]},
+        filters={"trace_id" if unit == "traces" else "session_id": [rid]},
     )
     task.evals.add(yes_no)
     tasks = EvalTask.objects.filter(pk=task.pk)
+    if event == "named-trace":
+        # A previous poll materialized this named row and cached a stalled
+        # summary. The same version must stop offering Resume on exhaustion.
+        assert _summary(auth_client, observe_project, task)["status"] == "stalled"
     if state:
+        watched = state in ("accepted", "claimed") and event != "settled"
+        outcomes = {
+            "claimed": "send_reserved",
+            "accepted": "execution_progress" if event == "settled" else ("worker_admitted" if admitted else "awaiting_worker"),
+            "start_failed": "not_started",
+            "exhausted": "execution_closed_without_progress",
+            "void": "superseded",
+        }
         EvalTaskStartRequest.objects.create(
             task=task, state=state, attempts=2 if state == "start_failed" else 1,
-            last_outcome={"start_failed": "not_started", "exhausted": "execution_closed_without_progress"}.get(state, "requested"),
-            lease_until=timezone.now() + timedelta(minutes=2) if state in ("accepted", "claimed") else None,
+            last_outcome=outcomes.get(state, "requested"),
+            lease_until=timezone.now() + timedelta(minutes=2) if watched else None,
             admitted_run_id=uuid4() if admitted else None,
         )
     send = Mock()
-    describe = Mock(return_value=client.WF_ABSENT if event in ("worker-start", "worker-end") else client.WF_CLOSED)
+    # An expired history on the paused/failed legacy rows, and no history
+    # at all for the pre-cutover Running row that never wrote start_time.
+    absent = state is None and (event == "worker-end" or status == "paused" or (status == "running" and event is None))
+    describe = Mock(return_value=client.WF_ABSENT if absent else client.WF_CLOSED)
     monkeypatch.setattr(client, "describe_eval_task_workflow_sync", describe)
     monkeypatch.setattr("tracer.views.eval_task.start_eval_task_workflow_sync", send)
     _prepared_run(task, {}, rate=None)
@@ -107,11 +138,19 @@ def test_start_refusal_table(
         EvalTaskLogger.objects.create(eval_task=task, deleted=True)
     detail = f"{BASE}{task.pk}/"
     if event == "convert":
-        for patch in ({"run_type": "continuous"}, {"run_type": "historical", "status": "running", "spans_limit": 10}):
+        for patch in (
+            {"run_type": "continuous"},
+            {"run_type": "historical", "status": "running", "spans_limit": 10},
+        ):
             result = auth_client.patch(detail, patch, format="json")
             assert result.status_code == 200, result.content
     elif event == "rename":
         result = auth_client.patch(detail, {"name": "rename only", "last_run": timezone.now().isoformat()}, format="json")
+        assert result.status_code == 200, result.content
+    elif event == "worker-start" and status == "paused":
+        tasks.update(status="running", start_time=timezone.now())
+        monkeypatch.setattr("tracer.views.eval_task.signal_pause_eval_task_workflow", Mock())
+        result = auth_client.post(f"{BASE}pause_eval_task/?eval_task_id={task.pk}")
         assert result.status_code == 200, result.content
     elif event == "pause-pending":
         assert _control(auth_client, observe_project, task, "pause").status_code == 200
@@ -122,6 +161,12 @@ def test_start_refusal_table(
     tasks.update(updated_at=timezone.now() - timedelta(hours=1))
     task.refresh_from_db()
     assert task.status == status
+    if event == "pause-pending":
+        assert (task.instant_paused_before_start_at is not None) == (artifact is None)
+    if event in ("rerun", "rename", "convert"):
+        request = EvalTaskStartRequest.objects.get(task=task)
+        assert (request.superseded_at is not None) == (event == "rerun")
+        assert request.state == state
 
     result = auth_client.get(f"{BASE}get_eval_task_logs/", {"eval_task_id": task.pk})
     assert result.status_code == 200, result.content
@@ -147,4 +192,45 @@ def test_start_refusal_table(
         transaction.set_rollback(True)
     response = _control(auth_client, observe_project, task, "resume")
     assert response.status_code == instant, response.content
-    assert started == ([(str(task.pk), {"replace_existing": True})] if instant == 200 else [])
+    expected = [(str(task.pk), {"replace_existing": True})] if instant == 200 else []
+    assert started == expected
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("status", ["pending", "running", "failed", "paused"])
+def test_no_intent_guard_only_looks_up_the_intent(eval_task, django_assert_num_queries, status):
+    from tracer.services.eval_tasks.start_requests import start_refusal
+
+    eval_task.status = status
+    with django_assert_num_queries(1):
+        refusal = start_refusal(eval_task)
+    assert (refusal.code if refusal else None) == ("pending" if status == "pending" else None)
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("started")
+def test_only_an_explicit_submission_clears_the_native_pause_marker(
+    auth_client, observe_project, yes_no, monkeypatch,  # noqa: F811 (fixture)
+):
+    task = EvalTask.objects.create(project=observe_project, run_type="historical", status="pending")
+    task.evals.add(yes_no)
+    assert _control(auth_client, observe_project, task, "pause").status_code == 200
+    task.refresh_from_db()
+    marker = task.instant_paused_before_start_at
+    assert marker is not None
+
+    detail = auth_client.patch(f"{BASE}{task.pk}/", {"name": "new name"}, format="json")
+    assert detail.status_code == 200, detail.content
+    task.refresh_from_db()
+    assert task.instant_paused_before_start_at == marker
+
+    send = Mock()
+    monkeypatch.setattr("tracer.views.eval_task.start_eval_task_workflow_sync", send)
+    rerun = auth_client.patch(
+        f"{BASE}update_eval_task/", {"eval_task_id": str(task.pk), "edit_type": "fresh_run"}, format="json"
+    )
+    assert rerun.status_code == 200, rerun.content
+    send.assert_called_once_with(task, replace_existing=True)
+    task.refresh_from_db()
+    assert task.instant_paused_before_start_at is None
+    assert not EvalTaskStartRequest.objects.filter(task=task).exists()

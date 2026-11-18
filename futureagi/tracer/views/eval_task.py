@@ -100,8 +100,8 @@ from tracer.services.eval_tasks.sampling.policy import (
 )
 from tracer.services.eval_tasks.start_requests import (
     dispatch_start_request,
-    resume_block_reason,
-    start_request_error,
+    record_rerun,
+    start_refusal,
 )
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
@@ -2152,7 +2152,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 .only(
                     "id",
                     "project_id",
-                    "last_run",
+                    "instant_paused_before_start_at",
                     "continuous_cursor",
                     "start_time",
                     "end_time",
@@ -2244,8 +2244,8 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             # group shape for its reason; never fabricate an evaluation or add
             # it to the per-evaluation counts/usage.
             if not counts["total_count"]:
-                reason = start_request_error(eval_task)
-                if reason:
+                refusal = start_refusal(eval_task)
+                if refusal and (reason := refusal.log_message):
                     error_groups.append(
                         {"normalized": reason, "count": 1, "sample": reason}
                     )
@@ -2958,8 +2958,8 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                         f"Cannot unpause eval task with status '{eval_task.status}'. "
                         "Only paused or failed tasks can be resumed."
                     )
-                if reason := resume_block_reason(eval_task):
-                    return self._gm.bad_request(reason)
+                if refusal := start_refusal(eval_task):
+                    return self._gm.bad_request(refusal.standard)
                 recovered_from = eval_task.status
                 undrained = EvalLogger.objects.filter(
                     eval_task_id=str(eval_task.id),
@@ -3246,7 +3246,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 )
                 task_serializer.is_valid(raise_exception=True)
                 eval_task = task_serializer.save()
-                EvalTaskStartRequest.void_for_tasks([eval_task.pk])
+                record_rerun(eval_task)
 
                 effective_run_type = update_fields.get("run_type", original_run_type)
                 if effective_run_type == RunType.CONTINUOUS and (
