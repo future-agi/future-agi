@@ -3098,24 +3098,35 @@
 - the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
 
-### SIM-E2E-009 — a multi-agent call serves its workers turn by turn, an unplaced step as unknown, and a stopped call its cancelled worker
+### SIM-E2E-009 — a multi-agent call shows its workers turn by turn, an unplaced step as unknown, and a refused worker action
 
-**Goal:** A developer reads which worker did what in each turn of a multi-agent call, what the record could not place, and how a stopped call left its workers
+**Goal:** A developer opens a multi-agent call and sees which worker did what in each turn, what the record could not place, and what the world refused a worker
 
-**Spec:** `flows/simulate/participants-table.spec.ts:10`
+**Spec:** `flows/simulate/participants-table.spec.ts:19`
 
 **Tags:** —
 
 **User steps:**
 
-1. seed one completed chat call with a stored Participants record, and a call the user stopped
-2. read the completed call's workers
-3. read the stopped call's workers
+1. seed one completed chat call with a stored Participants record and trial world changes
+2. open the call from its run
+3. open the Participants tab
+4. open the first hand-off row and Open in Traces, then close the trace
+5. open the World changes tab
+6. open the call the user stopped and its Participants tab
 
 **Backend state verified:**
 
 - the workers API serves two turns, each step with its turn and order, and the second hand-off as relationship unknown
-- the stopped call serves its refund worker as cancelled, stopped with the run sandbox
+
+**Browser observations:**
+
+- one table section per turn, each with its own request and only its own hand-off
+- the unplaced hand-off carries the parent unknown chip, and only that one
+- a step read from a trace opens that trace, and closing it leaves the call on its Traces tab
+- World changes lists the worker's refused attempt with its reason
+- World changes lists the order two workers named, with its committed writes
+- the stopped call says it was stopped by the user, and its cancelled worker was stopped with the run sandbox
 
 ### SIM-E2E-010 — an actor with no channel is named on Scenarios, and World state reads a read apart from a write
 
@@ -3149,24 +3160,29 @@
 - the Scenarios table names the actor, never its raw id
 - World state reads "1 read" and "Committed: issue_refund"
 
-### SIM-E2E-011 — the environment serves its declared workers, and a worker the harness stopped at its deadline is served so
+### SIM-E2E-011 — the Contract tab lists the declared workers, and a worker the harness stopped at its deadline says so
 
-**Goal:** A developer reads which workers the app declares before a run, and after a run that a worker past its deadline was stopped, not only refused
+**Goal:** A developer reviews which workers the app declares before a run, and after a run sees that a worker past its deadline was stopped, not only refused
 
-**Spec:** `flows/simulate/worker-stop-and-declared-workers.spec.ts:9`
+**Spec:** `flows/simulate/worker-stop-and-declared-workers.spec.ts:17`
 
 **Tags:** —
 
 **User steps:**
 
 1. seed an Environment whose contract declares two workers, with a call whose refund worker the harness stopped at its deadline
-2. read the environment detail
-3. read that call's workers
+2. open its Contract tab
+3. open that call and its Participants tab
 
 **Backend state verified:**
 
 - the environment detail serves both declared workers with their binding and the tools each may use
 - the workers API serves the stopped worker as past its deadline with cleanup stopped
+
+**Browser observations:**
+
+- the Workers card lists each worker with its channel and only the tools it may use
+- the stopped call says the refund worker was stopped when its deadline passed
 
 ### SIM-E2E-017 — the Tools card shows each tool's inputs with units, what it returns, and a production-only tool as Unsupported
 
@@ -3289,22 +3305,29 @@
 - a line says the agent committed the change after Dana Brooks refused it
 - the approval names the refund the agent wrote after the decision
 
-### SIM-E2E-035 — a user stops a running Run, and its call is served Cancelled in the calls list and the runs list while a skipped case stays Error
+### SIM-E2E-035 — a user stops a running Run, and its call reads Cancelled in the calls list, the chips and analytics while a skipped case stays Error
 
-**Goal:** A developer stops a Run mid-call and the stopped call is counted as Cancelled, never as an error, while a case the harness skipped still reads Error
+**Goal:** A developer stops a Run mid-call and sees the stopped call counted as Cancelled, never as an error, while a case the harness skipped still reads Error
 
-**Spec:** `flows/simulate/stop-run-reads-cancelled.spec.ts:17`
+**Spec:** `flows/simulate/stop-run-reads-cancelled.spec.ts:26`
 
 **Tags:** —
 
 **User steps:**
 
 1. seed a running hosted Run with one call under way and one case the harness skipped
-2. stop the Run, as its Stop simulation button does
-3. read the Run's calls and the runs list
+2. open the Run and click Stop simulation, then Stop run
+3. reload the Run once it has stopped
+4. read the status chips
+5. open Analytics and click the donut legend entry for Cancelled calls
 
 **Backend state verified:**
 
-- the stop is accepted even with no gateway workflow to signal
 - the calls API serves the stopped call as cancelled and the skipped case as error, with status counts Cancelled 1 and Error 1
 - the runs list serves the Run as Cancelled with one cancelled outcome, no errored one and the skipped case as skipped
+
+**Browser observations:**
+
+- after the stop the Run offers no Stop control
+- the Cancelled chip counts 1 and the Error chip counts 1
+- the donut legend entry for Cancelled calls opens the calls list on the stopped call alone
