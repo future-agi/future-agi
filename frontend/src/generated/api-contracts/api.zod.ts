@@ -40407,6 +40407,12 @@ export const SimulateApiHarnessEnvironmentsActorLimitsResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      review_decision: zod
+        .enum(["accepted", "rejected"])
+        .optional()
+        .describe(
+          "The decision taken on the actor in the draft's change review; null when none holds.",
+        ),
       arrival_overrides: zod
         .array(
           zod
@@ -40739,6 +40745,12 @@ export const SimulateApiHarnessEnvironmentsActorLimitsResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    review_decision: zod
+      .enum(["accepted", "rejected"])
+      .optional()
+      .describe(
+        "The decision taken on the actor in the draft's change review; null when none holds.",
+      ),
     arrival_overrides: zod
       .array(
         zod
@@ -40987,6 +40999,12 @@ export const SimulateApiHarnessEnvironmentsAcceptUnresolvedResponse =
         max_turns: zod.number(),
         max_lines: zod.number(),
         scenarios: zod.number().describe("Scenarios that include the actor."),
+        review_decision: zod
+          .enum(["accepted", "rejected"])
+          .optional()
+          .describe(
+            "The decision taken on the actor in the draft's change review; null when none holds.",
+          ),
         arrival_overrides: zod
           .array(
             zod
@@ -41321,6 +41339,12 @@ export const SimulateApiHarnessEnvironmentsAcceptUnresolvedResponse =
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      review_decision: zod
+        .enum(["accepted", "rejected"])
+        .optional()
+        .describe(
+          "The decision taken on the actor in the draft's change review; null when none holds.",
+        ),
       arrival_overrides: zod
         .array(
           zod
@@ -41662,6 +41686,12 @@ export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      review_decision: zod
+        .enum(["accepted", "rejected"])
+        .optional()
+        .describe(
+          "The decision taken on the actor in the draft's change review; null when none holds.",
+        ),
       arrival_overrides: zod
         .array(
           zod
@@ -41992,6 +42022,12 @@ export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    review_decision: zod
+      .enum(["accepted", "rejected"])
+      .optional()
+      .describe(
+        "The decision taken on the actor in the draft's change review; null when none holds.",
+      ),
     arrival_overrides: zod
       .array(
         zod
@@ -42507,6 +42543,12 @@ export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      review_decision: zod
+        .enum(["accepted", "rejected"])
+        .optional()
+        .describe(
+          "The decision taken on the actor in the draft's change review; null when none holds.",
+        ),
       arrival_overrides: zod
         .array(
           zod
@@ -42839,6 +42881,12 @@ export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    review_decision: zod
+      .enum(["accepted", "rejected"])
+      .optional()
+      .describe(
+        "The decision taken on the actor in the draft's change review; null when none holds.",
+      ),
     arrival_overrides: zod
       .array(
         zod
@@ -43401,6 +43449,12 @@ export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      review_decision: zod
+        .enum(["accepted", "rejected"])
+        .optional()
+        .describe(
+          "The decision taken on the actor in the draft's change review; null when none holds.",
+        ),
       arrival_overrides: zod
         .array(
           zod
@@ -43733,6 +43787,12 @@ export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    review_decision: zod
+      .enum(["accepted", "rejected"])
+      .optional()
+      .describe(
+        "The decision taken on the actor in the draft's change review; null when none holds.",
+      ),
     arrival_overrides: zod
       .array(
         zod
@@ -43973,6 +44033,12 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      review_decision: zod
+        .enum(["accepted", "rejected"])
+        .optional()
+        .describe(
+          "The decision taken on the actor in the draft's change review; null when none holds.",
+        ),
       arrival_overrides: zod
         .array(
           zod
@@ -44305,6 +44371,12 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    review_decision: zod
+      .enum(["accepted", "rejected"])
+      .optional()
+      .describe(
+        "The decision taken on the actor in the draft's change review; null when none holds.",
+      ),
     arrival_overrides: zod
       .array(
         zod
@@ -44468,7 +44540,7 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         "ready: certified together; failed: the agent failed a validation's check, so runs are refused; check_unavailable: the check failed on our side, so runs are not held for it; retry: the last validation ended before its check did, or a run failed the pairing.",
       ),
     job_id: zod.string().uuid(),
-    purpose: zod.enum(["agent_move", "recheck"]),
+    purpose: zod.enum(["agent_move", "recheck", "save"]),
     finished_at: zod.string().datetime({ offset: true }),
     error: zod.record(zod.string(), zod.string()),
   }),
@@ -44991,7 +45063,7 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
           "ready: certified together; failed: the agent failed a validation's check, so runs are refused; check_unavailable: the check failed on our side, so runs are not held for it; retry: the last validation ended before its check did, or a run failed the pairing.",
         ),
       job_id: zod.string().uuid(),
-      purpose: zod.enum(["agent_move", "recheck"]),
+      purpose: zod.enum(["agent_move", "recheck", "save"]),
       finished_at: zod.string().datetime({ offset: true }),
       error: zod.record(zod.string(), zod.string()),
     }),
@@ -45711,12 +45783,26 @@ export const SimulateApiHarnessEnvironmentsDraftsParams = zod.object({
   id: zod.string(),
 });
 
+export const simulateApiHarnessEnvironmentsDraftsResponseEnvironmentSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsDraftsResponseSuiteSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsDraftsResponseSetAsideItemSavedWithoutCheckDefault =
+  false;
+
 export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
   environment: zod
     .object({
       id: zod.string().uuid(),
       label: zod.string().min(1).nullable(),
-      status: zod.enum(["draft", "active", "discarded"]),
+      name: zod
+        .string()
+        .min(1)
+        .describe("The name a person gave the version, if any.")
+        .nullable(),
+      status: zod.enum(["draft", "candidate", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
       created_by: zod
@@ -45803,6 +45889,28 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .optional()
         .describe(
           "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
+      candidate_state: zod
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "check_unavailable",
+          "superseded",
+          "expired",
+        ])
+        .describe(
+          "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+        )
+        .nullable(),
+      saved_without_check: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsDraftsResponseEnvironmentSavedWithoutCheckDefault,
+        )
+        .describe(
+          "Saved while the check was unavailable; its pairings read Untested until checked.",
         ),
       stale: zod
         .boolean()
@@ -45838,7 +45946,12 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
     .object({
       id: zod.string().uuid(),
       label: zod.string().min(1).nullable(),
-      status: zod.enum(["draft", "active", "discarded"]),
+      name: zod
+        .string()
+        .min(1)
+        .describe("The name a person gave the version, if any.")
+        .nullable(),
+      status: zod.enum(["draft", "candidate", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
       created_by: zod
@@ -45925,6 +46038,28 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .optional()
         .describe(
           "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
+      candidate_state: zod
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "check_unavailable",
+          "superseded",
+          "expired",
+        ])
+        .describe(
+          "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+        )
+        .nullable(),
+      saved_without_check: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsDraftsResponseSuiteSavedWithoutCheckDefault,
+        )
+        .describe(
+          "Saved while the check was unavailable; its pairings read Untested until checked.",
         ),
       stale: zod
         .boolean()
@@ -45960,7 +46095,12 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
     zod.object({
       id: zod.string().uuid(),
       label: zod.string().min(1).nullable(),
-      status: zod.enum(["draft", "active", "discarded"]),
+      name: zod
+        .string()
+        .min(1)
+        .describe("The name a person gave the version, if any.")
+        .nullable(),
+      status: zod.enum(["draft", "candidate", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
       created_by: zod
@@ -46048,6 +46188,28 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .describe(
           "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
         ),
+      candidate_state: zod
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "check_unavailable",
+          "superseded",
+          "expired",
+        ])
+        .describe(
+          "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+        )
+        .nullable(),
+      saved_without_check: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsDraftsResponseSetAsideItemSavedWithoutCheckDefault,
+        )
+        .describe(
+          "Saved while the check was unavailable; its pairings read Untested until checked.",
+        ),
       stale: zod
         .boolean()
         .describe(
@@ -46078,10 +46240,263 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         ),
     }),
   ),
+  validation: zod
+    .object({
+      state: zod
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "check_unavailable",
+          "superseded",
+          "unavailable",
+        ])
+        .describe(
+          "ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check.",
+        ),
+      job_id: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe("The validation job, while one runs."),
+      error: zod
+        .object({
+          code: zod.string(),
+          message: zod.string(),
+          failed_actions: zod
+            .array(zod.record(zod.string(), zod.string()))
+            .describe("Each action whose check failed, with the reason."),
+        })
+        .optional(),
+      affected_scenarios: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe("Scenarios that need a failed action on every path."),
+      dropped_scenarios: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe("Scenarios certifying left out of the suite."),
+    })
+    .nullable(),
+  candidates: zod
+    .object({
+      environment_version_id: zod.string().uuid(),
+      suite_version_id: zod.string().uuid(),
+    })
+    .describe(
+      "The versions Validate built; send them to Save once validation is ready.",
+    )
+    .nullable(),
+  validation_required: zod
+    .boolean()
+    .describe(
+      "A Save of these drafts must go through Validate first; a plain Save is refused.",
+    ),
 });
 
 /**
- * Make every named draft live together; returns the new defaults and every
+ * Every change the open drafts make, item by item, with the decision taken on each. No writes.
+ */
+export const SimulateApiHarnessEnvironmentsDraftsDraftsReviewParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsDraftsDraftsReviewResponse =
+  zod.object({
+    drafts: zod.record(
+      zod.string(),
+      zod.object({
+        id: zod.string().min(1),
+        revision: zod.number(),
+        parent_id: zod.string(),
+      }),
+    ),
+    changes: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        piece: zod.enum(["environment", "suite"]),
+        kind: zod.enum([
+          "tool",
+          "rule",
+          "contract_field",
+          "sub_goal",
+          "actor",
+          "world_state",
+          "source",
+          "scenario",
+          "file",
+        ]),
+        key: zod.string().min(1),
+        document: zod.string().min(1),
+        action: zod.enum(["added", "removed", "changed"]),
+        fields: zod.array(zod.string().min(1)),
+        patch: zod.array(zod.record(zod.string(), zod.string())),
+        base_digest: zod.string().min(1),
+        draft_digest: zod.string().min(1),
+        summary: zod.string().min(1),
+        decision: zod.enum(["accepted", "rejected"]),
+        affects: zod
+          .object({})
+          .passthrough()
+          .describe("The scenario keys this change touches, or `all`."),
+        sources: zod
+          .array(zod.record(zod.string(), zod.string()))
+          .describe(
+            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
+          ),
+        depends_on: zod
+          .array(zod.string().min(1))
+          .describe(
+            "Changes this one needs; accepting it means accepting them.",
+          ),
+        graded: zod
+          .boolean()
+          .describe("The change alters what trials are graded on."),
+        revalidate: zod
+          .array(zod.string().min(1))
+          .describe("The scenarios to prove again once this change is saved."),
+        rows: zod
+          .array(zod.record(zod.string(), zod.string()))
+          .optional()
+          .describe(
+            "A world state change: rows added, removed and changed per table; null when it cannot be read.",
+          ),
+      }),
+    ),
+    counts: zod.object({
+      total: zod.number(),
+      accepted: zod.number(),
+      rejected: zod.number(),
+      undecided: zod.number(),
+    }),
+    review_digest: zod
+      .string()
+      .min(1)
+      .describe("Send back on Save; a review that moved is refused."),
+    can_save: zod.boolean(),
+  });
+
+/**
+ * Accept or reject changes, one by id, all of a kind, or every remaining one; returns the review.
+ */
+export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsBody =
+  zod.object({
+    expected_revisions: zod
+      .record(zod.string(), zod.number())
+      .describe("Per piece, the draft revision the person reviewed."),
+    decisions: zod.array(
+      zod.object({
+        id: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe("One change; omit with `kind` or `remaining`."),
+        kind: zod
+          .enum([
+            "tool",
+            "rule",
+            "contract_field",
+            "sub_goal",
+            "actor",
+            "world_state",
+            "source",
+            "scenario",
+            "file",
+          ])
+          .optional(),
+        remaining: zod
+          .boolean()
+          .optional()
+          .describe("Every change not yet decided."),
+        decision: zod.enum(["accepted", "rejected"]),
+      }),
+    ),
+  });
+
+export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponse =
+  zod.object({
+    drafts: zod.record(
+      zod.string(),
+      zod.object({
+        id: zod.string().min(1),
+        revision: zod.number(),
+        parent_id: zod.string(),
+      }),
+    ),
+    changes: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        piece: zod.enum(["environment", "suite"]),
+        kind: zod.enum([
+          "tool",
+          "rule",
+          "contract_field",
+          "sub_goal",
+          "actor",
+          "world_state",
+          "source",
+          "scenario",
+          "file",
+        ]),
+        key: zod.string().min(1),
+        document: zod.string().min(1),
+        action: zod.enum(["added", "removed", "changed"]),
+        fields: zod.array(zod.string().min(1)),
+        patch: zod.array(zod.record(zod.string(), zod.string())),
+        base_digest: zod.string().min(1),
+        draft_digest: zod.string().min(1),
+        summary: zod.string().min(1),
+        decision: zod.enum(["accepted", "rejected"]),
+        affects: zod
+          .object({})
+          .passthrough()
+          .describe("The scenario keys this change touches, or `all`."),
+        sources: zod
+          .array(zod.record(zod.string(), zod.string()))
+          .describe(
+            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
+          ),
+        depends_on: zod
+          .array(zod.string().min(1))
+          .describe(
+            "Changes this one needs; accepting it means accepting them.",
+          ),
+        graded: zod
+          .boolean()
+          .describe("The change alters what trials are graded on."),
+        revalidate: zod
+          .array(zod.string().min(1))
+          .describe("The scenarios to prove again once this change is saved."),
+        rows: zod
+          .array(zod.record(zod.string(), zod.string()))
+          .optional()
+          .describe(
+            "A world state change: rows added, removed and changed per table; null when it cannot be read.",
+          ),
+      }),
+    ),
+    counts: zod.object({
+      total: zod.number(),
+      accepted: zod.number(),
+      rejected: zod.number(),
+      undecided: zod.number(),
+    }),
+    review_digest: zod
+      .string()
+      .min(1)
+      .describe("Send back on Save; a review that moved is refused."),
+    can_save: zod.boolean(),
+  });
+
+/**
+ * Make every named draft, or the validated candidates, live together; returns the new defaults and every
 version.
  */
 export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsParams = zod.object({
@@ -46090,29 +46505,57 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsParams = zod.object({
 
 export const simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyDraftsItemExpectedRevisionMin = 0;
 
+export const simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyNameMax = 80;
+
 export const simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyIdempotencyKeyMax = 128;
 
 export const simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyIdempotencyKeyRegExp =
   new RegExp("^[A-Za-z0-9_-]+$");
 
 export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsBody = zod.object({
-  drafts: zod.array(
-    zod.object({
-      piece: zod.enum(["environment", "suite"]),
-      expected_parent_id: zod
-        .string()
-        .uuid()
-        .nullable()
-        .describe("The draft's parent the caller saw."),
-      expected_revision: zod
-        .number()
-        .min(
-          simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyDraftsItemExpectedRevisionMin,
-        )
-        .optional()
-        .describe("The draft's revision the caller saw."),
-    }),
-  ),
+  drafts: zod
+    .array(
+      zod
+        .object({
+          piece: zod.enum(["environment", "suite"]),
+          expected_parent_id: zod
+            .string()
+            .uuid()
+            .nullable()
+            .describe("The draft's parent the caller saw."),
+          expected_revision: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyDraftsItemExpectedRevisionMin,
+            )
+            .optional()
+            .describe("The draft's revision the caller saw."),
+        })
+        .describe("Save the drafts as they are."),
+    )
+    .optional()
+    .describe("Save the drafts as they are."),
+  candidates: zod
+    .object({
+      environment_version_id: zod.string().uuid(),
+      suite_version_id: zod.string().uuid(),
+    })
+    .optional()
+    .describe(
+      "The versions Validate built; send them to Save once validation is ready.",
+    ),
+  expected_review_digest: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "The review digest the person saw; Save refuses a review that moved since.",
+    ),
+  name: zod
+    .string()
+    .max(simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyNameMax)
+    .optional()
+    .describe("A name for the new version; never an identity."),
   idempotency_key: zod
     .string()
     .min(1)
@@ -46123,6 +46566,18 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsBody = zod.object({
     .describe("Repeating a Save with the same key repeats its answer."),
 });
 
+export const simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSavedSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsAgentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsEnvironmentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsSuiteItemSavedWithoutCheckDefault =
+  false;
+
 export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
   zod.object({
     saved: zod
@@ -46131,7 +46586,12 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
         zod.object({
           id: zod.string().uuid(),
           label: zod.string().min(1).nullable(),
-          status: zod.enum(["draft", "active", "discarded"]),
+          name: zod
+            .string()
+            .min(1)
+            .describe("The name a person gave the version, if any.")
+            .nullable(),
+          status: zod.enum(["draft", "candidate", "active", "discarded"]),
           is_default: zod.boolean(),
           created_at: zod.string().datetime({ offset: true }),
           created_by: zod
@@ -46222,6 +46682,28 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .optional()
             .describe(
               "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+            ),
+          candidate_state: zod
+            .enum([
+              "validating",
+              "retry",
+              "ready",
+              "failed",
+              "check_unavailable",
+              "superseded",
+              "expired",
+            ])
+            .describe(
+              "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+            )
+            .nullable(),
+          saved_without_check: zod
+            .boolean()
+            .default(
+              simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSavedSavedWithoutCheckDefault,
+            )
+            .describe(
+              "Saved while the check was unavailable; its pairings read Untested until checked.",
             ),
         }),
       )
@@ -46231,7 +46713,12 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
         zod.object({
           id: zod.string().uuid(),
           label: zod.string().min(1).nullable(),
-          status: zod.enum(["draft", "active", "discarded"]),
+          name: zod
+            .string()
+            .min(1)
+            .describe("The name a person gave the version, if any.")
+            .nullable(),
+          status: zod.enum(["draft", "candidate", "active", "discarded"]),
           is_default: zod.boolean(),
           created_at: zod.string().datetime({ offset: true }),
           created_by: zod
@@ -46322,6 +46809,28 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .optional()
             .describe(
               "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+            ),
+          candidate_state: zod
+            .enum([
+              "validating",
+              "retry",
+              "ready",
+              "failed",
+              "check_unavailable",
+              "superseded",
+              "expired",
+            ])
+            .describe(
+              "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+            )
+            .nullable(),
+          saved_without_check: zod
+            .boolean()
+            .default(
+              simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsAgentItemSavedWithoutCheckDefault,
+            )
+            .describe(
+              "Saved while the check was unavailable; its pairings read Untested until checked.",
             ),
         }),
       ),
@@ -46329,7 +46838,12 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
         zod.object({
           id: zod.string().uuid(),
           label: zod.string().min(1).nullable(),
-          status: zod.enum(["draft", "active", "discarded"]),
+          name: zod
+            .string()
+            .min(1)
+            .describe("The name a person gave the version, if any.")
+            .nullable(),
+          status: zod.enum(["draft", "candidate", "active", "discarded"]),
           is_default: zod.boolean(),
           created_at: zod.string().datetime({ offset: true }),
           created_by: zod
@@ -46420,6 +46934,28 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .optional()
             .describe(
               "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+            ),
+          candidate_state: zod
+            .enum([
+              "validating",
+              "retry",
+              "ready",
+              "failed",
+              "check_unavailable",
+              "superseded",
+              "expired",
+            ])
+            .describe(
+              "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+            )
+            .nullable(),
+          saved_without_check: zod
+            .boolean()
+            .default(
+              simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsEnvironmentItemSavedWithoutCheckDefault,
+            )
+            .describe(
+              "Saved while the check was unavailable; its pairings read Untested until checked.",
             ),
         }),
       ),
@@ -46427,7 +46963,12 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
         zod.object({
           id: zod.string().uuid(),
           label: zod.string().min(1).nullable(),
-          status: zod.enum(["draft", "active", "discarded"]),
+          name: zod
+            .string()
+            .min(1)
+            .describe("The name a person gave the version, if any.")
+            .nullable(),
+          status: zod.enum(["draft", "candidate", "active", "discarded"]),
           is_default: zod.boolean(),
           created_at: zod.string().datetime({ offset: true }),
           created_by: zod
@@ -46519,9 +47060,102 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .describe(
               "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
             ),
+          candidate_state: zod
+            .enum([
+              "validating",
+              "retry",
+              "ready",
+              "failed",
+              "check_unavailable",
+              "superseded",
+              "expired",
+            ])
+            .describe(
+              "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+            )
+            .nullable(),
+          saved_without_check: zod
+            .boolean()
+            .default(
+              simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseVersionsSuiteItemSavedWithoutCheckDefault,
+            )
+            .describe(
+              "Saved while the check was unavailable; its pairings read Untested until checked.",
+            ),
         }),
       ),
     }),
+  });
+
+/**
+ * Build candidate versions from the reviewed drafts and start validating them; 202 while it runs.
+ */
+export const SimulateApiHarnessEnvironmentsDraftsValidateDraftsParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsDraftsValidateDraftsBody =
+  zod.object({
+    expected_revisions: zod
+      .record(zod.string(), zod.number())
+      .describe("Per piece, the draft revision the person reviewed."),
+    expected_review_digest: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "The review digest the person saw; required once any change is decided.",
+      ),
+  });
+
+export const SimulateApiHarnessEnvironmentsDraftsValidateDraftsResponse =
+  zod.object({
+    validation: zod.object({
+      state: zod
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "check_unavailable",
+          "superseded",
+          "unavailable",
+        ])
+        .describe(
+          "ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check.",
+        ),
+      job_id: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe("The validation job, while one runs."),
+      error: zod
+        .object({
+          code: zod.string(),
+          message: zod.string(),
+          failed_actions: zod
+            .array(zod.record(zod.string(), zod.string()))
+            .describe("Each action whose check failed, with the reason."),
+        })
+        .optional(),
+      affected_scenarios: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe("Scenarios that need a failed action on every path."),
+      dropped_scenarios: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe("Scenarios certifying left out of the suite."),
+    }),
+    candidates: zod
+      .object({
+        environment_version_id: zod.string().uuid(),
+        suite_version_id: zod.string().uuid(),
+      })
+      .describe(
+        "The versions Validate built; send them to Save once validation is ready.",
+      ),
   });
 
 /**
@@ -48422,6 +49056,12 @@ export const SimulateApiHarnessEnvironmentsUploadFileResponse = zod.object({
       max_turns: zod.number(),
       max_lines: zod.number(),
       scenarios: zod.number().describe("Scenarios that include the actor."),
+      review_decision: zod
+        .enum(["accepted", "rejected"])
+        .optional()
+        .describe(
+          "The decision taken on the actor in the draft's change review; null when none holds.",
+        ),
       arrival_overrides: zod
         .array(
           zod
@@ -48754,6 +49394,12 @@ export const SimulateApiHarnessEnvironmentsUploadFileResponse = zod.object({
     max_turns: zod.number(),
     max_lines: zod.number(),
     scenarios: zod.number().describe("Scenarios that include the actor."),
+    review_decision: zod
+      .enum(["accepted", "rejected"])
+      .optional()
+      .describe(
+        "The decision taken on the actor in the draft's change review; null when none holds.",
+      ),
     arrival_overrides: zod
       .array(
         zod
@@ -49799,12 +50445,26 @@ export const SimulateApiHarnessEnvironmentsVersionsParams = zod.object({
   id: zod.string(),
 });
 
+export const simulateApiHarnessEnvironmentsVersionsResponseAgentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsVersionsResponseEnvironmentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsVersionsResponseSuiteItemSavedWithoutCheckDefault =
+  false;
+
 export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
   agent: zod.array(
     zod.object({
       id: zod.string().uuid(),
       label: zod.string().min(1).nullable(),
-      status: zod.enum(["draft", "active", "discarded"]),
+      name: zod
+        .string()
+        .min(1)
+        .describe("The name a person gave the version, if any.")
+        .nullable(),
+      status: zod.enum(["draft", "candidate", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
       created_by: zod
@@ -49891,6 +50551,28 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .optional()
         .describe(
           "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
+      candidate_state: zod
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "check_unavailable",
+          "superseded",
+          "expired",
+        ])
+        .describe(
+          "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+        )
+        .nullable(),
+      saved_without_check: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsVersionsResponseAgentItemSavedWithoutCheckDefault,
+        )
+        .describe(
+          "Saved while the check was unavailable; its pairings read Untested until checked.",
         ),
     }),
   ),
@@ -49898,7 +50580,12 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
     zod.object({
       id: zod.string().uuid(),
       label: zod.string().min(1).nullable(),
-      status: zod.enum(["draft", "active", "discarded"]),
+      name: zod
+        .string()
+        .min(1)
+        .describe("The name a person gave the version, if any.")
+        .nullable(),
+      status: zod.enum(["draft", "candidate", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
       created_by: zod
@@ -49986,13 +50673,40 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .describe(
           "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
         ),
+      candidate_state: zod
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "check_unavailable",
+          "superseded",
+          "expired",
+        ])
+        .describe(
+          "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+        )
+        .nullable(),
+      saved_without_check: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsVersionsResponseEnvironmentItemSavedWithoutCheckDefault,
+        )
+        .describe(
+          "Saved while the check was unavailable; its pairings read Untested until checked.",
+        ),
     }),
   ),
   suite: zod.array(
     zod.object({
       id: zod.string().uuid(),
       label: zod.string().min(1).nullable(),
-      status: zod.enum(["draft", "active", "discarded"]),
+      name: zod
+        .string()
+        .min(1)
+        .describe("The name a person gave the version, if any.")
+        .nullable(),
+      status: zod.enum(["draft", "candidate", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
       created_by: zod
@@ -50079,6 +50793,28 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .optional()
         .describe(
           "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+        ),
+      candidate_state: zod
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "check_unavailable",
+          "superseded",
+          "expired",
+        ])
+        .describe(
+          "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+        )
+        .nullable(),
+      saved_without_check: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsVersionsResponseSuiteItemSavedWithoutCheckDefault,
+        )
+        .describe(
+          "Saved while the check was unavailable; its pairings read Untested until checked.",
         ),
     }),
   ),
@@ -50155,13 +50891,27 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionParam
 export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionBody =
   zod.object({});
 
+export const simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseAgentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseEnvironmentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseSuiteItemSavedWithoutCheckDefault =
+  false;
+
 export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse =
   zod.object({
     agent: zod.array(
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
-        status: zod.enum(["draft", "active", "discarded"]),
+        name: zod
+          .string()
+          .min(1)
+          .describe("The name a person gave the version, if any.")
+          .nullable(),
+        status: zod.enum(["draft", "candidate", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
         created_by: zod
@@ -50250,6 +51000,28 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .optional()
           .describe(
             "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
+        candidate_state: zod
+          .enum([
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "expired",
+          ])
+          .describe(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          )
+          .nullable(),
+        saved_without_check: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseAgentItemSavedWithoutCheckDefault,
+          )
+          .describe(
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
           ),
       }),
     ),
@@ -50257,7 +51029,12 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
-        status: zod.enum(["draft", "active", "discarded"]),
+        name: zod
+          .string()
+          .min(1)
+          .describe("The name a person gave the version, if any.")
+          .nullable(),
+        status: zod.enum(["draft", "candidate", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
         created_by: zod
@@ -50347,13 +51124,40 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .describe(
             "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
           ),
+        candidate_state: zod
+          .enum([
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "expired",
+          ])
+          .describe(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          )
+          .nullable(),
+        saved_without_check: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseEnvironmentItemSavedWithoutCheckDefault,
+          )
+          .describe(
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
+          ),
       }),
     ),
     suite: zod.array(
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
-        status: zod.enum(["draft", "active", "discarded"]),
+        name: zod
+          .string()
+          .min(1)
+          .describe("The name a person gave the version, if any.")
+          .nullable(),
+        status: zod.enum(["draft", "candidate", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
         created_by: zod
@@ -50442,6 +51246,28 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .optional()
           .describe(
             "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
+        candidate_state: zod
+          .enum([
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "expired",
+          ])
+          .describe(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          )
+          .nullable(),
+        saved_without_check: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseSuiteItemSavedWithoutCheckDefault,
+          )
+          .describe(
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
           ),
       }),
     ),
@@ -50504,13 +51330,27 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultBody = zod.object(
   },
 );
 
+export const simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseAgentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseEnvironmentItemSavedWithoutCheckDefault =
+  false;
+
+export const simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuiteItemSavedWithoutCheckDefault =
+  false;
+
 export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
   zod.object({
     agent: zod.array(
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
-        status: zod.enum(["draft", "active", "discarded"]),
+        name: zod
+          .string()
+          .min(1)
+          .describe("The name a person gave the version, if any.")
+          .nullable(),
+        status: zod.enum(["draft", "candidate", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
         created_by: zod
@@ -50599,6 +51439,28 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .optional()
           .describe(
             "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
+        candidate_state: zod
+          .enum([
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "expired",
+          ])
+          .describe(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          )
+          .nullable(),
+        saved_without_check: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseAgentItemSavedWithoutCheckDefault,
+          )
+          .describe(
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
           ),
       }),
     ),
@@ -50606,7 +51468,12 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
-        status: zod.enum(["draft", "active", "discarded"]),
+        name: zod
+          .string()
+          .min(1)
+          .describe("The name a person gave the version, if any.")
+          .nullable(),
+        status: zod.enum(["draft", "candidate", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
         created_by: zod
@@ -50696,13 +51563,40 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .describe(
             "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
           ),
+        candidate_state: zod
+          .enum([
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "expired",
+          ])
+          .describe(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          )
+          .nullable(),
+        saved_without_check: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseEnvironmentItemSavedWithoutCheckDefault,
+          )
+          .describe(
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
+          ),
       }),
     ),
     suite: zod.array(
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
-        status: zod.enum(["draft", "active", "discarded"]),
+        name: zod
+          .string()
+          .min(1)
+          .describe("The name a person gave the version, if any.")
+          .nullable(),
+        status: zod.enum(["draft", "candidate", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
         created_by: zod
@@ -50791,6 +51685,28 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .optional()
           .describe(
             "An environment version's five release checks; null for other versions. Ready only once all five passed; a pairing still needs its own readiness.",
+          ),
+        candidate_state: zod
+          .enum([
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "check_unavailable",
+            "superseded",
+            "expired",
+          ])
+          .describe(
+            "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
+          )
+          .nullable(),
+        saved_without_check: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuiteItemSavedWithoutCheckDefault,
+          )
+          .describe(
+            "Saved while the check was unavailable; its pairings read Untested until checked.",
           ),
       }),
     ),
@@ -65163,7 +66079,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
               "ready: certified together; failed: the agent failed a validation's check, so runs are refused; check_unavailable: the check failed on our side, so runs are not held for it; retry: the last validation ended before its check did, or a run failed the pairing.",
             ),
           job_id: zod.string().uuid(),
-          purpose: zod.enum(["agent_move", "recheck"]),
+          purpose: zod.enum(["agent_move", "recheck", "save"]),
           finished_at: zod.string().datetime({ offset: true }),
           error: zod.record(zod.string(), zod.string()),
         }),
