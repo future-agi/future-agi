@@ -100,7 +100,7 @@
       "taskId": "1048726",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "2",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "requestId": "2a6476f6-067c-4e7a-a111-9cca996df78d",
         "historySizeBytes": "984",
         "workerVersion": {
@@ -116,7 +116,7 @@
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "2",
         "startedEventId": "3",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "workerVersion": {
           "buildId": "afa82086a37a42d4c2454dbb83fe50f4"
         },
@@ -180,7 +180,7 @@
       "taskId": "1048736",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "5",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "requestId": "1fb51bf9-5966-4985-8ab4-1322ab8de20b",
         "attempt": 1,
         "workerVersion": {
@@ -206,7 +206,7 @@
         },
         "scheduledEventId": "5",
         "startedEventId": "6",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95"
+        "identity": "15720@replay-recorder"
       }
     },
     {
@@ -216,7 +216,7 @@
       "taskId": "1048738",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "15720@fleet-nikhil-r23-fix-g-4d95-9221fac1322e449388a2a41b419f084c",
+          "name": "15720@replay-recorder-9221fac1322e449388a2a41b419f084c",
           "kind": "TASK_QUEUE_KIND_STICKY",
           "normalName": "synthetic-replay"
         },
@@ -231,7 +231,7 @@
       "taskId": "1048742",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "8",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "requestId": "b270891a-1e1c-4fdb-a4ee-ae1b1ffd60aa",
         "historySizeBytes": "1972",
         "workerVersion": {
@@ -247,7 +247,7 @@
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "8",
         "startedEventId": "9",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "workerVersion": {
           "buildId": "afa82086a37a42d4c2454dbb83fe50f4"
         },
@@ -393,7 +393,7 @@
       "taskId": "1048755",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "14",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "requestId": "c3b7755b-bb66-4042-98a7-a72e11acf172",
         "attempt": 1,
         "workerVersion": {
@@ -419,7 +419,7 @@
         },
         "scheduledEventId": "14",
         "startedEventId": "15",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95"
+        "identity": "15720@replay-recorder"
       }
     },
     {
@@ -429,7 +429,7 @@
       "taskId": "1048757",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "15720@fleet-nikhil-r23-fix-g-4d95-9221fac1322e449388a2a41b419f084c",
+          "name": "15720@replay-recorder-9221fac1322e449388a2a41b419f084c",
           "kind": "TASK_QUEUE_KIND_STICKY",
           "normalName": "synthetic-replay"
         },
@@ -444,7 +444,7 @@
       "taskId": "1048761",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "17",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "requestId": "3ce49cff-be37-41ad-a944-492624173330",
         "historySizeBytes": "3428",
         "workerVersion": {
@@ -460,7 +460,7 @@
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "17",
         "startedEventId": "18",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "workerVersion": {
           "buildId": "afa82086a37a42d4c2454dbb83fe50f4"
         },
@@ -515,7 +515,7 @@
       "taskId": "1048770",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "20",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "requestId": "7dbfffda-b41c-44cf-85c7-291d816619ec",
         "attempt": 1,
         "workerVersion": {
@@ -541,7 +541,7 @@
         },
         "scheduledEventId": "20",
         "startedEventId": "21",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95"
+        "identity": "15720@replay-recorder"
       }
     },
     {
@@ -551,7 +551,7 @@
       "taskId": "1048772",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "15720@fleet-nikhil-r23-fix-g-4d95-9221fac1322e449388a2a41b419f084c",
+          "name": "15720@replay-recorder-9221fac1322e449388a2a41b419f084c",
           "kind": "TASK_QUEUE_KIND_STICKY",
           "normalName": "synthetic-replay"
         },
@@ -566,7 +566,7 @@
       "taskId": "1048776",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "23",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "requestId": "1a7e9016-cac1-4ef0-8d0c-6572af6efaed",
         "historySizeBytes": "4244",
         "workerVersion": {
@@ -582,7 +582,7 @@
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "23",
         "startedEventId": "24",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "workerVersion": {
           "buildId": "afa82086a37a42d4c2454dbb83fe50f4"
         },
@@ -637,7 +637,7 @@
       "taskId": "1048785",
       "activityTaskStartedEventAttributes": {
         "scheduledEventId": "26",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "requestId": "ac722830-d979-4c5c-98ea-3a10add97745",
         "attempt": 1,
         "workerVersion": {
@@ -663,7 +663,7 @@
         },
         "scheduledEventId": "26",
         "startedEventId": "27",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95"
+        "identity": "15720@replay-recorder"
       }
     },
     {
@@ -673,7 +673,7 @@
       "taskId": "1048787",
       "workflowTaskScheduledEventAttributes": {
         "taskQueue": {
-          "name": "15720@fleet-nikhil-r23-fix-g-4d95-9221fac1322e449388a2a41b419f084c",
+          "name": "15720@replay-recorder-9221fac1322e449388a2a41b419f084c",
           "kind": "TASK_QUEUE_KIND_STICKY",
           "normalName": "synthetic-replay"
         },
@@ -688,7 +688,7 @@
       "taskId": "1048791",
       "workflowTaskStartedEventAttributes": {
         "scheduledEventId": "29",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "requestId": "f9ea9db1-ee90-4cce-aee8-3d6ccdfdfeb9",
         "historySizeBytes": "5041",
         "workerVersion": {
@@ -704,7 +704,7 @@
       "workflowTaskCompletedEventAttributes": {
         "scheduledEventId": "29",
         "startedEventId": "30",
-        "identity": "15720@fleet-nikhil-r23-fix-g-4d95",
+        "identity": "15720@replay-recorder",
         "workerVersion": {
           "buildId": "afa82086a37a42d4c2454dbb83fe50f4"
         },
