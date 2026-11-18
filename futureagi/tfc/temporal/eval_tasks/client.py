@@ -47,12 +47,12 @@ def _select(
 
     generation = getattr(task, "workflow_generation", None)
     generation = str(generation) if generation is not None else None
-    args = dict(
-        task_id=str(task.id),
-        task_queue=task_queue,
-        workflow_generation=generation,
-        workflow_confirmed_stopped=workflow_confirmed_stopped,
-    )
+    args = {
+        "task_id": str(task.id),
+        "task_queue": task_queue,
+        "workflow_generation": generation,
+        "workflow_confirmed_stopped": workflow_confirmed_stopped,
+    }
     if task.run_type == RunType.CONTINUOUS:
         state = ContinuousDrainState(**args)
         if gated:

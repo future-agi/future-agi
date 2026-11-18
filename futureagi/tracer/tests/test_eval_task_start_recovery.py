@@ -232,7 +232,12 @@ def test_second_failure_needs_negative_describe_before_exhaustion(
     assert data["start_time"] is None and data["end_time"] is None
     assert data["total_count"] == data["errors_count"] == 0
     assert data["error_groups"] == [
-        {"normalized": message, "sample": message, "count": 1, "start_reason_code": "start_failed"}
+        {
+            "normalized": message,
+            "sample": message,
+            "count": 1,
+            "start_reason_code": "start_failed",
+        }
     ]
     assert "private" not in logs.content.decode()
     start.reset_mock()
@@ -706,7 +711,9 @@ def test_admission_is_watched_until_work_or_confirmed_closure(
         tick()
         check(intent, "accepted", 1)
         completed = next_event == "completed"
-        assert intent.last_outcome == ("execution_completed" if completed else "execution_progress")
+        assert intent.last_outcome == (
+            "execution_completed" if completed else "execution_progress"
+        )
         expected = "completed" if completed else "running"
         assert tasks.get().status == expected
         assert describe.call_count == (3 if completed else 2)
@@ -875,7 +882,8 @@ def test_user_action_itself_voids_start(
         start.assert_called_once()
     elif action == "bulk_delete":
         response = auth_client.post(
-            f"{_CREATE}mark_eval_tasks_deleted/", {"eval_task_ids": [str(intent.pk)]},
+            f"{_CREATE}mark_eval_tasks_deleted/",
+            {"eval_task_ids": [str(intent.pk)]},
             format="json",
         )
     else:
@@ -1180,7 +1188,9 @@ def test_failed_intent_is_not_a_veto_on_a_later_drain(
     else:
         # The same workflow ID is reused. A generic gated closure is not proof.
         describe.side_effect = lambda *a, **kw: (
-            client.WF_LEGACY_CLOSED if kw.get("distinguish_legacy") else client.WF_CLOSED
+            client.WF_LEGACY_CLOSED
+            if kw.get("distinguish_legacy")
+            else client.WF_CLOSED
         )
     tasks.update(status="failed")  # replacement start lost its reply; no end_time
     logs = auth_client.get(f"{_CREATE}get_eval_task_logs/", {"eval_task_id": intent.pk})
@@ -1194,16 +1204,26 @@ def test_failed_intent_is_not_a_veto_on_a_later_drain(
 
 
 def test_no_intent_task_loads_follow_the_configured_router(
-    lagging_replica, settings, project, transport, monkeypatch,  # noqa: F811
+    lagging_replica,
+    settings,
+    project,
+    transport,
+    monkeypatch,  # noqa: F811
 ):
     from tracer.services import instant_eval_rows
     from tracer.utils.eval import evaluate_trace_observe
-    from tracer.utils.eval_tasks import eval_task_cron, process_eval_task, run_for_processed_spans
+    from tracer.utils.eval_tasks import (
+        eval_task_cron,
+        process_eval_task,
+        run_for_processed_spans,
+    )
     from tracer.views import instant_eval_scale
 
     settings.READ_REPLICA_OPT_IN = [*settings.READ_REPLICA_OPT_IN, "EvalTask"]
     task = EvalTask.objects.create(
-        project=project, status="paused", filters={instant_eval_rows.RUN_MARKER: True},
+        project=project,
+        status="paused",
+        filters={instant_eval_rows.RUN_MARKER: True},
     )
     lagging_replica.freeze()
     EvalTask.objects.filter(pk=task.pk).update(status="running")
@@ -1220,6 +1240,8 @@ def test_no_intent_task_loads_follow_the_configured_router(
 
     monkeypatch.setattr(instant_eval_scale, "_project", lambda *_: project)
     loaded, error = instant_eval_scale._load(
-        Mock(), {"project_id": project.pk, "eval_task_id": task.pk}, Mock(),
+        Mock(),
+        {"project_id": project.pk, "eval_task_id": task.pk},
+        Mock(),
     )
     assert error is None and loaded.status == "paused"

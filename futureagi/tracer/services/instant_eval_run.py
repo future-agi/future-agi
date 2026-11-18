@@ -427,7 +427,9 @@ def _summary_key(task, run, status: str, view) -> str:
     return "ie-summary:v10:" + hashlib.sha1(raw.encode()).hexdigest()
 
 
-def _summary_payload(task, run, view, questions, price, refusal: Refusal | None) -> dict:
+def _summary_payload(
+    task, run, view, questions, price, refusal: Refusal | None
+) -> dict:
     """The run's summary; ``price`` is credits per answer, None where the
     run isn't billed."""
     data = summary_service.summary(view)
@@ -591,4 +593,6 @@ def prewarm_summary(task_id) -> None:
     if run is None:
         return
     view, questions = _view(task, run, {"tz": run.last_tz or "UTC"})
-    compute_summary(task, run, view, questions, credits_per_answer(), start_refusal(task))
+    compute_summary(
+        task, run, view, questions, credits_per_answer(), start_refusal(task)
+    )

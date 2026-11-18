@@ -138,10 +138,13 @@ def started(monkeypatch):
     calls = []
     # The fake starter records submissions but creates no Temporal execution.
     monkeypatch.setattr(
-        client, "describe_eval_task_workflow_sync", lambda task_id, **kw: client.WF_ABSENT
+        client,
+        "describe_eval_task_workflow_sync",
+        lambda task_id, **kw: client.WF_ABSENT,
     )
     monkeypatch.setattr(
-        client, "start_eval_task_workflow_sync",
+        client,
+        "start_eval_task_workflow_sync",
         lambda task, **kw: calls.append((str(task.id), kw)) or "wf",
     )
     monkeypatch.setattr(
@@ -595,7 +598,9 @@ def test_paused_reserved_create_completing_fenced_is_not_a_previous_run(
     from tracer.services.eval_tasks.start_requests import start_refusal
 
     monkeypatch.setattr(
-        client, "describe_eval_task_workflow_sync", lambda *a, **kw: client.WF_LEGACY_CLOSED
+        client,
+        "describe_eval_task_workflow_sync",
+        lambda *a, **kw: client.WF_LEGACY_CLOSED,
     )
     task.refresh_from_db()
     refusal = start_refusal(task)
@@ -676,10 +681,20 @@ def test_pending_legacy_summary_is_not_a_request_to_resume(
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("state", "outcome"),
-    [("exhausted", "execution_closed_without_progress"), ("start_failed", "not_started")],
+    [
+        ("exhausted", "execution_closed_without_progress"),
+        ("start_failed", "not_started"),
+    ],
 )
 def test_failed_create_does_not_offer_a_standard_page_action_on_instant_resume(
-    auth_client, observe_project, yes_no, started, monkeypatch, no_new_usage, state, outcome
+    auth_client,
+    observe_project,
+    yes_no,
+    started,
+    monkeypatch,
+    no_new_usage,
+    state,
+    outcome,
 ):
     from tracer.models.eval_task import EvalTaskStartRequest
 

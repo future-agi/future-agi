@@ -165,6 +165,8 @@ def record_pending_instant_pause(task):
     """Called under the task lock, before Pause loses the old status."""
     if (
         task.status == EvalTaskStatus.PENDING
+        # An explicit replacement is resumable even if Pause beat its send.
+        and task.workflow_generation is None
         and not _current_request(task).exists()
         and not _has_worker_artifacts(task)
     ):
