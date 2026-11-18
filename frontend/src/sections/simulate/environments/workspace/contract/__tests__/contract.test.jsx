@@ -4,6 +4,10 @@ import RlContractPanel from "../RlContractPanel";
 import WorldToolsPanel from "../../world/WorldToolsPanel";
 
 vi.mock("../../sources/SourcesSection", () => ({ default: () => null }));
+vi.mock("../../sources/useKnowledgeBaseChanges", () => ({
+  default: () => {},
+  useKnowledgeBaseChanges: () => {},
+}));
 
 const tool = (name, description, writes) => ({
   tool: name,
