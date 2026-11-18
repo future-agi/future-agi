@@ -52,6 +52,7 @@ import { formatDistanceToNow } from "date-fns";
 import CustomModelDropdownControl from "src/components/custom-model-dropdown/CustomModelDropdownControl";
 import { MODEL_TYPES } from "../../develop-detail/RunPrompt/common";
 import { useAuthContext } from "src/auth/hooks";
+import ProviderConnectionHealth from "./ProviderConnectionHealth";
 
 const EditAgentDetails = ({
   control,
@@ -1107,6 +1108,9 @@ const EditAgentDetails = ({
             >
               Enable if you want to monitor this agent
             </Typography>
+            {!isSourceAgent && (
+              <ProviderConnectionHealth agentDefinitionId={agentDefinitionId} />
+            )}
           </Stack>
         </ShowComponent>
       </Box>
