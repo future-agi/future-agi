@@ -1876,7 +1876,12 @@ def _flat_kpi_evals(
     if len(natural) == len(values) and natural.isdisjoint(system_keys):
         return {name: value for (name, _, _), value in values.items()}
 
+    def project(key: str) -> str:
+        # Run detail's canonicalKeys hides the underscore-to-camel projection of each key.
+        return re.sub(r"_([a-z0-9])", lambda match: match[1].upper(), key)
+
     reserved = natural | system_keys
+    reserved_projections = {project(key) for key in reserved}
     used = system_keys.copy()
     priority = {"score": 0, "numeric": 1, "distribution": 2}
     keys = {}
@@ -1885,9 +1890,14 @@ def _flat_kpi_evals(
         key = name
         if key in used:
             key = f"{name}__{binding_id}"
-            while key in reserved:
+            while (
+                key in reserved
+                or key in reserved_projections
+                or project(key) in reserved
+            ):
                 key += "_"
             reserved.add(key)
+            reserved_projections.add(project(key))
         keys[metric] = key
         used.add(key)
     return {keys[metric]: value for metric, value in values.items()}

@@ -1,3 +1,6 @@
+import json
+import os
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -133,6 +136,64 @@ def test_colliding_distributions_keep_counts_labels_and_occupied_alias(bind, kpi
         alias: {"Blue": 1, "choices": ["Blue"]},
         alias + "_": {"Shared": 2, "Cool": 0, "choices": ["Shared", "Cool"]},
     }
+
+
+@pytest.mark.parametrize("direction", ["forward", "reverse"])
+def test_alias_payload_survives_run_detail_projection(bind, kpis, direction):
+    second_id = str(UUID(int=2))
+    natural_name = (
+        f"tier1_{second_id}" if direction == "forward" else f"tier__1___{second_id}"
+    )
+    entries = (
+        bind(
+            1, "Tier 1", "choices", ["warm", "warm", "cold"], choices=("Warm", "Cold")
+        ),
+        bind(
+            2, "tier_1", "choices", ["rough", "calm"], choices=("Calm", "Rough", "None")
+        ),
+        bind(
+            3,
+            natural_name,
+            "choices",
+            ["fine", "fine", "fine", "flat"],
+            choices=("Fine", "Flat"),
+        ),
+        bind(4, "Score", "score", 0.2),
+        bind(5, "Response", "score", 0.3),
+        bind(6, "Agent Latency", "score", 0.4),
+    )
+    system = kpis()
+    data = kpis(*entries)
+    if output_dir := os.environ.get("KPI_CALLER_PAYLOAD_DIR"):
+        (Path(output_dir) / f"{direction}.json").write_text(
+            json.dumps(data), encoding="utf-8"
+        )
+
+    fixture = Path(__file__).with_name("kpi_alias_payloads.json")
+    payloads = json.loads(fixture.read_text(encoding="utf-8"))
+    expected = system | payloads["system"] | payloads[direction]
+    assert data == expected
+    assert {key: type(data[key]) for key in system} == {
+        key: type(value) for key, value in system.items()
+    }
+    assert kpis(*reversed(entries)) == data
+
+
+def test_generated_alias_does_not_project_to_another_generated_alias():
+    binding_id = str(UUID(int=3))
+    entries = [
+        (("band1", str(UUID(int=1)), "distribution"), "first"),
+        (("band_1_", str(UUID(int=2)), "distribution"), "second"),
+        (("band1", binding_id, "distribution"), "third"),
+        (("band_1_", binding_id, "distribution"), "fourth"),
+    ]
+    for rows in (entries, reversed(entries)):
+        assert _flat_kpi_evals(dict(rows), set()) == {
+            "band1": "first",
+            "band_1_": "second",
+            f"band1__{binding_id}": "third",
+            f"band_1___{binding_id}_": "fourth",
+        }
 
 
 def test_flat_keys_are_independent_of_row_order():
