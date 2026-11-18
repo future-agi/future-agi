@@ -428,12 +428,12 @@ describe("CallWorkersPanel, the record's own words", () => {
     );
     result = { data: unplaced, isLoading: false, isError: false };
     render(<CallWorkersPanel callExecutionId="c1" />);
-    // The unplaced hand-off comes from the "not tied to a worker" lane, never the coordinator's.
+    // The unplaced hand-off comes from the "not tied to a participant" lane, never the coordinator's.
     fireEvent.click(
-      screen.getByRole("button", { name: "Follow Not tied to a worker" }),
+      screen.getByRole("button", { name: "Follow Not tied to a participant" }),
     );
     expect(
-      screen.getByText(/^Following Not tied to a worker · 1 of/),
+      screen.getByText(/^Following Not tied to a participant · 1 of/),
     ).toBeInTheDocument();
   });
 });
