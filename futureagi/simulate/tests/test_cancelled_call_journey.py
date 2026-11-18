@@ -265,3 +265,35 @@ def test_the_cancel_seal_waits_on_a_call_in_flight_until_its_receipt_lands(
     now["t"] = 0.0
     gateway._await_guest_seal(attempt)
     assert now["t"] == 0.0
+
+
+@pytest.mark.django_db
+def test_stop_with_no_gateway_workflow_and_no_sandbox_provider_still_cancels_the_run(
+    auth_client, running_run, settings, monkeypatch
+):
+    """Stop falls back to cancelling in the platform when the gateway workflow is gone; with no sandbox provider
+    configured, an attempt that never made a sandbox still closes, and its call reads Cancelled."""
+    from simulate.services import hosted_harness_gateway as gateway_module
+    from simulate.services.hosted_sandbox import SandboxProviderConfigurationError
+
+    def unconfigured():
+        raise SandboxProviderConfigurationError("no sandbox provider")
+
+    monkeypatch.setattr(gateway_module, "get_sandbox_provider", unconfigured)
+    settings.HARNESS_CANCEL_SEAL_SECONDS = 0
+    run, _attempt = running_run
+    stopped = _call(run, STOPPED)
+
+    with patch(
+        "simulate.temporal.client.cancel_hosted_harness_gateway_workflow",
+        side_effect=RuntimeError("workflow not found"),
+    ):
+        response = auth_client.post(
+            f"/simulate/test-executions/{run.test_execution_id}/cancel/"
+        )
+
+    assert response.status_code == 200, response.content
+    run.refresh_from_db()
+    stopped.refresh_from_db()
+    assert run.state == HostedHarnessJob.State.CANCELED
+    assert stopped.status == CallExecution.CallStatus.CANCELLED

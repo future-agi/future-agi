@@ -4403,7 +4403,8 @@ class HostedHarnessGateway:
                     provider_ref="",
                     verified_absent=True,
                     details={
-                        "provider": getattr(self.client, "name", ""),
+                        # No `client` when no sandbox provider is configured: a stop needs none here.
+                        "provider": getattr(getattr(self, "client", None), "name", ""),
                         "sandbox_created": False,
                     },
                 )
