@@ -46,8 +46,10 @@ export const mapLabelEvent = (value) => ({ label: value.label, fromVersion: valu
 export const mapUsage = (value) => ({
   days: value.days, total: value.total, byDay: value.by_day || [], byChannel: value.by_channel,
   byVersion: (value.by_version || []).map(({ version, count, last_at }) => ({ version, count, lastAt: last_at })),
-  consumers: (value.consumers || []).map(({ label, channel, count, last_at }) => ({ label, channel, count, lastAt: last_at })),
+  consumers: (value.consumers || []).map(({ label, channel, count, last_at, sdk_version }) => ({ label, channel, count, lastAt: last_at, sdkVersion: sdk_version ?? null })),
   lastFetchedAt: value.last_fetched_at,
+  // All time, not the window. Null: never fetched. Undefined: an older server didn't say.
+  firstFetchedOn: value.first_fetched_on,
 });
 export const mapPublish = (value) => ({ releaseRevision: value.release_revision, evidence: value.evidence ? { runId: value.evidence.run_id, validity: value.evidence.validity, currentness: { content: value.evidence.currentness.content, baseline: value.evidence.currentness.baseline, suite: value.evidence.currentness.suite, competitors: value.evidence.currentness.competitors, payloadAvailable: value.evidence.currentness.payload_available } } : null, version: mapVersion(value.version), unchanged: value.unchanged, checks: mapChecks(value.checks), ...(value.skill ? { skill: mapSkill(value.skill) } : {}) });
 const mapImportBundle = (value) => ({ key: value.key, root: value.root, name: value.name, fileCount: value.file_count, totalBytes: value.total_bytes, status: value.status, skillId: value.skill_id, latestVersion: value.latest_version, checks: mapChecks(value.checks) });

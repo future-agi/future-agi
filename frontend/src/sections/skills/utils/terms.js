@@ -27,6 +27,21 @@ export const HUMAN_CHECK = 'Human check';
 
 // UXF-09: protected labels, explained where they appear.
 export const PROTECTED_LABEL = 'Protected label (only admins can move it)';
+
+/**
+ * What ticking one label in the skill Publish dialog does, said before it is ticked
+ * (UXF-09, UXF-11): "Ticking moves it from v2 to v3 · Protected label (only admins can move it)".
+ * `current` is the version the label points at now (undefined: not set); `target` is
+ * the version text the dialog publishes ("v3"); `protectedLabels` is the skill's current
+ * rule (null when unknown, then nothing is said about protection).
+ */
+export function labelEffect({ label, current, target, protectedLabels = null }) {
+  const move = Number.isInteger(current)
+    ? (`v${current}` === target ? `Already on ${target}; ticking keeps it there` : `Ticking moves it from v${current} to ${target}`)
+    : `Not set yet; ticking sets it to ${target}`;
+  const rule = Array.isArray(protectedLabels) && protectedLabels.includes(label) ? ` · ${PROTECTED_LABEL}` : '';
+  return `${move}${rule}`;
+}
 export const CHANGE_RULES = 'Change rules';
 
 // UXF-15 and §15 D17: connected apps, never "consumers".

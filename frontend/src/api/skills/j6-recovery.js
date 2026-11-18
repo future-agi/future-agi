@@ -20,6 +20,7 @@ const paths = {
   skill: (skill_id) => apiPath('/model-hub/skills/{skill_id}/', { skill_id }),
   preview: () => apiPath('/model-hub/skills/release-requests/preview/'),
   requests: () => apiPath('/model-hub/skills/release-requests/'),
+  request: (request_id) => apiPath('/model-hub/skills/release-requests/{request_id}/', { request_id }),
   credentials: () => apiPath('/model-hub/skills/contexts/credentials/'),
   members: () => apiPath('/accounts/organization/members/'),
 };
@@ -106,6 +107,47 @@ export function useContextRecovery(contextId) {
   return useSkillV11Query({ parts: ['agent_context', contextId, 'j6-recovery'], enabled: Boolean(contextId), load: (config) => loadRecovery(contextId, config) });
 }
 
+// UXF-08: the rollback tracker follows the server, not the page session. These are the
+// caller's own open release requests (waiting or approved) for this context, read from the
+// authored-requests list and each request's detail. The panel decides which one, if any, is a
+// rollback it may show as a tracker; nothing here grants authority to move production.
+const OPEN_REQUEST_STATUSES = ['pending', 'approved'];
+const OPEN_REQUEST_PAGES = 5;
+export async function loadOpenContextRequests(contextId, config) {
+  const rows = [];
+  try {
+    for (const state of OPEN_REQUEST_STATUSES) {
+      for (let page = 1; page <= OPEN_REQUEST_PAGES; page += 1) {
+        const value = skillV11Result(await axios.get(paths.requests(), { ...config, params: { status: state, page, page_size: 100 } }));
+        rows.push(...(value.results ?? []).filter((row) => row.subject_id === contextId && row.subject_kind === 'agent_context'));
+        if (page >= (value.total_pages ?? 1)) break;
+      }
+    }
+  } catch (error) {
+    // People who can't write release requests have none to resume; their access is shown elsewhere.
+    if (status(error) === 403) return [];
+    throw error;
+  }
+  rows.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+  const details = await Promise.all(rows.map(async (row) => {
+    try {
+      const item = skillV11Result(await axios.get(paths.request(row.id), config));
+      const transition = item.packet?.transition;
+      if (item.revision !== row.revision || !transition || item.subject_id !== contextId) return null;
+      return {
+        requestId: item.id, requestRevision: item.revision, status: item.status,
+        candidateVersionId: item.packet.candidate_version_id, label: transition.label,
+        expectedReleaseRevision: transition.expected_release_revision,
+        reviewer: (item.recipients ?? []).map((person) => person.name).filter(Boolean).join(', ') || null,
+      };
+    } catch { return null; }
+  }));
+  return details.filter(Boolean);
+}
+export function useOpenContextRequests(contextId, enabled = true) {
+  return useSkillV11Query({ parts: ['agent_context', contextId, 'open-release-requests'], enabled: Boolean(contextId) && enabled, load: (config) => loadOpenContextRequests(contextId, config) });
+}
+
 export function useRecoveryReviewers() {
   const access = useSkillV11Scope();
   const self = access.scope.userId;
@@ -129,7 +171,7 @@ export function useSubmitRecoveryRequest(contextId) {
     send: async ({ preview, reviewerId, idempotencyKey }, config) => skillV11Result(await axios.post(paths.requests(), {
       packet: preview.packet, expected_fingerprint: preview.fingerprint, recipient_ids: [reviewerId], revision: 0,
     }, { ...config, headers: { ...config.headers, ...idempotencyHeaders(idempotencyKey) } })),
-    invalidate: () => [['agent_context', contextId, 'j6-recovery'], ['review-inbox']],
+    invalidate: () => [['agent_context', contextId, 'j6-recovery'], ['agent_context', contextId, 'open-release-requests'], ['review-inbox']],
   });
 }
 

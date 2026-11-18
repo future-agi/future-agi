@@ -48210,6 +48210,20 @@ export const ModelHubSkillsReleaseRequestsRenewalListResponse = zod.object({
         source: zod.string().min(1),
       }),
     ),
+    policy_changes: zod.array(
+      zod.object({
+        field: zod.enum([
+          "protected_labels",
+          "quarantine",
+          "release_rules",
+          "security_rules",
+        ]),
+        before: zod.object({}).passthrough().nullable(),
+        after: zod.object({}).passthrough().nullable(),
+        changed_by: zod.string().min(1).nullable(),
+        changed_at: zod.string().datetime({ offset: true }).nullable(),
+      }),
+    ),
   }),
 });
 
@@ -52902,16 +52916,26 @@ export const ModelHubSkillsTestsUpdateResponse = zod.object({
   }),
 });
 
+/**
+ * A fetch is a read of the resource, never proof that an agent used it.
+The skill path keeps its selector and error contract; a context is
+resolved by its explicit kind in the caller's workspace scope.
+ * @summary Fetch counts for a skill, or for an agent context with kind=agent_context.
+ */
 export const ModelHubSkillsUsageListParams = zod.object({
   skill_id: zod.string().uuid(),
 });
 
 export const modelHubSkillsUsageListQueryDaysDefault = 7;
+export const modelHubSkillsUsageListQueryKindDefault = `skill`;
 
 export const ModelHubSkillsUsageListQueryParams = zod.object({
   days: zod
     .union([zod.literal(7), zod.literal(30), zod.literal(90)])
     .default(modelHubSkillsUsageListQueryDaysDefault),
+  kind: zod
+    .enum(["skill", "agent_context"])
+    .default(modelHubSkillsUsageListQueryKindDefault),
 });
 
 export const ModelHubSkillsUsageListResponse = zod.object({
@@ -52930,6 +52954,7 @@ export const ModelHubSkillsUsageListResponse = zod.object({
       api: zod.number(),
       download: zod.number(),
       mcp: zod.number(),
+      sdk: zod.number().optional(),
     }),
     by_version: zod.array(
       zod.object({
@@ -52941,12 +52966,16 @@ export const ModelHubSkillsUsageListResponse = zod.object({
     consumers: zod.array(
       zod.object({
         label: zod.string(),
-        channel: zod.enum(["api", "download", "mcp"]),
+        channel: zod.enum(["api", "download", "mcp", "sdk"]),
         count: zod.number(),
         last_at: zod.string().datetime({ offset: true }),
+        sdk_version: zod.string().min(1).nullish(),
+        tracing_mode: zod.enum(["on", "load_only", "off", "no_otel"]).nullish(),
+        can_record: zod.boolean().optional(),
       }),
     ),
     last_fetched_at: zod.string().datetime({ offset: true }).nullable(),
+    first_fetched_on: zod.string().date().nullable(),
   }),
 });
 

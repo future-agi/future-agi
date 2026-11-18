@@ -18,6 +18,7 @@ from rest_framework.views import APIView
 from accounts.authentication import APIKeyAuthentication
 from model_hub.models.skills_hub import HubSkillVersion
 from model_hub.selectors import skills_hub as selectors
+from model_hub.selectors.skills_hub_v12 import get_resource
 from model_hub.serializers import skills_hub as s
 from model_hub.services.skills_hub import (
     checks,
@@ -672,12 +673,23 @@ class SkillDraftPublishView(SkillsView):
 class SkillUsageView(SkillsView):
     @contract(s.Usage, query=s.UsageQuery)
     def get(self, request, skill_id):
+        """Fetch counts for a skill, or for an agent context with kind=agent_context.
+
+        A fetch is a read of the resource, never proof that an agent used it.
+        The skill path keeps its selector and error contract; a context is
+        resolved by its explicit kind in the caller's workspace scope.
+        """
+        query = request.validated_query_data
+        if query["kind"] == "skill":
+            resource = self.skill(request, skill_id)
+        else:
+            resource = get_resource(
+                principal=request.skill_principal,
+                resource_id=skill_id,
+                kind=query["kind"],
+            )
         return self.output(
-            request,
-            s.Usage,
-            usage.usage_summary(
-                self.skill(request, skill_id), request.validated_query_data["days"]
-            ),
+            request, s.Usage, usage.usage_summary(resource, query["days"])
         )
 
 

@@ -4,7 +4,7 @@ import {
   INBOX_OPEN_REQUEST, OPEN_CONNECTED_APPS, OTHER_FILES, OTHER_FILES_NOTE, PINNED, PROTECTED_LABEL,
   PUBLISH_AND_REQUEST_RELEASE, RELEASE_REQUEST, RENEW_REQUEST, RETIRED_TERMS, STREAM_B_TERMS,
   TEST_CASE_APPROVED, TEST_CASE_NEEDS_APPROVAL, UPDATE_RULE, followsLabel, labelDisplayName, pinnedTo,
-  releaseRuleSentences, requestReleaseFor,
+  labelEffect, releaseRuleSentences, requestReleaseFor,
 } from './terms';
 
 describe('UXF-14 release request names', () => {
@@ -74,4 +74,18 @@ describe('releaseRuleSentences (UXF-09)', () => {
     expect(releaseRuleSentences({})).toEqual([]);
   });
   it('capitalises only for display', () => expect(labelDisplayName(' production ')).toBe('Production'));
+});
+
+describe('labelEffect (UXF-09, UXF-11)', () => {
+  it('says what ticking each label does before it is ticked, from the current pointer and rule', () => {
+    expect(labelEffect({ label: 'production', current: 2, target: 'v3', protectedLabels: ['production'] }))
+      .toBe('Ticking moves it from v2 to v3 · Protected label (only admins can move it)');
+    expect(labelEffect({ label: 'staging', current: undefined, target: 'v3', protectedLabels: ['production'] }))
+      .toBe('Not set yet; ticking sets it to v3');
+    expect(labelEffect({ label: 'production', current: 2, target: 'v2', protectedLabels: [] }))
+      .toBe('Already on v2; ticking keeps it there');
+  });
+  it('says nothing about protection when the rule is unknown', () => {
+    expect(labelEffect({ label: 'production', current: 1, target: 'v2', protectedLabels: null })).toBe('Ticking moves it from v1 to v2');
+  });
 });

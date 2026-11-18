@@ -11,5 +11,5 @@ export const skillsKeys = {
   labels: (id) => ['skills', id, 'labels'],
   labelHistory: (id, label) => ['skills', id, 'labelHistory', label || null],
   draft: (id) => ['skills', id, 'draft'],
-  usage: (id, days) => ['skills', id, 'usage', days],
+  usage: (id, days, kind = 'skill') => ['skills', id, 'usage', days, kind],
 };

@@ -27,6 +27,7 @@ import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import {
   useContextRecovery,
   useIssueRecoveryCredential,
+  useOpenContextRequests,
   usePreviewRecoveryRelease,
   useRecoveryClosure,
   useRefreshContextFacts,
@@ -50,7 +51,7 @@ import Iconify from 'src/components/iconify';
 import { consumerNextStep, humanizeCode, needsDeliveryVerification } from './consumerPresentation';
 import { paths } from "src/routes/paths";
 import { restoreCommands } from "./restoreCommands";
-import { suggestRelease, suggestReviewer, initialReleaseState, checkedFiles, rollbackAcknowledgment, rollbackProgress, trackerSteps, canMoveFromTracker } from "./recoverySuggestion";
+import { suggestRelease, suggestReviewer, initialReleaseState, checkedFiles, rollbackAcknowledgment, rollbackProgress, trackerSteps, canMoveFromTracker, resumedRollback } from "./recoverySuggestion";
 import { INBOX_OPEN_REQUEST, OPEN_CONNECTED_APPS } from "../utils/terms";
 import { recipientsOf } from "../utils/conclusions";
 
@@ -405,6 +406,9 @@ const REQUEST_CLOSED_NOTE = {
   expired: 'This request expired.',
 };
 
+// The server says the approved request still applies and this person may move production.
+const readIsCurrent = (data) => Boolean(data) && data.canExecute === true && data.preview?.current === true && !data.staleCode && !data.renewalRequired;
+
 // After the request is sent, the same panel is a status tracker (UXF-08): waiting for the reviewer,
 // approved (production moves from one button here), then checking that apps updated. The server
 // decides every step; this panel only reads the request and, once it is approved, sends the same
@@ -425,8 +429,8 @@ function RollbackTracker({ candidate, submitted, read, link, evidenceItems, onRe
   });
   return (
     <Stack spacing={1.5}>
-      {progress.phase === 'waiting' && <Alert severity="success" role="status">{`Rollback to v${candidate.number} requested from ${submitted.reviewer}. Production has not moved.`}</Alert>}
-      {progress.phase === 'approved' && <Alert severity="success" role="status">{`${submitted.reviewer} approved the rollback to v${candidate.number}. Production has not moved yet.`}</Alert>}
+      {progress.phase === 'waiting' && <Alert severity="success" role="status">{`Rollback to v${candidate.number} requested from ${submitted.reviewer || 'your reviewer'}. Production has not moved.`}</Alert>}
+      {progress.phase === 'approved' && <Alert severity="success" role="status">{`${submitted.reviewer || 'Your reviewer'} approved the rollback to v${candidate.number}. Production has not moved yet.`}</Alert>}
       {progress.phase === 'moved' && <Alert severity="success" role="status">{`Production moved to v${candidate.number}. Checking that apps updated is next.`}</Alert>}
       {progress.phase === 'closed' && <Alert severity="warning" role="status">{`${REQUEST_CLOSED_NOTE[status] ?? 'This request is closed.'} Production has not moved.`}</Alert>}
       {read.isError && <Alert severity="warning" role="status" action={<Button size="small" color="inherit" onClick={() => read.refetch?.()}>Check again</Button>}>Couldn&apos;t check the request status. Production has not moved.</Alert>}
@@ -437,7 +441,10 @@ function RollbackTracker({ candidate, submitted, read, link, evidenceItems, onRe
           <OperationFeedback error={execute.error} action="move production" onRefresh={onRefresh} onRetry={move} onReconcile={move} />
         </Stack>
       ) : (
-        <Typography variant="s3" color="text.secondary">Open the request to move production: it has changed since it was sent, or moving production needs someone else.</Typography>
+        <Typography variant="s3" color="text.secondary">{submitted.resumed && readIsCurrent(read.data)
+          // A current request found again after a reload was not checked in this page session: the request page confirms it first.
+          ? 'Open the request to move production. It shows the change for you to confirm before production moves.'
+          : 'Open the request to move production: it has changed since it was sent, or moving production needs someone else.'}</Typography>
       ))}
       <TechnicalDetails title="Attached test evidence"><EvidenceSummary items={evidenceItems} emptyText="No matching test evidence attached. Not tested is not a pass." /></TechnicalDetails>
       {link && (
@@ -490,6 +497,7 @@ function RollbackRequest({
   onSubmitted,
   acknowledgmentLabel,
   requestRead,
+  resumed,
 }) {
   const options = useReviewOptions('agent_context', contextId, candidate.id);
   // Reviewers come from the server's eligible recipients for this request (the same list the
@@ -540,15 +548,21 @@ function RollbackRequest({
   useEffect(() => {
     if (submit.data?.id) onSubmitted({ candidateId: candidate.id, from: production?.number, revision: releaseRevision, reviewer: reviewerName, requestId: submit.data.id, requestRevision: submit.data.revision, fingerprint: sentFingerprint });
   }, [submit.data?.id, submit.data?.revision, onSubmitted, candidate.id, production?.number, releaseRevision, reviewerName, sentFingerprint]);
-  const link = submit.data?.id
-    ? `${window.location.origin}${paths.dashboard.skills.contextReview(contextId)}?request=${submit.data.id}`
+  const trackedId = submit.data?.id ?? resumed?.requestId;
+  const link = trackedId
+    ? `${window.location.origin}${paths.dashboard.skills.contextReview(contextId)}?request=${trackedId}`
     : "";
-  if (submit.data) {
-    const submitted = { requestId: submit.data.id, requestRevision: submit.data.revision, fingerprint: sentFingerprint, reviewer: reviewerName };
+  // After sending, or when the server already has this person's rollback request (a reload, another
+  // tab), the panel is the tracker. A resumed request carries no fingerprint from this session.
+  if (submit.data || resumed) {
+    const submitted = submit.data
+      ? { requestId: submit.data.id, requestRevision: submit.data.revision, fingerprint: sentFingerprint, reviewer: reviewerName }
+      : resumed;
+    const sentEvidence = submit.data ? (originalPreview.current?.evidence ?? evidence) : (requestRead.data?.preview?.packet?.evidence ?? []);
     return (
       <Section title="Rollback request">
         <RollbackTracker candidate={candidate} submitted={submitted} read={requestRead} link={link} onRefresh={onRefresh}
-          evidenceItems={evidenceRows(originalPreview.current?.evidence ?? evidence)} />
+          evidenceItems={evidenceRows(sentEvidence)} />
       </Section>
     );
   }
@@ -605,6 +619,7 @@ RollbackRequest.propTypes = {
   onSubmitted: PropTypes.func.isRequired,
   acknowledgmentLabel: PropTypes.string.isRequired,
   requestRead: PropTypes.object.isRequired,
+  resumed: PropTypes.object,
 };
 
 function LocalRecovery({ contextId, contextName, candidate, canIssue }) {
@@ -783,13 +798,22 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   const [picked, setChosen] = useState(null);
   const [submitted, setSubmitted] = useState(null);
   const onSubmitted = useCallback((receipt) => setSubmitted(receipt), []);
-  // The server's own read of the request this session sent; it decides every step of the tracker.
-  const requestRead = useReleaseRequest(submitted?.requestId, contextId);
+  const data = query.data;
+  // UXF-08: the tracker comes from the server. This person's open rollback request for the release
+  // in production now is resumed after a reload, so the page never offers a second request beside it.
+  const openRequests = useOpenContextRequests(contextId, data?.canPromote !== false);
+  const resumed = useMemo(
+    () => (data && openRequests.data ? resumedRollback({ requests: openRequests.data, candidates: data.candidates, releaseRevision: data.releaseRevision }) : null),
+    [data, openRequests.data],
+  );
+  const tracked = submitted ?? resumed;
+  // The server's own read of the tracked request; it decides every step of the tracker.
+  const requestRead = useReleaseRequest(tracked?.requestId, contextId);
   const latestRead = useRef(requestRead);
   latestRead.current = requestRead;
   const requestStatus = requestRead.data?.request?.status;
   // A request read is heavier than the recovery facts, so it follows more slowly (and only while it can still change).
-  const watching = Boolean(submitted?.requestId) && !['released', 'changes_requested', 'superseded', 'cancelled'].includes(requestStatus);
+  const watching = Boolean(tracked?.requestId) && !['released', 'changes_requested', 'superseded', 'cancelled'].includes(requestStatus);
   useEffect(() => {
     if (!watching) return undefined;
     const timer = setInterval(() => {
@@ -803,7 +827,6 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   // fresh packet is one acknowledgement and one submit. Until one is picked, the person
   // who last moved production (or the only reviewer) is suggested.
   const [reviewerId, setReviewerId] = useState("");
-  const data = query.data;
   const liveProduction = data?.candidates.find((row) => row.isProduction);
   useEffect(() => {
     if (!liveProduction) return;
@@ -817,10 +840,12 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   );
   // The suggestion becomes the actual selection once, so it stays selected after production
   // moves to it (it is then the release whose locks and applications are recovered next).
+  // A resumed rollback request selects its own release; the choice waits until that lookup settles.
+  const lookingUp = openRequests.isLoading;
   useEffect(() => {
-    if (picked === null && (suggestion || liveProduction)) setChosen(suggestion?.candidateId ?? liveProduction.id);
-  }, [suggestion, picked, liveProduction]);
-  const chosen = picked ?? suggestion?.candidateId ?? liveProduction?.id ?? null;
+    if (picked === null && !lookingUp && (resumed || suggestion || liveProduction)) setChosen(resumed?.candidateId ?? suggestion?.candidateId ?? liveProduction.id);
+  }, [resumed, suggestion, picked, liveProduction, lookingUp]);
+  const chosen = picked ?? resumed?.candidateId ?? suggestion?.candidateId ?? liveProduction?.id ?? null;
   const chosenCandidate = data?.candidates.find((row) => row.id === chosen);
   const reviewerOptions = useReviewOptions('agent_context', contextId, chosenCandidate && !chosenCandidate.isProduction ? chosenCandidate.id : undefined);
   const suggestedReviewer = suggestReviewer({
@@ -861,7 +886,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
     );
   const candidate = data.candidates.find((row) => row.id === chosen);
   const production = data.candidates.find((row) => row.isProduction);
-  const awaiting = submitted?.candidateId === chosen && submitted?.revision === data.releaseRevision && !candidate?.isProduction;
+  const awaiting = tracked?.candidateId === chosen && tracked?.revision === data.releaseRevision && !candidate?.isProduction;
   const confirmed = data.cohort.filter((row) => row.observationsComplete === true && row.states.includes('matches_target') && row.loaded?.versionId === row.desired?.versionId && row.states.every((state) => ['matches_target', 'pinned_as_intended'].includes(state))).length;
   const from = previousProduction.current?.id !== production?.id ? previousProduction.current?.number : movedFrom.current;
   // -1 until a request is sent, then the tracker's step (UXF-08): waiting, approved, check apps.
@@ -873,7 +898,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
   // An initial release is not a recovery task. Link to delivery facts, but do not
   // invite an impossible rollback or expose a replacement credential form.
   const initial = initialReleaseState(data.candidates, data.releaseRevision);
-  if (initial && !from && !submitted) return <EmptyState title="Nothing to roll back to yet"
+  if (initial && !from && !tracked) return <EmptyState title="Nothing to roll back to yet"
     description={<>{`v${initial.production.number} is the only released version, so there's nothing to roll back to yet.`}{initial.next && <Typography component="span" variant="s1" sx={{ display: 'block', mt: 1 }}>{`To change production, send a release request for v${initial.next.number}.`}</Typography>}</>}
     // The header carries "Request release for vN" for a newer release, so the body does not repeat it.
     action={initial.next ? undefined : <Button variant="outlined" href="?tab=consumers">{OPEN_CONNECTED_APPS}</Button>} />;
@@ -883,7 +908,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
         {/* UXF-08: one title names the target; the target is preselected, so the question is not asked again. */}
         {!candidate?.isProduction && <Typography component="h2" variant="m1" sx={{ overflowWrap: 'anywhere' }}>{candidate ? `Roll back ${contextName} to v${candidate.number}` : `Roll back ${contextName}`}</Typography>}
         {!awaiting && <Typography variant="m3" role="status">{candidate?.isProduction ? `${from ? `Production moved from v${from} to v${candidate.number}` : `Production is v${candidate.number}`} · ${confirmed} of ${data.cohort.length} ${data.cohort.length === 1 ? 'app' : 'apps'} confirmed` : `Production is ${production ? `v${production.number}` : 'not set'}.${candidate ? '' : ' Choose an eligible version to request a rollback.'}`}</Typography>}
-        {step >= 0 && <RecoverySteps step={step} names={trackerSteps(submitted?.reviewer, step)} />}
+        {step >= 0 && <RecoverySteps step={step} names={trackerSteps(tracked?.reviewer, step)} />}
       </Stack>
       {data.canPromote === false && <RollbackDenied contextName={contextName} version={candidate && !candidate.isProduction ? candidate.number : undefined} />}
       {query.isFetching && <StatusBadge status="checking" label="Updating…" sx={{ alignSelf: 'flex-start' }} />}
@@ -904,7 +929,9 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           </Stack>
         </TechnicalDetails>
       </Stack>}
-      {candidate && !candidate.isProduction && (
+      {candidate && !candidate.isProduction && !submitted && lookingUp && <Section title="Ask for approval"><ContentSkeleton variant="rows" rows={3} label="Checking for an open rollback request" sx={{ '& .MuiSkeleton-root': { bgcolor: 'action.selected' } }} /></Section>}
+      {candidate && !candidate.isProduction && !submitted && !lookingUp && openRequests.isError && <ErrorState title="Couldn't check for an open rollback request" detail="Nothing was sent. Check again before requesting a rollback." onRetry={() => openRequests.refetch()} />}
+      {candidate && !candidate.isProduction && (submitted || (!lookingUp && !openRequests.isError)) && (
         <RollbackRequest
           // A moved release revision makes an earlier packet stale: start a fresh review.
           key={`${candidate.id}:${data.releaseRevision}`}
@@ -920,6 +947,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           onRefresh={() => refreshFacts()}
           acknowledgmentLabel={acknowledgmentLabel}
           requestRead={requestRead}
+          resumed={awaiting && !submitted ? resumed : null}
         />
       )}
       </Box>}
@@ -928,7 +956,7 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
           but defer the delivery warning and local tasks until verification is active. */}
       {(phase === 'moved' || data.cohort.some((row) => row.latestFailure)) && <Cohort cohort={data.cohort} numbers={numbers} asOf={data.asOf} active={phase === 'moved'} />}
       {candidate && (candidate.isProduction ? <LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /> : <TechnicalDetails title="Prepare recovery on your machine"><LocalRecovery key={`local-${candidate.id}`} contextId={contextId} contextName={contextName} candidate={candidate} canIssue={data.canIssueCredentials} /></TechnicalDetails>)}
-      <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} onClick={() => { refreshFacts(); if (submitted?.requestId) requestRead.refetch?.(); }}>
+      <Button variant="outlined" sx={{ alignSelf: 'flex-start' }} onClick={() => { refreshFacts(); openRequests.refetch?.(); if (tracked?.requestId) requestRead.refetch?.(); }}>
         Check again
       </Button>
     </Stack>

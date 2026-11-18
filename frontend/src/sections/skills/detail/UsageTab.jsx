@@ -3,6 +3,7 @@ import { useState } from "react";
 import ReactApexChart from "react-apexcharts";
 import {
   Box,
+  Button,
   MenuItem,
   Stack,
   Tab,
@@ -35,6 +36,7 @@ import { buildUsageChart } from "./usageChart";
 // Fetch channels, as people read them. SDK fetches (SKILL-TRACES §6.7) also
 // name the SDK version that fetched, when the server reports it.
 const CHANNEL_LABELS = { api: "API", mcp: "MCP", download: "Download", sdk: "SDK" };
+// eslint-disable-next-line react-refresh/only-export-components -- tested on its own.
 export const channelLabel = (item) => {
   const name = CHANNEL_LABELS[item?.channel] || item?.channel || "Unknown";
   const raw = item?.sdkVersion ?? item?.sdk_version;
@@ -51,25 +53,27 @@ const SUBJECT = {
 
 /**
  * The one fetch read for this tab. Per SKILLS-API-REVIEW, skills and agent
- * contexts are meant to share one usage route rather than gain a context-only
- * one, so a context's Activity tab sends its id to the same read. Until the
- * server's usage view accepts context ids (SKILL-TRACES [V17], open after ST7),
- * that read fails and the tab shows its error state. The server authorizes it.
+ * contexts share one usage route rather than gaining a context-only one: a
+ * context's Activity tab sends its id with kind "agent_context" (SKILL-TRACES
+ * [V17]). The server authorizes the read and resolves the id as that kind only.
  */
-export function useFetchUsage(id, days) {
-  return useSkillUsage(id, days);
+// eslint-disable-next-line react-refresh/only-export-components -- the tab's one read, shared with tests.
+export function useFetchUsage(id, days, kind = "skill") {
+  return useSkillUsage(id, days, kind);
 }
 
-export default function UsageTab({ skill, kind = "skill" }) {
+export default function UsageTab({ skill, kind = "skill", onInstall }) {
   const theme = useTheme();
   const preview = usePreviewState();
   const [days, setDays] = useState(30);
   const [view, setView] = useState("chart");
-  const query = useFetchUsage(skill.id, days);
+  const query = useFetchUsage(skill.id, days, kind);
   const usage = query.data;
   const subject = SUBJECT[kind] || SUBJECT.skill;
   const isContext = kind === "agent_context";
   const empty = preview === "empty" || usage?.total === 0;
+  // First day: the server says nothing has ever fetched it (all time, not this window).
+  const neverFetched = !preview && usage?.total === 0 && usage?.firstFetchedOn === null;
   const chart = buildUsageChart(
     usage?.byDay || [],
     skill.latestVersion || 0,
@@ -141,7 +145,7 @@ export default function UsageTab({ skill, kind = "skill" }) {
   // One open state for both renderings of "About this data": the standalone one shown while usage loads
   // and the adoption panel's, so a disclosure the reader opened stays open when the data arrives.
   const [aboutOpen, setAboutOpen] = useState(false);
-  const usageShown = !(preview === "loading" || query.isPending || preview === "error" || query.isError || empty) && Boolean(usage);
+  const usageShown = !(preview === "loading" || query.isPending || preview === "error" || query.isError || empty || neverFetched) && Boolean(usage);
   // The populated view. A skill shows it inside its fetch adoption panel; an agent
   // context has no label-move adoption (its releases are reviewed requests, and its
   // runtime view is the Runtime tab), so it shows the same parts on their own.
@@ -289,6 +293,12 @@ export default function UsageTab({ skill, kind = "skill" }) {
           detail={subject.unchanged}
           onRetry={query.refetch}
         />
+      ) : neverFetched ? (
+        <EmptyState
+          title={`Nobody has fetched this ${subject.noun} yet`}
+          description={`Fetches appear when someone resolves, downloads or reads this ${subject.noun} through the API, the SDK or MCP. Install it in an agent to see the first one here.`}
+          action={onInstall ? <Button variant="outlined" size="small" onClick={onInstall}>Install</Button> : undefined}
+        />
       ) : empty ? (
         <EmptyState
           title="No fetches in this period"
@@ -306,4 +316,5 @@ export default function UsageTab({ skill, kind = "skill" }) {
 UsageTab.propTypes = {
   skill: PropTypes.shape({ id: PropTypes.string.isRequired, name: PropTypes.string, latestVersion: PropTypes.number }).isRequired,
   kind: PropTypes.oneOf(["skill", "agent_context"]),
+  onInstall: PropTypes.func,
 };

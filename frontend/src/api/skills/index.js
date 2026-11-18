@@ -115,8 +115,11 @@ export function useSkillDraft(id) {
     },
   });
 }
-export function useSkillUsage(id, days) {
-  return useSkillsQuery(skillsKeys.usage(id, days), () => endpoints.usage(id), mapUsage, { days }, Boolean(id));
+// Fetch counts for a skill or an agent context. Both kinds share one usage route
+// (SKILLS-API-REVIEW: shared projections, not a route per screen); a context names
+// its kind, and the server resolves it only as a context in the caller's workspace.
+export function useSkillUsage(id, days, kind = 'skill') {
+  return useSkillsQuery(skillsKeys.usage(id, days, kind), () => endpoints.usage(id), mapUsage, kind === 'skill' ? { days } : { days, kind }, Boolean(id));
 }
 
 // Invalidate only this principal's affected feature resources. Published file

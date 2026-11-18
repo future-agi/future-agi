@@ -165,3 +165,41 @@ def test_policy_change_serializer_shape(actors, hub_skill, candidate):
     assert data[0]["before"] == [] and data[0]["after"] == ["production"]
     assert isinstance(data[0]["changed_at"], str)
     assert data[1]["changed_at"] is None and data[1]["changed_by"] is None
+
+
+def test_renewal_route_returns_policy_changes(
+    actors, hub_skill, candidate, organization, workspace
+):
+    """The mounted route carries the rule values, not just the service result."""
+    from uuid import uuid4
+
+    from rest_framework.test import APIClient
+
+    from accounts.models import OrgApiKey
+
+    author, reviewer = actors
+    request = _approved(actors, hub_skill, candidate[1])
+    hub_skill.refresh_from_db()
+    set_label_protection(
+        principal=reviewer,
+        skill_id=hub_skill.pk,
+        protected_label_names=["staging", "production"],
+        expected_release_revision=hub_skill.release_revision,
+    )
+    key = OrgApiKey.objects.create(
+        name="Synthetic reviewer",
+        type="user",
+        user_id=reviewer.user_id,
+        api_key=f"test-{uuid4()}",
+        secret_key=f"test-{uuid4()}",
+        organization=organization,
+        workspace=workspace,
+    )
+    client = APIClient()
+    client.credentials(HTTP_X_API_KEY=key.api_key, HTTP_X_SECRET_KEY=key.secret_key)
+    response = client.get(f"/model-hub/skills/release-requests/{request['id']}/renewal/")
+    assert response.status_code == 200, response.data
+    rows = response.data["result"]["policy_changes"]
+    assert [row["field"] for row in rows] == ["protected_labels"]
+    assert rows[0]["after"] == ["production", "staging"]
+    assert rows[0]["changed_by"] and rows[0]["changed_at"]

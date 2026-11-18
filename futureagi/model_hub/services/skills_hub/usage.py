@@ -8,7 +8,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
-from django.db.models import F, Max, OuterRef, Q, Subquery, Sum
+from django.db.models import F, Max, Min, OuterRef, Q, Subquery, Sum
 from django.db.models.functions import Greatest
 from django.utils import timezone
 from packaging.version import InvalidVersion, Version
@@ -274,6 +274,7 @@ def usage_summary(skill: HubSkill, days: int) -> dict:
     consumers = _consumer_rows(rows)
     for row in consumers:
         row.pop("skill_id")
+    first = skill.usage_days.aggregate(first=Min("day"))["first"]
     return {
         "days": days,
         "total": totals["total"] or 0,
@@ -282,6 +283,7 @@ def usage_summary(skill: HubSkill, days: int) -> dict:
         "by_version": by_version,
         "consumers": consumers,
         "last_fetched_at": totals["last_fetched_at"],
+        "first_fetched_on": first,
     }
 
 

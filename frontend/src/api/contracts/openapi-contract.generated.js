@@ -35579,6 +35579,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
               default: 7,
             },
           },
+          kind: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["skill", "agent_context"],
+              default: "skill",
+            },
+          },
         },
         responses: {
           200: {
@@ -133640,6 +133648,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "previous_fingerprint",
         "changes",
         "removed_evidence",
+        "policy_changes",
       ],
       type: "object",
       properties: {
@@ -133688,6 +133697,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/SkillsContextRemovedEvidence",
+          },
+        },
+        policy_changes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SkillsContextPolicyChange",
           },
         },
       },
@@ -135541,6 +135556,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "by_version",
         "consumers",
         "last_fetched_at",
+        "first_fetched_on",
       ],
       type: "object",
       properties: {
@@ -135577,6 +135593,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Last fetched at",
           type: "string",
           format: "date-time",
+          "x-nullable": true,
+        },
+        first_fetched_on: {
+          title: "First fetched on",
+          type: "string",
+          format: "date",
           "x-nullable": true,
         },
       },
@@ -153224,6 +153246,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SkillsContextPolicyChange: {
+      required: ["field", "before", "after", "changed_by", "changed_at"],
+      type: "object",
+      properties: {
+        field: {
+          title: "Field",
+          type: "string",
+          enum: [
+            "protected_labels",
+            "quarantine",
+            "release_rules",
+            "security_rules",
+          ],
+        },
+        before: {
+          title: "Before",
+          type: "object",
+          "x-nullable": true,
+        },
+        after: {
+          title: "After",
+          type: "object",
+          "x-nullable": true,
+        },
+        changed_by: {
+          title: "Changed by",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        changed_at: {
+          title: "Changed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
     SkillsContextRemovedEvidence: {
       required: ["source_id", "reason", "source"],
       type: "object",
@@ -154019,6 +154079,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Mcp",
           type: "integer",
         },
+        sdk: {
+          title: "Sdk",
+          type: "integer",
+        },
       },
     },
     SkillsHubConsumer: {
@@ -154032,7 +154096,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         channel: {
           title: "Channel",
           type: "string",
-          enum: ["api", "download", "mcp"],
+          enum: ["api", "download", "mcp", "sdk"],
         },
         count: {
           title: "Count",
@@ -154042,6 +154106,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Last at",
           type: "string",
           format: "date-time",
+        },
+        sdk_version: {
+          title: "Sdk version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        tracing_mode: {
+          title: "Tracing mode",
+          type: "string",
+          enum: ["on", "load_only", "off", "no_otel"],
+          "x-nullable": true,
+        },
+        can_record: {
+          title: "Can record",
+          type: "boolean",
         },
       },
     },

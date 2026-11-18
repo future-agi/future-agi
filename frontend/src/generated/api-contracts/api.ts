@@ -73949,6 +73949,12 @@ export const getModelHubSkillsUsageListUrl = (
     : `/model-hub/skills/${skillId}/usage/`;
 };
 
+/**
+ * A fetch is a read of the resource, never proof that an agent used it.
+The skill path keeps its selector and error contract; a context is
+resolved by its explicit kind in the caller's workspace scope.
+ * @summary Fetch counts for a skill, or for an agent context with kind=agent_context.
+ */
 export const modelHubSkillsUsageList = async (
   skillId: string,
   params?: ModelHubSkillsUsageListParams,

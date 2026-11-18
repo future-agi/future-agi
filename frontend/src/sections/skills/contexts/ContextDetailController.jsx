@@ -102,7 +102,7 @@ function Detail() {
   // the existing Rollback tab, which keeps the reviewed rollback request; nothing moves here.
   const tracesSections = traces && contextName ? {
     runtime: <ContextRuntimeView context={{ id: contextId, name: contextName }} versionId={selectedVersion?.id} onRollback={() => openTab('recovery')} onCheckTracing={() => openTab('use')} />,
-    usage: <Suspense fallback={<ContentSkeleton variant="panel" label="Loading usage" />}><UsageTab kind="agent_context" skill={{ id: contextId, name: contextName, latestVersion: query.data?.context?.latestVersion ?? undefined }} /></Suspense>,
+    usage: <Suspense fallback={<ContentSkeleton variant="panel" label="Loading usage" />}><UsageTab kind="agent_context" skill={{ id: contextId, name: contextName, latestVersion: query.data?.context?.latestVersion ?? undefined }} onInstall={() => openTab('use')} /></Suspense>,
   } : {};
   return <Stack spacing={1.5} sx={{ p: { xs: 2, md: 3 }, minWidth: 0 }}>
     {requested !== null && number === null && <Alert severity="error">Choose a positive, explicit release number. No latest-version substitution was made.</Alert>}

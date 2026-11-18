@@ -295,6 +295,9 @@ class RenewalPreview(Packet):
     previous_fingerprint = ctx.Digest()
     changes = RenewalChange(many=True)
     removed_evidence = RemovedEvidence(many=True)
+    # The rule values behind a changed rule counter (UXF-10). Rows whose values
+    # weren't recorded at approval carry nulls; nothing is inferred.
+    policy_changes = r3.PolicyChange(many=True)
 
 
 class Renew(Revision):

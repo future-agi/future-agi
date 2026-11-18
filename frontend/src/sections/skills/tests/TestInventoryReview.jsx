@@ -18,6 +18,8 @@ import TechnicalDetails from '../components/TechnicalDetails';
 import IdentityChip from "../components/IdentityChip";
 import ActionReason from "../components/ActionReason";
 import InventoryFileDrawer from "./InventoryFileDrawer";
+import { RowActionsCell } from "../components/RowActions";
+import { rowLinkProps, stackedTableSx } from "../components/responsiveTable";
 
 const fileKey = (skillId, file) => `${skillId}:${file.path}:${file.sha256}`;
 // The server accepts exactly these five fields (v11/inventory.py), so nothing else is added here.
@@ -28,6 +30,13 @@ const freshReview = (fingerprint) => ({
   classifications: [],
   falsePositiveSecretFindings: [],
 });
+
+/** A file's flags as a card reads them without a column header: "No flags" or "Flagged: answer key". */
+// eslint-disable-next-line react-refresh/only-export-components -- tested on its own.
+export const flagText = (flags = []) => (flags.length ? `Flagged: ${flags.map((flag) => flag.replaceAll('_', ' ')).join(', ')}` : 'No flags');
+/** "512 bytes", "1.4 KB". */
+// eslint-disable-next-line react-refresh/only-export-components -- tested on its own.
+export const formatBytes = (bytes) => (bytes < 1024 ? `${bytes} ${bytes === 1 ? 'byte' : 'bytes'}` : `${(bytes / 1024).toFixed(1)} KB`);
 
 const PROVIDERS = { openai: "OpenAI", anthropic: "Anthropic", google: "Google", azure: "Azure", bedrock: "Amazon Bedrock", mistral: "Mistral" };
 /** A provider id as people read it ("openai" → "OpenAI"). */
@@ -193,15 +202,22 @@ export default function TestInventoryReview({
         <Stack spacing={1.5}>
           <Typography variant="s1">{files.length} files · {flaggedCount} flagged · {bytes < 1024 ? `${bytes} bytes` : `${(bytes / 1024).toFixed(1)} KB`}</Typography>
           <TechnicalDetails title="View all files sent to the model" defaultOpen>
-          <TableContainer><Table size="small" aria-label="Model-visible inventory">
-            <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>File</TableCell><TableCell>Source/version</TableCell><TableCell>Flags</TableCell><TableCell>Size</TableCell><TableCell /></TableRow></TableHead>
-            <TableBody>{preview.inventory.flatMap((bundle, index) => bundle.files.map((file) => <TableRow key={`${index}:${file.path}`} hover sx={{ height: ROW_HEIGHT.default }}>
-              <TableCell sx={{ overflowWrap: 'anywhere' }}><Typography variant="s1">{file.path}</Typography></TableCell>
-              <TableCell><Typography variant="s1">{sourceLabel(bundle)}</Typography><TechnicalDetails title="Source details"><IdentityChip value={bundle.skillId} label="Source" kind="id" /><IdentityChip value={bundle.digest} label="Version" /></TechnicalDetails></TableCell>
-              <TableCell><Typography variant="s3">{file.flags.length ? file.flags.map((flag) => flag.replaceAll('_', ' ')).join(', ') : 'None'}</Typography></TableCell>
-              <TableCell><Typography variant="s3">{file.sizeBytes} bytes</Typography></TableCell>
-              <TableCell><Button size="small" variant="text" color="inherit" aria-label={`View ${file.path}`} onClick={() => setInspected({ bundle, file, fingerprint: preview.fingerprint })}>View</Button></TableCell>
-            </TableRow>))}</TableBody>
+          {/* UXF-03/UXF-12: the shared stacked-table pattern. Below sm each file is one tappable card
+              (path, then source · flags · size); the whole row opens the file, as View does. */}
+          <TableContainer><Table size="small" aria-label="Model-visible inventory" sx={stackedTableSx}>
+            <TableHead><TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}><TableCell>File</TableCell><TableCell>Source/version</TableCell><TableCell>Flags</TableCell><TableCell>Size</TableCell><TableCell aria-label="Actions" /></TableRow></TableHead>
+            <TableBody>{preview.inventory.flatMap((bundle, index) => bundle.files.map((file) => {
+              const primary = { label: 'View file', onClick: () => setInspected({ bundle, file, fingerprint: preview.fingerprint }) };
+              const link = rowLinkProps(primary);
+              return <TableRow key={`${index}:${file.path}`} {...link} aria-label={`View ${file.path}`} sx={[...(link.sx ? [link.sx] : []), { height: ROW_HEIGHT.default }]}>
+              <TableCell sx={{ overflowWrap: 'anywhere' }}><Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{file.path}</Typography></TableCell>
+              <TableCell><Typography variant="s1" component="span" sx={{ typography: { xs: 's3', sm: 's1' } }}>{sourceLabel(bundle)}</Typography><TechnicalDetails title="Source details"><IdentityChip value={bundle.skillId} label="Source" kind="id" /><IdentityChip value={bundle.digest} label="Version" /></TechnicalDetails></TableCell>
+              {/* Self-describing: in the stacked card the column headers are hidden. */}
+              <TableCell sx={{ whiteSpace: { sm: 'nowrap' } }}><Typography variant="s3" component="span">{flagText(file.flags)}</Typography></TableCell>
+              <TableCell sx={{ whiteSpace: 'nowrap' }}><Typography variant="s3" component="span">{formatBytes(file.sizeBytes)}</Typography></TableCell>
+              <RowActionsCell name={file.path} primary={primary} />
+            </TableRow>;
+            }))}</TableBody>
           </Table></TableContainer>
           </TechnicalDetails>
           {inspected && inspected.fingerprint === preview.fingerprint && <InventoryFileDrawer key={`${preview.fingerprint}:${inspected.file.path}:${inspected.file.sha256}`} subjectKind={subjectKind} subjectId={subjectId} candidate={[preview.candidate, preview.production, preview.reference, ...(preview.competitors || [])].find((item) => item?.digest === inspected.bundle.digest && (item.skillId ?? item.skill_id) === inspected.bundle.skillId)} bundle={inspected.bundle} file={inspected.file} onClose={() => setInspected(null)} />}

@@ -9,6 +9,7 @@ import { useSkillTestingOptions } from "src/api/skills/testing";
 import { skillFilesDigest, skillManifestDigest } from 'src/api/skills/digest';
 import ActionReason from "../components/ActionReason";
 import ReleaseRuleNote from "../components/ReleaseRuleNote";
+import { labelEffect } from "../utils/terms";
 import LabelProtectionDialog from "../governance/LabelProtectionDialog";
 import TestEvidence from '../tests/TestEvidence';
 import AssistPanel from '../assist/AssistPanel';
@@ -242,7 +243,9 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
           {checks && <ChecksList checks={checks} />}
           {checks?.summary.errors > 0 && <Alert severity="error">Fix the errors in the editor before publishing.</Alert>}
         </ReviewSection>
-        <TestEvidence skillId={skill.id} candidate={{ kind: 'draft', revision: draft.revision, ...(digest ? { digest } : {}) }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} recordedWith="It is saved with the new version when you publish." />
+        {/* UXF-11: one summary line; counts, model and limits sit under Technical details, so the
+            release labels and their rule are in view without scrolling past evidence counts. */}
+        <TestEvidence variant="summary" skillId={skill.id} candidate={{ kind: 'draft', revision: draft.revision, ...(digest ? { digest } : {}) }} onSelectRun={setEvidenceRunId} selectedRunId={evidenceRunId} recordedWith="It is saved with the new version when you publish." />
         {/* With AI drafting off for the workspace nothing about it is shown; a missing permission keeps the disabled button and its reason. */}
         {options.data?.assistEnabled && <>
           <ActionReason id="publish-action-reason-1" reason={noFileChanges ? "Make a change to summarise" : !skill.permissions?.canRunTests ? "You need test permissions to use AI assistance." : ""} />
@@ -250,16 +253,24 @@ function PublishReview({ onClose, onDraftChange, skill, draft: initialDraft }) {
         </>}
         {summaryOpen && !noFileChanges && <AssistPanel skill={skill} draft={draft} kind="summary" isDirty={Boolean(currentDraft.data && currentDraft.data.revision !== draft.revision)} onUseSummary={(summary) => setNote(summary)} />}
         <ReviewSection title="Release labels (optional)" description="Apps that follow a selected label get this version the next time they fetch it. Pinned versions do not change.">
-          <Stack>
+          {/* UXF-09: the rule is read before any choice is ticked, not after. */}
+          {protectedLabels && <ReleaseRuleNote rules={{ protectedLabels }} canChangeRules={ruleSource.permissions?.canManageLabelProtection === true} onChangeRules={() => setRulesOpen(true)} sx={{ mb: 1 }} />}
+          <Stack spacing={0.5}>
             {["staging", "production"].map((label) => (
-              <FormControlLabel key={label} label={label} control={(
-                <Checkbox disabled={(label === "production" && credentialWarning && !labels.includes(label)) || (!canMove(label) && !labels.includes(label))} checked={labels.includes(label)} onChange={(_, checked) => setLabels((current) => checked ? [...current, label] : current.filter((value) => value !== label))} />
-              )} />
+              <Box key={label}>
+                <FormControlLabel label={label} sx={{ mb: 0 }} control={(
+                  <Checkbox disabled={(label === "production" && credentialWarning && !labels.includes(label)) || (!canMove(label) && !labels.includes(label))} checked={labels.includes(label)} onChange={(_, checked) => setLabels((current) => checked ? [...current, label] : current.filter((value) => value !== label))}
+                    inputProps={{ 'aria-describedby': `publish-label-effect-${label}` }} />
+                )} />
+                {/* What this choice does, shown before it is ticked (UXF-11). */}
+                <Typography id={`publish-label-effect-${label}`} variant="s3" color="text.secondary" component="p" data-testid={`label-effect-${label}`} sx={{ m: 0, pl: 4 }}>
+                  {labelEffect({ label, current: release.labels?.find((item) => item.name === label)?.version, target: versionText, protectedLabels })}
+                </Typography>
+              </Box>
             ))}
           </Stack>
           {credentialWarning && <Typography variant="s3" color="text.secondary">Production can&apos;t be set while a possible credential warning is open.</Typography>}
           {['staging', 'production'].filter((name) => !canMove(name)).map((name) => <Typography key={name} variant="s3" color="text.secondary">You can publish a version. A workspace admin or organization admin must move {name}.</Typography>)}
-          {protectedLabels && <ReleaseRuleNote rules={{ protectedLabels }} canChangeRules={ruleSource.permissions?.canManageLabelProtection === true} onChangeRules={() => setRulesOpen(true)} sx={{ mt: 1 }} />}
         </ReviewSection>
         <TextField label="Version note" value={note} onChange={(event) => setNote(event.target.value)} multiline minRows={2} inputProps={{ maxLength: 2000 }} helperText={`${note.length}/2,000 characters`} fullWidth />
       </Stack>

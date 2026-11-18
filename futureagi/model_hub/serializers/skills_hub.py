@@ -225,6 +225,9 @@ class HistoryQuery(PageQuery):
 
 class UsageQuery(HubSerializer):
     days = s.ChoiceField(choices=[7, 30, 90], default=7)
+    # One fetch read for both resource kinds (SKILL-TRACES §7.4, §16 UXF-07):
+    # an agent context names its kind here instead of gaining its own route.
+    kind = s.ChoiceField(choices=["skill", "agent_context"], default="skill")
 
 
 class UploadFilesField(s.FileField):
@@ -798,6 +801,8 @@ class Usage(HubSerializer):
     by_version = UsageVersion(many=True)
     consumers = Consumer(many=True)
     last_fetched_at = s.DateTimeField(allow_null=True)
+    # All time, not the window: tells "never fetched" from "none in this period".
+    first_fetched_on = s.DateField(allow_null=True)
 
 
 class TemplateFile(HubSerializer):

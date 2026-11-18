@@ -27,6 +27,12 @@ describe('skills wire mappers', () => {
   it('maps label history and usage timestamps', () => {
     expect(mapLabelEvent({ label: 'production', from_version: 1, to_version: null, actor: { ...actor, kind: 'api_key' } })).toMatchObject({ fromVersion: 1, toVersion: null, actor: { kind: 'api_key' } });
     expect(mapUsage({ by_version: [{ version: 1, count: 2, last_at: 'today' }], consumers: [{ label: 'CI', last_at: 'today' }], last_fetched_at: 'today' })).toMatchObject({ byVersion: [{ lastAt: 'today' }], consumers: [{ lastAt: 'today' }], lastFetchedAt: 'today' });
+    // UXF-07: the SDK version that fetched, and the all-time first fetch (null: never fetched).
+    const usage = mapUsage({ consumers: [{ label: '', channel: 'sdk', sdk_version: '0.8.0' }], first_fetched_on: null });
+    expect(usage.consumers[0].sdkVersion).toBe('0.8.0');
+    expect(usage.firstFetchedOn).toBeNull();
+    expect(mapUsage({ first_fetched_on: '2026-11-17' }).firstFetchedOn).toBe('2026-11-17');
+    expect(mapUsage({}).firstFetchedOn).toBeUndefined();
   });
   it('maps import and publish results', () => {
     expect(mapImportPreview({ bundles: [{ key: 'one', file_count: 2, total_bytes: 123, skill_id: 'id', latest_version: 1 }] }).bundles[0]).toMatchObject({ fileCount: 2, totalBytes: 123, skillId: 'id', latestVersion: 1 });
