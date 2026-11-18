@@ -63,6 +63,29 @@ function openHistory() {
 }
 
 describe("execution history", () => {
+  it("follows new arrivals until the user clicks a run, even the current newest", async () => {
+    const history = openHistory();
+    try {
+      await screen.findByText("a-latest");
+      history.pages.a[0] = page([row("a-next", "running"), row("a-latest")]);
+      await act(() => history.client.invalidateQueries({ queryKey: key("a") }));
+      const next = await screen.findByText("Running");
+      expect(screen.getByRole("status")).toHaveTextContent("a-next");
+
+      fireEvent.click(next);
+      history.pages.a[0] = page([
+        row("a-new", "pending"),
+        row("a-next", "running"),
+        row("a-latest"),
+      ]);
+      await act(() => history.client.invalidateQueries({ queryKey: key("a") }));
+      await screen.findByText("Pending");
+      expect(screen.getByRole("status")).toHaveTextContent("a-next");
+    } finally {
+      history.close();
+    }
+  });
+
   it("keeps a run selected from page two when a refetch prepends a newer run", async () => {
     const history = openHistory();
     try {

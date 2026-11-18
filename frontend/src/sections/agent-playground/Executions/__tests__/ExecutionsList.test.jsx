@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import ExecutionsList from "../ExecutionsList";
 
@@ -38,36 +38,14 @@ const renderExecutionsList = (props) =>
   );
 
 describe("ExecutionsList selection", () => {
-  it("auto-selects the newest execution on first open", () => {
+  it("reports an explicit selection only when a row is clicked", () => {
     const onExecutionChange = vi.fn();
-    const { rerender } = renderExecutionsList({
-      onExecutionChange,
-    });
+    const { getByText } = renderExecutionsList({ onExecutionChange });
 
+    expect(onExecutionChange).not.toHaveBeenCalled();
+    fireEvent.click(getByText("Success"));
     expect(onExecutionChange).toHaveBeenCalledOnce();
     expect(onExecutionChange).toHaveBeenCalledWith("execution-newest");
-
-    rerender(
-      <ThemeProvider theme={theme}>
-        <ExecutionsList
-          executions={[
-            {
-              id: "execution-newer",
-              status: "running",
-              startedAt: "2026-09-10T10:00:00.000Z",
-            },
-            ...executions,
-          ]}
-          selectedExecutionId="execution-newest"
-          onExecutionChange={onExecutionChange}
-          isFetchingNextPage={false}
-          fetchNextPage={vi.fn()}
-          hasNextPage={false}
-        />
-      </ThemeProvider>,
-    );
-
-    expect(onExecutionChange).toHaveBeenCalledOnce();
   });
 
   it("does not replace a user-selected older execution when the list refreshes", () => {

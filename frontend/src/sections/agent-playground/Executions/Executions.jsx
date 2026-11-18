@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
 import { Box, Divider, Stack, Typography } from "@mui/material";
 import { useParams } from "react-router-dom";
@@ -13,7 +13,7 @@ export default function Executions() {
 }
 
 function AgentExecutions({ agentId }) {
-  const [selectedExecutionId, setSelectedExecutionId] = useState(null);
+  const [chosenExecutionId, setChosenExecutionId] = useState(null);
 
   const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage } =
     useGetExecutions(agentId);
@@ -31,9 +31,7 @@ function AgentExecutions({ agentId }) {
     [data],
   );
 
-  const handleExecutionChange = useCallback((executionId) => {
-    setSelectedExecutionId(executionId);
-  }, []);
+  const selectedExecutionId = chosenExecutionId ?? executions[0]?.id;
 
   if (isLoading) {
     return (
@@ -86,7 +84,7 @@ function AgentExecutions({ agentId }) {
         <ExecutionsList
           executions={executions}
           selectedExecutionId={selectedExecutionId}
-          onExecutionChange={handleExecutionChange}
+          onExecutionChange={setChosenExecutionId}
           isFetchingNextPage={isFetchingNextPage}
           fetchNextPage={fetchNextPage}
           hasNextPage={hasNextPage}

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback } from "react";
 import { Box, Typography, Skeleton, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { format, isValid } from "date-fns";
@@ -40,14 +40,6 @@ const ExecutionsList = ({
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const scrollContainerRef = useScrollEnd(fetchNext, [fetchNext]);
-
-  // Auto-select top execution only on initial load when nothing is selected
-  const firstExecutionId = executions[0]?.id;
-  useEffect(() => {
-    if (!selectedExecutionId && firstExecutionId) {
-      onExecutionChange(firstExecutionId);
-    }
-  }, [firstExecutionId, selectedExecutionId, onExecutionChange]);
 
   return (
     <Box
