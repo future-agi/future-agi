@@ -420,7 +420,7 @@ def _label(
 def resolve(
     environment: Any,
     environment_version: Any,
-    by_key: Mapping[str, list[Mapping[str, Any]]],
+    by_key: Mapping[str, list[Any]],
     *,
     stored: Mapping[str, list[Mapping[str, Any]]] | None = None,
     proved: Mapping[str, list[Mapping[str, Any]]] | None = None,
