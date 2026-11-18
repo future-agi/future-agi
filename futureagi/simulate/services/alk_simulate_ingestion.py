@@ -1664,13 +1664,16 @@ def _store_alk_chat_messages(
             )
             row_offsets_ms.append(agent_segs[0].get("start_time_ms"))
 
-    timed = all(isinstance(ms, int) for ms in row_offsets_ms) and all(
-        later > earlier for earlier, later in pairwise(row_offsets_ms)
+    offsets_ms = [ms for ms in row_offsets_ms if isinstance(ms, int)]
+    timed = len(offsets_ms) == len(row_offsets_ms) and all(
+        later > earlier for earlier, later in pairwise(offsets_ms)
     )
-    transcript_times = [
-        base + (timedelta(milliseconds=ms) if timed else timedelta(seconds=index))
-        for index, ms in enumerate(row_offsets_ms)
-    ]
+    if timed:
+        transcript_times = [base + timedelta(milliseconds=ms) for ms in offsets_ms]
+    else:
+        transcript_times = [
+            base + timedelta(seconds=index) for index in range(len(row_offsets_ms))
+        ]
 
     if rows:
         # ``created_at`` is ``auto_now_add``, so bulk_create stamps every row
