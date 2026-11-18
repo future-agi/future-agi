@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { Box, Button, Collapse, Stack, Typography } from "@mui/material";
+import Iconify from "src/components/iconify";
 import { StatusDot } from "../components/primitives";
 import { clickable, focusRing } from "../components/clickable";
 import { CAPABILITIES, COMPAT_STATUS } from "../_mock/compatibility";
@@ -15,8 +16,7 @@ import {
 } from "../_mock/testedVersions";
 
 const MONO = "ui-monospace, Menlo, monospace";
-const COLS =
-  "minmax(170px, 1.2fr) minmax(150px, 1.1fr) 104px minmax(0, 1.6fr) 150px 120px";
+const COLS = "minmax(0, 1fr) 170px 14px";
 const capLabel = (id) =>
   QUAL_LABEL[id] || CAPABILITIES.find((c) => c.id === id)?.label || id;
 /* A family's qualification result, as its row shows it. */
@@ -42,14 +42,19 @@ const STATUS_KEY = {
   Partial: "partial",
   Untested: "untested",
 };
+/* Problems first: known gaps, then untested, then supported. */
+const STATUS_ORDER = { Partial: 0, Untested: 1, Supported: 2 };
 const when = (iso) =>
   new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-/* One family: its tested versions and limits; its diagnostic one click away. */
+/* One family on one line; what isn't covered and its checks open below it. */
 function FamilyRow({ row, mine, qual }) {
   const [open, setOpen] = useState(mine);
   const diag = diagnosticOf(row);
   const status = STATUS_KEY[row.status] || "untested";
+  const limits = row.limits !== "—" ? row.limits : "";
+  const checks = diag.id ? CAPABILITIES.filter((c) => diag.results[c.id]) : [];
+  const misses = checks.filter((c) => diag.results[c.id] !== "supported");
   return (
     <Box
       sx={{
@@ -58,109 +63,78 @@ function FamilyRow({ row, mine, qual }) {
       }}
     >
       <Box
+        {...clickable(() => setOpen((o) => !o), { expanded: open })}
         sx={{
+          ...focusRing,
           display: "grid",
           gridTemplateColumns: COLS,
           columnGap: 2,
           px: 1.5,
-          py: 0.875,
-          alignItems: "start",
+          py: 0.625,
+          alignItems: "center",
+          cursor: "pointer",
+          "&:hover": { bgcolor: "action.hover" },
         }}
       >
-        <Box minWidth={0}>
-          <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-            {row.family}
-            {mine && (
-              <Box
-                component="span"
-                sx={{ typography: "s3", color: "text.tertiary", ml: 0.75 }}
-              >
-                this agent
-              </Box>
-            )}
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {row.how}
-          </Typography>
-        </Box>
-        <Typography sx={{ typography: "s3", fontFamily: MONO, minWidth: 0 }}>
-          {row.versions}
+        <Typography noWrap sx={{ typography: "s2" }}>
+          {row.family}
+          {mine && (
+            <Box
+              component="span"
+              sx={{ typography: "s3", color: "text.tertiary", ml: 0.75 }}
+            >
+              this agent
+            </Box>
+          )}
         </Typography>
-        <Stack direction="row" alignItems="center" spacing={0.5}>
-          <StatusDot status={COMPAT_STATUS[status].dot} size={6} live={false} />
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {row.status}
+        <Stack direction="row" alignItems="center" spacing={0.75} minWidth={0}>
+          <StatusDot
+            status={
+              qual ? QUAL_SHOWN[qual.outcome].dot : COMPAT_STATUS[status].dot
+            }
+            size={6}
+            live={qual?.outcome === "running"}
+          />
+          <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
+            {qual ? QUAL_SHOWN[qual.outcome].text(qual) : row.status}
           </Typography>
         </Stack>
-        <Typography
-          sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}
-        >
-          {[
-            row.evidence !== "—" && row.evidence,
-            row.limits !== "—" && `Not covered: ${row.limits}`,
-          ]
-            .filter(Boolean)
-            .join(". ")}
-        </Typography>
-        {qual ? (
-          <Stack direction="row" alignItems="flex-start" spacing={0.5}>
-            <Box sx={{ pt: "5px", display: "flex" }}>
-              <StatusDot
-                status={QUAL_SHOWN[qual.outcome].dot}
-                size={6}
-                live={qual.outcome === "running"}
-              />
-            </Box>
-            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              {QUAL_SHOWN[qual.outcome].text(qual)}
-            </Typography>
-          </Stack>
-        ) : (
-          <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-            —
-          </Typography>
-        )}
-        {diag.id ? (
-          <Box
-            {...clickable(() => setOpen((o) => !o), { expanded: open })}
-            sx={{
-              ...focusRing,
-              cursor: "pointer",
-              typography: "s3",
-              fontFamily: MONO,
-              textAlign: "right",
-              "&:hover": { textDecoration: "underline" },
-            }}
-          >
-            {diag.id}
-          </Box>
-        ) : (
-          <Typography
-            sx={{
-              typography: "s3",
-              color: "text.disabled",
-              textAlign: "right",
-            }}
-          >
-            No diagnostic
-          </Typography>
-        )}
+        <Iconify
+          icon="solar:alt-arrow-down-linear"
+          width={14}
+          sx={{
+            color: "text.tertiary",
+            transform: open ? "rotate(180deg)" : "none",
+            transition: "transform .15s",
+          }}
+        />
       </Box>
-      <Collapse in={open && !!diag.id} unmountOnExit>
-        <Box sx={{ px: 1.5, pb: 1.25 }}>
+      <Collapse in={open} unmountOnExit>
+        <Stack spacing={0.5} sx={{ px: 1.5, pb: 1 }}>
           <Typography
-            sx={{ typography: "s3", color: "text.tertiary", mb: 0.5 }}
+            sx={{ typography: "s3", fontFamily: MONO, color: "text.secondary" }}
           >
-            {`Diagnostic ${diag.id} · ${diag.at ? when(diag.at) : ""} · our internal check for this family, on the returns world`}
+            {row.versions}
           </Typography>
+          {limits && (
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {`Not covered: ${limits}`}
+            </Typography>
+          )}
           <Stack
             direction="row"
             flexWrap="wrap"
             useFlexGap
-            columnGap={2}
+            columnGap={1.5}
             rowGap={0.5}
+            alignItems="center"
           >
-            {CAPABILITIES.filter((c) => diag.results[c.id]).map((c) => (
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              {checks.length
+                ? `${checks.length - misses.length} of ${checks.length} checks passed${diag.at ? ` · ${when(diag.at)}` : ""}`
+                : "Not checked yet"}
+            </Typography>
+            {misses.map((c) => (
               <Stack
                 key={c.id}
                 direction="row"
@@ -173,12 +147,12 @@ function FamilyRow({ row, mine, qual }) {
                   live={false}
                 />
                 <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                  {`${c.label} · ${COMPAT_STATUS[diag.results[c.id]].label.toLowerCase()}`}
+                  {c.label}
                 </Typography>
               </Stack>
             ))}
           </Stack>
-        </Box>
+        </Stack>
       </Collapse>
     </Box>
   );
@@ -222,6 +196,10 @@ export default function TestedVersionsMatrix({ highlight = null }) {
   const failedN = done.filter((q) => q.outcome === "failed").length;
   const notRunN = done.filter((q) => q.outcome === "not-run").length;
   const passedN = done.length - failedN - notRunN;
+  const counts = TESTED_VERSIONS.reduce(
+    (m, r) => ({ ...m, [r.status]: (m[r.status] || 0) + 1 }),
+    {},
+  );
   return (
     <Stack spacing={1}>
       <Stack direction="row" alignItems="center" spacing={1.5}>
@@ -229,8 +207,8 @@ export default function TestedVersionsMatrix({ highlight = null }) {
           {ranAt
             ? running
               ? `Qualifying ${TESTED_VERSIONS.length} families at once · ${done.length} done`
-              : `Qualified ${when(ranAt.toISOString())} · ${passedN} passed${failedN ? ` · ${failedN} failed, each on its own row` : ""}${notRunN ? ` · ${notRunN} not run` : ""}`
-            : `Every family runs the same ${QUAL_CHECKS.length} checks. A failure shows on its own row.`}
+              : `Checked ${when(ranAt.toISOString())} · ${passedN} passed${failedN ? ` · ${failedN} failed` : ""}${notRunN ? ` · ${notRunN} not run` : ""}`
+            : `${TESTED_VERSIONS.length} families · ${counts.Supported || 0} supported · ${counts.Partial || 0} partial · ${counts.Untested || 0} untested`}
         </Typography>
         <Button
           size="small"
@@ -239,7 +217,7 @@ export default function TestedVersionsMatrix({ highlight = null }) {
           onClick={runQualification}
           sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
         >
-          {ranAt ? "Run again" : "Run qualification"}
+          {ranAt ? "Run again" : "Run checks"}
         </Button>
       </Stack>
       <Box
@@ -250,7 +228,7 @@ export default function TestedVersionsMatrix({ highlight = null }) {
           overflowX: "auto",
         }}
       >
-        <Box sx={{ minWidth: 900 }}>
+        <Box>
           <Box
             sx={{
               display: "grid",
@@ -262,59 +240,33 @@ export default function TestedVersionsMatrix({ highlight = null }) {
               borderColor: "divider",
             }}
           >
-            {[
-              "Family",
-              "Tested versions",
-              "Status",
-              "Evidence",
-              "Qualification",
-              "Diagnostic",
-            ].map((h, i) => (
+            {["Family", ranAt ? "Last check" : "Status", ""].map((h) => (
               <Typography
                 key={h}
                 sx={{
                   typography: "s3",
                   color: "text.tertiary",
-                  textAlign: i === 5 ? "right" : "left",
                 }}
               >
                 {h}
               </Typography>
             ))}
           </Box>
-          {FAMILY_CATEGORIES.map((cat) => {
-            const rows = TESTED_VERSIONS.filter((r) => r.category === cat.id);
-            if (!rows.length) return null;
-            return (
-              <Box
-                key={cat.id}
-                sx={{
-                  "& + &": { borderTop: "1px solid", borderColor: "divider" },
-                }}
-              >
-                <Typography
-                  sx={{
-                    px: 1.5,
-                    pt: 1,
-                    pb: 0.25,
-                    typography: "s3",
-                    fontWeight: 600,
-                    color: "text.tertiary",
-                  }}
-                >
-                  {cat.label}
-                </Typography>
-                {rows.map((r) => (
-                  <FamilyRow
-                    key={r.family}
-                    row={r}
-                    mine={highlight === r.family}
-                    qual={qual[r.family]}
-                  />
-                ))}
-              </Box>
-            );
-          })}
+          {FAMILY_CATEGORIES.flatMap((cat) =>
+            TESTED_VERSIONS.filter((r) => r.category === cat.id),
+          )
+            .sort(
+              (a, b) =>
+                (STATUS_ORDER[a.status] ?? 3) - (STATUS_ORDER[b.status] ?? 3),
+            )
+            .map((r) => (
+              <FamilyRow
+                key={r.family}
+                row={r}
+                mine={highlight === r.family}
+                qual={qual[r.family]}
+              />
+            ))}
         </Box>
       </Box>
     </Stack>

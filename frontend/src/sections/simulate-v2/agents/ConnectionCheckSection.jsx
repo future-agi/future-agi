@@ -719,7 +719,7 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
       <Dialog
         open={versionsOpen}
         onClose={() => setVersionsOpen(false)}
-        maxWidth="md"
+        maxWidth="sm"
         fullWidth
       >
         <DialogTitle
@@ -743,10 +743,8 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
           <Typography
             sx={{ typography: "s3", color: "text.secondary", mb: 1.5 }}
           >
-            The agent families our connection paths were tested with, the
-            evidence, and what isn&apos;t covered. A family not listed, or
-            Untested, may still connect — we just haven&apos;t checked that path
-            ourselves.
+            Agent families we&apos;ve checked our connection against. One not
+            listed may still connect.
           </Typography>
           <TestedVersionsMatrix />
         </DialogContent>
