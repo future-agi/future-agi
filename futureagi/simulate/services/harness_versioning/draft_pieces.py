@@ -98,9 +98,9 @@ def piece_files(
 
 
 def document_token(document: Mapping[str, Any]) -> str:
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    from simulate.services.harness_starting_records import scenario_token
 
-    return _scenario_token(document.get("scenario_key") or document.get("name"))
+    return scenario_token(document.get("scenario_key") or document.get("name"))
 
 
 def exempted_keys(draft: Any) -> set[str]:
