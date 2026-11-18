@@ -35596,7 +35596,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/EmptyRequest",
+          $ref: "#/definitions/EvalTaskUnpauseRequest",
         },
         queryParameters: {
           eval_task_id: {
@@ -35612,6 +35612,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/EvalTaskMessageResponse",
           },
           400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorResponse",
           },
           500: {
@@ -63530,6 +63533,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/EvalTaskMessageResult",
+        },
+      },
+    },
+    EvalTaskUnpauseRequest: {
+      type: "object",
+      properties: {
+        start: {
+          title: "Start",
+          type: "boolean",
         },
       },
     },
@@ -102316,6 +102328,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "",
           ],
           "x-nullable": true,
+        },
+        can_start: {
+          title: "Can start",
+          type: "boolean",
         },
         filters_applied: {
           title: "Filters applied",
