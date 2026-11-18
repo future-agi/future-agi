@@ -865,7 +865,12 @@ class TestAgentMoves:
     def test_fix_candidate_default_accepts_validating(self):
         from types import SimpleNamespace
 
-        candidate = SimpleNamespace(fix_run=SimpleNamespace(environment=None))
+        candidate = SimpleNamespace(
+            fix_run=SimpleNamespace(
+                base_agent_version=SimpleNamespace(version_number=1),
+                environment=SimpleNamespace(agent_version_id="a1"),
+            )
+        )
 
         with (
             patch.object(agent_fix_runs, "require_shippable"),

@@ -18,7 +18,6 @@ from simulate.tests.test_harness_readiness import (
     BASE,
     _built,
     _certify,
-    _committed_run,
     _environment,
     _report,
 )
@@ -65,7 +64,23 @@ def _sealed(door, *, held):
             "deadline": None,
         }
 
+    # A door that stands seals each worker's allow-list and each world action's tool beside it.
+    proxy = (
+        {
+            assembly.PERMISSIONS_FILE_PATH: {
+                "worker:order_lookup": {"allow": ["POST orders.lookup"]},
+                "worker:refund": {"allow": ["POST refunds.issue"]},
+            },
+            assembly.ACTIONS_FILE_PATH: {
+                "POST orders.lookup": LOOKUP,
+                "POST refunds.issue": REFUND,
+            },
+        }
+        if door.get("present")
+        else {}
+    )
     return {
+        **proxy,
         assembly.DOOR_OUTCOME_PATH: door,
         assembly.WORKER_LIMITS_PATH: {
             "workers": {one["id"]: {"limited": True} for one in WORKERS},
@@ -205,8 +220,17 @@ def test_a_bypass_alk_reports_holds_the_cases_relying_on_that_worker(
         },
         metadata,
     )
-    run = _committed_run(environment, django_capture_on_commit_callbacks)
-    CallExecution.objects.filter(test_execution_id=run.test_execution_id).update(
+    with django_capture_on_commit_callbacks(execute=True):
+        started = _run(auth_client, environment, LOOKUP_KEYS, "worker-bypass-run")
+    assert started.status_code in (200, 201, 202), started.content
+    run = HostedHarnessJob.no_workspace_objects.filter(environment=environment).latest(
+        "created_at"
+    )
+    # One call of the run carries ALK's notice.
+    bypassing = CallExecution.objects.filter(
+        test_execution_id=run.test_execution_id
+    ).first()
+    CallExecution.objects.filter(id=bypassing.id).update(
         call_metadata={TRIAL_STATE_KEY: metadata[TRIAL_STATE_KEY]}
     )
 

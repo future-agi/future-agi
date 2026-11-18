@@ -2,6 +2,7 @@
 each case's hold from `worker-limits.json`, and the sub-agent evidence row from the worker record each call keeps."""
 
 import json
+import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -494,7 +495,9 @@ def _children(monkeypatch, calls, contract=CONTRACT, runs=("r1",)):
     from simulate.models import CallExecution
 
     monkeypatch.setattr(CallExecution, "objects", _Calls(calls))
-    return children_module.children(contract["workers"], list(runs))
+    # Run job ids are UUIDs; the calls stand in for what those runs recorded.
+    jobs = [str(uuid.uuid5(uuid.NAMESPACE_URL, one)) for one in runs]
+    return children_module.children(contract["workers"], jobs)
 
 
 def _checks(reading):
