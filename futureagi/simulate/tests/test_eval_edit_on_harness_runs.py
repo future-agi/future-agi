@@ -389,11 +389,15 @@ def test_two_edit_and_run_requests_dispatch_once(
     )
 
     first = _edit_and_run(auth_client, harness_run, config, execution)
-    second = _edit_and_run(auth_client, harness_run, config, execution)
+    second = _edit_and_run(
+        auth_client, harness_run, config, execution, {"model": "second"}
+    )
 
     assert first.status_code == 200, first.content
     assert second.status_code == 400, second.content
     assert second.json()["code"] == "rerun_evals_run_not_completed"
+    # Refused before the save: the second edit is not kept.
+    assert _row(config)["model"] == "x"
     grading.assert_called_once()
     call.refresh_from_db()
     assert call.eval_outputs[str(config.id)][KEPT_KEY] == HARNESS_VERDICT
@@ -404,7 +408,8 @@ def test_an_edit_and_run_that_loses_the_claim_dispatches_nothing(
     auth_client, harness_run, eval_template, grading
 ):
     """Another request moves the run to EVALUATING after this one read it
-    COMPLETED: the claim is conditional, so this one stops."""
+    COMPLETED: the claim is conditional, so this one dispatches nothing. That can
+    only be known after the save, so the answer says the edit was kept."""
     config, execution, call = _mapped_harness_cell(
         harness_run, eval_template, TestExecution.ExecutionStatus.COMPLETED
     )
@@ -422,8 +427,12 @@ def test_an_edit_and_run_that_loses_the_claim_dispatches_nothing(
     ):
         response = _edit_and_run(auth_client, harness_run, config, execution)
 
-    assert response.status_code == 400, response.content
-    assert response.json()["code"] == "rerun_evals_already_running"
+    assert response.status_code == 200, response.content
+    assert response.json()["message"] == (
+        "Evaluation config updated. Grading is already running on this run, so "
+        "this change grades the next time evals run."
+    )
+    assert _row(config)["model"] == "x"
     grading.assert_not_called()
     assert _call_state(call)[0] == {str(config.id): HARNESS_VERDICT}
 
@@ -444,11 +453,14 @@ def test_an_edit_and_run_on_a_run_that_did_not_complete_marks_no_call(
         harness_run, eval_template, run_status
     )
     cell = _call_state(call)
+    before = _row(config)
 
     response = _edit_and_run(auth_client, harness_run, config, execution)
 
     assert response.status_code == 400, response.content
     assert response.json()["code"] == "rerun_evals_run_not_completed"
+    # Refused before the save, so the page's error means nothing changed.
+    assert _row(config) == before
     assert _call_state(call) == cell
     execution.refresh_from_db()
     assert execution.status == run_status
@@ -498,11 +510,13 @@ def test_an_edit_and_run_on_a_run_still_finishing_is_refused(
         test_execution=execution, state=job_state
     )
     cell = _call_state(call)
+    before = _row(config)
 
     response = _edit_and_run(auth_client, harness_run, config, execution)
 
     assert response.status_code == 400, response.content
     assert response.json()["code"] == "rerun_evals_still_finishing"
+    assert _row(config) == before
     assert _call_state(call) == cell
     execution.refresh_from_db()
     assert execution.status == TestExecution.ExecutionStatus.COMPLETED
@@ -626,4 +640,129 @@ def test_a_rerun_that_also_edits_a_suite_result_column_is_still_refused(
     assert response.status_code == 400, response.content
     assert response.json()["result"] == REFUSED
     assert _call_state(call) == cell
+    grading.assert_not_called()
+
+
+# --- Dileep's review of 5e7ffaf48e -------------------------------------------
+
+
+def _filter():
+    return {
+        "column_id": "duration",
+        "filter_config": {
+            "filter_type": "number",
+            "filter_op": "greater_than_or_equal",
+            "filter_value": 10,
+        },
+    }
+
+
+@pytest.mark.django_db
+def test_a_filters_only_edit_with_run_saves_the_filters_on_a_harness_run(
+    auth_client, harness_run, eval_template, grading
+):
+    """A body that changes only the filters is an edit, not a bare re-run."""
+    config, execution, call = _mapped_harness_cell(
+        harness_run, eval_template, TestExecution.ExecutionStatus.COMPLETED
+    )
+
+    response = _edit_and_run(
+        auth_client, harness_run, config, execution, {"filters": [_filter()]}
+    )
+
+    assert response.status_code == 200, response.content
+    assert _row(config)["filters"] == [_filter()]
+    grading.assert_called_once_with(args=([str(call.id)], [str(config.id)]))
+
+
+@pytest.mark.django_db
+def test_a_filters_only_edit_with_run_saves_the_filters_on_a_run_no_harness_touched(
+    auth_client, run_test, eval_template, grading
+):
+    config = scoring._config(run_test, eval_template, name="Politeness")
+    execution = scoring._run(run_test, TestExecution.ExecutionStatus.COMPLETED)
+    scoring._call(execution)
+
+    response = _edit_and_run(
+        auth_client, run_test, config, execution, {"filters": [_filter()]}
+    )
+
+    assert response.status_code == 200, response.content
+    assert _row(config)["filters"] == [_filter()]
+
+
+def _eval_only_snapshot(call):
+    from simulate.models.test_execution import CallExecutionSnapshot
+
+    (snapshot,) = CallExecutionSnapshot.objects.filter(
+        call_execution=call,
+        rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
+    )
+    return snapshot
+
+
+@pytest.mark.django_db
+def test_an_edit_and_run_snapshots_the_harness_verdict(
+    auth_client, harness_run, eval_template, grading
+):
+    """As "Re-run evals" does, so the verdict the harness can't produce again is
+    in the run's history once the grade replaces it."""
+    config, execution, call = _mapped_harness_cell(
+        harness_run, eval_template, TestExecution.ExecutionStatus.COMPLETED
+    )
+
+    response = _edit_and_run(auth_client, harness_run, config, execution)
+
+    assert response.status_code == 200, response.content
+    assert _eval_only_snapshot(call).eval_outputs == {str(config.id): HARNESS_VERDICT}
+
+
+@pytest.mark.django_db
+def test_a_bare_rerun_of_a_suite_result_column_snapshots_the_harness_verdict(
+    auth_client, harness_run, suite_template, grading
+):
+    config = _harness_column(harness_run, suite_template)
+    execution, call = _finished_run(harness_run, config)
+
+    response = _update(
+        auth_client,
+        harness_run,
+        config,
+        {"run": True, "test_execution_id": str(execution.id)},
+    )
+
+    assert response.status_code == 200, response.content
+    assert _eval_only_snapshot(call).eval_outputs == {str(config.id): HARNESS_VERDICT}
+
+
+@pytest.mark.django_db
+def test_an_edit_and_run_on_a_run_no_harness_touched_that_is_running_saves_nothing(
+    auth_client, run_test, eval_template, grading
+):
+    config = scoring._config(run_test, eval_template, name="Politeness")
+    execution = scoring._run(run_test, TestExecution.ExecutionStatus.RUNNING)
+    scoring._call(execution)
+    before = _row(config)
+
+    response = _edit_and_run(auth_client, run_test, config, execution)
+
+    assert response.status_code == 400, response.content
+    assert _row(config) == before
+    grading.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_an_edit_and_run_on_a_harness_run_with_no_completed_call_saves_nothing(
+    auth_client, harness_run, eval_template, grading
+):
+    config = scoring._config(harness_run, eval_template, name="Politeness")
+    execution = scoring._run(harness_run, TestExecution.ExecutionStatus.COMPLETED)
+    scoring._call(execution, status="failed")
+    before = _row(config)
+
+    response = _edit_and_run(auth_client, harness_run, config, execution)
+
+    assert response.status_code == 400, response.content
+    assert response.json()["code"] == "rerun_evals_no_completed_call"
+    assert _row(config) == before
     grading.assert_not_called()
