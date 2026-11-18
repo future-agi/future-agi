@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { MONO_FONT } from "./contract.constants";
 import { WORKERS_COPY } from "./workers.constants";
 
 const CHIP_SX = {
@@ -11,7 +12,7 @@ const CHIP_SX = {
   bgcolor: "action.selected",
   typography: "s3",
   fontWeight: 500,
-  fontFamily: "ui-monospace, Menlo, monospace",
+  fontFamily: MONO_FONT,
   lineHeight: "18px",
   whiteSpace: "nowrap",
 };

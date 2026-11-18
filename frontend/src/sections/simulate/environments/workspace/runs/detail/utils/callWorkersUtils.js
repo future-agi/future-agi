@@ -88,11 +88,15 @@ const endEvents = (step, names) => {
       : {
           ...base,
           type: C.noReturnStep,
-          bad: step.did_not_finish,
+          bad: step.did_not_finish && !stoppedByUser(step),
           note: C.noReturn(base.actor),
         },
   ];
 };
+
+// Cut short by a user stop: neither an error nor a failure of the worker.
+export const stoppedByUser = (step) =>
+  step.end_state === "cancelled" || step.end_state === "cancel_requested";
 
 const stepsOf = (step, byKey, names, nested) => [
   ...(step.handoff ? [handOffEvent(step, names)] : []),

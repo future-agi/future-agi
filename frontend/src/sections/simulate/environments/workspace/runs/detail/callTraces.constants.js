@@ -29,7 +29,9 @@ export const CALL_WORKERS_COPY = {
   // The record does not say which hand-off this ran in, so it sits at the top of its turn.
   parentUnknown: "parent unknown",
   noEvidence:
-    "Nothing was recorded for this call's participants: the app sent no traces and the sandbox recorded no hand-offs.",
+    "Nothing was recorded for this call's participants: your app sent no traces and no hand-off was seen during the run.",
+  infrastructureLost:
+    "Nothing was recorded for this call's participants: the attempt was lost to an infrastructure failure.",
   partialCollection:
     "Only part of this call's traces could be read, so some steps may be missing.",
   unavailableCollection:
@@ -49,10 +51,10 @@ export const CALL_WORKERS_COPY = {
   noReply: "No reply recorded",
   transferred: (name) => `Control passed to ${name}`,
   sandboxOnly:
-    "Built from the sandbox's record of this call; the app sent no traces, so the Traces tab is empty.",
+    "Your app sent no traces for this call, so the Traces tab is empty. These steps were recorded by the test run.",
   // What multi-agent testing covers, said on every multi-agent call, so nothing reads as more than it is.
   supportedBoundary:
-    "Multi-agent testing covers a coordinator handing work to its workers one at a time, one level deep.",
+    "Multi-agent testing covers a coordinator handing work to its participants one at a time, one level deep.",
   // Added where a call went past it.
   beyondBoundary:
     "This call also had nested, parallel or background hand-offs: they are shown as recorded, outside that support.",
@@ -79,7 +81,7 @@ export const CALL_WORKERS_COPY = {
   showMore: "Show more",
   showLess: "Show less",
   rawEvents: "Raw events",
-  workerColumn: "Worker",
+  workerColumn: "Participant",
   taskColumn: "Task",
   resultColumn: "Result",
   showRow: (name) => `Show raw data for ${name}`,
@@ -99,18 +101,23 @@ export const CALL_WORKERS_COPY = {
       passed && `${passed} passed control`,
       cutOff && `${cutOff} cut off`,
     ].filter(Boolean);
-    return `${handOffs} hand-off${handOffs === 1 ? "" : "s"} to ${workers} worker${workers === 1 ? "" : "s"}. ${ends.join(", ")}.`;
+    return `${handOffs} hand-off${handOffs === 1 ? "" : "s"} to ${workers} participant${workers === 1 ? "" : "s"}. ${ends.join(", ")}.`;
   },
   callsOutsideTable: (count) =>
     `${count} tool call${count === 1 ? "" : "s"} had no hand-off, so ${count === 1 ? "it isn't" : "they aren't"} in this table. Turn on Raw events to see ${count === 1 ? "it" : "them"}.`,
   // Why a call has no record to show, by the state the API serves.
   states: {
+    collecting: "Collecting this call's participants…",
     unreadable:
       "This call's participants couldn't be read. Its record may have hand-offs that aren't shown.",
     not_kept:
       "This attempt ran before attempts kept their participants, so its record wasn't kept.",
   },
+  noHandOffInAttempt: "No hand-off was recorded in this attempt.",
   workersNotObserved: (names) => `Not observed: ${names}`,
+  // A worker not seen in an attempt lost to an infrastructure failure: whether it ran is not known.
+  workersUnknown: (names) =>
+    `Not known: the attempt was lost to an infrastructure failure: ${names}`,
   // Took part (its tool calls, or control handed to it) with no return recorded: no end is claimed for it.
   workersNoEnd: (names) => `Took part, no end recorded: ${names}`,
   // A worker's end state when the trial cut it short; one that returned or never ran has none shown.
@@ -123,7 +130,7 @@ export const CALL_WORKERS_COPY = {
   },
   workersCutShort: (list) => `Cut short: ${list}`,
   // A worker's own checks: beside the call's verdict, never deciding it.
-  workerChecks: "Worker checks",
+  workerChecks: "Participant checks",
   workerCheckResult: (passed, result) =>
     passed === true
       ? "Passed"
@@ -143,23 +150,23 @@ export const CALL_WORKERS_COPY = {
     no_moment:
       "Not tied to a step: nothing recorded ties this check to a moment in the call",
     several_hand_offs:
-      "Not tied to a step: this worker was handed work more than once",
-    no_hand_off: "Not tied to a step: this worker was never handed work",
+      "Not tied to a step: this participant was handed work more than once",
+    no_hand_off: "Not tied to a step: this participant was never handed work",
   },
   // Past its action deadline: the world refused its later calls. Its execution is stopped only when the app serves it
   // as its own process (cleanup says "Stopped when its deadline passed").
   workersPastDeadline: (names) => `Past their action deadline: ${names}`,
   workersBypassed: (names) =>
-    `Reached the world on the shared address, not their own channel, so their limits weren't held and their own checks weren't graded: ${names}`,
+    `Limits not enforced in this run, their calls went through the main app, so their own checks weren't graded: ${names}`,
   workersNotDeclared: (names) => `Not declared: ${names}`,
   // What happened to a cut-short worker when the call ended. "stopped" for one worker only when the app serves it as
   // its own process; one inside the app's process stops with the run's whole sandbox.
   cleanup: {
     stopped: (time) => `Stopped when its deadline passed, ${time}`,
     stopped_with_sandbox: (time) =>
-      `Stopped when the run's sandbox was removed, ${time}`,
+      `Stopped when the run's test environment shut down, ${time}`,
     still_running: "Still running when the call ended",
-    unknown: "Cleanup not confirmed",
+    unknown: "Not confirmed whether it stopped",
   },
   workerCleanup: (name, cleanup) => `${name}: ${cleanup}`,
   stoppedByUser:

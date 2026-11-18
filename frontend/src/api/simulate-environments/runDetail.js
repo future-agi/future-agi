@@ -707,7 +707,23 @@ const traceRow = (raw) => ({
   latencyMs: raw.latency_ms ?? null,
 });
 
-/** Which of a multi-agent app's workers did what in one call; null when it has no record yet (202) or none (204). */
+// The shortest wait before reading a pending worker record again.
+export const READ_AGAIN_MIN_MS = 1000;
+
+/**
+ * How long until a pending worker record is read again; false when none is due. Never 0, which turns polling off:
+ * a `next_read_at` already past (a late answer, a clock ahead of the server's) still reads again.
+ */
+export const readAgainDelay = (at, now = Date.now()) =>
+  at ? Math.max(Date.parse(at) - now, READ_AGAIN_MIN_MS) : false;
+
+// A multi-agent call whose record is still being collected (202): the tab stays and says so until it lands.
+export const COLLECTING_WORKERS = Object.freeze({ state: "collecting" });
+
+/**
+ * Which of a multi-agent app's workers did what in one call: COLLECTING_WORKERS while its record is still being
+ * collected (202) for a version that declares participants, null when it has none (204) or is single-agent.
+ */
 export function useCallWorkers(
   callExecutionId,
   callStatus = null,
@@ -731,24 +747,33 @@ export function useCallWorkers(
         record,
         // The API says when a read still due may change this answer; the tab reads again once, then.
         readAgainAt: response.data?.pending ? response.data.next_read_at : null,
+        // A single-agent app's call is read too: only a declared participant makes the wait worth showing.
+        participantsDeclared: response.data?.participants_declared === true,
       };
     },
-    select: (read) => read.record,
+    select: (read) =>
+      read.record ??
+      (read.readAgainAt && read.participantsDeclared
+        ? COLLECTING_WORKERS
+        : null),
+    // A status change re-reads the same call: its record stays shown meanwhile, never another call's or attempt's.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === callExecutionId &&
+      previousQuery?.queryKey[3] === attempt
+        ? previous
+        : undefined,
     enabled: !!callExecutionId,
     retry: false,
     // The panel says so inline; this tab must not toast about a call the user isn't looking at.
     meta: { errorHandled: true },
-    refetchInterval: (query) => {
-      const at = query.state.data?.readAgainAt;
-      if (query.state.error || !at) return false;
-      return Math.max(Date.parse(at) - Date.now(), 0);
-    },
+    refetchInterval: (query) =>
+      query.state.error ? false : readAgainDelay(query.state.data?.readAgainAt),
   });
 }
 
 /**
- * Whether a call has workers to show: false while it has no record (no Participants tab), undefined while unread.
- * A failed read shows the tab, so the panel can say it couldn't load.
+ * Whether a call has workers to show: false when it has no record (no Participants tab), undefined while unread.
+ * A record still being collected and a failed read both show the tab, so the panel can say which.
  */
 export function useHasWorkers(callExecutionId, callStatus = null) {
   const { data, isError } = useCallWorkers(callExecutionId, callStatus);

@@ -181,7 +181,7 @@ describe("RlContractPanel", () => {
   });
 });
 
-describe("Workers card", () => {
+describe("Participants card", () => {
   // As the API serves them: a non-null channel and the tools each may use.
   const workers = [
     {
@@ -193,7 +193,8 @@ describe("Workers card", () => {
       tools_shown: ["get_order", "list_refunds"],
       binding: "separate",
       enforcement: "unknown",
-      enforcement_label: "Not known: held only when a trial shows it",
+      enforcement_label:
+        "Not confirmed yet: no run has shown this participant's own calls",
     },
     {
       id: "refund",
@@ -204,7 +205,8 @@ describe("Workers card", () => {
       tools_shown: ["list_refunds", "issue_refund"],
       binding: "not_declared",
       enforcement: "not_enforced",
-      enforcement_label: "Not enforced: it shares the app's address",
+      enforcement_label:
+        "Limits can't be enforced: this participant runs inside the app, so its calls can't be told apart",
     },
   ];
 
@@ -217,6 +219,16 @@ describe("Workers card", () => {
     // No channel is claimed for a worker whose contract entry does not say.
     expect(rows[1]).not.toHaveTextContent(WORKERS_COPY.binding.shared);
     expect(rows[1]).toHaveTextContent(WORKERS_COPY.binding.not_declared);
+  });
+
+  it("calls them Participants, as the agent and the call drawers do, in product words", () => {
+    renderPanel({ env: { ...voiceEnv, workers } });
+    expect(screen.getByText("Participants")).toBeInTheDocument();
+    expect(screen.getByText("2 participants")).toBeInTheDocument();
+    const rows = screen.getAllByTestId("declared-worker");
+    expect(rows[0]).toHaveTextContent("Own connection");
+    expect(rows[1]).toHaveTextContent("Connection not declared");
+    expect(screen.queryByText(/channel/i)).toBeNull();
   });
 
   it("hides the workers card when the contract declares none", () => {

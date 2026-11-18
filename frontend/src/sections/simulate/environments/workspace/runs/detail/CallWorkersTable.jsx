@@ -20,7 +20,11 @@ import {
 } from "./callTraces.constants";
 import { EventList } from "./CallWorkersEventList";
 import { Reveal, UnknownParent } from "./CallWorkersParts";
-import { asMarkdown, handOffEvents } from "./utils/callWorkersUtils";
+import {
+  asMarkdown,
+  handOffEvents,
+  stoppedByUser,
+} from "./utils/callWorkersUtils";
 
 const NO_CHECKS = [];
 
@@ -65,7 +69,7 @@ function WorkerRow({
       ? C.modelTokens(worker.model, worker.tokens)
       : "";
   const end = step.end;
-  const failed = step.did_not_finish;
+  const failed = step.did_not_finish && !stoppedByUser(step);
   const task = step.handoff?.task_shown;
   const answer = step.returned?.result_shown;
   const emptyResult = {

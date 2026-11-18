@@ -10,6 +10,7 @@ from uuid import UUID
 import structlog
 from django.utils import timezone
 
+from simulate.constants.hosted_harness import TRIAL_STATE_KEY
 from simulate.models import (
     CallExecution,
     CallTranscript,
@@ -19,20 +20,23 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.services.harness_worker_events import recorded_timeline
 from simulate.services.harness_worker_states import (
+    ATTEMPT_END_KEY,
     _call_attempt,
     _execution,
     _job_of,
     deadline_refused,
     job_for_call,
+    refused_past_deadline,
     stopped_by_user,
     stopped_workers,
+    stopped_workers_of,
     trial_ending,
     worker_cleanup,
     worker_states,
 )
 from simulate.services.harness_worker_text import digest, utc_iso
 from simulate.services.harness_worker_timeline import HAND_OFF_TYPES, bounded, in_order
-from simulate.services.run_traces_v3 import list_run_traces
+from simulate.services.run_traces_v3 import RunTraces, list_run_traces
 from simulate.services.scoring_status import locked_call_metadata_update
 from simulate.types import (
     CallTurn,
@@ -280,11 +284,25 @@ def kept_record(
     )
 
 
-def mark_read(call_execution_id: UUID | str, *, failed: bool) -> None:
-    """Note that this attempt's read ran, or failed; a failure never replaces a record an earlier read kept."""
+_ANY_ATTEMPT = object()
+
+
+def _same_attempt(call_execution_id: UUID | str, attempt: object) -> bool:
+    """Whether the call is still on the attempt a read was for (`attempt`, its reset time); read under the caller's
+    row lock, so a rerun that reset the call meanwhile is seen."""
+    return attempt is _ANY_ATTEMPT or attempt_reset(call_execution_id) == attempt
+
+
+def mark_read(
+    call_execution_id: UUID | str, *, failed: bool, attempt: object = _ANY_ATTEMPT
+) -> None:
+    """Note that this attempt's read ran, or failed; a failure never replaces a record an earlier read kept, and a
+    read for an attempt a rerun has since replaced (`attempt`, its reset time) notes nothing."""
     now = timezone.now().isoformat()
 
     def note(metadata: dict[str, object]) -> bool:
+        if not _same_attempt(call_execution_id, attempt):
+            return False
         if failed and metadata.get(WORKERS_KEY):
             return False
         metadata[READ_KEY] = {"at": now, "failed": failed}
@@ -413,23 +431,18 @@ def later_read_due(first_due: str) -> str:
     ).isoformat()
 
 
-def record_call_workers(
-    call_execution_id: str, *, second_read: bool = False
-) -> WorkerTimeline | None:
-    """Keep one call's worker timeline on the call and return it; None when it has no worker or hand-off to keep."""
-    call = CallExecution.objects.select_related("test_execution").get(
-        id=call_execution_id
-    )
-    traces = list_run_traces(call.test_execution, call_execution_id=call.id)
-    sealed = [
+def _sealed_calls(provider_call_data: object) -> list[SealedToolCall]:
+    """The tool calls the harness sealed on a call or an attempt's snapshot."""
+    data = provider_call_data if isinstance(provider_call_data, dict) else {}
+    return [
         cast(SealedToolCall, one)
-        for one in ((call.provider_call_data or {}).get("livekit") or {}).get(
-            "tool_calls"
-        )
-        or []
+        for one in (data.get("livekit") or {}).get("tool_calls") or []
         if isinstance(one, dict)
     ]
-    traced_calls = [
+
+
+def _with_workers(sealed: list[SealedToolCall]) -> list[SealedToolCall]:
+    return [
         one
         for one in sealed
         if one.get("worker_id")
@@ -437,18 +450,80 @@ def record_call_workers(
         or one.get("delegated_to")
         or one.get("worker_events")
     ]
+
+
+def attempt_timeline(
+    call: CallExecution,
+    attempt: CallExecutionSnapshot,
+    metadata: Mapping[str, Any],
+) -> WorkerTimeline | None:
+    """An earlier attempt's record built from the tool calls its snapshot sealed, for an attempt rerun before its own
+    read ran; None when it sealed no worker and the app declares none. Nothing is stored and no span is read."""
+    traced = _with_workers(_sealed_calls(attempt.provider_call_data))
+    job = job_for_call(call)
+    declared = declared_workers(job) if job is not None else []
+    if not traced and not declared:
+        return None
+    end = metadata.get(ATTEMPT_END_KEY)
+    trial = metadata.get(TRIAL_STATE_KEY)
+    timeline = worker_states(
+        recorded_timeline(
+            [],
+            declared,
+            run_key=str(job.run_id) if job is not None else str(call.test_execution_id),
+            traced_calls=traced,
+        ),
+        trial=(end.get("ending") if isinstance(end, Mapping) else None) or "ended",
+        past_deadline=refused_past_deadline(metadata),
+        stopped={
+            str(one["worker"]): float(one["at"])
+            for one in stopped_workers_of(trial if isinstance(trial, Mapping) else {})
+        },
+    )
+    timeline["collected_at"] = timezone.now().isoformat()
+    timeline["project_id"] = None
+    timeline["tree_complete"] = True
+    timeline["spans_received"] = False
+    timeline["collection"] = "complete" if traced else "no_evidence"
+    return timeline
+
+
+def record_call_workers(
+    call_execution_id: str, *, second_read: bool = False
+) -> WorkerTimeline | None:
+    """Keep one call's worker timeline on the call and return it; None when it has no worker or hand-off to keep."""
+    call = CallExecution.objects.select_related("test_execution").get(
+        id=call_execution_id
+    )
+    sealed = _sealed_calls(call.provider_call_data)
+    traced_calls = _with_workers(sealed)
+    # The worker events the harness sealed are the record; the app's spans only add to it (models, tokens, older
+    # calls), so a span store that cannot be reached never loses a sealed record.
+    sealed_events = any(one.get("worker_events") for one in traced_calls)
+    try:
+        traces = list_run_traces(call.test_execution, call_execution_id=call.id)
+    except Exception:
+        if not sealed_events:
+            raise
+        logger.warning(
+            "call_workers_trace_list_failed",
+            call_execution_id=str(call.id),
+            exc_info=True,
+        )
+        traces = RunTraces(project_id=None, traces=[])
+    # The attempt this read is for: a rerun that resets the call before the read writes leaves the new attempt alone.
+    reset = attempt_reset(call.id)
     job = job_for_call(call)
     declared = declared_workers(job) if job is not None else []
     # A declared team with no evidence is still recorded, so the call never reads like a single-agent one.
     if traces.project_id is None and not traced_calls and not declared:
         # Spans may still be on their way: only the later read says there were none.
         if second_read:
-            mark_read(call.id, failed=False)
+            mark_read(call.id, failed=False, attempt=reset)
         return None
     spans: list[CHSpan] = []
     partial, unavailable = False, False
     # A rerun keeps the call's id, so only the traces begun after this attempt's reset are read.
-    reset = attempt_reset(call.id)
     since = reset.timestamp() if reset is not None else None
     if traces.project_id is not None:
         with application_read_context(execution_cap_ms=SPAN_READ_CAP_MS):
@@ -502,7 +577,7 @@ def record_call_workers(
     timeline["tree_complete"] = not partial and _has_roots(spans)
     timeline["collection"] = (
         "unavailable"
-        if unavailable
+        if unavailable and not sealed_events
         else "partial"
         if partial
         else "complete"
@@ -515,12 +590,15 @@ def record_call_workers(
         # A read that could not reach the spans found nothing because it saw nothing, not because there was none;
         # a first read that found nothing leaves the answer to the later one.
         if second_read or unavailable:
-            mark_read(call.id, failed=unavailable)
+            mark_read(call.id, failed=unavailable, attempt=reset)
         return None
 
     kept: list[WorkerTimeline] = []
 
     def keep(metadata: dict[str, object]) -> bool:
+        # Rechecked under the row lock: a rerun that reset the call during this read owns the call now.
+        if not _same_attempt(call.id, reset):
+            return False
         # A later read adds what it found, and never takes away what an earlier one kept.
         merged = with_later_read(
             kept_record(
@@ -534,5 +612,6 @@ def record_call_workers(
         metadata[WORKERS_KEY] = merged
         return True
 
-    locked_call_metadata_update(call.id, keep)
+    if locked_call_metadata_update(call.id, keep) is None:
+        return None
     return kept[-1] if kept else timeline

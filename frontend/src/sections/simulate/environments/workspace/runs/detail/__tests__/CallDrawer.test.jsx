@@ -1041,3 +1041,67 @@ describe("CallDrawer — the call's traces", () => {
     });
   });
 });
+
+describe("CallDrawer — an earlier attempt and the next call", () => {
+  const VOICE_A = {
+    id: "voice-a",
+    transcript: [],
+    evaluations: [],
+    attempt_number: 2,
+    earlier_attempts: [
+      {
+        attempt: "a1",
+        number: 1,
+        rerun_at: "2026-11-17T09:00:00+00:00",
+        kept: true,
+        trial_state: null,
+      },
+    ],
+  };
+
+  it.each([
+    ["still loading", { data: undefined, isPending: true }],
+    [
+      "loaded with no earlier attempt",
+      {
+        data: { id: "voice-b", transcript: [], evaluations: [] },
+        isPending: false,
+      },
+    ],
+  ])(
+    "an attempt picked on one voice call never reads the next call's detail (%s)",
+    async (_name, next) => {
+      const user = userEvent.setup();
+      useCallExecutionV3Detail.mockReturnValue({
+        data: VOICE_A,
+        isPending: false,
+      });
+      const { rerender } = render(
+        <CallDrawer
+          task={{ id: "voice-a", simulationCallType: "voice" }}
+          agentType="voice"
+          onClose={() => {}}
+        />,
+      );
+      await user.click(
+        screen.getByRole("button", { name: "choose participants" }),
+      );
+      await user.click(screen.getByRole("combobox", { name: "Attempt" }));
+      await user.click(
+        screen.getByRole("option", { name: /Attempt 1, re-run at/ }),
+      );
+
+      // Next: the same drawer, now on call B.
+      useCallExecutionV3Detail.mockReturnValue(next);
+      rerender(
+        <CallDrawer
+          task={{ id: "voice-b", simulationCallType: "voice" }}
+          agentType="voice"
+          onClose={() => {}}
+        />,
+      );
+      // No crash: B renders (or loads) with no attempt carried over from A.
+      expect(screen.queryByRole("combobox", { name: "Attempt" })).toBeNull();
+    },
+  );
+});

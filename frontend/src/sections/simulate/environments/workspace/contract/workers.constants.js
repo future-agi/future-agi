@@ -1,14 +1,14 @@
-// Copy for the declared workers, on the Contract tab's Workers card and the agent's Participants card.
+// Copy for the declared workers, on the Contract tab's and the agent's Participants cards.
 export const WORKERS_COPY = {
-  title: "Workers",
+  title: "Participants",
   subtitle: "The agents this app hands work to, as its source declares them",
-  count: (n) => `${n} worker${n === 1 ? "" : "s"}`,
+  count: (n) => `${n} participant${n === 1 ? "" : "s"}`,
   binding: {
-    separate: "Own channel",
-    shared: "Shared channel",
-    not_declared: "Channel not declared",
+    separate: "Own connection",
+    shared: "Shares the app's connection",
+    not_declared: "Connection not declared",
   },
-  ownProcess: "Own process",
+  ownProcess: "Runs on its own",
   footer:
     "Declared by the app's source. A run shows which of them actually took part.",
 };

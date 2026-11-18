@@ -113,37 +113,44 @@ export default function VoiceCallDrawer({
   // Forgotten on another call, so stepping to it and back does not reopen the trace.
   const [traceCallId, setTraceCallId] = useState(task.id);
   // An earlier attempt's id, or null for the call itself; forgotten on another call.
-  const [attempt, setAttempt] = useState(null);
+  const [chosenAttempt, setAttempt] = useState(null);
   if (traceCallId !== task.id) {
     setTraceCallId(task.id);
     setOpenStep(null);
     setAttempt(null);
   }
+  // Only an attempt of the call shown: a choice made on the previous call is never read against this one's detail.
+  const chosen =
+    traceCallId === task.id
+      ? data?.earlier_attempts?.find((one) => one.attempt === chosenAttempt)
+      : undefined;
+  const attempt = chosen ? chosenAttempt : null;
   // Stays on Participants while the next call's record is unread; a call known to have none has no tab.
   // An earlier attempt's record is read on its own, whatever the latest attempt kept.
   const showWorkers =
     hasWorkers ||
     (hasWorkers === undefined && chosenTab === "workers") ||
     Boolean(attempt);
-  // Participants and World state are kept per attempt: each says which attempt it shows.
-  const attemptSelect = data?.earlier_attempts?.length ? (
-    <Box sx={{ px: 2, pt: 1 }}>
-      <AttemptSelect
-        attemptNumber={data?.attempt_number}
-        earlierAttempts={data?.earlier_attempts}
-        value={attempt}
-        onChange={setAttempt}
-      />
-    </Box>
-  ) : null;
-  const leftPanelTabs = useMemo(
-    () => [
+  const leftPanelTabs = useMemo(() => {
+    // Participants and World state are kept per attempt: each says which attempt it shows.
+    const attemptSelect = data?.earlier_attempts?.length ? (
+      <Box sx={{ px: 2, pt: 1 }}>
+        <AttemptSelect
+          attemptNumber={data?.attempt_number}
+          earlierAttempts={data?.earlier_attempts}
+          value={attempt}
+          onChange={setAttempt}
+        />
+      </Box>
+    ) : null;
+    return [
       {
         label: CALL_TRACES_COPY.tab,
         value: "traces",
         icon: "solar:chart-square-linear",
         content: (
           <CallTracesPanel
+            key={task.id}
             traces={callTraces.traces}
             projectId={callTraces.projectId}
             testExecutionId={executionId}
@@ -188,31 +195,28 @@ export default function VoiceCallDrawer({
             {attemptSelect}
             <TrialChangesPanel
               trialState={
-                attempt
-                  ? data.earlier_attempts.find((one) => one.attempt === attempt)
-                      .trial_state
-                  : data?.trial_state ?? null
+                chosen ? chosen.trial_state : data?.trial_state ?? null
               }
               underWay={!attempt && TRIAL_UNDER_WAY.has(task.status)}
             />
           </>
         ),
       },
-    ],
-    [
-      task.id,
-      task.status,
-      showWorkers,
-      data,
-      attempt,
-      callTraces.projectId,
-      callTraces.isError,
-      callTraces.traces,
-      executionId,
-      onTracePanelMountedChange,
-      openStep,
-    ],
-  );
+    ];
+  }, [
+    task.id,
+    task.status,
+    showWorkers,
+    data,
+    attempt,
+    chosen,
+    callTraces.projectId,
+    callTraces.isError,
+    callTraces.traces,
+    executionId,
+    onTracePanelMountedChange,
+    openStep,
+  ]);
 
   if (isError) {
     return (

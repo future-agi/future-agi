@@ -505,8 +505,6 @@ ToolsCard.propTypes = {
   fromDraft: PropTypes.bool,
 };
 
-/* ── workers ────────────────────────────────────────────────────────── */
-
 function WorkersCard({ workers }) {
   return (
     <SectionCard

@@ -4,7 +4,7 @@ import DeclaredWorkerRows from "src/sections/simulate/environments/workspace/con
 import { Card } from "./bits";
 import { PARTICIPANTS_COPY } from "./participants.constants";
 
-/** The agent version's workers, read-only, drawn as the Contract tab's Workers card draws them. */
+/** The agent version's workers, read-only, drawn as the Contract tab's Participants card draws them. */
 export default function ParticipantsCard({ participants }) {
   if (!participants.length) return null;
   return (

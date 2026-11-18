@@ -279,6 +279,46 @@ describe("ChatCallDrawer World state", () => {
 });
 
 describe("ChatCallDrawer, an earlier attempt", () => {
+  it("never reads an attempt picked on one call against the next call's detail", async () => {
+    const user = userEvent.setup();
+    mocks.callDetail = {
+      turns: [],
+      stats: {},
+      attemptNumber: 2,
+      earlierAttempts: [
+        {
+          attempt: "a1",
+          number: 1,
+          rerun_at: "2026-11-17T09:00:00+00:00",
+          kept: true,
+          trial_state: null,
+        },
+      ],
+    };
+    const { rerender } = render(
+      <ChatCallDrawer
+        task={{ id: "call-1", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("combobox", { name: "Attempt" }));
+    await user.click(
+      screen.getByRole("option", { name: /Attempt 1, re-run at/ }),
+    );
+    await user.click(screen.getByRole("tab", { name: "World state" }));
+
+    // Next: call 2, which was never re-run.
+    mocks.callDetail = { turns: [], stats: {} };
+    rerender(
+      <ChatCallDrawer
+        task={{ id: "call-2", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("combobox", { name: "Attempt" })).toBeNull();
+    mocks.callDetail = null;
+  });
+
   it("opens Participants for an earlier attempt even when the latest attempt kept no record", async () => {
     const user = userEvent.setup();
     mocks.callDetail = {
