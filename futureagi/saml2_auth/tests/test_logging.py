@@ -40,7 +40,7 @@ def test_acs_store_failure_scrubs_assertion_from_sentry_locals(monkeypatch):
     import base64
     import json
 
-    from tfc.logging.sentry import _scrub_event
+    from tfc.logging.sentry_scrub import _scrub_event
 
     marker = "<saml:Assertion>private-marker@example.test</saml:Assertion>"
     event = {

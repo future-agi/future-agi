@@ -38,15 +38,18 @@ from sentry_sdk.utils import iter_event_frames
 from temporalio.worker import ExecuteActivityInput
 
 from tfc.logging import sentry as sentry_module
+from tfc.logging import sentry_scrub as scrub_module
 from tfc.logging.sentry import (
-    _MAX_FORMATTED,
-    _REDACTED,
     _event_scrubber,
-    _formatted,
     _get_before_send,
+    _scrub_deployment_telemetry_event,
+)
+from tfc.logging.sentry_scrub import (
+    _REDACTED,
+    MAX_EVENT_STRING_LENGTH,
+    _formatted,
     _is_sensitive_key,
     _scrub,
-    _scrub_deployment_telemetry_event,
     _scrub_event,
     _scrub_strings,
     _template_text,
@@ -418,7 +421,7 @@ def test_a_rebuilt_log_line_keeps_the_size_cap():
         }
     }
     _scrub_event(event)
-    assert len(event["logentry"]["formatted"]) == 16_384
+    assert len(event["logentry"]["formatted"]) == MAX_EVENT_STRING_LENGTH
 
 
 def test_scrub_event_drops_a_logged_text_that_names_a_key():
@@ -868,7 +871,7 @@ def test_a_failing_scrub_drops_the_event_and_reports_only_the_failure(
     monkeypatch, capfd, caplog
 ):
     secret = secrets.token_hex(16)
-    monkeypatch.setattr(sentry_module, "_scrub_strings", _boom)
+    monkeypatch.setattr(scrub_module, "_scrub_strings", _boom)
 
     def action():
         sentry_sdk.add_breadcrumb(message="m", data={"customer_api_key": secret})
@@ -885,7 +888,7 @@ def test_a_failing_scrub_drops_the_event_and_reports_only_the_failure(
 
 
 def test_a_failing_scrub_drops_a_transaction(monkeypatch, capfd):
-    monkeypatch.setattr(sentry_module, "_scrub_strings", _boom)
+    monkeypatch.setattr(scrub_module, "_scrub_strings", _boom)
 
     def action():
         with sentry_sdk.start_transaction(name="t", op="task"):
@@ -1022,10 +1025,10 @@ def test_init_sentry_ignores_only_the_noisy_loggers_and_wires_the_hooks(monkeypa
     # Well above the final cap, so a key name that follows a long text is still
     # in view of the scrub; the hooks cut every string to the cap afterwards.
     assert seen["max_value_length"] == 262_144
-    assert seen["max_value_length"] > _MAX_FORMATTED
+    assert seen["max_value_length"] > MAX_EVENT_STRING_LENGTH
     long_text = "x" * 50_000
     assert len(seen["before_send"]({"extra": {"k": long_text}}, {})["extra"]["k"]) == (
-        _MAX_FORMATTED
+        MAX_EVENT_STRING_LENGTH
     )
     event = {"type": "transaction", "spans": [{"data": {"q": "token=leak"}}]}
     out = seen["before_send_transaction"](event, {})
@@ -1106,8 +1109,8 @@ _HOSTILE_TEMPLATES = {
 @pytest.mark.parametrize("name", list(_HOSTILE_TEMPLATES))
 def test_a_hostile_log_template_is_read_in_linear_time(name):
     template = _HOSTILE_TEMPLATES[name]
-    _seconds_for(lambda: sentry_module._names_key_in_template(template))
-    _seconds_for(lambda: sentry_module._template_leaks(template))
+    _seconds_for(lambda: scrub_module._names_key_in_template(template))
+    _seconds_for(lambda: scrub_module._template_leaks(template))
 
 
 @pytest.mark.parametrize("name", ["zero flags", "open mapping keys"])
@@ -1145,8 +1148,8 @@ def test_the_conversions_a_log_template_can_hold_are_still_recognised(template, 
 
 
 def test_a_template_naming_a_key_is_still_read_around_its_conversions():
-    assert sentry_module._names_key_in_template("api_key=%010.3f")
-    assert not sentry_module._names_key_in_template("took %05d ms for %(a)05.1f")
+    assert scrub_module._names_key_in_template("api_key=%010.3f")
+    assert not scrub_module._names_key_in_template("took %05d ms for %(a)05.1f")
 
 
 @pytest.mark.parametrize(
@@ -1495,9 +1498,9 @@ def test_an_http_path_segment_after_a_key_name_is_replaced(description, expected
 def test_a_huge_span_description_is_cut_before_it_is_scrubbed_and_capped(monkeypatch):
     secret = secrets.token_hex(16)
     seen = []
-    real = sentry_module._is_secret_value
+    real = scrub_module._is_secret_value
     monkeypatch.setattr(
-        sentry_module, "_is_secret_value", lambda v: seen.append(len(v)) or real(v)
+        scrub_module, "_is_secret_value", lambda v: seen.append(len(v)) or real(v)
     )
     huge = "ok " * 1_000 + f"--api_key={secret}" + " pad" * 500_000
     plain = "q " * 1_000_000
@@ -1509,10 +1512,10 @@ def test_a_huge_span_description_is_cut_before_it_is_scrubbed_and_capped(monkeyp
     started = time.monotonic()
     out = sentry_module._get_before_send_transaction()(event, {})
     assert time.monotonic() - started < 1
-    assert seen and max(seen) <= sentry_module._SDK_MAX_VALUE_LENGTH
+    assert seen and max(seen) <= scrub_module._SDK_MAX_VALUE_LENGTH
     first, second = (s["description"] for s in out["spans"])
     assert first == _REDACTED
-    assert len(second) == _MAX_FORMATTED
+    assert len(second) == MAX_EVENT_STRING_LENGTH
     assert secret not in json.dumps(out)
 
 
@@ -1562,16 +1565,16 @@ _GUARDED = ("_COUNT_FIELD", "_COUNT_PHRASE", "_TOKEN_KEY_PREFIX", "_URL_PASSWORD
 
 
 def _count_regex_calls(monkeypatch, action):
-    spies = {name: _CountingRegex(getattr(sentry_module, name)) for name in _GUARDED}
+    spies = {name: _CountingRegex(getattr(scrub_module, name)) for name in _GUARDED}
     for name, spy in spies.items():
-        monkeypatch.setattr(sentry_module, name, spy)
+        monkeypatch.setattr(scrub_module, name, spy)
     action()
     return {name: spy.calls for name, spy in spies.items()}
 
 
 @pytest.mark.parametrize(
     "scrub",
-    [sentry_module._scrub_text, sentry_module._template_leaks],
+    [scrub_module._scrub_text, scrub_module._template_leaks],
     ids=["text", "template"],
 )
 def test_text_that_cannot_match_does_not_run_the_regexes(monkeypatch, scrub):
@@ -1592,7 +1595,7 @@ def test_text_that_cannot_match_does_not_run_the_regexes(monkeypatch, scrub):
     ],
 )
 def test_the_regexes_still_run_when_a_plain_check_hits(monkeypatch, text, ran):
-    calls = _count_regex_calls(monkeypatch, lambda: sentry_module._scrub_text(text))
+    calls = _count_regex_calls(monkeypatch, lambda: scrub_module._scrub_text(text))
     assert {name for name, n in calls.items() if n} >= ran
 
 
@@ -1606,14 +1609,14 @@ _FRAGMENTS = [
 
 
 def _reference_names_key(lowered):
-    lowered = sentry_module._COUNT_FIELD.sub(" ", lowered)
-    lowered = sentry_module._COUNT_PHRASE.sub(" ", lowered)
-    return any(s in lowered for s in sentry_module.SENSITIVE_KEY_SUBSTRINGS)
+    lowered = scrub_module._COUNT_FIELD.sub(" ", lowered)
+    lowered = scrub_module._COUNT_PHRASE.sub(" ", lowered)
+    return any(s in lowered for s in scrub_module.SENSITIVE_KEY_SUBSTRINGS)
 
 
 def _reference_scrub_text(text):
     """`_scrub_text` as it was before the guards: every regex on every text."""
-    module = sentry_module
+    module = scrub_module
     if (
         _reference_names_key(text.lower())
         or any(m in text for m in module._SAML_VALUE_MARKERS)
@@ -1625,7 +1628,7 @@ def _reference_scrub_text(text):
 
 
 def _reference_template_leaks(template):
-    module = sentry_module
+    module = scrub_module
     text = module._template_text(template)
     if (
         any(m in text for m in module._SAML_VALUE_MARKERS)
@@ -1647,8 +1650,8 @@ def test_the_guards_leave_the_output_of_the_text_checks_unchanged():
     rng = random.Random(20261117)
     for _ in range(4_000):
         text = "".join(rng.choice(_FRAGMENTS) for _ in range(rng.randint(1, 9)))
-        assert sentry_module._scrub_text(text) == _reference_scrub_text(text), text
-        assert sentry_module._template_leaks(text) == _reference_template_leaks(text), (
+        assert scrub_module._scrub_text(text) == _reference_scrub_text(text), text
+        assert scrub_module._template_leaks(text) == _reference_template_leaks(text), (
             text
         )
 
@@ -1660,7 +1663,7 @@ def test_sixty_long_strings_in_frame_vars_are_scrubbed_in_time():
     # Called directly, so no event budget stands in for the guards: all sixty
     # strings are read.
     frame = {"vars": {f"v{i}": text for i in range(60)}}
-    _seconds_for(lambda: sentry_module._scrub_frame_vars(frame), limit=2)
+    _seconds_for(lambda: scrub_module._scrub_frame_vars(frame), limit=2)
     assert len(frame["vars"]) == 60
     assert all(len(v) == _SDK_LIMIT for v in frame["vars"].values())
 
@@ -1952,8 +1955,8 @@ def test_the_query_parameter_rule_does_not_touch_general_text():
 
 
 def test_saml_markers_make_free_text_sensitive():
-    assert sentry_module._mentions_sensitive_key("<saml:Assertion ID='x'>")
-    assert sentry_module._mentions_sensitive_key("body SAMLResponse=PHNhbWw")
+    assert scrub_module._mentions_sensitive_key("<saml:Assertion ID='x'>")
+    assert scrub_module._mentions_sensitive_key("body SAMLResponse=PHNhbWw")
     event = {
         "message": "<samlp:Response>x</samlp:Response>",
         "exception": {"values": [{"type": "E", "value": "bad <saml:Assertion>"}]},
@@ -2158,7 +2161,7 @@ def test_an_encoded_credential_name_in_the_query_string_is_caught(query):
     event = {"request": {"query_string": query}}
     _scrub_event(event)
     assert event["request"]["query_string"] == _REDACTED
-    assert sentry_module._scrub_url(f"https://a.test/p?{query}").endswith(
+    assert scrub_module._scrub_url(f"https://a.test/p?{query}").endswith(
         f"?{_REDACTED}"
     )
 
@@ -2426,9 +2429,9 @@ def test_a_long_harmless_string_is_capped_in_the_sent_event():
     [frame_vars] = [
         f["vars"] for f in iter_event_frames(sent[0]) if "blob" in (f.get("vars") or {})
     ]
-    assert len(frame_vars["blob"]) == _MAX_FORMATTED
+    assert len(frame_vars["blob"]) == MAX_EVENT_STRING_LENGTH
     assert frame_vars["blob"].endswith("...")
-    assert max(len(s) for s in _strings_in(sent)) <= _MAX_FORMATTED
+    assert max(len(s) for s in _strings_in(sent)) <= MAX_EVENT_STRING_LENGTH
 
 
 def _strings_in(value):
@@ -2465,15 +2468,16 @@ def test_both_hooks_cap_every_string_to_the_final_limit():
     for event in (error, transaction):
         strings = list(_strings_in(event))
         assert strings
-        assert max(len(s) for s in strings) == _MAX_FORMATTED
-    assert error["extra"]["a"][0]["b"] == "y" * (_MAX_FORMATTED - 3) + "..."
+        assert max(len(s) for s in strings) == MAX_EVENT_STRING_LENGTH
+    assert error["extra"]["a"][0]["b"] == "y" * (MAX_EVENT_STRING_LENGTH - 3) + "..."
 
 
 def test_the_final_cap_counts_bytes_like_the_sdk():
     out = sentry_module._get_before_send()({"extra": {"k": "\u00e9" * 20_000}}, {})
     cut = out["extra"]["k"]
-    assert len(cut.encode("utf-8")) <= _MAX_FORMATTED
+    assert len(cut.encode("utf-8")) <= MAX_EVENT_STRING_LENGTH
     assert cut.endswith("...")
     # A text that fits is left alone.
-    short = sentry_module._get_before_send()({"extra": {"k": "\u00e9" * 8_000}}, {})
-    assert short["extra"]["k"] == "\u00e9" * 8_000
+    # 4,000 two-byte characters are 8,000 bytes, under the limit.
+    short = sentry_module._get_before_send()({"extra": {"k": "\u00e9" * 4_000}}, {})
+    assert short["extra"]["k"] == "\u00e9" * 4_000

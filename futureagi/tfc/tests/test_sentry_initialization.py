@@ -1,5 +1,8 @@
 """Exercise centralized initialization with the real SDK and an in-memory transport."""
 
+import json
+import secrets
+
 import pytest
 import sentry_sdk
 
@@ -40,9 +43,8 @@ def initialized_sentry(monkeypatch):
 
 
 def test_init_sentry_caps_event_strings_at_8192(initialized_sentry):
-    client, events = initialized_sentry
+    _client, events = initialized_sentry
 
-    assert client.options["max_value_length"] == 8192
     assert sentry_sdk.capture_event({"message": "x" * 9000}) is not None
     assert len(events) == 1
     assert len(events[0]["message"]) <= 8192
@@ -57,3 +59,39 @@ def test_init_sentry_preserves_strings_at_the_limit(initialized_sentry):
     assert events[0]["message"] == message
     assert events[0]["tags"]["component"] == "temporal"
     assert events[0]["tags"]["queue"] == "tasks_l"
+
+
+def _strings_in(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _strings_in(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _strings_in(item)
+
+
+def test_a_secret_whose_marker_is_past_8192_is_scrubbed_and_no_string_is_longer(
+    initialized_sentry,
+):
+    _client, events = initialized_sentry
+    secret = secrets.token_hex(16)
+    # The value comes first and the name that marks it as a secret comes after
+    # the 8192nd character. A cut made before the scrub would keep the value
+    # and drop the name.
+    marked_late = f"value {secret} " + "pad " * 3_000 + "customer_api_key"
+    assert marked_late.index("customer_api_key") > 8192
+
+    assert (
+        sentry_sdk.capture_event(
+            {
+                "message": "y" * 20_000,
+                "extra": {"note": marked_late, "blob": "z" * 50_000},
+            }
+        )
+        is not None
+    )
+    assert len(events) == 1
+    assert secret not in json.dumps(events[0], default=str)
+    assert max(len(s) for s in _strings_in(events[0])) <= 8192
