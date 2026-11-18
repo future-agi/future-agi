@@ -73,7 +73,12 @@ export default function ProposalsDrawer({
         >
           <Typography sx={{ typography: "m1" }}>{COPY.title}</Typography>
           <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
-            {COPY.subtitle(prepared.ui.sources.map((source) => source.name))}
+            {COPY.subtitle(
+              // A file refused by its extension was never read.
+              prepared.ui.sources
+                .filter((source) => source.status !== "unsupported")
+                .map((source) => source.name),
+            )}
           </Typography>
         </Box>
         <Box sx={{ flex: 1, minHeight: 0 }}>
