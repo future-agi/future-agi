@@ -7,7 +7,7 @@ import {
   sourceSummaryKey,
   upsertPersonalDataEdit,
 } from "../sources";
-import { sampleDraftReview } from "../_fixtures/draftReview";
+import { ALL_SCENARIOS, sampleDraftReview } from "../_fixtures/draftReview";
 
 describe("draft review contract", () => {
   it("the sample review keeps to the backend's contract", () => {
@@ -42,10 +42,21 @@ describe("edits added from files", () => {
   it("adds accepted items as accepted rows and blocked ones as failed", () => {
     const queryClient = clientWith([
       { source_id: "src_1", name: "policy.pdf" },
-      { source_id: "src_2", name: "orders.csv" },
+      {
+        source_id: "src_2",
+        name: "orders.csv",
+        ui: { parsed: { table: "orders", accepted: 500 } },
+      },
     ]);
     appendAcceptedEdits(queryClient, envId, {
       accepted: [
+        {
+          id: "scenario-boundary",
+          kind: "scenario",
+          title: "Scenarios: a return on day 30 and on day 31",
+          cite: { sourceId: "src_1", ref: "policy.pdf · p.1", at: "p1" },
+          scenario: [{ t: "Return on day 30" }, { t: "Return on day 31" }],
+        },
         {
           id: "rule-src_1-p2",
           kind: "rule",
@@ -89,8 +100,8 @@ describe("edits added from files", () => {
     const review = reviewIn(queryClient);
     expect(DraftReviewSchema.safeParse(review).error?.issues).toBe(undefined);
     expect(review.counts).toEqual({
-      total: 3,
-      accepted: 3,
+      total: 4,
+      accepted: 4,
       rejected: 0,
       undecided: 0,
     });
@@ -98,11 +109,16 @@ describe("edits added from files", () => {
       "rule",
       "rule",
       "world_state",
+      "scenario",
     ]);
+    // Rules and records recheck every sample scenario; new scenarios add theirs.
+    expect(new Set(review.changes.flatMap((one) => one.revalidate)).size).toBe(
+      ALL_SCENARIOS.length + 2,
+    );
     expect(review.failed.map((one) => one.fix)).toEqual(["supply", "attach"]);
     // A refetch (chat nudge, save) keeps what files added.
     const refetched = freshSampleReview(review);
-    expect(refetched.counts.total).toBe(sampleDraftReview().counts.total + 3);
+    expect(refetched.counts.total).toBe(sampleDraftReview().counts.total + 4);
     expect(refetched.failed).toHaveLength(
       sampleDraftReview().failed.length + 2,
     );

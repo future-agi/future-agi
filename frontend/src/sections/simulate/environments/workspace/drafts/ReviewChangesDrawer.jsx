@@ -9,6 +9,7 @@ import ErrorState from "src/components/error-state";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import {
   useDecideChanges,
+  sampleFileEdits,
   useDismissFailedChange,
   useDraftReview,
 } from "src/api/simulate-environments/draftReview";
@@ -31,6 +32,7 @@ import {
 } from "./reviewView";
 
 const NAME_LIMIT = 80;
+const SAMPLE_CHECK_MS = 1200;
 const visuallyHidden = {
   border: 0,
   clip: "rect(0 0 0 0)",
@@ -90,6 +92,7 @@ export default function ReviewChangesDrawer({
   const [name, setName] = useState("");
   const [discarding, setDiscarding] = useState(false);
   const [announced, setAnnounced] = useState("");
+  const [check, setCheck] = useState({ key: null, state: "idle" });
   const bodyRef = useRef(null);
   const titleRef = useRef(null);
   const saveRef = useRef(null);
@@ -103,6 +106,19 @@ export default function ReviewChangesDrawer({
   const kept = keptChanges(changes);
   const nameTooLong = name.trim().length > NAME_LIMIT;
   const names = recheckedKeys(changes);
+  // Changes from files have their affected scenarios checked here before the
+  // save, again whenever that list moves. A sample run until the API exists.
+  const needsCheck = recheckedKeys(sampleFileEdits(review).changes).length > 0;
+  const checkKey = names.join("|");
+  const checkState = check.key === checkKey ? check.state : "idle";
+  useEffect(() => {
+    if (checkState !== "running") return undefined;
+    const timer = setTimeout(
+      () => setCheck({ key: checkKey, state: "passed" }),
+      SAMPLE_CHECK_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [checkState, checkKey]);
   const line = saveLine(changes, versions);
   const counts = reviewCounts(changes);
   const piece = pieceOf(changes);
@@ -156,6 +172,8 @@ export default function ReviewChangesDrawer({
   if (nameTooLong) saveReason = COPY.nameTooLong(NAME_LIMIT);
   else if (counts.undecided) saveReason = COPY.saveWaiting(counts.undecided);
   else if (!counts.accepted) saveReason = COPY.saveAllRejected;
+  else if (needsCheck && checkState !== "passed")
+    saveReason = COPY.runChecksFirst;
 
   // (tab, params?): `params` opens a file there, e.g. { source, at }.
   const goTab = (...to) => {
@@ -258,7 +276,19 @@ export default function ReviewChangesDrawer({
             </Box>
           </Box>
         ))}
-        {names.length > 0 && <RecheckCard names={names} />}
+        {names.length > 0 && (
+          <RecheckCard
+            names={names}
+            check={
+              needsCheck
+                ? {
+                    state: checkState,
+                    onRun: () => setCheck({ key: checkKey, state: "running" }),
+                  }
+                : null
+            }
+          />
+        )}
         {kept.length > 0 && (
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {COPY.comparability(compared)}

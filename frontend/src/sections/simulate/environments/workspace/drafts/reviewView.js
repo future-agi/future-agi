@@ -34,6 +34,13 @@ const FIELD_LABEL = {
   file: "Files",
 };
 
+// Parts of the world a file changes, named as the screens name them.
+const OWN_FIELDS = {
+  "/tables": "Tables",
+  "/world_data": "World data",
+  "/personal_data": "Personal data",
+};
+
 /** Undo rejects a change: it leaves the list. Keeping one accepts it at Save. */
 export const keptChanges = (changes = []) =>
   changes.filter((one) => one.decision !== "rejected");
@@ -87,6 +94,16 @@ export const diffLines = (change) => {
           before: nameOf(old),
           text: nameOf(op.value),
         };
+      }
+      const own = OWN_FIELDS[op.path];
+      if (own) {
+        return op.op === "add"
+          ? { sign: "+", field: own, text: nameOf(op.value) }
+          : {
+              sign: "~",
+              field: own,
+              text: `${nameOf(old)} → ${nameOf(op.value)}`,
+            };
       }
       const name = `${change.key} · ${fieldWords(op.path)}`;
       if (op.op === "remove") {
