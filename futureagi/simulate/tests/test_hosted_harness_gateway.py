@@ -63,7 +63,6 @@ from simulate.services.hosted_harness_gateway import (
     HostedSourceAcquirer,
     _add_scoped_guest_pin_policy,
     _authoring_archive_for,
-    _authoring_egress_domains,
     _authoring_ttl_seconds,
     _connector_egress_domains,
     _execution_ttl_seconds,
@@ -1944,16 +1943,9 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     assert set(client.params.allowed_domains) == {
         "agent.example.com",
         "*.vapi.ai",
-        "api.github.com",
-        "codeload.github.com",
-        "files.pythonhosted.org",
         "gateway.example.test",
-        "github.com",
         "ingest.example.com",
-        "objects.githubusercontent.com",
         "platform.example.com",
-        "pypi.org",
-        "raw.githubusercontent.com",
     }
 
 
@@ -2001,16 +1993,16 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
     assert attempt.state == HostedHarnessAttempt.State.RUNNING
     command = client.sandbox.process.session_request.command
     assert "--await-harness" not in command and "--adjustments" in command
-    assert {"pypi.org", "files.pythonhosted.org"} <= set(client.params.allowed_domains)
     assert not job.conversation.messages.filter(
         content__startswith="Build the test environment"
     ).exists()
 
 
 @pytest.mark.django_db
-def test_an_authored_run_keeps_package_egress(organization, settings, monkeypatch):
+def test_a_certification_run_keeps_package_egress(organization, settings, monkeypatch):
     payload = _payload()
     payload.setdefault("metadata", {})["simulation_only"] = True
+    payload["metadata"]["certification"] = {"campaign_id": "campaign-1"}
     payload["source"] = {
         "kind": "remote",
         "endpoint": "https://agent.example.com",
@@ -2414,16 +2406,9 @@ def test_daytona_livekit_launch_uses_coturn_domain_allowlist(
     assert client.params.allowed_cidrs == ()
     assert set(client.params.allowed_domains) == {
         "agent.example.com",
-        "api.github.com",
-        "codeload.github.com",
         "coturn.turn-eu.futureagi.com",
-        "files.pythonhosted.org",
-        "github.com",
         "ingest.example.com",
-        "objects.githubusercontent.com",
         "platform.example.com",
-        "pypi.org",
-        "raw.githubusercontent.com",
     }
 
 
@@ -4484,20 +4469,11 @@ class _ExportWorld:
             self.client.max_egress_domains = len(self.baseline_domains())
 
     def baseline_domains(self):
-        return _normalize_egress_domains(
-            [
-                *_resolved_egress_domains(
-                    self.job.payload,
-                    dict(self.declared),
-                    self.simulator_values,
-                    "platform.example.com",
-                ),
-                *_authoring_egress_domains(
-                    self.simulator_values,
-                    "",
-                    provider_profile=False,
-                ),
-            ]
+        return _resolved_egress_domains(
+            self.job.payload,
+            dict(self.declared),
+            self.simulator_values,
+            "platform.example.com",
         )
 
     def launch(self):

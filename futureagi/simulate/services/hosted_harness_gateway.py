@@ -2603,12 +2603,14 @@ class HostedHarnessGateway:
         _validate_resolved_egress_domains(
             allowed_domains, max_domains=self.client.max_egress_domains
         )
-        simulation_only = bool((payload.get("metadata") or {}).get("simulation_only"))
+        metadata = payload.get("metadata") or {}
+        simulation_only = bool(metadata.get("simulation_only"))
+        certification_run = bool(metadata.get("certification"))
         fresh_build = authoring_archive is None and not simulation_only
         harness_builds = fresh_build and getattr(
             settings, "ALK_HOSTED_BUILDER_SESSION", True
         )
-        if fresh_build or authoring_archive is not None:
+        if certification_run and (fresh_build or authoring_archive is not None):
             allowed_domains = _normalize_egress_domains(
                 [
                     *allowed_domains,
