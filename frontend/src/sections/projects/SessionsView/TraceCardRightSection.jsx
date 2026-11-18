@@ -49,9 +49,9 @@ const TraceCardRightSection = ({
 
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
-
   const { data: traceDetail } = useGetTraceDetail(
     isDrawerOpen ? traceId : null,
+    { projectId: observeId },
   );
   const projectId = observeId || traceDetail?.trace?.project;
 
@@ -106,37 +106,17 @@ const TraceCardRightSection = ({
         </Stack>
       </Stack>
       <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
-        <Tabs
+        <Tabs sx={{ boxShadow: "none" }}
           value={value}
           onChange={handleChange}
           aria-label="trace detail tabs"
           textColor="primary"
           indicatorColor="primary"
-          sx={{
-            typography: "s2",
-            "& .Mui-selected": {
-              color: "primary.main",
-              fontWeight: "fontWeightSemiBold",
-            },
-            "& .MuiTabs-indicator": {
-              backgroundColor: "primary.main",
-            },
-            "& .MuiTab-root": {},
-          }}
         >
           {tabsConfig.map((tab, index) => (
             <Tab
               key={tab.label}
-              icon={
-                <SvgColor
-                  sx={{
-                    bgcolor: index === value ? "primary.main" : "text.disabled",
-                    height: "16px",
-                    width: "16px",
-                  }}
-                  src={tab.icon}
-                />
-              }
+              icon={<SvgColor sx={{ width: "16px" }} src={tab.icon} />}
               iconPosition="start"
               label={`${tab.label} ${
                 tab.label === "Evaluations"
@@ -177,7 +157,6 @@ const TraceCardRightSection = ({
           variant="outlined"
           size="small"
           fullWidth
-          sx={{ borderRadius: "8px" }}
           onClick={(e) => {
             e.stopPropagation();
             setIsDrawerOpen(true);
@@ -185,11 +164,8 @@ const TraceCardRightSection = ({
           startIcon={
             <SvgColor
               src="/assets/icons/custom/eye.svg"
-              sx={{
-                height: "16px",
-                width: "16px",
-                color: "text.primary",
-              }}
+              width="16px"
+              sx={{ color: "text.primary" }}
             />
           }
         >

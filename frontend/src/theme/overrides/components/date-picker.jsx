@@ -22,12 +22,16 @@ const timeList = [
   "DesktopTimePicker",
 ];
 
-const switchIcon = () => <Iconify icon="eva:chevron-down-fill" width={24} />;
+const switchIcon = () => (
+  <Iconify icon="solar:alt-arrow-down-linear" width={24} />
+);
 
-const leftIcon = () => <Iconify icon="eva:arrow-ios-back-fill" width={24} />;
+const leftIcon = () => (
+  <Iconify icon="solar:alt-arrow-left-linear" width={24} />
+);
 
 const rightIcon = () => (
-  <Iconify icon="eva:arrow-ios-forward-fill" width={24} />
+  <Iconify icon="solar:alt-arrow-right-linear" width={24} />
 );
 
 const calendarIcon = () => (

@@ -15,9 +15,68 @@
  * matches what the backend expects regardless of whether the row
  * came from a manual edit or the AI query.
  */
-import { describe, it, expect } from "vitest";
-import { panelFilterToStore, unwrapScalarValue } from "../DevelopFilterBox";
-import { transformFilter } from "../common";
+import React from "react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+const datasetValueQuery = vi.hoisted(() => ({
+  current: {
+    data: [],
+    isLoading: false,
+    isError: false,
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
+    isFetchingNextPage: false,
+  },
+}));
+vi.mock("src/hooks/useDashboards", () => ({
+  useDatasetColumnValues: () => datasetValueQuery.current,
+}));
+import {
+  buildProperties,
+  DatasetColumnValuePicker,
+  panelFilterToStore,
+  storeFilterToPanel,
+  unwrapScalarValue,
+} from "../DevelopFilterBox";
+import { transformFilter, validateFilter } from "../common";
+
+describe("DatasetColumnValuePicker exact pagination", () => {
+  beforeEach(() => {
+    datasetValueQuery.current = {
+      data: ["alpha"],
+      isLoading: false,
+      isError: false,
+      hasNextPage: true,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
+    };
+  });
+
+  it("exposes the signed continuation as an explicit Load more action", () => {
+    const pickerProps = {
+      fieldType: "string",
+      value: "",
+      onChange: vi.fn(),
+      property: { id: "column-1" },
+      projectId: "dataset-1",
+    };
+    const { rerender } = render(
+      React.createElement(DatasetColumnValuePicker, pickerProps),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more values" }));
+    expect(datasetValueQuery.current.fetchNextPage).toHaveBeenCalledTimes(1);
+
+    datasetValueQuery.current = {
+      ...datasetValueQuery.current,
+      hasNextPage: false,
+    };
+    rerender(React.createElement(DatasetColumnValuePicker, pickerProps));
+    expect(
+      screen.queryByRole("button", { name: "Load more values" }),
+    ).not.toBeInTheDocument();
+  });
+});
 
 describe("unwrapScalarValue", () => {
   it("preserves arrays for canonical list operators", () => {
@@ -177,6 +236,64 @@ describe("panelFilterToStore — AI-path regression (TH-4400)", () => {
   });
 });
 
+describe("panelFilterToStore — free-text scalar + list operator (TH-6621)", () => {
+  // Repro: Dataset Detail → Basic filter → pick a text column (its "equals"
+  // label is the canonical list op `in`) → type a value in the free-text
+  // input. That input emits a bare scalar; `in` needs a list, so the row was
+  // dropped by validateFilter and the grid never updated. The store must wrap
+  // the scalar into a single-element list so the same typed value applies —
+  // and crucially, the result must survive validateFilter (the exact gate the
+  // grid's request builder uses).
+  it("wraps a typed scalar into a list for `in` and passes validateFilter", () => {
+    const out = panelFilterToStore({
+      field: "vf",
+      fieldCategory: "dataset",
+      fieldType: "string",
+      operator: "in",
+      value: "02",
+    });
+    expect(out.filterConfig).toMatchObject({
+      filterType: "text",
+      filterOp: "in",
+      filterValue: ["02"],
+    });
+    expect(validateFilter(out)).toBe(true);
+  });
+
+  it("wraps a typed scalar into a list for `not_in` too", () => {
+    const out = panelFilterToStore({
+      field: "vf",
+      fieldType: "string",
+      operator: "not_in",
+      value: "02",
+    });
+    expect(out.filterConfig.filterValue).toEqual(["02"]);
+    expect(validateFilter(out)).toBe(true);
+  });
+
+  it("leaves scalar operators (contains) as a bare scalar", () => {
+    const out = panelFilterToStore({
+      field: "vf",
+      fieldType: "string",
+      operator: "contains",
+      value: "02",
+    });
+    expect(out.filterConfig.filterValue).toBe("02");
+    expect(validateFilter(out)).toBe(true);
+  });
+
+  it("keeps an empty scalar empty so the row stays invalid (not [''])", () => {
+    const out = panelFilterToStore({
+      field: "vf",
+      fieldType: "string",
+      operator: "in",
+      value: "",
+    });
+    expect(out.filterConfig.filterValue).toBe("");
+    expect(validateFilter(out)).toBe(false);
+  });
+});
+
 describe("transformFilter", () => {
   it("emits the canonical backend filter contract", () => {
     const out = transformFilter({
@@ -217,6 +334,43 @@ describe("transformFilter", () => {
       filter_type: "datetime",
       filter_op: "between",
       filter_value: ["2026-05-01 00:00:00", "2026-05-02 00:00:00"],
+    });
+  });
+
+  it("preserves the dataset-column UUID registry identity through store and request", () => {
+    const properties = buildProperties([
+      {
+        field: "display-accessor-alias",
+        headerName: "Language",
+        col: {
+          id: "16e2f9e7-2bb2-44a2-aa4b-d82e052ef3da",
+          name: "Language",
+          data_type: "text",
+          origin_type: "dataset",
+        },
+      },
+    ]);
+    expect(properties[0]).toMatchObject({
+      id: "16e2f9e7-2bb2-44a2-aa4b-d82e052ef3da",
+      registryId: "dataset_column:16e2f9e7-2bb2-44a2-aa4b-d82e052ef3da",
+    });
+
+    const stored = panelFilterToStore({
+      field: properties[0].id,
+      registryId: properties[0].registryId,
+      fieldType: "string",
+      operator: "in",
+      value: ["English"],
+    });
+    expect(
+      storeFilterToPanel(stored, { [properties[0].id]: properties[0] }),
+    ).toMatchObject({
+      field: properties[0].id,
+      registryId: properties[0].registryId,
+    });
+    expect(transformFilter(stored)).toMatchObject({
+      column_id: properties[0].id,
+      property_id: properties[0].registryId,
     });
   });
 

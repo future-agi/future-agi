@@ -1,22 +1,35 @@
-from typing import Container
+from collections import Counter
+from collections.abc import Container
 
 import numpy as np
 
 from simulate.models import CallExecution, SimulateEvalConfig
+from simulate.selectors.runs import user_executions
 
 
 def iter_live_eval_outputs(eval_outputs, eval_configs: Container[str]):
-    """Yield only the (eval_id, eval_data) pairs whose eval config is still live.
+    """Yield the (eval_id, eval_data) pairs whose id is in ``eval_configs``.
 
     ``eval_outputs`` (JSONB on ``SimulateCallExecution``) is a snapshot and is
     not pruned when an eval config is soft-deleted, so its keys can outlive the
-    config. Callers pass ``eval_configs`` -- any ``Container[str]`` of the
-    currently-live eval config ids (a ``dict[str, SimulateEvalConfig]`` keyed by
-    id, or a ``set[str]``) -- and this filters the stale keys out. Membership is
-    tested with ``in``, so pass a set/dict (not a list) to keep it O(1) per key.
+    config. Liveness is the caller's definition, not this function's: pass a
+    live-only map/set to filter to still-live configs, or a map that also
+    includes soft-deleted ones to keep their rows too -- the call-details view
+    deliberately does the latter (TH-8045) so a removed eval's verdict still
+    surfaces, marked ``removed``. Membership is tested with ``in``, so pass a
+    set/dict (not a list) to keep it O(1) per key.
     """
-    for eval_id, eval_data in (eval_outputs or {}).items():
-        if str(eval_id) in eval_configs:
+    if not isinstance(eval_outputs, dict):
+        return
+    for eval_id, eval_data in eval_outputs.items():
+        # Harness-native checks are already-computed execution evidence and do
+        # not necessarily have a reusable EvalTemplate/SimulateEvalConfig. They
+        # remain live by source marker; template-backed harness judgements use a
+        # normal config ID and pass the membership check below.
+        is_harness_result = (
+            isinstance(eval_data, dict) and eval_data.get("source") == "harness"
+        )
+        if str(eval_id) in eval_configs or is_harness_result:
             yield eval_id, eval_data
 
 
@@ -29,9 +42,7 @@ def derive_kpi_output_type(eval_template):
         "percentage": "score",
         "deterministic": "choices",
     }
-    return mapping.get(
-        getattr(eval_template, "output_type_normalized", None), "score"
-    )
+    return mapping.get(getattr(eval_template, "output_type_normalized", None), "score")
 
 
 def _get_eval_config_for_agent_version(agent_version):
@@ -58,7 +69,7 @@ def _get_completed_call_executions_for_agent_version(agent_version):
 def _get_completed_call_executions(run_test, execution_id):
     """Get completed call executions with eval outputs"""
     base_query = {
-        "test_execution__run_test": run_test,
+        "test_execution__in": user_executions().filter(run_test=run_test),
         "status": "completed",
         "eval_outputs__isnull": False,
     }
@@ -147,9 +158,20 @@ def _calculate_config_stats(eval_config, outputs):
         raise ValueError(f"Invalid output type: {output_type}")
 
 
+NOT_APPLICABLE_OUTPUT = "Not applicable"
+INCONCLUSIVE_OUTPUT = "Inconclusive"
+# Results that are neither a pass nor a fail, so no pass rate counts them.
+UNSCORED_OUTPUTS = frozenset({NOT_APPLICABLE_OUTPUT, INCONCLUSIVE_OUTPUT})
+
+
 def _calculate_pass_fail_stats(eval_config, outputs):
     """Calculate Pass/Fail statistics"""
-    total_calls = len(outputs)
+    unscored = Counter(
+        output.get("output")
+        for output in outputs
+        if output.get("output") in UNSCORED_OUTPUTS
+    )
+    total_calls = len(outputs) - sum(unscored.values())
     pass_count = 0
     fail_count = 0
 
@@ -178,6 +200,8 @@ def _calculate_pass_fail_stats(eval_config, outputs):
             "fail": fail_rate,
             "pass_count": pass_count,
             "fail_count": fail_count,
+            "not_applicable_count": unscored[NOT_APPLICABLE_OUTPUT],
+            "inconclusive_count": unscored[INCONCLUSIVE_OUTPUT],
         },
     }
 

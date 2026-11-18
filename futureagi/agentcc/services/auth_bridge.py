@@ -1,11 +1,82 @@
 import hashlib
+from typing import TYPE_CHECKING
 
 import structlog
+from django.db.models import Q, QuerySet
+from django.utils import timezone
 
 from agentcc.models import AgentccAPIKey
-from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
+from agentcc.services.gateway_client import (
+    GatewayClientError,
+    _stringify_metadata,
+    get_gateway_client,
+)
+
+if TYPE_CHECKING:
+    from accounts.models import Organization
 
 logger = structlog.get_logger(__name__)
+
+
+class GatewayKeyIdCollision(Exception):
+    """The gateway returned a key ID that already belongs to another key."""
+
+
+def _live_keys(org: "Organization | None" = None) -> QuerySet[AgentccAPIKey]:
+    """Active, not deleted and not expired; the org's only, when given."""
+    qs = AgentccAPIKey.no_workspace_objects.filter(
+        status=AgentccAPIKey.ACTIVE,
+        deleted=False,
+    ).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
+    if org:
+        qs = qs.filter(organization=org)
+    return qs
+
+
+def gateway_loadable_keys(
+    org: "Organization | None" = None,
+) -> QuerySet[AgentccAPIKey]:
+    """The keys the gateway should hold: live ones with a stored hash, since
+    the gateway loads keys by hash. The gateway's startup pull and Sync's push
+    both send exactly these, so a key Sync pushes is one the next pull keeps.
+    Expired keys are left out even for gateways that predate expiry
+    enforcement."""
+    return _live_keys(org).exclude(key_hash="")
+
+
+def gateway_key_payload(key):
+    """A stored key as the gateway loads it by hash (its ``SyncedKey``).
+
+    Startup sync pulls these from the bulk endpoint and Sync pushes them; the
+    raw key never leaves Django.
+    """
+    metadata = _stringify_metadata(key.metadata or {})
+    metadata.setdefault("org_id", str(key.organization_id))
+    return {
+        "id": key.gateway_key_id,
+        "name": key.name,
+        "owner": key.owner,
+        "key_hash": key.key_hash,
+        "key_prefix": key.key_prefix,
+        "models": key.allowed_models or [],
+        "providers": key.allowed_providers or [],
+        "metadata": metadata,
+        "expires_at": key.expires_at.isoformat() if key.expires_at else None,
+    }
+
+
+def _is_same_key(local_key, key_hash="", key_prefix=""):
+    """Whether a stored row is the key the gateway describes under its ID.
+
+    Gateways before random key IDs reissued IDs after a restart, so a shared
+    ID alone does not make two keys the same. The hash settles it when both
+    sides have one; otherwise the display prefix, a weak but free signal.
+    """
+    if local_key.key_hash and key_hash:
+        return local_key.key_hash == key_hash
+    if local_key.key_prefix and key_prefix:
+        return local_key.key_prefix == key_prefix
+    return True
 
 
 def provision_key(
@@ -41,6 +112,22 @@ def provision_key(
 
     try:
         computed_hash = hashlib.sha256(raw_key.encode()).hexdigest() if raw_key else ""
+
+        # Never store a new key over another key's row. A row for this same key
+        # can exist: a Sync that raced this create stores it without a hash.
+        for existing in AgentccAPIKey.no_workspace_objects.filter(
+            gateway_key_id=result["id"]
+        ):
+            if not _is_same_key(
+                existing,
+                key_hash=computed_hash,
+                key_prefix=result.get("key_prefix", ""),
+            ):
+                raise GatewayKeyIdCollision(
+                    f"The gateway issued key id {result['id']!r}, which already "
+                    "belongs to another API key; the new key was discarded. "
+                    "Upgrade the gateway so it issues unique key ids, then try again."
+                )
 
         api_key, created = AgentccAPIKey.no_workspace_objects.update_or_create(
             gateway_key_id=result["id"],
@@ -133,10 +220,12 @@ def sync_keys(org=None):
     """
     Bidirectional sync between Go gateway and Django DB.
     - Keys on gateway but not in Django → create local record
-    - Keys in Django but not on gateway → log warning
+    - Keys in Django but not on gateway → push them to the gateway (by hash)
+    - Keys revoked in Django but active on gateway → revoke on the gateway
     Django is the source of truth; the gateway is ephemeral.
 
     Only syncs keys belonging to the given org (matched via metadata.org_id).
+    Returns how many of the org's keys the gateway holds afterwards.
     """
     client = get_gateway_client()
     result = client.list_keys()
@@ -174,6 +263,18 @@ def sync_keys(org=None):
 
         local_key = existing_keys.get(gateway_key_id)
 
+        if local_key and not _is_same_key(
+            local_key, key_prefix=gk.get("key_prefix", "")
+        ):
+            # An ID reissued by an older gateway: the gateway key is a different
+            # key, and the stored one is lost from the gateway under this ID.
+            logger.warning(
+                "sync_keys_id_collision",
+                gateway_key_id=gateway_key_id,
+                hint="revoke the stored key and create a new one",
+            )
+            continue
+
         if local_key:
             gw_status = gk.get("status", "active")
             update_fields = []
@@ -184,6 +285,9 @@ def sync_keys(org=None):
             if local_key.status == AgentccAPIKey.ACTIVE and gw_status == "revoked":
                 local_key.status = AgentccAPIKey.REVOKED
                 update_fields.append("status")
+            elif local_key.status == AgentccAPIKey.REVOKED and gw_status == "active":
+                # A revoke the gateway missed (it was unreachable at the time).
+                client.revoke_key(gateway_key_id)
             if org and local_key.organization_id != org.id:
                 local_key.organization = org
                 update_fields.append("organization")
@@ -224,20 +328,46 @@ def sync_keys(org=None):
                 },
             )
 
-    qs = AgentccAPIKey.no_workspace_objects.filter(
-        status=AgentccAPIKey.ACTIVE,
-        deleted=False,
-    )
-    if org:
-        qs = qs.filter(organization=org)
-    missing_keys = qs.exclude(gateway_key_id__in=gateway_key_ids)
+    return org_key_count + _restore_missing_keys(client, org, gateway_key_ids)
 
-    missing_count = missing_keys.count()
-    if missing_count:
+
+def _restore_missing_keys(client, org, gateway_key_ids):
+    """Push the keys the gateway should hold but lacks (e.g. after a restart
+    without startup sync) and return how many it loaded."""
+    payload = [
+        gateway_key_payload(key)
+        for key in gateway_loadable_keys(org).exclude(
+            gateway_key_id__in=gateway_key_ids
+        )
+    ]
+    unrecoverable = (
+        _live_keys(org)
+        .filter(key_hash="")
+        .exclude(gateway_key_id__in=gateway_key_ids)
+        .count()
+    )
+
+    if unrecoverable:
+        logger.warning(
+            "sync_keys_unrecoverable",
+            count=unrecoverable,
+            hint="no key hash is stored for these keys; revoke them and create new ones",
+        )
+    if not payload:
+        return 0
+
+    try:
+        loaded = client.import_keys(payload).get("loaded", 0)
+    except GatewayClientError as e:
+        # A gateway older than POST /-/keys/sync cannot take keys back. Sync
+        # still did the rest, so report what it could not restore.
+        if e.status_code not in (404, 405):
+            raise
         logger.warning(
             "sync_keys_missing_from_gateway",
-            missing=missing_count,
-            hint="keys exist in DB but not on gateway — restart gateway to trigger startup sync",
+            missing=len(payload),
+            hint="this gateway cannot import keys: upgrade it, or restart it to trigger startup sync",
         )
-
-    return org_key_count
+        return 0
+    logger.info("sync_keys_restored", pushed=len(payload), loaded=loaded)
+    return loaded

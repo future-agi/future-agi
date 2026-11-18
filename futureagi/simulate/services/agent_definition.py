@@ -122,7 +122,7 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         server_url = ""
         agent_name = ""
         config_json = None
-        max_concurrency = None
+        max_concurrency = data.livekit_max_concurrency
     else:
         provider_type = ProviderCredentials.ProviderType.VAPI
         api_key = (data.api_key or "").strip()
@@ -131,7 +131,7 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         server_url = ""
         agent_name = ""
         config_json = None
-        max_concurrency = None
+        max_concurrency = data.livekit_max_concurrency
 
     try:
         creds = ProviderCredentials.objects.get(agent_version=version)
@@ -192,8 +192,39 @@ def resolve_api_key_for_version(version):
     return None
 
 
-def resolve_stored_api_key(*, organization, workspace=None, agent_id=None, assistant_id=None):
+def resolve_api_secret_for_version(version):
+    """Read the API secret from a version's credentials (LiveKit).
+
+    Mirrors :func:`resolve_api_key_for_version` for the secret field, used to
+    preserve a masked ``livekit_api_secret`` across a new version instead of
+    blanking it. Returns the decrypted secret, or None if not configured.
+    """
+    if version is None:
+        return None
+    try:
+        creds = version.credentials
+        if creds and creds.get_api_secret():
+            return creds.get_api_secret()
+    except AgentVersion.credentials.RelatedObjectDoesNotExist:
+        pass
+    try:
+        agent = version.agent_definition
+        legacy = agent.credentials_legacy
+        if legacy and legacy.get_api_secret():
+            return legacy.get_api_secret()
+    except ProviderCredentials.DoesNotExist:
+        pass
+    return None
+
+
+def resolve_stored_api_key(
+    *, organization, workspace=None, agent_id=None, assistant_id=None, masked_value=None
+):
     """Resolve the decrypted API key for a masked request, scoped to the caller's tenant.
+
+    When ``masked_value`` is provided, the stored key's masked form is compared
+    against it as a security check — a wrong masked prefix/suffix is rejected
+    even when the agent_id is valid.
 
     Returns the key, or None. Never crosses organization/workspace.
     """
@@ -213,4 +244,12 @@ def resolve_stored_api_key(*, organization, workspace=None, agent_id=None, assis
         return None
 
     version = agent.active_version or agent.latest_version
-    return resolve_api_key_for_version(version) or None
+    key = resolve_api_key_for_version(version) or None
+
+    if key and masked_value:
+        from agentcc.services.credential_manager import mask_key
+
+        if mask_key(key) != masked_value:
+            return None
+
+    return key

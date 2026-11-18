@@ -58,11 +58,15 @@ export const SimulationDetailProvider = ({ simulationId, children }) => {
   }, []);
 
   const refreshGrid = useCallback(() => {
+
+    queryClient.invalidateQueries({
+      queryKey: ["simulation-executions-grid", simulationId],
+    });
     queryClient.invalidateQueries({
       queryKey: ["simulation-executions", simulationId],
     });
     if (gridApiRef.current) {
-      gridApiRef.current.refreshServerSide();
+      gridApiRef?.current?.refreshServerSide();
     }
   }, [queryClient, simulationId]);
 

@@ -1,6 +1,9 @@
+import EmptyContent from "src/components/empty-content";
+import ErrorState from "src/components/error-state";
 import React, { useEffect } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
-import { Box, CircularProgress, Typography } from "@mui/material";
+import { Box } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useGetScenarioDetail } from "src/api/scenarios/scenarios";
 
 const DatasetScenarioView = () => {
@@ -18,18 +21,7 @@ const DatasetScenarioView = () => {
   }, [scenario, navigate]);
 
   if (isLoading) {
-    return (
-      <Box
-        sx={{
-          height: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingScreen sx={{ height: "100vh" }} />;
   }
 
   if (error) {
@@ -42,9 +34,7 @@ const DatasetScenarioView = () => {
           justifyContent: "center",
         }}
       >
-        <Typography color="error">
-          Error loading scenario: {error.message}
-        </Typography>
+        <ErrorState title="Error loading scenario" detail={error.message} />
       </Box>
     );
   }
@@ -55,16 +45,10 @@ const DatasetScenarioView = () => {
 
   if (!scenario || !datasetId) {
     return (
-      <Box
-        sx={{
-          height: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <Typography>No dataset found for this scenario</Typography>
-      </Box>
+      <EmptyContent
+        title="No dataset found for this scenario"
+        sx={{ height: "100vh" }}
+      />
     );
   }
 

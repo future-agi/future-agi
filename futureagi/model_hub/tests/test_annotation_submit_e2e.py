@@ -1,3 +1,4 @@
+import uuid
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,7 +9,6 @@ from rest_framework import status
 
 # These tests verify that queue annotation submission correctly creates Score
 # records, adds queue annotators, manages reservations, and validates permissions.
-
 from accounts.models import User
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
@@ -76,12 +76,28 @@ def _create_trace_project(organization, workspace, name="Annotation E2E Project"
 
 
 def _create_trace(project, name="Annotation E2E Trace"):
-    return Trace.objects.create(
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.tests._ch_seed import seed_ch_span
+
+    trace = Trace.objects.create(
         project=project,
         name=name,
         input={"prompt": "hello"},
         output={"response": "world"},
     )
+    # Tracer sources resolve CH-native — seed a CH-only root span (never PG).
+    root = ObservationSpan(
+        id=f"chroot_{uuid.uuid4().hex[:16]}",
+        project=project,
+        trace=trace,
+        name="trace root",
+        observation_type="agent",
+        start_time=timezone.now() - timedelta(seconds=1),
+        end_time=timezone.now(),
+        status="OK",
+    )
+    seed_ch_span(root)  # CH only — NOT ObservationSpan.objects.create
+    return trace
 
 
 def _create_trace_queue(
@@ -148,9 +164,7 @@ def test_submit_and_complete_trace_label_writes_score_and_legacy_annotation(
     submit_resp = auth_client.post(
         _submit_url(queue.id, item.id),
         {
-            "annotations": [
-                {"label_id": str(label.id), "value": {"text": "ship it"}}
-            ],
+            "annotations": [{"label_id": str(label.id), "value": {"text": "ship it"}}],
             "notes": "queue note",
         },
         format="json",
@@ -166,7 +180,9 @@ def test_submit_and_complete_trace_label_writes_score_and_legacy_annotation(
     assert score.trace_id == trace.id
     assert score.value == {"text": "ship it"}
 
-    complete_resp = auth_client.post(_complete_url(queue.id, item.id), {}, format="json")
+    complete_resp = auth_client.post(
+        _complete_url(queue.id, item.id), {}, format="json"
+    )
     assert complete_resp.status_code == status.HTTP_200_OK, complete_resp.data
     item.refresh_from_db()
     assert item.status == QueueItemStatus.COMPLETED.value
@@ -267,7 +283,9 @@ def test_reservation_blocks_other_user_until_timeout(
     # Assign item to both users so the detail endpoint allows access
     QueueItemAssignment.objects.get_or_create(queue_item=item, user=other_user)
 
-    first_resp = auth_client.get(_annotate_detail_url(queue.id, item.id), {"reserve": "true"})
+    first_resp = auth_client.get(
+        _annotate_detail_url(queue.id, item.id), {"reserve": "true"}
+    )
     assert first_resp.status_code == status.HTTP_200_OK, first_resp.data
     item.refresh_from_db()
     assert item.reserved_by_id == user.id
@@ -345,7 +363,9 @@ def test_import_annotations_dual_writes_score_and_legacy_trace_annotation(
     trace = _create_trace(_create_trace_project(organization, workspace))
     queue, item = _create_trace_queue(organization, workspace, user, trace, label)
 
-    annotator = _make_user(organization, "imported-annotator@example.com", workspace=workspace)
+    annotator = _make_user(
+        organization, "imported-annotator@example.com", workspace=workspace
+    )
     AnnotationQueueAnnotator.objects.get_or_create(
         queue=queue,
         user=annotator,

@@ -24,6 +24,7 @@ import { useGetJsonColumnSchema } from "src/api/develop/develop-detail";
 import PropTypes from "prop-types";
 import { enqueueSnackbar } from "notistack";
 import { FormCheckboxField } from "../../../components/FormCheckboxField";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { LoadingButton } from "@mui/lab";
 import { ADD_AND_RUN_BUTTON_MAPPER, ADD_BUTTON_MAPPER } from "./common";
@@ -77,6 +78,7 @@ export default function EvaluationMappingFormContent({
   disabledName,
   isViewMode,
   isFutureagiBuilt,
+  alwaysShowModel = false,
   modelsToShow,
   hideModel,
   modeHelpMessage,
@@ -113,14 +115,20 @@ export default function EvaluationMappingFormContent({
   formState,
   hideGroupHeader = false,
   hideAddGroupButton = false,
+  onColumnSearchChange,
+  columnInventoryControls,
 }) {
   const [_, setSearchParams] = useSearchParams();
   const theme = useTheme();
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
   const navigate = useNavigate();
   const model = useWatch({
     control,
     name: "model",
   });
+  const visibleModels = (modelsToShow || []).filter((m) =>
+    ["turing_large", "turing_small", "turing_flash"].includes(m.value),
+  );
   const functionConfigSchema =
     evalConfig?.functionParamsSchema ||
     evalConfig?.function_params_schema ||
@@ -181,18 +189,12 @@ export default function EvaluationMappingFormContent({
             }}
             variant="outlined"
             sx={{
-              borderRadius: theme.spacing(0.5),
-              paddingX: theme.spacing(1.5),
-              paddingY: theme.spacing(0.5),
               borderColor: "action.hover",
             }}
             startIcon={
-              <Iconify
-                icon="lucide:chevron-left"
-                sx={{
-                  width: theme.spacing(2),
-                  height: theme.spacing(2),
-                  marginRight: "-4px",
+              <Iconify width={16}
+                icon="solar:alt-arrow-left-linear"
+                sx={{ marginRight: "-4px",
                   // background:'red',
                 }}
               />
@@ -217,7 +219,7 @@ export default function EvaluationMappingFormContent({
             }}
           >
             <Iconify
-              icon="line-md:close"
+              icon="solar:close-linear"
               sx={{
                 width: theme.spacing(3),
                 height: theme.spacing(3),
@@ -261,7 +263,6 @@ export default function EvaluationMappingFormContent({
                 minWidth: "100px",
                 maxWidth: "100px",
                 marginLeft: "auto",
-                fontSize: "12px",
                 whiteSpace: "nowrap",
                 borderColor: "text.disabled",
               }}
@@ -348,7 +349,7 @@ export default function EvaluationMappingFormContent({
                       >
                         <Iconify
                           sx={{ height: 12, width: 12 }}
-                          icon="mingcute:close-line"
+                          icon="solar:close-linear"
                         />
                       </IconButton>
                     )}
@@ -364,7 +365,7 @@ export default function EvaluationMappingFormContent({
                   gap: 0.5,
                   height: "18px",
 
-                  fontSize: "10px",
+                  fontSize: "12px",
                   fontWeight: 500,
                   color: "primary.main",
                 }}
@@ -382,7 +383,11 @@ export default function EvaluationMappingFormContent({
                   sx={{ padding: 0 }}
                 >
                   <Iconify
-                    icon={showAll ? "tabler:chevron-up" : "tabler:chevron-down"}
+                    icon={
+                      showAll
+                        ? "solar:alt-arrow-up-linear"
+                        : "solar:alt-arrow-down-linear"
+                    }
                     width={16}
                     height={16}
                     sx={{ color: "primary.main" }}
@@ -411,81 +416,85 @@ export default function EvaluationMappingFormContent({
           }
         />
       </ShowComponent>
-      {isFutureagiBuilt && modelsToShow?.length > 0 && !hideModel && (
-        <HeadingAndSubHeading
-          heading={
-            <FormSearchSelectFieldControl
-              control={control}
-              disabled={isViewMode}
-              options={modelsToShow.map((model) => {
-                return {
-                  ...model,
-                  component: (
-                    <Box sx={{ padding: theme.spacing(0.75, 1) }}>
-                      <Box
-                        display={"flex"}
-                        flexDirection={"row"}
-                        alignItems={"center"}
-                        gap={"8px"}
-                      >
-                        <img
-                          src={"/favicon/logo.svg"}
-                          style={{
-                            height: theme.spacing(2),
-                            width: theme.spacing(2),
-                          }}
-                        />
+      {(isFutureagiBuilt || alwaysShowModel) &&
+        visibleModels.length > 0 &&
+        !hideModel && (
+          <HeadingAndSubHeading
+            heading={
+              <FormSearchSelectFieldControl
+                control={control}
+                disabled={isViewMode}
+                options={visibleModels.map((model) => {
+                  return {
+                    ...model,
+                    component: (
+                      <Box sx={{ padding: theme.spacing(0.75, 1) }}>
+                        <Box
+                          display={"flex"}
+                          flexDirection={"row"}
+                          alignItems={"center"}
+                          gap={"8px"}
+                        >
+                          <img
+                            src={"/favicon/logo.svg"}
+                            style={{
+                              height: theme.spacing(2),
+                              width: theme.spacing(2),
+                            }}
+                          />
+                          <Typography
+                            typography="s1"
+                            fontWeight={"fontWeightMedium"}
+                            color={"text.primary"}
+                          >
+                            {model.label}
+                          </Typography>
+                        </Box>
                         <Typography
-                          typography="s1"
-                          fontWeight={"fontWeightMedium"}
+                          typography={"s2"}
+                          sx={{
+                            marginLeft: theme.spacing(3),
+                            wordWrap: "break-word",
+                            whiteSpace: "normal",
+                          }}
                           color={"text.primary"}
                         >
-                          {model.label}
+                          {model.description}
                         </Typography>
                       </Box>
-                      <Typography
-                        typography={"s2"}
-                        sx={{
-                          marginLeft: theme.spacing(3),
-                          wordWrap: "break-word",
-                          whiteSpace: "normal",
+                    ),
+                  };
+                })}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <img
+                        src={"/favicon/logo.svg"}
+                        style={{
+                          height: theme.spacing(2),
+                          width: theme.spacing(2),
                         }}
-                        color={"text.primary"}
-                      >
-                        {model.description}
-                      </Typography>
-                    </Box>
+                      />
+                    </InputAdornment>
                   ),
-                };
-              })}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <img
-                      src={"/favicon/logo.svg"}
-                      style={{
-                        height: theme.spacing(2),
-                        width: theme.spacing(2),
-                      }}
-                    />
-                  </InputAdornment>
-                ),
-              }}
-              error={formState.errors?.model && formState.errors.model.message}
-              fieldName={"model"}
-              label={"Language Model"}
-              size={"small"}
-              fullWidth
-              required
-            />
-          }
-          subHeading={
-            modeHelpMessage
-              ? modeHelpMessage
-              : "The model to use for evaluation"
-          }
-        />
-      )}
+                }}
+                error={
+                  formState.errors?.model && formState.errors.model.message
+                }
+                fieldName={"model"}
+                label={"Language Model"}
+                size={"small"}
+                fullWidth
+                required
+              />
+            }
+            subHeading={
+              modeHelpMessage
+                ? modeHelpMessage
+                : "The model to use for evaluation"
+            }
+          />
+        )}
       <ShowComponent condition={!hideKnowledgeBase}>
         <HeadingAndSubHeading
           heading={
@@ -565,12 +574,11 @@ export default function EvaluationMappingFormContent({
                   handleCheckbox={undefined}
                   noOptions={emptyMessage()}
                   hideFieldColumns={hideFieldColumns}
+                  onSearchChange={onColumnSearchChange}
                 />
                 <IconButton
                   sx={{
                     paddingY: 0,
-                    paddingX: 0.5,
-                    height: theme.spacing(3),
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -581,12 +589,9 @@ export default function EvaluationMappingFormContent({
                     });
                   }}
                 >
-                  <Iconify
-                    icon="tabler:copy"
-                    sx={{
-                      width: theme.spacing(2),
-                      height: theme.spacing(2),
-                    }}
+                  <Iconify width={16}
+                    icon="solar:copy-linear"
+                    sx={{ }}
                   />
                 </IconButton>
               </Box>
@@ -596,12 +601,12 @@ export default function EvaluationMappingFormContent({
         <ShowComponent condition={selectedEval?.isGroupEvals}>
           {groupedRequiredKeys?.map((group, index) => {
             const evals = group?.evals?.map((evalItm) => evalItm?.name);
-            const groupedKeys = group?.required_keys?.filter((gKey) =>
+            const groupedKeys = group?.requiredKeys?.filter((gKey) =>
               filteredRequiredKeys?.includes(gKey),
             );
             const uniqueOptionalKeys = [
               ...new Set(
-                group?.required_keys
+                group?.requiredKeys
                   ?.filter((item) => String(item).startsWith("OPT"))
                   ?.map((item) => {
                     return item.slice(4, item?.length);
@@ -618,7 +623,7 @@ export default function EvaluationMappingFormContent({
                 sx={{
                   border: "1px solid",
                   borderColor: "divider",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   padding: theme.spacing(2, 1.5),
                   display: "flex",
                   flexDirection: "column",
@@ -698,6 +703,7 @@ export default function EvaluationMappingFormContent({
                         handleCheckbox={undefined}
                         noOptions={emptyMessage()}
                         hideFieldColumns={hideFieldColumns}
+                        onSearchChange={onColumnSearchChange}
                       />
                     ))}
                   </Stack>
@@ -730,6 +736,7 @@ export default function EvaluationMappingFormContent({
                         handleCheckbox={undefined}
                         noOptions={emptyMessage()}
                         hideFieldColumns={hideFieldColumns}
+                        onSearchChange={onColumnSearchChange}
                       />
                     ))}
                   </Stack>
@@ -787,12 +794,11 @@ export default function EvaluationMappingFormContent({
                     handleCheckbox={undefined}
                     noOptions={emptyMessage()}
                     hideFieldColumns={hideFieldColumns}
+                    onSearchChange={onColumnSearchChange}
                   />
                   <IconButton
                     sx={{
                       paddingY: 0,
-                      paddingX: 0.5,
-                      height: theme.spacing(3),
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -803,12 +809,9 @@ export default function EvaluationMappingFormContent({
                       });
                     }}
                   >
-                    <Iconify
-                      icon="tabler:copy"
-                      sx={{
-                        width: theme.spacing(2),
-                        height: theme.spacing(2),
-                      }}
+                    <Iconify width={16}
+                      icon="solar:copy-linear"
+                      sx={{ }}
                     />
                   </IconButton>
                 </Box>
@@ -816,6 +819,7 @@ export default function EvaluationMappingFormContent({
             })}
           </Box>
         )}
+      {columnInventoryControls}
       <ShowComponent
         condition={!selectedEval?.isGroupEvals && functionConfigKeys.length > 0}
       >
@@ -824,7 +828,7 @@ export default function EvaluationMappingFormContent({
           py={theme.spacing(2)}
           px={theme.spacing(1.5)}
           border={`1px solid`}
-          borderColor={"black.50"}
+          borderColor={"divider"}
           borderRadius={theme.spacing(0.5)}
           flexDirection={"column"}
           gap={theme.spacing(2)}
@@ -860,7 +864,7 @@ export default function EvaluationMappingFormContent({
           py={theme.spacing(2)}
           px={theme.spacing(1.5)}
           border={`1px solid`}
-          borderColor={"black.50"}
+          borderColor={"divider"}
           borderRadius={theme.spacing(0.5)}
           flexDirection={"column"}
           gap={theme.spacing(2)}
@@ -900,38 +904,40 @@ export default function EvaluationMappingFormContent({
           })}
         </Box>
       </ShowComponent>
-      <Box
-        display={"flex"}
-        py={theme.spacing(2)}
-        px={theme.spacing(1.5)}
-        border={`1px solid`}
-        borderColor={"divider"}
-        borderRadius={theme.spacing(0.5)}
-      >
-        <HeadingAndSubHeading
-          heading={
-            <FormCheckboxField
-              control={control}
-              fieldName={"errorLocalizer"}
-              label={"Error Localization"}
-              helperText={undefined}
-              disabled={isViewMode}
-              labelPlacement="end"
-              defaultValue={formState.defaultValues.errorLocalizer}
-              labelProps={{
-                gap: theme.spacing(1),
-              }}
-              checkboxSx={{
-                padding: 0,
-                "&.Mui-checked": {
-                  color: "primary.light",
-                },
-              }}
-            />
-          }
-          subHeading="Pinpoints the errors in your LLM output"
-        />
-      </Box>
+      {errorLocalizerAvailable && (
+        <Box
+          display={"flex"}
+          py={theme.spacing(2)}
+          px={theme.spacing(1.5)}
+          border={`1px solid`}
+          borderColor={"divider"}
+          borderRadius={theme.spacing(0.5)}
+        >
+          <HeadingAndSubHeading
+            heading={
+              <FormCheckboxField
+                control={control}
+                fieldName={"errorLocalizer"}
+                label={"Error Localization"}
+                helperText={undefined}
+                disabled={isViewMode}
+                labelPlacement="end"
+                defaultValue={formState.defaultValues.errorLocalizer}
+                labelProps={{
+                  gap: theme.spacing(1),
+                }}
+                checkboxSx={{
+                  padding: 0,
+                  "&.Mui-checked": {
+                    color: "primary.light",
+                  },
+                }}
+              />
+            }
+            subHeading="Pinpoints the errors in your LLM output"
+          />
+        </Box>
+      )}
       <Box display={"flex"} flexGrow={1} />
       <ShowComponent condition={!selectedEval?.isGroupEvals}>
         <Box
@@ -1047,15 +1053,7 @@ export default function EvaluationMappingFormContent({
               ? handleSubmit((formData) => onFormSave(formData, removedEvals))
               : undefined
           }
-          startIcon={
-            <SvgColor
-              sx={{
-                height: "20px",
-                width: "20px",
-              }}
-              src={"/assets/icons/ic_add.svg"}
-            />
-          }
+          startIcon={<SvgColor width={20} src={"/assets/icons/ic_add.svg"} />}
           variant="contained"
           color="primary"
         >
@@ -1087,6 +1085,7 @@ EvaluationMappingFormContent.propTypes = {
   disabledName: PropTypes.string,
   isViewMode: PropTypes.bool,
   isFutureagiBuilt: PropTypes.bool,
+  alwaysShowModel: PropTypes.bool,
   modelsToShow: PropTypes.array,
   hideModel: PropTypes.bool,
   modeHelpMessage: PropTypes.string,
@@ -1123,4 +1122,6 @@ EvaluationMappingFormContent.propTypes = {
   formState: PropTypes.object,
   hideGroupHeader: PropTypes.bool,
   hideAddGroupButton: PropTypes.bool,
+  onColumnSearchChange: PropTypes.func,
+  columnInventoryControls: PropTypes.node,
 };

@@ -16,14 +16,14 @@ const ControlledRating = ({ control, fieldName, settings }) => {
       }}
       icon={
         <Iconify
-          icon="material-symbols:star"
+          icon="solar:star-bold"
           sx={{ fontSize: "inherit" }}
           width={25}
         />
       }
       emptyIcon={
         <Iconify
-          icon="material-symbols:star-outline"
+          icon="solar:star-linear"
           width={25}
           sx={{ fontSize: "inherit" }}
         />
@@ -74,14 +74,14 @@ const StarLabelField = ({ control, label, fieldName, settings }) => {
           }}
           icon={
             <Iconify
-              icon="material-symbols:star"
+              icon="solar:star-bold"
               sx={{ fontSize: "inherit" }}
               width={25}
             />
           }
           emptyIcon={
             <Iconify
-              icon="material-symbols:star-outline"
+              icon="solar:star-linear"
               width={25}
               sx={{ fontSize: "inherit" }}
             />

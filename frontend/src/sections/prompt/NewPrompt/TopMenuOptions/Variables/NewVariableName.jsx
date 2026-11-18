@@ -44,7 +44,13 @@ const NewVariableName = ({ open, onClose, handleAddVariable }) => {
     onClose();
   };
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle
         sx={{
           gap: "10px",
@@ -60,11 +66,11 @@ const NewVariableName = ({ open, onClose, handleAddVariable }) => {
             justifyContent: "space-between",
           }}
         >
-          <Typography fontWeight={700} fontSize="18px">
+          <Typography fontWeight={600} fontSize="16px">
             Duplicate Dataset
           </Typography>
           <IconButton onClick={handleClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>

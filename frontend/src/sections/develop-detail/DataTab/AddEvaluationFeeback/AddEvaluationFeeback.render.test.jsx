@@ -71,4 +71,55 @@ describe("FeedBackForm — choice rendering", () => {
     // not checkboxes
     expect(screen.queryByRole("checkbox", { name: "A" })).toBeNull();
   });
+
+  it("renders Passed/Failed radios for a Pass/Fail eval", () => {
+    render(
+      <Wrapper
+        feedbackData={{
+          output_type: "Pass/Fail",
+          choices: ["Passed", "Failed"],
+          choice_scores: null,
+        }}
+      />,
+    );
+    expect(screen.getByRole("radio", { name: "Passed" })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "Failed" })).toBeTruthy();
+  });
+
+  it("renders checkboxes with score annotations when choice_scores + multi_choice", () => {
+    render(
+      <Wrapper
+        feedbackData={{
+          output_type: "choices",
+          multi_choice: true,
+          choices: ["Polite", "Helpful"],
+          choice_scores: { Polite: 1, Helpful: 1, Toxic: 0 },
+        }}
+      />,
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "Polite (score 1)" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("checkbox", { name: "Toxic (score 0)" }),
+    ).toBeTruthy();
+    // not radios
+    expect(
+      screen.queryByRole("radio", { name: "Polite (score 1)" }),
+    ).toBeNull();
+  });
+
+  it("renders radios with score annotations when choice_scores is set and multi_choice is false", () => {
+    render(
+      <Wrapper
+        feedbackData={{
+          output_type: "score",
+          multi_choice: false,
+          choice_scores: { Yes: 1, No: 0 },
+        }}
+      />,
+    );
+    expect(screen.getByRole("radio", { name: "Yes (score 1)" })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "No (score 0)" })).toBeTruthy();
+  });
 });

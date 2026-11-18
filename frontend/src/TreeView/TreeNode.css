@@ -177,3 +177,58 @@
   width: 14px;
   height: 14px;
 }
+
+/* Dark theme — driven by the data-theme attribute set by ThemeProvider */
+[data-theme="dark"] .tree-node__content--selected {
+  border-color: #60a5fa;
+  background: #18181b;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="dark"]
+  .tree-node__content:hover:not(.tree-node__content--selected) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .tree-node__vertical-line,
+[data-theme="dark"] .tree-node__horizontal-line,
+[data-theme="dark"] .tree-node__connector-line,
+[data-theme="dark"] .tree-view__root-connector {
+  background: #27272a;
+}
+
+[data-theme="dark"] .tree-node__toggle:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .tree-node__toggle-icon {
+  color: #a1a1aa;
+}
+
+[data-theme="dark"] .tree-node__name {
+  color: #fafafa;
+}
+
+[data-theme="dark"] .node-metadata {
+  color: #a1a1aa;
+}
+
+[data-theme="dark"] .node-icon--agent {
+  background: rgba(37, 99, 235, 0.2);
+  color: #93c5fd;
+}
+
+[data-theme="dark"] .node-icon--tool {
+  background: rgba(234, 88, 12, 0.2);
+  color: #fdba74;
+}
+
+[data-theme="dark"] .node-icon--prompt {
+  background: rgba(124, 58, 237, 0.2);
+  color: #c4b5fd;
+}
+
+[data-theme="dark"] .node-icon--eval {
+  background: rgba(22, 163, 74, 0.2);
+  color: #86efac;
+}

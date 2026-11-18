@@ -27,6 +27,16 @@ class RateLimitExceededError(MCPError):
         self.retry_after = retry_after
 
 
+class RateLimitBackendUnavailableError(RateLimitExceededError):
+    """Raised when a distributed rate-limit decision cannot be made."""
+
+    def __init__(self, retry_after: int = 60) -> None:
+        super().__init__(
+            "Rate limiting service temporarily unavailable",
+            retry_after=retry_after,
+        )
+
+
 class SessionNotFoundError(MCPError):
     """Raised when an MCP session is not found."""
 

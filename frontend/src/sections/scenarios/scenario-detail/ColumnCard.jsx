@@ -86,7 +86,7 @@ export const ColumnCard = ({
           sx={{
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 0.5,
+            borderRadius: "4px",
             padding: 2,
             flexGrow: 1,
             width: "100%",
@@ -112,7 +112,7 @@ export const ColumnCard = ({
                 height: "20px",
                 color: "text.primary",
                 transform: expand ? "rotate(180deg)" : "rotate(0deg)",
-                transition: "transform 0.3s ease",
+                transition: "transform 0.2s ease",
               }}
             />
           </Box>
@@ -143,13 +143,13 @@ export const ColumnCard = ({
       </Box>
 
       <ModalWrapper
-        modalWidth="480px"
+        modalWidth="560px"
         actionBtnTitle={"Delete"}
         isValid={true}
         actionBtnSx={{
-          backgroundColor: "red.500",
+          backgroundColor: "status.danger.solid",
           "&:hover": {
-            backgroundColor: "red.500",
+            backgroundColor: "status.danger.solid",
           },
         }}
         open={deleteModalOpen}

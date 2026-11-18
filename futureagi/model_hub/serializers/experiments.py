@@ -16,6 +16,11 @@ from model_hub.models.experiments import (
     ExperimentPromptConfig,
     ExperimentsTable,
 )
+from model_hub.utils.workspace_scope import (
+    scoped_column_queryset,
+    scoped_dataset_queryset,
+    scoped_user_eval_metric_queryset,
+)
 from tfc.middleware.workspace_context import get_current_organization
 
 
@@ -40,6 +45,18 @@ class ExperimentsTableSerializer(serializers.ModelSerializer):
             "column_id",
         ]
         read_only_fields = ["id", "status"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request") if self.context else None
+        self.fields["dataset_id"].queryset = scoped_dataset_queryset(request)
+        self.fields["column_id"].queryset = scoped_column_queryset(request)
+        # `user_eval_template_ids` is many=True — the per-pk lookup runs on
+        # the child_relation, so scope both to keep workspace isolation
+        # honest (see develop_optimisation.py for the same pattern).
+        scoped_metrics = scoped_user_eval_metric_queryset(request)
+        self.fields["user_eval_template_ids"].queryset = scoped_metrics
+        self.fields["user_eval_template_ids"].child_relation.queryset = scoped_metrics
 
     def validate_prompt_config(self, value):
         # Add any specific validation for prompt_config if needed
@@ -396,10 +413,18 @@ class EvalMetricEntrySerializer(serializers.Serializer):
 
 
 class _ExtraFieldsMixin:
-    """Pass unknown keys through to_internal_value unchanged.
+    """Pass unknown keys through both directions unchanged.
 
-    Provides the typed-keys-plus-escape-hatch pattern: declared fields are
-    validated; any additional provider-specific key is accepted as-is.
+    Provides the typed-keys-plus-escape-hatch pattern:
+
+    * ``to_internal_value`` (request input) — declared fields are validated;
+      any additional provider-specific key is accepted as-is.
+    * ``to_representation`` (response output) — declared fields render
+      normally; any additional key present on a source dict is copied
+      straight through. Without this, serializers that promise
+      ``additionalProperties: True`` (e.g. ``EvalUsageTableRowSerializer``'s
+      dynamic ``input_var_<name>`` cells) would silently drop those keys at
+      ``.data`` time.
     """
 
     def to_internal_value(self, data):
@@ -408,6 +433,17 @@ class _ExtraFieldsMixin:
             if key not in self.fields:
                 validated[key] = value
         return validated
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        # `instance` can be a dict (views build responses as raw dicts) or a
+        # model instance. Only dicts carry surprise keys — model instances
+        # already went through ORM field mapping.
+        if isinstance(instance, dict):
+            for key, value in instance.items():
+                if key not in self.fields:
+                    rep[key] = value
+        return rep
 
 
 class MessageItemSerializer(_ExtraFieldsMixin, serializers.Serializer):

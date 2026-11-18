@@ -5,10 +5,10 @@ and middleware cleanup.
 """
 
 import threading
-
-import pytest
+from types import SimpleNamespace
 
 from tfc.middleware.workspace_context import (
+    WorkspaceContextMiddleware,
     clear_workspace_context,
     get_current_organization,
     get_current_user,
@@ -110,11 +110,46 @@ class TestWorkspaceContextGetSet:
         # Organization should be overwritten since set_workspace_context
         # replaces the whole context
         # Actually let's check what the implementation does
-        result = get_current_organization()
         # This depends on implementation - if set_workspace_context
         # only sets provided fields, org should remain
         # We'll just verify workspace was set
         assert get_current_workspace().id == "ws-1"
+
+
+class TestWorkspaceContextMiddleware:
+    def setup_method(self):
+        clear_workspace_context()
+
+    def teardown_method(self):
+        clear_workspace_context()
+
+    def test_request_entry_clears_inherited_context(self):
+        set_workspace_context(
+            workspace=FakeWorkspace("stale-workspace"),
+            organization=FakeOrganization("stale-organization"),
+            user=FakeUser("stale-user"),
+        )
+
+        middleware = WorkspaceContextMiddleware(lambda request: None)
+        middleware.process_request(SimpleNamespace())
+
+        assert get_current_workspace() is None
+        assert get_current_organization() is None
+        assert get_current_user() is None
+
+    def test_exception_clears_bound_context(self):
+        set_workspace_context(
+            workspace=FakeWorkspace("request-workspace"),
+            organization=FakeOrganization("request-organization"),
+            user=FakeUser("request-user"),
+        )
+
+        middleware = WorkspaceContextMiddleware(lambda request: None)
+        middleware.process_exception(SimpleNamespace(), RuntimeError("boom"))
+
+        assert get_current_workspace() is None
+        assert get_current_organization() is None
+        assert get_current_user() is None
 
 
 class TestThreadIsolation:
@@ -195,12 +230,12 @@ class TestThreadIsolation:
 
         assert not errors, f"Thread errors: {errors}"
         for i in range(num_threads):
-            assert (
-                results[i]["workspace"] == f"ws-{i}"
-            ), f"Thread {i} got workspace {results[i]['workspace']}"
-            assert (
-                results[i]["organization"] == f"org-{i}"
-            ), f"Thread {i} got org {results[i]['organization']}"
+            assert results[i]["workspace"] == f"ws-{i}", (
+                f"Thread {i} got workspace {results[i]['workspace']}"
+            )
+            assert results[i]["organization"] == f"org-{i}", (
+                f"Thread {i} got org {results[i]['organization']}"
+            )
 
     def test_main_thread_not_affected_by_child(self):
         """Setting context in child thread doesn't affect main thread."""

@@ -361,7 +361,6 @@ class _EvalRunResult:
 
 
 class _FullTemplate:
-
     def __init__(
         self,
         output="score",
@@ -484,9 +483,7 @@ class TestScoreEvalOutputRawRunResult:
         assert score_eval_output(run_result, template) == 0.42
 
     def test_raw_pass_fail_output(self):
-        template = _FullTemplate(
-            output="Pass/Fail", output_type_normalized="pass_fail"
-        )
+        template = _FullTemplate(output="Pass/Fail", output_type_normalized="pass_fail")
         run_result = _EvalRunResult(
             eval_results=[
                 {
@@ -569,3 +566,13 @@ class TestScoreEvalOutputDefaultScore:
     def test_value_key_dict_scores_correctly(self):
         template = _Template(output_type_normalized="percentage")
         assert score_eval_output({"value": 0.85}, template) == 0.85
+
+    def test_default_score_none_surfaces_unscoreable_as_none(self):
+        # Composite runner opts into None so its exclusion branch fires.
+        template = _Template(output_type_normalized="pass_fail")
+        assert score_eval_output("maybe", template, default_score=None) is None
+
+    def test_default_score_none_leaves_valid_scores_intact(self):
+        template = _Template(output_type_normalized="pass_fail")
+        assert score_eval_output("Passed", template, default_score=None) == 1.0
+        assert score_eval_output("Failed", template, default_score=None) == 0.0

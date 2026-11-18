@@ -4,9 +4,11 @@ import axios, { endpoints } from "src/utils/axios";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import PropTypes from "prop-types";
 import { useAgThemeWithoutGridWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const RunEvals = ({ gridRef, setIsData }) => {
   const [mainData, setMainData] = useState(null);
@@ -125,7 +127,7 @@ const RunEvals = ({ gridRef, setIsData }) => {
             rowData={rowData}
             domLayout="autoHeight"
             rowSelection={rowSelection}
-            rowHeight={35}
+            rowHeight={ROW_HEIGHT.default}
             headerHeight={0}
             overlayNoRowsTemplate={
               '<span style="padding: 10px; color: var(--text-muted);">No data available</span>'

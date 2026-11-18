@@ -1,5 +1,7 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
+import EmptyContent from "src/components/empty-content";
 /* eslint-disable react/prop-types */
-import { Box, Button, Chip, Stack, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import PropTypes from "prop-types";
@@ -7,6 +9,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
@@ -16,8 +19,9 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { SIMULATION_TYPE } from "src/components/run-tests/common";
 import {
-  statusStyles,
+  EXECUTION_STATUS_ROLE,
   STOPPABLE_STATUSES,
+  TERMINAL_STATUSES,
   useCancelExecution,
 } from "src/sections/common/simulation";
 
@@ -25,20 +29,22 @@ import { useTestDetailContext } from "../context/TestDetailContext";
 import { useTestRunsGridStore } from "../states";
 import { useTestRunsSearchStoreShallow } from "./states";
 
+const POLL_INTERVAL_MS = 5000;
+
 // ── Cell renderers ──
 
 function DateCell({ getValue }) {
   const value = getValue();
   if (!value) {
     return (
-      <Typography variant="body2" sx={{ fontSize: 13, color: "text.disabled" }}>
+      <Typography variant="body2" sx={{ fontSize: 12, color: "text.disabled" }}>
         —
       </Typography>
     );
   }
   try {
     return (
-      <Typography variant="body2" sx={{ fontSize: 13 }}>
+      <Typography variant="body2" sx={{ fontSize: 12 }}>
         {format(new Date(value), "yyyy-MM-dd HH:mm")}
       </Typography>
     );
@@ -50,7 +56,7 @@ function DateCell({ getValue }) {
 function DurationCell({ getValue }) {
   const v = getValue();
   return (
-    <Typography variant="body2" sx={{ fontSize: 13 }}>
+    <Typography variant="body2" sx={{ fontSize: 12 }}>
       {v ? formatDuration(v) : "—"}
     </Typography>
   );
@@ -59,7 +65,7 @@ function DurationCell({ getValue }) {
 function PercentCell({ getValue }) {
   const v = getValue();
   return (
-    <Typography variant="body2" sx={{ fontSize: 13 }}>
+    <Typography variant="body2" sx={{ fontSize: 12 }}>
       {v == null ? "—" : `${v}%`}
     </Typography>
   );
@@ -68,7 +74,7 @@ function PercentCell({ getValue }) {
 function NumberCell({ getValue }) {
   const v = getValue();
   return (
-    <Typography variant="body2" sx={{ fontSize: 13 }}>
+    <Typography variant="body2" sx={{ fontSize: 12 }}>
       {v ?? 0}
     </Typography>
   );
@@ -77,7 +83,7 @@ function NumberCell({ getValue }) {
 function TextCell({ getValue }) {
   const v = getValue();
   return (
-    <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+    <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
       {v || "—"}
     </Typography>
   );
@@ -87,7 +93,7 @@ function AgentDefinitionCell({ row }) {
   const { agent_definition: name, agent_version: version } = row.original;
   const label = name && version ? `${name} (${version})` : "—";
   return (
-    <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+    <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
       {label}
     </Typography>
   );
@@ -108,16 +114,11 @@ function StatusCell({ getValue, row }) {
 
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-      <Chip
-        variant="soft"
+      <StatusBadge
+        status={status}
         label={status || "—"}
-        size="small"
-        sx={{
-          typography: "s3",
-          fontWeight: "fontWeightRegular",
-          pointerEvents: "none",
-          ...(statusStyles[status] || {}),
-        }}
+        role={EXECUTION_STATUS_ROLE[status]}
+        sx={{ pointerEvents: "none" }}
       />
       {showStop && (
         <Button
@@ -125,14 +126,9 @@ function StatusCell({ getValue, row }) {
           size="small"
           onClick={handleStop}
           sx={{
-            borderRadius: "4px",
-            px: 1.5,
             minWidth: 0,
-            height: 26,
-            textTransform: "none",
-            fontSize: 12,
           }}
-          startIcon={<Iconify icon="bi:stop-circle" width={14} />}
+          startIcon={<Iconify icon="solar:stop-circle-linear" width={14} />}
         >
           Stop
         </Button>
@@ -252,7 +248,7 @@ function buildColumns(agentType, simulationType) {
         cell: ({ getValue }) => {
           const v = getValue();
           return (
-            <Typography variant="body2" sx={{ fontSize: 13 }}>
+            <Typography variant="body2" sx={{ fontSize: 12 }}>
               {v ?? "—"}
             </Typography>
           );
@@ -335,30 +331,11 @@ function buildColumns(agentType, simulationType) {
 
 function EmptyState() {
   return (
-    <Box
-      sx={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexDirection: "column",
-        flex: 1,
-        minHeight: 300,
-      }}
-    >
-      <img
-        style={{ height: "109px", width: "117px" }}
-        alt="no runs"
-        src="/assets/illustrations/no-dataset-added.svg"
-      />
-      <Stack direction="column" alignItems="center" sx={{ mt: 1 }}>
-        <Typography color="text.primary" typography="subtitle2">
-          No rows to show
-        </Typography>
-        <Typography typography="s1" color="text.secondary">
-          No tests are run to show
-        </Typography>
-      </Stack>
-    </Box>
+    <EmptyContent
+      title="No rows to show"
+      description="No tests are run to show"
+      sx={{ minHeight: 300 }}
+    />
   );
 }
 
@@ -399,6 +376,15 @@ const TestRunsGrid = ({ agentType, simulationType }) => {
     select: (d) => d.data,
     keepPreviousData: true,
     enabled: !!testId,
+    // Poll while any run is still in progress so the row auto-populates on completion.
+    refetchInterval: (query) => {
+      const rows = query?.state?.data?.data?.results ?? [];
+      const anyInProgress = rows.some(
+        (row) => !TERMINAL_STATUSES.includes(row.status),
+      );
+      return anyInProgress ? POLL_INTERVAL_MS : false;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const items = useMemo(() => data?.results ?? [], [data]);
@@ -476,7 +462,7 @@ const TestRunsGrid = ({ agentType, simulationType }) => {
         onRowClick={handleRowClick}
         getRowId={(row) => row.id}
         enableSelection
-        rowHeight={48}
+        rowHeight={ROW_HEIGHT.default}
         emptyMessage="No test runs to show"
       />
       <DataTablePagination

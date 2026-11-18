@@ -8,29 +8,66 @@ import structlog
 from django.db import close_old_connections
 
 from accounts.models.organization import Organization
-
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from agentic_eval.core_evals.run_prompt.litellm_models import (
+    MissingProviderKeyError,
+    UnavailableModelError,
+)
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
-from model_hub.models.develop_dataset import Column
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from model_hub.services.ground_truth_service import GroundTruthService
+from model_hub.utils.eval_input_validation import (
+    EvalConfigError,
+    validate_eval_configuration,
+)
+from model_hub.utils.eval_metadata import (
+    EvaluationMetadataUnavailable,
+    read_evaluation_column_types,
+    read_evaluation_workspace,
+)
 from model_hub.views.eval_runner import (
     EvaluationRunner,
     _extract_column_id_and_path,
     process_mapping,
 )
-from sdk.utils.helpers import _get_api_call_type
+from sdk.utils.helpers import (
+    _emit_jev_usage_billed,
+    _get_api_call_type,
+    _get_billing_event_type,
+)
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_specific_error_message
+from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_rate_limited
+
+logger = structlog.get_logger(__name__)
 
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
     log_and_deduct_cost_for_api_request = None
+
+
+def _canonical_playground_output(value, response, template, api_call_log_row):
+    from model_hub.types import PlaygroundEvalResponse
+
+    payload = PlaygroundEvalResponse(
+        output=value,
+        reason=response.get("reason"),
+        model=response.get("model"),
+        metadata=response.get("metadata"),
+        output_type=template.config.get("output"),
+        log_id=(str(api_call_log_row.log_id) if api_call_log_row is not None else None),
+        ground_truth_examples=response.get("ground_truth_examples"),
+        warnings=response.get("warnings") or None,
+    ).model_dump()
+    if payload.get("warnings") is None:
+        payload.pop("warnings", None)
+    if payload.get("ground_truth_examples") is None:
+        payload.pop("ground_truth_examples", None)
+    return payload
 
 
 def run_eval_func(
@@ -44,11 +81,32 @@ def run_eval_func(
 ):
     api_call_log_row = None
     try:
-        # Block agent-type evals in OSS mode — AgentEvaluator requires ee/
+        # Agent-type evals need the ee/ AgentEvaluator. Gate via the
+        # capability service: self-hosted runs them on any user-keyed model
+        # (turing/protect model choice is licensed separately by the turing
+        # gates), so only a capability denial — or genuinely absent ee code
+        # before the service is configured — blocks here.
         if getattr(template, "eval_type", "") == "agent":
-            from tfc.ee_loader import _is_oss_mode
+            try:
+                from tfc.capabilities import service as capability_service
 
-            if _is_oss_mode():
+                if capability_service.is_configured():
+                    decision = capability_service.check(
+                        "agentic_eval",
+                        org_id=str(org.id) if org is not None else None,
+                    )
+                    denied = not decision.allowed
+                else:
+                    from tfc.ee_loader import has_ee
+
+                    denied = not has_ee("ee.evals")
+            except Exception:
+                # A permission check must fail closed. Do not fall back to
+                # has_ee() (True on every build shipping ee/) — that would
+                # silently allow. Deny and log with the stack trace.
+                logger.exception("agentic_eval_capability_check_failed")
+                denied = True
+            if denied:
                 raise ValueError(
                     "Agent evaluations are not available on OSS. "
                     "Use LLM-as-a-Judge or Code evaluations instead."
@@ -59,6 +117,8 @@ def run_eval_func(
         workspace = kwargs.get("workspace", None)
         input_data_types = kwargs.get("input_data_types", {})
         error_localizer = kwargs.get("error_localizer", False)
+        # Called with the credits this eval billed, once it billed them.
+        on_billed = kwargs.get("on_billed")
         kb_id = kwargs.get("kb_id", None)
         # Auto-context payloads — forwarded untouched to the evaluator's
         # run() so `{{row.X}}` / `{{span.X}}` / `{{trace.X}}` /
@@ -217,6 +277,23 @@ def run_eval_func(
         if input_data_types:
             source_config.update({"input_data_types": input_data_types})
 
+        # Stamp which eval version produced this result so the Usage tab can
+        # show it per row. Callers that already resolved a version (e.g. a
+        # pinned composite child) pass it in; otherwise the template default.
+        tracked_version = kwargs.get("resolved_version")
+        if not tracked_version:
+            try:
+                tracked_version = EvalTemplateVersion.objects.get_default(template)
+            except Exception:
+                logger.warning(
+                    "version_tracking_failed",
+                    template_id=str(template.id),
+                    exc_info=True,
+                )
+        if tracked_version:
+            source_config["version_id"] = str(tracked_version.id)
+            source_config["version_number"] = tracked_version.version_number
+
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -226,7 +303,7 @@ def run_eval_func(
         api_call_type = (
             BillingEventType.CODE_EVALUATOR.value
             if _is_code_eval and BillingEventType is not None
-            else _get_api_call_type(model)
+            else _get_api_call_type(model, template=template, runtime_config=config)
         )
 
         # Pre-check: enforce free tier limits before running eval
@@ -261,6 +338,8 @@ def run_eval_func(
                 raise ValueError(
                     "API call not allowed : Error validating the api call."
                 )
+
+            raise_if_rate_limited(api_call_log_row)
 
             if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                 raise ValueError("API call not allowed : ", api_call_log_row.status)
@@ -313,6 +392,7 @@ def run_eval_func(
         from model_hub.utils.eval_input_validation import validate_eval_inputs
 
         partial_input_warning, _run_kwargs = validate_eval_inputs(template, _run_kwargs)
+        validate_eval_configuration(eval_id, eval_instance)
 
         eval_result = eval_instance.run(**_run_kwargs)
         end_time = time.time()
@@ -356,7 +436,7 @@ def run_eval_func(
                 metadata = {}
 
         if api_call_log_row is None:
-            return response
+            return _canonical_playground_output(value, response, template, None)
         config_dict = json.loads(api_call_log_row.config)
         output_payload = {"output": value, "reason": response["reason"]}
         # Mirror the dataset path: propagate partial-input warnings into
@@ -396,7 +476,9 @@ def run_eval_func(
             try:
                 from ee.usage.utils.event_properties import token_usage_properties
             except ImportError:
-                token_usage_properties = lambda token_usage: {}
+
+                def token_usage_properties(token_usage):
+                    return {}
 
             billing_config = None
             if BillingConfig is not None:
@@ -462,41 +544,43 @@ def run_eval_func(
                 else 0
             )
 
+            billed: float | None = 0
             if (
                 emit is not None
                 and UsageEvent is not None
                 and BillingEventType is not None
             ):
-
-                emit(
-                    UsageEvent(
-                        org_id=str(org.id),
-                        event_type=api_call_type,
-                        amount=credits,
-                        properties={
-                            "source": source,
-                            "source_id": str(template.id),
-                            "raw_cost_usd": str(actual_cost),
-                            **cost_properties,
-                            **token_usage_properties(_token_usage),
-                        },
-                    )
+                billed = _emit_jev_usage_billed(
+                    eval_instance,
+                    org_id=str(org.id),
+                    run_id=str(api_call_log_row.log_id),
                 )
+                if billed is None:
+                    billed = credits
+                    emit(
+                        UsageEvent(
+                            org_id=str(org.id),
+                            event_type=_get_billing_event_type(
+                                api_call_type, model, evaluator=eval_instance
+                            ),
+                            amount=credits,
+                            properties={
+                                "source": source,
+                                "source_id": str(template.id),
+                                "raw_cost_usd": str(actual_cost),
+                                **cost_properties,
+                                **token_usage_properties(_token_usage),
+                            },
+                        )
+                    )
+            if on_billed is not None:
+                on_billed(billed)
         except Exception:
             pass  # Metering failure must not break the action
 
-        output = {}
-        output["output"] = value
-        output["reason"] = response.get("reason")
-        output["model"] = response.get("model")
-        output["metadata"] = response.get("metadata")
-        output["output_type"] = template.config.get("output")
-        output["log_id"] = str(api_call_log_row.log_id)
-        output["ground_truth_examples"] = response.get("ground_truth_examples")
-        # Pass partial-input warning through to the playground UI so the
-        # yellow ⚠ badge can render alongside the result.
-        if response.get("warnings"):
-            output["warnings"] = response["warnings"]
+        output = _canonical_playground_output(
+            value, response, template, api_call_log_row
+        )
 
         if error_localizer:
             from model_hub.tasks.user_evaluation import (
@@ -516,18 +600,27 @@ def run_eval_func(
                 value=value,
                 mapping=mappings,
                 eval_explanation=response.get("reason"),
+                eval_config=config,
             )
 
         return output
 
+    except EvaluationDenied:
+        # The ledger already records RATE_LIMITED with no charge.
+        raise
     except Exception as e:
         try:
             if api_call_log_row:
+                from tfc.ee_gates import jev_error_message
+
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 current_config = json.loads(api_call_log_row.config)
                 current_config.update(
                     {
-                        "output": {"output": None, "reason": str(e)},
+                        "output": {
+                            "output": None,
+                            "reason": jev_error_message(e) or str(e),
+                        },
                         "mappings": mappings,
                         "required_keys": list(mappings.keys()),
                     }
@@ -538,7 +631,20 @@ def run_eval_func(
             logger.exception(f"Error updating api call log row status: {str(exc)}")
             pass
 
-        logger.exception(f"Error running evaluation: {str(e)}")
+        if isinstance(e, UnavailableModelError):
+            # A saved model retired from the catalog is the user's to replace,
+            # not a fault; name it, since nothing else in the log does.
+            logger.warning(
+                "evaluation_configuration_invalid",
+                error_type=type(e).__name__,
+                model=e.model_name,
+            )
+        elif isinstance(e, (EvalConfigError, MissingProviderKeyError)):
+            logger.warning(
+                "evaluation_configuration_invalid", error_type=type(e).__name__
+            )
+        else:
+            logger.exception(f"Error running evaluation: {str(e)}")
         raise e
 
 
@@ -577,8 +683,10 @@ def process_eval_for_single_row(
                 if base_col_id:
                     mapping_uids.append(base_col_id)
 
-        cols = Column.objects.filter(id__in=mapping_uids).values("id", "data_type")
-        col_map = {str(col["id"]): col["data_type"] for col in cols}
+        col_map = read_evaluation_column_types(mapping_uids)
+        # process_mapping reads the row's dataset and workspace. Load them
+        # inside the retry boundary first so those checks use the cache.
+        read_evaluation_workspace(row)
         required_field, mapping = process_mapping(
             mappings, row, run_prompt_column=run_prompt_column, runner=runner
         )
@@ -690,6 +798,13 @@ def process_eval_for_single_row(
         #     return response
         # else:
         return output
+    except EvaluationMetadataUnavailable as error:
+        logger.warning("evaluation_metadata_unavailable", error_code=error.code)
+        return {
+            "reason": str(error),
+            "output_type": "reason",
+            "error_code": error.code,
+        }
     except Exception as e:
         try:
             api_call_log_row.status = APICallStatusChoices.ERROR.value
@@ -749,5 +864,8 @@ def run_eval_func_task(
         )
 
         logger.info(f"Evaluation for feedback completed for {log_id}")
+    except EvaluationDenied as denial:
+        logger.warning("feedback_evaluation_denied", code=denial.code)
+        return {"status": "denied", "denial": denial.as_dict(), "output": None}
     except Exception as e:
         logger.exception(f"Error running evaluation for feedback: {str(e)}")

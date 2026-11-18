@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
-import { Box } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
+import { Box, Tab } from "@mui/material";
 import PropTypes from "prop-types";
-import { CustomTab, CustomTabs, TabWrapper } from "./SummaryStyle";
 import { ShowComponent } from "src/components/show";
 import EvalCard from "./EvalsCard/EvalsCard";
 import FilterSummary from "./FilterSummary";
@@ -10,14 +10,12 @@ import { useGetDatasetDetail } from "src/api/develop/develop-detail";
 import { useParams } from "react-router";
 import StyledChip from "./styledChip";
 import PropmtCard from "./PromptCard";
-import AnnotationCard from "./AnnotationCard";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
 const tabOptions = [
   { label: "Evals", value: "evals", disabled: false },
   { label: "Prompt", value: "prompt", disabled: false },
-  { label: "Annotation", value: "annotation", disabled: false },
 ];
 
 const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
@@ -103,39 +101,26 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
       }}
     >
       <Box display="flex" justifyContent={"space-between"}>
-        <TabWrapper>
-          <CustomTabs
-            textColor="primary"
-            value={currentTab}
-            onChange={changeTab}
-            TabIndicatorProps={{
-              style: {
-                opacity: 0,
-                height: "100%",
-                borderRadius: "8px",
-              },
-            }}
-          >
+        <Box sx={{ mb: 2 }}>
+          <SegmentedTabs value={currentTab} onChange={changeTab}>
             {tabOptions.map((tab) => (
-              <CustomTab
+              <Tab
                 key={tab.value}
                 label={tab.label}
                 value={tab.value}
                 disabled={tab.disabled}
               />
             ))}
-          </CustomTabs>
-        </TabWrapper>
+          </SegmentedTabs>
+        </Box>
 
-        {currentTab != "annotation" && (
-          <FilterSummary
-            columnLists={columnLists}
-            handleApplyFilter={handleApplyFilter}
-            selectedColumn={selectedColumn}
-            setSelectedColumn={setSelectedColumn}
-            appliedFilter={appliedFilter}
-          />
-        )}
+        <FilterSummary
+          columnLists={columnLists}
+          handleApplyFilter={handleApplyFilter}
+          selectedColumn={selectedColumn}
+          setSelectedColumn={setSelectedColumn}
+          appliedFilter={appliedFilter}
+        />
       </Box>
       <Box sx={{ overflow: "auto", height: "calc(100vh - 200px)" }}>
         <Box display="flex" gap={2} marginBottom={2}>
@@ -144,11 +129,7 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
               key={item.id}
               label={item.name}
               deleteIcon={
-                <Iconify
-                  icon="mingcute:close-line"
-                  width="16px"
-                  height="16px"
-                />
+                <Iconify icon="solar:close-linear" width="16px" height="16px" />
               }
               onDelete={() => onFilterChange(item)}
             />
@@ -169,14 +150,6 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
         </ShowComponent>
         <ShowComponent condition={currentTab === "prompt"}>
           <PropmtCard
-            setCurrentTab={setCurrentTabs}
-            selectedColumns={appliedFilter?.map((item) => item.sourceId)}
-            datasetId={datasetId}
-            datasetIndex={datasetIndex}
-          />
-        </ShowComponent>
-        <ShowComponent condition={currentTab === "annotation"}>
-          <AnnotationCard
             setCurrentTab={setCurrentTabs}
             selectedColumns={appliedFilter?.map((item) => item.sourceId)}
             datasetId={datasetId}

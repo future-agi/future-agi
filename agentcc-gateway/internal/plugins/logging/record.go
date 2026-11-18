@@ -2,11 +2,14 @@ package logging
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/payloads"
 	"github.com/futureagi/agentcc-gateway/internal/privacy"
 )
 
@@ -116,6 +119,9 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 			if rc.ImageResponse != nil {
 				rec.StatusCode = 200
 			}
+		case "speech_relay", "transcription_relay":
+			// The session ran; a failed dial or upgrade records its error below.
+			rec.StatusCode = 200
 		case "speech", "speech_stream":
 			if rc.Metadata["response_content_type"] != "" {
 				rec.StatusCode = 200
@@ -140,6 +146,10 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 			if rc.OCRResponse != nil {
 				rec.StatusCode = 200
 			}
+		case "decision":
+			if rc.DecisionResponse != nil {
+				rec.StatusCode = 200
+			}
 		}
 	}
 	if rec.ResolvedModel == "" && rec.StatusCode > 0 {
@@ -149,10 +159,16 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 	// Determine status code from errors.
 	if len(rc.Errors) > 0 {
 		lastErr := rc.Errors[len(rc.Errors)-1]
-		if apiErr, ok := lastErr.(*models.APIError); ok {
+		var apiErr *models.APIError
+		if errors.As(lastErr, &apiErr) {
 			rec.StatusCode = apiErr.Status
 			rec.ErrorMessage = apiErr.Message
 			rec.ErrorCode = apiErr.Code
+			if rc.EndpointType == "decision" {
+				// A vendor's error text can quote the decision's content back;
+				// the code and status say what happened.
+				rec.ErrorMessage = http.StatusText(apiErr.Status)
+			}
 		} else {
 			if rec.StatusCode == 0 {
 				rec.StatusCode = 500
@@ -197,76 +213,30 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 	if cfg.IncludeBodies {
 		rec.RequestBody = rc.Request
 		rec.ResponseBody = rc.Response
-		rec.RequestBodyJSON, rec.ResponseBodyJSON = buildEndpointBodyJSON(rc)
+		rec.RequestBodyJSON, rec.ResponseBodyJSON = payloads.ForEndpoint(rc)
 		if rc.RequestHeaders != nil {
 			rec.RequestHeaders = sanitizeHeaders(rc.RequestHeaders)
+		}
+	}
+
+	// A decision always logs its summary — question IDs and types, the state's
+	// size, the answers and usage — and its full bodies only where bodies are
+	// recorded and privacy mode allows them.
+	if rc.EndpointType == "decision" {
+		rec.RequestBodyJSON, rec.ResponseBodyJSON = payloads.ForEndpoint(rc)
+		if cfg.IncludeBodies && decisionBodiesAllowed(rc) {
+			rec.RequestBodyJSON, rec.ResponseBodyJSON = payloads.DecisionBodies(rc)
 		}
 	}
 
 	return rec
 }
 
-func buildEndpointBodyJSON(rc *models.RequestContext) (json.RawMessage, json.RawMessage) {
-	marshal := func(v any) json.RawMessage {
-		if v == nil {
-			return nil
-		}
-		b, err := json.Marshal(v)
-		if err != nil {
-			return nil
-		}
-		return b
-	}
-
-	switch rc.EndpointType {
-	case "speech", "speech_stream":
-		if rc.SpeechRequest == nil {
-			return nil, nil
-		}
-		resp := map[string]any{
-			"binary":       true,
-			"content_type": rc.Metadata["response_content_type"],
-		}
-		if size := rc.Metadata["response_size_bytes"]; size != "" {
-			resp["size_bytes"] = size
-		}
-		return marshal(rc.SpeechRequest), marshal(resp)
-	case "transcription":
-		if rc.TranscriptionReq == nil {
-			return nil, marshal(rc.TranscriptionResp)
-		}
-		req := map[string]any{
-			"model":           rc.TranscriptionReq.Model,
-			"file_name":       rc.TranscriptionReq.FileName,
-			"file_size_bytes": len(rc.TranscriptionReq.FileData),
-			"language":        rc.TranscriptionReq.Language,
-			"response_format": rc.TranscriptionReq.ResponseFormat,
-		}
-		if rc.TranscriptionReq.Temperature != nil {
-			req["temperature"] = *rc.TranscriptionReq.Temperature
-		}
-		if audioSeconds := rc.Metadata["audio_seconds"]; audioSeconds != "" {
-			req["audio_seconds"] = audioSeconds
-		}
-		return marshal(req), marshal(rc.TranscriptionResp)
-	case "translation":
-		if rc.TranslationReq == nil {
-			return nil, marshal(rc.TranslationResp)
-		}
-		req := map[string]any{
-			"model":           rc.TranslationReq.Model,
-			"file_name":       rc.TranslationReq.FileName,
-			"file_size_bytes": len(rc.TranslationReq.FileData),
-			"prompt":          rc.TranslationReq.Prompt,
-			"response_format": rc.TranslationReq.ResponseFormat,
-		}
-		if rc.TranslationReq.Temperature != nil {
-			req["temperature"] = *rc.TranslationReq.Temperature
-		}
-		return marshal(req), marshal(rc.TranslationResp)
-	default:
-		return nil, nil
-	}
+// decisionBodiesAllowed reports whether privacy mode lets a decision's full
+// bodies into the log. Any privacy setting keeps them out: the redactor walks
+// chat messages, not a decision's state.
+func decisionBodiesAllowed(rc *models.RequestContext) bool {
+	return rc.Metadata["org_privacy_enabled"] != "true" && rc.Metadata["org_privacy_mode"] == "" && rc.Metadata["privacy_mode"] == ""
 }
 
 // redactRecord applies privacy redaction to message content in the trace record.
@@ -319,13 +289,23 @@ func redactChoices(choices []models.Choice, r *privacy.Redactor, mode string) []
 	return out
 }
 
+// sensitiveHeaderKeys never reach a request log. The gateway accepts a
+// credential in each of these, so a missing entry publishes it to everyone
+// with access to the logs — x-goog-api-key was missing, and the GenAI route
+// reads a caller's Google key from it (handlers_genai.go).
 var sensitiveHeaderKeys = map[string]bool{
-	"authorization":    true,
-	"x-api-key":        true,
-	"api-key":          true,
-	"x-auth-token":     true,
-	"cookie":           true,
-	"x-webhook-secret": true,
+	"authorization":                  true,
+	"proxy-authorization":            true,
+	"x-agentcc-provider-key":         true,
+	"x-api-key":                      true,
+	"api-key":                        true,
+	"x-goog-api-key":                 true,
+	"x-goog-iam-authorization-token": true,
+	"x-amz-security-token":           true,
+	"x-auth-token":                   true,
+	"cookie":                         true,
+	"set-cookie":                     true,
+	"x-webhook-secret":               true,
 }
 
 func sanitizeHeaders(h map[string][]string) map[string][]string {

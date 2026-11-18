@@ -56,6 +56,7 @@ def emit_span_ingestion_usage(
     payload_bytes: int,
     *,
     source: str,
+    event_id: str | None = None,
 ) -> None:
     try:
         try:
@@ -86,6 +87,7 @@ def emit_span_ingestion_usage(
                         event_type=BillingEventType.OBSERVE_ADD,
                         amount=payload_bytes,
                         properties={"source": source},
+                        **({"event_id": event_id} if event_id else {}),
                     )
                 )
             return
@@ -104,6 +106,7 @@ def emit_span_ingestion_usage(
                         event_type=BillingEventType.OBSERVE_ADD,
                         amount=payload_bytes,
                         properties=props,
+                        **({"event_id": event_id} if event_id else {}),
                     )
                 )
             return
@@ -118,6 +121,7 @@ def emit_span_ingestion_usage(
                     event_type=BillingEventType.TRACING_EVENT,
                     amount=tracing_units,
                     properties={"traces": tracing_units, "source": source},
+                    **({"event_id": event_id} if event_id else {}),
                 )
             )
     except Exception:

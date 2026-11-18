@@ -205,7 +205,10 @@ async def generate_synthetic_data_activity(
             )
         except ImportError:
             if settings.DEBUG:
-                logger.warning("Could not import ee.agenthub.synthetic_data_agent.synthetic_data_agent", exc_info=True)
+                logger.warning(
+                    "Could not import ee.agenthub.synthetic_data_agent.synthetic_data_agent",
+                    exc_info=True,
+                )
             return None
 
         async with Heartbeater() as heartbeater, ShutdownMonitor() as monitor:
@@ -600,7 +603,10 @@ async def generate_column_data_activity(
             )
         except ImportError:
             if settings.DEBUG:
-                logger.warning("Could not import ee.agenthub.synthetic_data_agent.synthetic_data_agent", exc_info=True)
+                logger.warning(
+                    "Could not import ee.agenthub.synthetic_data_agent.synthetic_data_agent",
+                    exc_info=True,
+                )
             return None
 
         async with Heartbeater() as heartbeater, ShutdownMonitor() as monitor:
@@ -1075,7 +1081,10 @@ def _build_sda_payload(
         )
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.persona_configurator", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.persona_configurator",
+                exc_info=True,
+            )
         return None
 
     property_dict = PersonaConfigurator.get_property_dict(mode)
@@ -1201,9 +1210,7 @@ def _resolve_scenario_agent(scenario, source_type):
                         formatted_messages.append(f"[{role}]: {content}")
                 prompt_content = "\n\n".join(formatted_messages)
 
-        agent_description = (
-            prompt_content or scenario.prompt_template.description or ""
-        )
+        agent_description = prompt_content or scenario.prompt_template.description or ""
         return types.SimpleNamespace(
             id=scenario.prompt_template.id,
             agent_name=scenario.prompt_template.name,
@@ -1240,18 +1247,6 @@ def _create_dataset_scenario_sync(
 
     from django.db import close_old_connections, transaction
     from django.shortcuts import get_object_or_404
-
-    try:
-        from ee.agenthub.scenario_graph.graph_generator import (
-            ConversationGraphGenerator,
-        )
-        from ee.agenthub.synthetic_data_agent.synthetic_data_agent import (
-            SyntheticDataAgent,
-        )
-    except ImportError:
-        if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.graph_generator", exc_info=True)
-        return None
 
     try:
         close_old_connections()
@@ -1302,6 +1297,22 @@ def _create_dataset_scenario_sync(
             organization=scenario.organization,
         )
 
+        # Enterprise-only imports; deferred so the source-dataset scope check runs on OSS.
+        try:
+            from ee.agenthub.scenario_graph.graph_generator import (
+                ConversationGraphGenerator,
+            )
+            from ee.agenthub.synthetic_data_agent.synthetic_data_agent import (
+                SyntheticDataAgent,
+            )
+        except ImportError:
+            if settings.DEBUG:
+                logger.warning(
+                    "Could not import ee.agenthub.scenario_graph.graph_generator",
+                    exc_info=True,
+                )
+            return None
+
         # Determine simulation mode
         mode = "voice" if agent_definition.agent_type == "voice" else "chat"
 
@@ -1349,9 +1360,9 @@ def _create_dataset_scenario_sync(
                     "description": scenario_columns_config[col_name]["description"],
                 }
                 if col_name == "persona":
-                    new_column_config[str(col_id)][
-                        "simulation_type"
-                    ] = agent_definition.agent_type
+                    new_column_config[str(col_id)]["simulation_type"] = (
+                        agent_definition.agent_type
+                    )
 
             new_dataset.column_order = new_column_order
             new_dataset.column_config = new_column_config
@@ -1716,7 +1727,10 @@ def _create_dataset_scenario_sync(
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.scenario_graph.prompt", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.scenario_graph.prompt",
+                        exc_info=True,
+                    )
                 return None
 
             # Build branch to situations mapping from generated data
@@ -1736,7 +1750,7 @@ def _create_dataset_scenario_sync(
             branch_to_category = {}
             if branch_to_situations:
                 llm = LLM(
-                    model_name="vertex_ai/gemini-2.5-pro",
+                    model_name="vertex_ai/gemini-3.7-flash",
                     temperature=0.3,
                     max_tokens=400,
                     provider="vertex_ai",
@@ -1976,7 +1990,10 @@ def _create_script_scenario_sync(
         )
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent",
+                exc_info=True,
+            )
         return None
     from model_hub.models.choices import StatusType
     from simulate.models import Scenarios
@@ -2383,7 +2400,10 @@ def _create_graph_scenario_sync(
         )
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent",
+                exc_info=True,
+            )
         return None
     from agentic_eval.core.llm.llm import LLM
     from agentic_eval.core.utils.model_config import ModelConfigs
@@ -2425,6 +2445,10 @@ def _create_graph_scenario_sync(
         except Exception:
             logger.warning("usage_precheck_failed", exc_info=True)
 
+        agent_definition_id = validated_data.get("agent_definition_id")
+        source_type = validated_data.get("source_type", "agent_definition")
+        generate_graph = validated_data.get("generate_graph", False)
+        graph_data = validated_data.get("graph")
         no_of_rows = validated_data.get("no_of_rows", 20)
         persona_ids = validated_data.get("personas", [])
         custom_columns = validated_data.get("custom_columns", [])
@@ -2488,6 +2512,10 @@ def _create_graph_scenario_sync(
                 workspace=scenario.workspace,
             )
         else:
+            if agent_definition_id is None:
+                raise AgentDefinition.DoesNotExist(
+                    "A graph scenario needs an agent definition"
+                )
             agent_definition = AgentDefinition.no_workspace_objects.get(
                 id=agent_definition_id
             )
@@ -2522,7 +2550,6 @@ def _create_graph_scenario_sync(
                     name=f"{scenario.name} - Graph",
                     description=f"Graph for {scenario.name}",
                     organization=scenario.organization,
-                    workspace=scenario.workspace,
                     graph_config={"graph_data": graph_data, "source": "user_provided"},
                 )
 
@@ -2551,7 +2578,7 @@ def _create_graph_scenario_sync(
                 prompt = USER_INTENT_PROMPT.format(
                     transcript=transcript, agent_definition=agent_description
                 )
-                llm_config = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+                llm_config = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
                 llm = LLM(
                     model_name=llm_config.model_name,
                     temperature=llm_config.temperature,
@@ -2581,12 +2608,17 @@ def _create_graph_scenario_sync(
             branches = None
             graph_id = str(scenario_graph.id) if scenario_graph else None
             if graph_id:
+                if not generate_graph:
+                    graph_generator = ConversationGraphGenerator(
+                        scenario=scenario,
+                        agent_definition=agent_definition,
+                    )
                 branches = graph_generator.get_branches(graph_id=graph_id)
 
             if branches:
                 try:
                     # Use Flash model for intent proposal (classification task)
-                    llm_config = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
+                    llm_config = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
                     llm = LLM(
                         model_name=llm_config.model_name,
                         temperature=llm_config.temperature,
@@ -2801,7 +2833,10 @@ def _setup_graph_scenario_sync(
         )
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent",
+                exc_info=True,
+            )
         return None
     from model_hub.models.choices import StatusType
     from simulate.models import AgentDefinition, Scenarios
@@ -2961,7 +2996,6 @@ def _setup_graph_scenario_sync(
                         name=f"{scenario.name} - Graph",
                         description=f"Graph for {scenario.name}",
                         organization=scenario.organization,
-                        workspace=scenario.workspace,
                         graph_config={
                             "graph_data": graph_data,
                             "source": "user_provided",
@@ -3167,7 +3201,10 @@ def _extract_intents_sync(
         from ee.agenthub.scenario_graph.prompt import USER_INTENT_PROMPT
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.graph_generator", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.graph_generator",
+                exc_info=True,
+            )
         return None
     from agentic_eval.core.llm.llm import LLM
     from agentic_eval.core.utils.model_config import ModelConfigs
@@ -3179,6 +3216,7 @@ def _extract_intents_sync(
         _ei_org_id = None
         try:
             from simulate.models.scenario_graph import ScenarioGraph
+
             try:
                 from ee.usage.schemas.event_types import BillingEventType
             except ImportError:
@@ -3209,7 +3247,7 @@ def _extract_intents_sync(
             transcript: str, agent_desc: str, audio_url: str = None
         ) -> str:
             try:
-                llm_config = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+                llm_config = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
                 llm = LLM(
                     model_name=llm_config.model_name,
                     temperature=llm_config.temperature,
@@ -3311,7 +3349,7 @@ def _extract_intents_sync(
                     intents = cached_intents
                 else:
                     # Use Flash model for intent proposal (classification task)
-                    llm_config = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
+                    llm_config = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
                     llm = LLM(
                         model_name=llm_config.model_name,
                         temperature=llm_config.temperature,
@@ -3329,7 +3367,9 @@ def _extract_intents_sync(
                     try:
                         if _ei_org_id:
                             try:
-                                from ee.usage.schemas.event_types import BillingEventType
+                                from ee.usage.schemas.event_types import (
+                                    BillingEventType,
+                                )
                             except ImportError:
                                 BillingEventType = None
                             try:
@@ -3453,7 +3493,10 @@ def _process_branches_sync(
         )
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent",
+                exc_info=True,
+            )
         return None
 
     try:
@@ -3463,6 +3506,7 @@ def _process_branches_sync(
         _pb_org_id = None
         try:
             from simulate.models.scenario_graph import ScenarioGraph
+
             try:
                 from ee.usage.schemas.event_types import BillingEventType
             except ImportError:
@@ -3716,7 +3760,10 @@ def _generate_cases_for_intent_sync(
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.scenario_graph.services.case_generator", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.scenario_graph.services.case_generator",
+                        exc_info=True,
+                    )
                 return None
 
             cases = generate_cases_for_intent(
@@ -3749,7 +3796,10 @@ def _generate_cases_for_intent_sync(
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent",
+                        exc_info=True,
+                    )
                 return None
 
             agent = EnhancedScenariosAgent.from_serialized_agent_definition(
@@ -3830,7 +3880,10 @@ def _categorize_branches_for_cases(cases: List[Dict[str, Any]]) -> Dict[str, str
         )
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.services.category_service", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.services.category_service",
+                exc_info=True,
+            )
         return None
 
     # Collect unique branches with their situations
@@ -3913,7 +3966,10 @@ def _categorize_and_validate_sync(
         )
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent",
+                exc_info=True,
+            )
         return None
 
     try:
@@ -4051,7 +4107,10 @@ def _create_scenario_dataset_sync(
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.scenario_graph.services.dataset_persister", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.scenario_graph.services.dataset_persister",
+                        exc_info=True,
+                    )
                 return None
 
             dataset = create_scenario_dataset(
@@ -4070,7 +4129,10 @@ def _create_scenario_dataset_sync(
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent",
+                        exc_info=True,
+                    )
                 return None
 
             agent = EnhancedScenariosAgent.from_serialized_agent_definition(
@@ -4094,7 +4156,10 @@ def _create_scenario_dataset_sync(
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.scenario_graph.enhanced_scenarios_agent",
+                        exc_info=True,
+                    )
                 return None
 
             dummy_agent_def = types.SimpleNamespace(
@@ -4287,6 +4352,7 @@ async def create_graph_scenario_activity(
 
     try:
         from simulate.models import Scenarios
+
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -4462,7 +4528,10 @@ def _get_branches_sync(
         )
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.graph_generator", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.graph_generator",
+                exc_info=True,
+            )
         return None
 
     try:
@@ -4557,7 +4626,10 @@ def _process_single_branch_sync(
         )
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.graph_generator", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.graph_generator",
+                exc_info=True,
+            )
         return None
 
     try:
@@ -4717,7 +4789,10 @@ def _select_branches_sync(
         )
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.services.branch_selector", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.services.branch_selector",
+                exc_info=True,
+            )
         return None
 
     try:
@@ -4805,7 +4880,10 @@ def _categorize_branch_sync(
         )
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.services.category_service", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.services.category_service",
+                exc_info=True,
+            )
         return None
 
     try:
@@ -4935,7 +5013,10 @@ def _validate_and_enrich_cases_sync(
         )
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.services.persona_validator", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.scenario_graph.services.persona_validator",
+                exc_info=True,
+            )
         return None
 
     try:
@@ -4951,7 +5032,10 @@ def _validate_and_enrich_cases_sync(
             )
         except ImportError:
             if settings.DEBUG:
-                logger.warning("Could not import ee.agenthub.scenario_graph.services.category_service", exc_info=True)
+                logger.warning(
+                    "Could not import ee.agenthub.scenario_graph.services.category_service",
+                    exc_info=True,
+                )
             return None
 
         categorized_branches = deduplicate_categories(categorized_branches)

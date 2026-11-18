@@ -3,6 +3,10 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,11 +18,14 @@ import (
 
 	chexp "github.com/future-agi/future-agi/fi-collector/exporter/clickhouse25exporter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // Spin up the server, point it at an httptest CH, fire one OTLP request,
@@ -54,9 +61,8 @@ func TestServerEnd2End(t *testing.T) {
 	})
 
 	s := New(Config{GRPCAddr: "127.0.0.1:0", BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
-	// We need a known listen address to dial; replicate Run's bind step.
-	// Easier: use a non-zero port — pick one that's likely free.
-	addr := "127.0.0.1:24317"
+	s.cfg.HTTPAddr = "" // Test only gRPC; never bind the production HTTP port.
+	addr := testTCPAddr(t)
 	s.cfg.GRPCAddr = addr
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -121,6 +127,159 @@ func insertTable(r *http.Request) string {
 	return ""
 }
 
+type propertyCatalogWriterStub struct {
+	rows  []observedcatalog.ScopedSpan
+	calls int
+	err   error
+}
+
+func (s *propertyCatalogWriterStub) EnqueueCanonicalSpans(rows []observedcatalog.ScopedSpan) error {
+	s.calls++
+	s.rows = append(s.rows, rows...)
+	return s.err
+}
+
+func newSpanTestWriter(t *testing.T, url, deadLetterFile string) *chwriter.Writer {
+	t.Helper()
+	writer, err := chwriter.New(chwriter.Config{
+		URL:            url,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		RequestTimeout: time.Second,
+		DeadLetterFile: deadLetterFile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writer
+}
+
+func TestPropertyCatalogSidecarIsDefaultOffAndNeverChangesCanonicalSpanBytes(t *testing.T) {
+	var spanBody string
+	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if insertTable(r) == "spans" {
+			spanBody = string(body)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer chServer.Close()
+
+	writer := newSpanTestWriter(t, chServer.URL, t.TempDir()+"/spans.jsonl")
+	without := New(Config{}, writer, nil, nil, nil)
+	if without.propertyCatalog != nil {
+		t.Fatal("unified property catalog must be nil unless explicitly installed")
+	}
+	row := map[string]any{
+		"id": "span-1", "org_id": "11111111-1111-4111-8111-111111111111",
+		"project_id":     "33333333-3333-4333-8333-333333333333",
+		"resource_attrs": map[string]any{"existing": "unchanged", "fi.org_id": "11111111-1111-4111-8111-111111111111"},
+	}
+	var expected bytes.Buffer
+	encoder := json.NewEncoder(&expected)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(row); err != nil {
+		t.Fatal(err)
+	}
+	without.enqueue([]map[string]any{row}, nil)
+	without.drainNow(context.Background())
+	if spanBody != expected.String() || strings.Contains(spanBody, "fi.workspace_id") {
+		t.Fatalf("disabled path changed canonical bytes: got=%q want=%q", spanBody, expected.String())
+	}
+
+	stub := &propertyCatalogWriterStub{}
+	with := New(Config{}, writer, nil, nil, nil, WithPropertyCatalogWriter(stub))
+	with.enqueueScoped(
+		[]map[string]any{row}, nil,
+		"11111111-1111-4111-8111-111111111111",
+		"22222222-2222-4222-8222-222222222222",
+		map[string]struct{}{"33333333-3333-4333-8333-333333333333": {}},
+	)
+	with.drainNow(context.Background())
+	if spanBody != expected.String() || strings.Contains(spanBody, "fi.workspace_id") {
+		t.Fatalf("enabled sidecar changed canonical bytes: got=%q want=%q", spanBody, expected.String())
+	}
+	if stub.calls != 1 || len(stub.rows) != 1 ||
+		stub.rows[0].WorkspaceID != "22222222-2222-4222-8222-222222222222" ||
+		stub.rows[0].Row["id"] != "span-1" {
+		t.Fatalf("property sidecar=%+v calls=%d", stub.rows, stub.calls)
+	}
+}
+
+func TestPropertyCatalogRunsOnlyAfterSpanSuccessAndCannotChangeSpanHealth(t *testing.T) {
+	statusCode := http.StatusBadRequest
+	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(statusCode)
+	}))
+	defer chServer.Close()
+
+	writer := newSpanTestWriter(t, chServer.URL, t.TempDir()+"/spans.jsonl")
+	stub := &propertyCatalogWriterStub{err: errors.New("catalog queue unavailable")}
+	var logs bytes.Buffer
+	server := New(
+		Config{}, writer, nil, nil, nil,
+		WithLogger(slog.New(slog.NewTextHandler(&logs, nil))),
+		WithPropertyCatalogWriter(stub),
+	)
+	enqueue := func(id string) {
+		server.enqueueScoped(
+			[]map[string]any{{"id": id}}, nil,
+			"11111111-1111-4111-8111-111111111111",
+			"22222222-2222-4222-8222-222222222222",
+			map[string]struct{}{"": {}},
+		)
+		server.drainNow(context.Background())
+	}
+	enqueue("dead-lettered")
+	if stub.calls != 0 {
+		t.Fatal("dead-lettered canonical span reached property catalog")
+	}
+	statusCode = http.StatusOK
+	enqueue("committed")
+	stats := writer.Snapshot()
+	if stub.calls != 1 || stats.BatchesInserted != 1 || stats.BatchesFailed != 1 ||
+		stats.RowsDeadLettered != 1 || !strings.Contains(logs.String(), "observed catalog enqueue failed") {
+		t.Fatalf("calls=%d stats=%+v logs=%q", stub.calls, stats, logs.String())
+	}
+}
+
+func TestPropertyCatalogSidecarMarksForeignWorkspaceProjectAsDurableGapInput(t *testing.T) {
+	var spanBody string
+	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if insertTable(r) == "spans" {
+			spanBody = string(body)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer chServer.Close()
+	writer := newSpanTestWriter(t, chServer.URL, t.TempDir()+"/spans.jsonl")
+	stub := &propertyCatalogWriterStub{}
+	server := New(Config{}, writer, nil, nil, nil, WithPropertyCatalogWriter(stub))
+	row := map[string]any{
+		"id": "span-foreign", "org_id": "11111111-1111-4111-8111-111111111111",
+		"project_id": "33333333-3333-4333-8333-333333333333",
+	}
+	server.enqueueScoped(
+		[]map[string]any{row}, nil,
+		"11111111-1111-4111-8111-111111111111",
+		"22222222-2222-4222-8222-222222222222",
+		map[string]struct{}{"66666666-6666-4666-8666-666666666666": {}},
+	)
+	server.drainNow(context.Background())
+	if stub.calls != 1 || len(stub.rows) != 1 || stub.rows[0].ScopeError != "project_workspace_mismatch" {
+		t.Fatalf("foreign workspace project sidecar=%+v calls=%d", stub.rows, stub.calls)
+	}
+	if !strings.Contains(spanBody, `"project_id":"33333333-3333-4333-8333-333333333333"`) ||
+		strings.Contains(spanBody, "ScopeError") || strings.Contains(spanBody, "scope_error") {
+		t.Fatalf("canonical span was changed by sidecar proof: %q", spanBody)
+	}
+}
+
 // TestServerEnd2End_WritesTraceRow: an OTLP root span through the real converter
 // + curatedwriter must produce a `traces` insert (so trace_dict resolves the
 // trace's project_id / name for evals & annotations) in addition to the spans one.
@@ -153,15 +312,17 @@ func TestServerEnd2End_WritesTraceRow(t *testing.T) {
 	})
 
 	// curatedwriter over the SAME chwriter (as production: server.New wires it).
-	s := New(Config{GRPCAddr: "127.0.0.1:24320", BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
+	addr := testTCPAddr(t)
+	s := New(Config{GRPCAddr: addr, BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
+	s.cfg.HTTPAddr = "" // Test only gRPC; never bind the production HTTP port.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = s.Run(ctx) }()
-	if !waitPort("127.0.0.1:24320", 2*time.Second) {
+	if !waitPort(addr, 2*time.Second) {
 		t.Fatal("server didn't listen")
 	}
 
-	conn, err := grpc.NewClient("127.0.0.1:24320", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,8 +389,8 @@ func startServerWithHTTP(t *testing.T) (httpAddr, grpcAddr string, sawCH func() 
 		t.Fatalf("chwriter.New: %v", err)
 	}
 
-	httpAddr = "127.0.0.1:24318"
-	grpcAddr = "127.0.0.1:24319" // dynamic enough that grpc test above on :24317 doesn't clash
+	httpAddr = testTCPAddr(t)
+	grpcAddr = testTCPAddr(t)
 	s := New(Config{
 		GRPCAddr:     grpcAddr,
 		HTTPAddr:     httpAddr,
@@ -456,12 +617,177 @@ func TestOTLPHTTPRejectsBadContentType(t *testing.T) {
 	}
 }
 
+// stubPricer is the fixture pricer for the WithPricer wiring tests below.
+// Mirrors chexp.Pricer (converter.go's Pricer interface) so it can be passed
+// straight to WithPricer without an adapter. Guarded by a mutex since it's
+// invoked from the server's request-handling goroutine while the test reads
+// `calls`/`lastOrgID` from the test goroutine.
+type stubPricer struct {
+	mu        sync.Mutex
+	calls     int
+	lastOrgID string
+	cost      float64
+}
+
+func (s *stubPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	s.lastOrgID = orgID
+	return s.cost, true
+}
+
+func (s *stubPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+	return s.TokenCost(ctx, orgID, model, p, c)
+}
+
+func (s *stubPricer) snapshot() (calls int, lastOrgID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls, s.lastOrgID
+}
+
+// TestNew_WithPricerOption pins the WithPricer wiring at the field level:
+// every other test in this file constructs New(...) with NO options, so only
+// the nil-pricer path (chexp.Pricer(nil), disabling token pricing) is
+// otherwise exercised. This confirms the Option accumulator loop in New
+// actually copies a non-nil WithPricer value onto Server.pricer — the same
+// field the gRPC/HTTP handlers read for every ConvertWithIdentities call.
+func TestNew_WithPricerOption(t *testing.T) {
+	p := &stubPricer{cost: 1.23}
+	s := New(Config{}, nil, nil, nil, nil, WithPricer(p))
+	if s.pricer != chexp.Pricer(p) {
+		t.Fatalf("s.pricer = %#v, want the stub pricer instance %#v", s.pricer, p)
+	}
+}
+
+// TestPricerWiredThroughGRPCExport drives a real trace through the gRPC
+// export path (New(..., WithPricer(stub))) with a span that carries
+// model+tokens but NO cost attribute, and confirms: (1) the stub Pricer's
+// TokenCost was invoked with the span's org, and (2) the row the server
+// enqueues to CH carries the stub's cost value. This is the end-to-end pin
+// for the pricer wiring finding — every other export test in this file
+// constructs New() with no options and so only exercises the nil-pricer
+// (token-pricing-disabled) path.
+func TestPricerWiredThroughGRPCExport(t *testing.T) {
+	var chBody string
+	var chSeen int32
+	var mu sync.Mutex
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b := make([]byte, 1<<14)
+		n, _ := r.Body.Read(b)
+		if insertTable(r) == "spans" {
+			atomic.AddInt32(&chSeen, 1)
+			mu.Lock()
+			chBody = string(b[:n])
+			mu.Unlock()
+		}
+		w.WriteHeader(200)
+	}))
+	defer chSrv.Close()
+
+	w, err := chwriter.New(chwriter.Config{
+		URL:            chSrv.URL,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		RequestTimeout: 2 * time.Second,
+		DeadLetterFile: t.TempDir() + "/dl.jsonl",
+	})
+	if err != nil {
+		t.Fatalf("chwriter.New: %v", err)
+	}
+
+	stub := &stubPricer{cost: 0.0099}
+	addr := testTCPAddr(t)
+	s := New(Config{GRPCAddr: addr, BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil, WithPricer(stub))
+	s.cfg.HTTPAddr = "" // Test only gRPC; never bind the production HTTP port.
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+	if !waitPort(addr, 2*time.Second) {
+		t.Fatal("server didn't listen")
+	}
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	const orgID = "88888888-8888-4888-8888-888888888888"
+	const projectID = "99999999-9999-4999-9999-999999999999"
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().PutStr("fi.project_id", projectID)
+	rs.Resource().Attributes().PutStr("fi.org_id", orgID)
+	sp := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+	sp.SetName("pricer-wiring-span")
+	sp.SetTraceID([16]byte{0xcc})
+	sp.SetSpanID([8]byte{0xdd})
+	sp.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Now()))
+	sp.SetEndTimestamp(pcommon.NewTimestampFromTime(time.Now().Add(10 * time.Millisecond)))
+	a := sp.Attributes()
+	a.PutStr("gen_ai.request.model", "gpt-4o")
+	a.PutInt("gen_ai.usage.input_tokens", 1000)
+	a.PutInt("gen_ai.usage.output_tokens", 500)
+	// Deliberately NO gen_ai.cost.total / llm.cost.* — this is the
+	// no-user-cost path that must fall through to the pricer.
+
+	req := ptraceotlp.NewExportRequestFromTraces(traces)
+	if _, err := ptraceotlp.NewGRPCClient(conn).Export(context.Background(), req); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && atomic.LoadInt32(&chSeen) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&chSeen) != 1 {
+		t.Fatalf("CH not POST'd; seen=%d", chSeen)
+	}
+
+	calls, lastOrgID := stub.snapshot()
+	if calls == 0 {
+		t.Fatal("stub Pricer.TokenCost was never called — pricer not wired through the gRPC export path")
+	}
+	if lastOrgID != orgID {
+		t.Errorf("stub pricer received orgID %q, want %q", lastOrgID, orgID)
+	}
+
+	mu.Lock()
+	body := chBody
+	mu.Unlock()
+	if !strings.Contains(body, `"cost":0.0099`) {
+		t.Errorf("enqueued row cost != stub's 0.0099 (or key absent); CH body: %q", body)
+	}
+}
+
+// testTCPAddr keeps tests independent of developer machines, CI workers, and
+// unrelated local services that may already own a well-known port.
+func testTCPAddr(t *testing.T) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve test port: %v", err)
+	}
+	addr := lis.Addr().String()
+	if err := lis.Close(); err != nil {
+		t.Fatalf("release test port %s: %v", addr, err)
+	}
+	return addr
+}
+
 // waitPort polls until something accepts on addr or deadline. Simple enough
 // not to need a /healthz round trip.
 func waitPort(addr string, d time.Duration) bool {
+	// grpc.NewClient is lazy (never dials), so probe with a real TCP connect.
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		conn, err := grpcDial(addr)
+		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
 		if err == nil {
 			conn.Close()
 			return true
@@ -469,10 +795,6 @@ func waitPort(addr string, d time.Duration) bool {
 		time.Sleep(20 * time.Millisecond)
 	}
 	return false
-}
-
-func grpcDial(addr string) (*grpc.ClientConn, error) {
-	return grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 }
 
 // makeObserveTraces builds a one-span observe-project Traces carrying a user.id
@@ -550,12 +872,12 @@ func TestDrainAggregatesCuratedAcrossPayloads(t *testing.T) {
 	s := New(Config{GRPCAddr: "", HTTPAddr: "", BatchMaxRows: 1_000_000, BatchMaxAge: time.Hour}, w, nil, nil, nil)
 
 	// Payload 1: userA / sessX.  Payload 2: userA again (dup) + userB / sessY.
-	r1, ids1, err := chexp.ConvertWithIdentities(makeObserveTraces(proj, org, "userA", "sessX", 0x01))
+	r1, ids1, err := chexp.ConvertWithIdentities(context.Background(), makeObserveTraces(proj, org, "userA", "sessX", 0x01), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r2a, ids2a, _ := chexp.ConvertWithIdentities(makeObserveTraces(proj, org, "userA", "sessX", 0x02)) // dup identity
-	r2b, ids2b, _ := chexp.ConvertWithIdentities(makeObserveTraces(proj, org, "userB", "sessY", 0x03))
+	r2a, ids2a, _ := chexp.ConvertWithIdentities(context.Background(), makeObserveTraces(proj, org, "userA", "sessX", 0x02), nil) // dup identity
+	r2b, ids2b, _ := chexp.ConvertWithIdentities(context.Background(), makeObserveTraces(proj, org, "userB", "sessY", 0x03), nil)
 
 	s.enqueue(r1, ids1)
 	s.enqueue(r2a, ids2a)
@@ -598,3 +920,149 @@ func TestDrainAggregatesCuratedAcrossPayloads(t *testing.T) {
 		t.Errorf("trace_sessions rows: got %d want 2", sessRows)
 	}
 }
+
+// A single span larger than gRPC's 4 MiB default must be accepted under the
+// default GRPCMaxRecvMiB. Regression: ended voice-call spans (full transcript
+// + raw_log) were rejected and silently lost, leaving traces stuck "In progress".
+func TestGRPCAcceptsSpanLargerThanFourMiB(t *testing.T) {
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(200)
+	}))
+	defer chSrv.Close()
+
+	w, _ := chwriter.New(chwriter.Config{
+		URL:            chSrv.URL,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		RequestTimeout: 2 * time.Second,
+		DeadLetterFile: t.TempDir() + "/dl.jsonl",
+	})
+
+	addr := testTCPAddr(t)
+	s := New(Config{GRPCAddr: addr, BatchMaxRows: 1000, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
+	s.cfg.HTTPAddr = "" // gRPC-only; don't race other tests (or a dev stack) for :4318
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+	if !waitPort(addr, 2*time.Second) {
+		t.Fatalf("server didn't listen on %s", addr)
+	}
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	client := ptraceotlp.NewGRPCClient(conn)
+
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().PutStr("fi.project_id", "33333333-3333-4333-8333-333333333333")
+	sp := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+	sp.SetName("big-voice-call-span")
+	sp.SetTraceID([16]byte{0xcc})
+	sp.SetSpanID([8]byte{0xdd})
+	sp.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Now()))
+	sp.SetEndTimestamp(pcommon.NewTimestampFromTime(time.Now().Add(time.Second)))
+	// ~6 MiB attribute: over the 4 MiB gRPC default, under the 16 MiB cap.
+	sp.Attributes().PutStr("raw_log", strings.Repeat("x", 6<<20))
+
+	req := ptraceotlp.NewExportRequestFromTraces(traces)
+	if _, err := client.Export(context.Background(), req); err != nil {
+		t.Fatalf("OTLP Export of >4MiB span rejected: %v", err)
+	}
+}
+
+// An over-cap message must be rejected AND show up in the collector's own
+// logs (else the drop is diagnosable only from client logs). It is refused
+// from its length prefix, before it is read or leased, with INVALID_ARGUMENT:
+// Some exporters (Python, Java) retry RESOURCE_EXHAUSTED without RetryInfo.
+func TestGRPCOverCapRejectionIsLogged(t *testing.T) {
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(200)
+	}))
+	defer chSrv.Close()
+
+	w, _ := chwriter.New(chwriter.Config{
+		URL:            chSrv.URL,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		RequestTimeout: 2 * time.Second,
+		DeadLetterFile: t.TempDir() + "/dl.jsonl",
+	})
+
+	var logMu sync.Mutex
+	var logBuf bytes.Buffer
+	logw := writerFunc(func(p []byte) (int, error) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		return logBuf.Write(p)
+	})
+
+	addr := testTCPAddr(t)
+	s := New(
+		Config{GRPCAddr: addr, BatchMaxRows: 1000, BatchMaxAge: 50 * time.Millisecond},
+		w, nil, nil, nil,
+		WithLogger(slog.New(slog.NewJSONHandler(logw, nil))),
+	)
+	s.cfg.HTTPAddr = "" // gRPC-only; don't race other tests (or a dev stack) for :4318
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+	if !waitPort(addr, 2*time.Second) {
+		t.Fatalf("server didn't listen on %s", addr)
+	}
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	client := ptraceotlp.NewGRPCClient(conn)
+
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	sp := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+	sp.SetName("over-cap-span")
+	// 17 MiB: over the 16 MiB default cap.
+	sp.Attributes().PutStr("raw_log", strings.Repeat("x", 17<<20))
+
+	req := ptraceotlp.NewExportRequestFromTraces(traces)
+	_, err = client.Export(context.Background(), req)
+	if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "FI_GRPC_MAX_RECV_MIB") {
+		t.Fatalf("want InvalidArgument naming FI_GRPC_MAX_RECV_MIB, got %v", err)
+	}
+	if p := s.wire.peak.Load(); p != 0 {
+		t.Errorf("an over-cap message leased %d wire bytes, want it refused from its length prefix", p)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		logMu.Lock()
+		got := logBuf.String()
+		logMu.Unlock()
+		if strings.Contains(got, "OTLP request refused") && strings.Contains(got, `"reason":"body_size"`) && strings.Contains(got, "InvalidArgument") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	logMu.Lock()
+	got := logBuf.String()
+	logMu.Unlock()
+	t.Fatalf("over-cap rejection not logged; log=%q", got)
+}
+
+// writerFunc adapts a func to io.Writer for test log capture.
+type writerFunc func(p []byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }

@@ -27,14 +27,15 @@ import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import { transformDynamicColumnConfig } from "../common";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = () => {
   return {
-    columnId: "",
+    column_id: "",
     labels: [],
-    languageModelId: "",
+    language_model_id: "",
     concurrency: "",
-    newColumnName: "",
+    new_column_name: "",
   };
 };
 
@@ -47,13 +48,7 @@ export const ClassificationChild = ({
   const { refreshGrid } = useDevelopDetailContext();
 
   const { control, handleSubmit, reset } = useForm({
-    defaultValues: {
-      columnId: "",
-      labels: [],
-      languageModelId: "",
-      concurrency: "",
-      newColumnName: "",
-    },
+    defaultValues: getDefaultValue(),
     resolver: zodResolver(
       ClassificationValidationSchema(!!onFormSubmit, !!editId),
     ),
@@ -66,7 +61,6 @@ export const ClassificationChild = ({
     if (initialData) {
       reset(initialData);
     } else if (!editId) {
-      // Reset to default values when opening for new column (no editId)
       reset(getDefaultValue());
     }
   }, [initialData, reset, editId]);
@@ -79,7 +73,6 @@ export const ClassificationChild = ({
         variant: "success",
       });
       reset();
-      // null for gridRef option and true for set column.
       refreshGrid(null, true);
       onClose();
     },
@@ -120,20 +113,10 @@ export const ClassificationChild = ({
     },
   });
 
-  const transformFormToApi = (formValues) => {
-    const { columnId, newColumnName, languageModelId, ...rest } = formValues;
-    return {
-      ...rest,
-      column_id: columnId,
-      new_column_name: newColumnName,
-      language_model_id: languageModelId,
-    };
-  };
-
   const onSubmit = (formValues) => {
     if (editId) {
       updateColumn({
-        config: transformFormToApi(formValues),
+        config: formValues,
         operation_type: "classify",
       });
       return;
@@ -141,13 +124,13 @@ export const ClassificationChild = ({
     if (onFormSubmit) {
       onFormSubmit({ ...formValues, type: "classification" });
     } else {
-      addColumn(transformFormToApi(formValues));
+      addColumn(formValues);
     }
   };
 
   const handlePreview = handleSubmit((formValues) => {
     if (!onFormSubmit) {
-      preview(transformFormToApi(formValues));
+      preview(formValues);
     }
   });
 
@@ -176,7 +159,7 @@ export const ClassificationChild = ({
             mb: 2,
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit Classification" : "Classification"}
           </Typography>
           <IconButton
@@ -186,7 +169,7 @@ export const ClassificationChild = ({
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -206,7 +189,7 @@ export const ClassificationChild = ({
               placeholder="Enter column name"
               control={control}
               required={!onFormSubmit}
-              fieldName="newColumnName"
+              fieldName="new_column_name"
             />
           )}
           <FormSearchSelectFieldControl
@@ -215,7 +198,7 @@ export const ClassificationChild = ({
             label="Column"
             size="small"
             control={control}
-            fieldName="columnId"
+            fieldName="column_id"
             options={allColumns.map((column) => ({
               label: column.headerName,
               value: column.field,
@@ -223,7 +206,7 @@ export const ClassificationChild = ({
           />
           <Accordion defaultExpanded>
             <AccordionSummary>
-              <Typography fontSize="12px" fontWeight={700}>
+              <Typography fontSize="12px" fontWeight={600}>
                 Labels
               </Typography>
             </AccordionSummary>
@@ -237,7 +220,7 @@ export const ClassificationChild = ({
           </Accordion>
           <CustomModelDropdownControl
             control={control}
-            fieldName="languageModelId"
+            fieldName="language_model_id"
             label="Model"
             searchDropdown
             size="small"
@@ -312,7 +295,6 @@ ClassificationChild.propTypes = {
 };
 
 const Classification = ({ initialData, onFormSubmit }) => {
-  // Using individual store
   const { openClassification, setOpenClassification } =
     useClassificationStore();
 
@@ -330,10 +312,12 @@ const Classification = ({ initialData, onFormSubmit }) => {
     select: (data) => data?.data?.result?.metadata,
   });
 
+  const covered = useDrawerCovered(openClassification);
   return (
     <Drawer
       anchor="right"
       open={openClassification}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       variant="persistent"
       PaperProps={{
@@ -341,8 +325,7 @@ const Classification = ({ initialData, onFormSubmit }) => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

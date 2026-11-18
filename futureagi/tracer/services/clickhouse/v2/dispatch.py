@@ -112,7 +112,7 @@ _REGISTRY: dict[str, _BuilderEntry] = {
         v1_module="tracer.services.annotation_label_source",
         v1_class="AnnotationLabelScoresPG",
         v2_module="tracer.services.annotation_label_source",
-        v2_class="AnnotationLabelScoresCH",
+        v2_class="AnnotationLabelScoresProjectPG",
     ),
 }
 

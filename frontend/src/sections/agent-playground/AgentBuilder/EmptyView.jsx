@@ -2,8 +2,10 @@ import { Box, Link, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState, useRef } from "react";
 import SvgColor from "src/components/svg-color";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import NodeSelectionPopper from "../components/NodeSelectionPopper";
 import ChooseAgentTemplateDrawer from "../components/ChooseAgentTemplateDrawer";
+import useCanEditAgent from "../hooks/useCanEditAgent";
 
 const Action = ({ anchorRef, iconSrc, label, sx = {}, onClick }) => {
   return (
@@ -28,7 +30,7 @@ const Action = ({ anchorRef, iconSrc, label, sx = {}, onClick }) => {
           alignItems: "center",
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           height: "66px",
           width: "66px",
           borderStyle: "dashed",
@@ -58,8 +60,10 @@ export default function EmptyView() {
   const [open, setOpen] = useState(false);
   const [templateDrawerOpen, setTemplateDrawerOpen] = useState(false);
   const anchorRef = useRef(null);
+  const { canEditAgent } = useCanEditAgent();
 
   const handleToggle = () => {
+    if (!canEditAgent) return;
     setOpen((prevOpen) => !prevOpen);
   };
 
@@ -69,6 +73,7 @@ export default function EmptyView() {
 
   const handleOpenTemplateDrawer = (e) => {
     e.stopPropagation();
+    if (!canEditAgent) return;
     setTemplateDrawerOpen(true);
   };
 
@@ -101,30 +106,45 @@ export default function EmptyView() {
         alignItems={"flex-start"}
         sx={{ pointerEvents: "auto" }}
       >
-        <Action
-          anchorRef={anchorRef}
-          onClick={handleToggle}
-          iconSrc="/assets/icons/ic_add.svg"
-          label={
-            <Stack gap={0} alignItems={"center"}>
-              <Typography
-                typography={"s1_2"}
-                fontWeight={"fontWeightMedium"}
-                color={"text.primary"}
-              >
-                Add first node
-              </Typography>
-              <Link
-                typography={"s2_1"}
-                fontWeight={"fontWeightMedium"}
-                onClick={handleOpenTemplateDrawer}
-                sx={{ cursor: "pointer" }}
-              >
-                or start from a template
-              </Link>
-            </Stack>
-          }
-        />
+        <CustomTooltip
+          show={!canEditAgent}
+          type=""
+          size="small"
+          title="You don't have permission to create agents."
+          arrow
+        >
+          <Action
+            anchorRef={anchorRef}
+            onClick={handleToggle}
+            iconSrc="/assets/icons/ic_add.svg"
+            sx={
+              !canEditAgent
+                ? { opacity: 0.5, cursor: "not-allowed" }
+                : undefined
+            }
+            label={
+              <Stack gap={0} alignItems={"center"}>
+                <Typography
+                  typography={"s1_2"}
+                  fontWeight={"fontWeightMedium"}
+                  color={"text.primary"}
+                >
+                  Add first node
+                </Typography>
+                {canEditAgent && (
+                  <Link
+                    typography={"s2_1"}
+                    fontWeight={"fontWeightMedium"}
+                    onClick={handleOpenTemplateDrawer}
+                    sx={{ cursor: "pointer" }}
+                  >
+                    or start from a template
+                  </Link>
+                )}
+              </Stack>
+            }
+          />
+        </CustomTooltip>
         <NodeSelectionPopper
           open={open}
           anchorEl={anchorRef.current}
@@ -136,7 +156,7 @@ export default function EmptyView() {
           }}
           typography={"s2_1"}
           fontWeight={"fontWeightMedium"}
-          color={"black.500"}
+          color={"text.secondary"}
         >
           Or
         </Typography>
@@ -148,7 +168,7 @@ export default function EmptyView() {
             <Typography
               typography={"s1_2"}
               fontWeight={"fontWeightMedium"}
-              color={"black.1000"}
+              color={"text.primary"}
             >
               Build with AI
             </Typography>

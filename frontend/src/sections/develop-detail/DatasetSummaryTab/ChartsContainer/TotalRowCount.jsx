@@ -5,7 +5,7 @@ import React from "react";
 const TotalRowCount = ({ value, ...rest }) => {
   return value || value === 0 ? (
     <Typography
-      fontSize={"8px"}
+      fontSize={"12px"}
       lineHeight={"20px"}
       fontWeight={"fontWeightMedium"}
       {...rest}

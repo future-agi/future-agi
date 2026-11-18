@@ -7,25 +7,29 @@ Activity 3: cluster_scan_issues_task — cluster unclustered issues + match succ
 """
 
 import time
+from contextlib import contextmanager
 from datetime import timedelta
-from typing import List
 
 import structlog
 from django.db.models import F
 
+from agentic_eval.core.embeddings.serving_client import serving_available
 from tfc.temporal.drop_in import temporal_activity
 from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.models.trace_scan import TraceScanConfig
 from tracer.queries.trace_scanner import (
     filter_already_scanned,
+    get_scan_config,
     is_trace_sampled,
     mark_traces_failed,
 )
 from tracer.services.clickhouse.v2 import get_reader
+from tracer.services.clickhouse.v2.query_settings import ch_query_settings
 from tracer.utils.trace_scanner import (
     cluster_issues,
     embed_trace_inputs,
     match_success_traces,
+    merge_duplicate_clusters,
     scan_and_write,
 )
 
@@ -36,12 +40,38 @@ SCAN_DELAY_SECONDS = 10
 # ─── Periodic sweep policy (scan collector-ingested CH-only traces) ──────────
 _SWEEP_GRACE_SECONDS = 60  # let straggler child spans settle before scanning
 _SWEEP_COLD_START_SECONDS = 900  # first-sweep window when last_swept_at is NULL
-_SWEEP_BATCH_SIZE = 15  # keep each scan task under its time_limit (cf. _trigger_trace_scanner)
-_SWEEP_MAX_LAG_SECONDS = 86400  # cap how far the watermark lags behind a stuck trace (24h)
+_SWEEP_BATCH_SIZE = (
+    15  # keep each scan task under its time_limit (cf. _trigger_trace_scanner)
+)
+_SWEEP_MAX_LAG_SECONDS = (
+    86400  # cap how far the watermark lags behind a stuck trace (24h)
+)
+
+# Per-query ClickHouse caps for the scanner's spans reads. Every statement uses
+# the shared 36-GiB / 30-second production read policy; big sorts spill to disk
+# before reaching the memory ceiling.
+# Baked into each reader's client at construction (via the ``ch_query_settings``
+# contextvar), so ``scan_ch_guardrails()`` must wrap the reader-building call.
+SCAN_CH_GUARDRAILS: dict[str, int] = {
+    "max_memory_usage": 36 * 1024 * 1024 * 1024,
+    "max_execution_time": 30,
+    "max_bytes_before_external_sort": 2 * 2**30,  # 2 GiB spill threshold
+}
+
+
+@contextmanager
+def scan_ch_guardrails():
+    """Apply per-query CH guardrails to every v2 reader built inside the block.
+
+    Inner ``ch_query_settings`` overrides win (e.g. a test tightens
+    ``max_memory_usage`` to probe the tripwire).
+    """
+    with ch_query_settings(**SCAN_CH_GUARDRAILS):
+        yield
 
 
 @temporal_activity(time_limit=600, queue="agent_compass", max_retries=1)
-def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = False):
+def scan_traces_task(trace_ids: list[str], project_id: str, from_sweep: bool = False):
     """
     Scan completed traces for issues.
 
@@ -54,6 +84,8 @@ def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = F
     terminal so it can't pin the sweep watermark. Inline batches leave it off —
     an unreplicated trace may just be lagging, and the sweep catches it later.
     """
+    if get_scan_config(project_id) is None:
+        return
     time.sleep(SCAN_DELAY_SECONDS)
 
     logger.info(
@@ -62,7 +94,8 @@ def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = F
         project_id=project_id,
     )
 
-    results = scan_and_write(trace_ids, project_id, mark_unresolved=from_sweep)
+    with scan_ch_guardrails():
+        results = scan_and_write(trace_ids, project_id, mark_unresolved=from_sweep)
 
     issues_found = sum(len(r.issues) for r in results)
     logger.info(
@@ -81,7 +114,7 @@ def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = F
 
 @temporal_activity(time_limit=300, queue="agent_compass", max_retries=1)
 def embed_trace_inputs_task(
-    trace_ids: List[str], project_id: str, trigger_clustering: bool
+    trace_ids: list[str], project_id: str, trigger_clustering: bool
 ):
     """
     Kevinify + embed root span inputs for all scanned traces.
@@ -90,13 +123,25 @@ def embed_trace_inputs_task(
     Runs for ALL traces (success and failure) so KNN has both sides.
     Chains to clustering if new issues were found.
     """
+    if not serving_available():
+        # Embedding and the clustering chained after it both need model
+        # serving. The scan results are already written; their issues stay
+        # unclustered until a clustering pass runs with serving up.
+        logger.info(
+            "embed_trace_inputs_task_skipped_serving_unavailable",
+            trace_count=len(trace_ids),
+            project_id=project_id,
+        )
+        return
+
     logger.info(
         "embed_trace_inputs_task_started",
         trace_count=len(trace_ids),
         project_id=project_id,
     )
 
-    stored = embed_trace_inputs(trace_ids, project_id)
+    with scan_ch_guardrails():
+        stored = embed_trace_inputs(trace_ids, project_id)
 
     logger.info(
         "embed_trace_inputs_task_completed",
@@ -120,12 +165,23 @@ def cluster_scan_issues_task(project_id: str):
 
     summary = cluster_issues(project_id)
 
+    # Online assignment has no merge step, so two clusters describing one root cause can
+    # never join — measured at 14% of feed entries on production briefs. Collapse them
+    # after each clustering pass. Bounded internally, and deliberately fail-open: a merge
+    # problem must not cost us the clustering that just succeeded.
+    try:
+        merged = merge_duplicate_clusters(project_id)
+    except Exception:
+        logger.exception("cluster_merge_failed", project_id=project_id)
+        merged = 0
+
     logger.info(
         "cluster_scan_issues_task_completed",
         project_id=project_id,
         clustered=summary.clustered,
         new_clusters=summary.new_clusters,
         assigned=summary.assigned,
+        merged_duplicates=merged,
     )
 
     # Match success traces for all scanner clusters in this project
@@ -172,6 +228,7 @@ def sweep_scannable_traces():
     configs = list(
         TraceScanConfig.no_workspace_objects.filter(
             enabled=True,
+            scan_version="v7.2",
             sampling_rate__gt=0,
             project__trace_type="observe",
         )
@@ -186,7 +243,7 @@ def sweep_scannable_traces():
 
     dispatched = 0
     abandoned = 0
-    with get_reader() as reader:
+    with scan_ch_guardrails(), get_reader() as reader:
         now_ch = reader.ch_now()
         upper = now_ch - timedelta(seconds=_SWEEP_GRACE_SECONDS)
         cold_floor = now_ch - timedelta(seconds=_SWEEP_COLD_START_SECONDS)

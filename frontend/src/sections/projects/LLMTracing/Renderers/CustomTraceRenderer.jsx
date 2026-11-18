@@ -30,6 +30,10 @@ const CustomTraceRenderer = (params) => {
   const isEval = column?.groupBy === "Evaluation Metrics" && !isReason;
   const isAnnotation = column?.groupBy === "Annotation Metrics";
 
+  // Span-level cells carry a single span's eval (Pass/Fail is 0 or 100);
+  // trace/voice cells are aggregated (Pass/Fail arrives as an averaged rate).
+  const isSpanLevel = params.context?.entityType === "span";
+
   const projectId = data?.project_id;
   const traceIdFromRow = data?.trace_id;
   const traceIdFromCell = value;
@@ -72,7 +76,14 @@ const CustomTraceRenderer = (params) => {
   if (colId === CELL_TYPES.STATUS && value) {
     return (
       <Box paddingX={1.5}>
-        <StatusChip label={value} status={value} />
+        <StatusChip
+          label={value}
+          status={value}
+          // TH-4088: neutral status text on the span list measured below 4.5:1 against the
+          // chip background with the shared `text.disabled` token. Only the span list opts
+          // into the readable token; the trace list and other consumers are unchanged.
+          neutralTextColor={isSpanLevel ? "text.secondary" : undefined}
+        />
       </Box>
     );
   }
@@ -104,13 +115,19 @@ const CustomTraceRenderer = (params) => {
   if (isEval && column?.outputType === "Pass/Fail") {
     return (
       <div style={{ height: "100%", width: "100%", padding: 0, margin: 0 }}>
-        <EvaluationCell value={value} column={column} />
+        <EvaluationCell
+          value={value}
+          column={column}
+          isSpanLevel={isSpanLevel}
+        />
       </div>
     );
   }
 
   if (isEval) {
-    return <EvaluationCell value={value} column={column} />;
+    return (
+      <EvaluationCell value={value} column={column} isSpanLevel={isSpanLevel} />
+    );
   }
 
   if (isAnnotation) {
@@ -139,6 +156,7 @@ const CustomTraceRenderer = (params) => {
       alignRight={alignRight}
       applyQuickFilters={params.applyQuickFilters}
       onCellClick={() => {
+        if (params.context?.disableCellNavigation) return;
         if (colId === CELL_TYPES.TRACE_ID) {
           handleTraceClick(traceIdFromCell);
         }

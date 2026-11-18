@@ -79,9 +79,9 @@ class AddSyntheticData(APIView):
                 return self._gm.bad_request(get_error_message("10_ROWS_REQUIRED"))
 
             columns = validated_data["columns"]
-            gen_columns = [col for col in columns if not col["skip"]]
-            new_columns = [col for col in columns if col["is_new"]]
-            gen_new_columns = [col for col in gen_columns if col["is_new"]]
+            gen_columns = [col for col in columns if not col.get("skip", False)]
+            new_columns = [col for col in columns if col.get("is_new", False)]
+            gen_new_columns = [col for col in gen_columns if col.get("is_new", False)]
 
             # Generate New Columns
             generated_columns = []
@@ -145,7 +145,9 @@ class AddSyntheticData(APIView):
                                 defaults={"id": uuid.uuid4(), "value": ""},
                             )
 
-            total_columns = Column.objects.filter(dataset=dataset, deleted=False).exclude(
+            total_columns = Column.objects.filter(
+                dataset=dataset, deleted=False
+            ).exclude(
                 source__in=[
                     SourceChoices.EXPERIMENT.value,
                     SourceChoices.EXPERIMENT_EVALUATION.value,
@@ -169,7 +171,9 @@ class AddSyntheticData(APIView):
                         status=CellStatus.RUNNING.value,
                     )
 
-            generate_new_rows.delay(dataset_id, validated_data, gen_columns, new_rows_id)
+            generate_new_rows.delay(
+                dataset_id, validated_data, gen_columns, new_rows_id
+            )
 
             return self._gm.success_response("Data Generation Started")
 

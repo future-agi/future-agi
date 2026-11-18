@@ -57,6 +57,9 @@ class ThirtyDayDataPoint(BaseModel):
 class EvalListItem(BaseModel):
     """Single item in the eval template list response."""
 
+    jev_mapping: dict | None = None
+    model: str | None = None
+
     id: str
     name: str
     template_type: Literal["single", "composite"]
@@ -105,6 +108,10 @@ class EvalCreateRequest(BaseModel):
     class Config:
         extra = "forbid"
 
+    jev_mapping: dict | None = None
+    multi_choice: bool = False
+    input_data_types: dict | None = None
+
     name: str = Field(min_length=0, max_length=255, default="")
     is_draft: bool = False
     eval_type: Literal["llm", "code", "agent"] = "llm"
@@ -133,9 +140,7 @@ class EvalCreateRequest(BaseModel):
     data_injection: dict | None = (
         None  # {variables_only, dataset_row, trace_context, ...}
     )
-    summary: dict | None = (
-        None  # {type: short|long|concise|custom, custom: str}
-    )
+    summary: dict | None = None  # {type: short|long|concise|custom, custom: str}
     # Error Localization — mirrors EvalUpdateRequest. Without this here the
     # FE's create payload (which always includes the toggle value) is
     # rejected by `extra="forbid"`.
@@ -159,6 +164,8 @@ class EvalCreateResponse(BaseModel):
 
 class EvalDetailResponse(BaseModel):
     """Response schema for GET /model-hub/eval-templates/{id}/detail/"""
+
+    jev_mapping: dict | None = None
 
     id: str
     name: str
@@ -199,6 +206,9 @@ class EvalUpdateRequest(BaseModel):
     class Config:
         extra = "forbid"
 
+    jev_mapping: dict | None = None
+    input_data_types: dict | None = None
+
     name: str | None = None
     eval_type: Literal["llm", "code", "agent"] | None = None
     instructions: str | None = None
@@ -238,6 +248,32 @@ class EvalUpdateResponse(BaseModel):
     updated: bool = True
 
 
+class PlaygroundEvalResponse(BaseModel):
+    """Response schema for POST /model-hub/eval-playground/ and related
+    single-run evaluation endpoints.
+
+    `output` shape is derived from the template's output_type + choice_scores:
+      - Pass/Fail                            -> "Passed" | "Failed"                    (str)
+      - score alone                          -> 0.7                                    (float)
+      - choices single, no choice_scores     -> "Good"                                 (str)
+      - choices multi, no choice_scores      -> ["A", "B"]                             (list)
+      - score + choice_scores                -> {"score": 0.7, "choice": "Good"}       (dict)
+      - choices + choice_scores single-pick  -> {"score": 0.7, "choice": "Good"}       (dict)
+      - choices + choice_scores multi-choice -> {"score": 0.5, "choices": ["A", "B"]}  (dict)
+
+    `log_id` is None when APICallLog is not written for this run.
+    `ground_truth_examples` is omitted when GT is not configured on the template."""
+
+    output: str | float | list | dict | None = None
+    reason: Optional[str] = None
+    model: Optional[str] = None
+    metadata: Any = None
+    output_type: Optional[str] = None
+    log_id: Optional[str] = None
+    ground_truth_examples: Optional[list] = None
+    warnings: Optional[list] = None
+
+
 # =============================================================================
 # Eval Versioning Types (Phase 5)
 # =============================================================================
@@ -245,6 +281,8 @@ class EvalUpdateResponse(BaseModel):
 
 class EvalVersionItem(BaseModel):
     """Single version in the version list."""
+
+    jev_mapping: dict | None = None
 
     id: str
     version_number: int
@@ -278,6 +316,8 @@ class EvalVersionListResponse(BaseModel):
 
 class CreateVersionRequest(BaseModel):
     """Request for POST /model-hub/eval-templates/{id}/versions/create/"""
+
+    jev_mapping: dict | None = None
 
     criteria: str | None = None
     model: str | None = None

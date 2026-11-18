@@ -71,17 +71,13 @@ class ExperimentRowCellMetadataSerializer(serializers.Serializer):
     token_count = serializers.IntegerField(required=False, allow_null=True)
     cost = serializers.JSONField(required=False, allow_null=True)
     cell_metadata = ExperimentRowCellInnerMetadataSerializer(required=False)
-    reason = serializers.CharField(
-        required=False, allow_blank=True, allow_null=True
-    )
+    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
 class ExperimentRowCellSerializer(serializers.Serializer):
     cell_value = serializers.JSONField(required=False, allow_null=True)
     cell_diff_value = serializers.JSONField(required=False, allow_null=True)
-    status = serializers.CharField(
-        required=False, allow_blank=True, allow_null=True
-    )
+    status = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     metadata = ExperimentRowCellMetadataSerializer(required=False)
     value_infos = serializers.JSONField(required=False, allow_null=True)
 
@@ -356,6 +352,14 @@ class ExperimentFeedbackTemplateResultSerializer(serializers.Serializer):
         required=False,
     )
     multi_choice = serializers.BooleanField(required=False)
+    # When the eval maps choice labels to derived scores, the FE renders a
+    # choice picker instead of a raw numeric input; null when the template
+    # does not use choice-scoring.
+    choice_scores = serializers.DictField(
+        child=serializers.FloatField(),
+        required=False,
+        allow_null=True,
+    )
 
 
 class ExperimentFeedbackTemplateResponseSerializer(serializers.Serializer):
