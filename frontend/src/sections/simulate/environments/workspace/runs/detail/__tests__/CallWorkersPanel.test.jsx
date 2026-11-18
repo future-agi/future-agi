@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { cleanup, fireEvent, render, screen } from "src/utils/test-utils";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "src/utils/test-utils";
 
 let result;
 let routes;
@@ -142,6 +148,12 @@ describe("CallWorkersPanel", () => {
       const [own, task] = screen.getAllByTestId("placed-check");
       expect(own).toHaveTextContent("Order-lookup worker");
       expect(own.dataset.step).toBe("1");
+      // Named by the sequence's own step number, and it opens that step.
+      expect(own).toHaveTextContent("On step 2");
+      fireEvent.click(within(own).getByRole("button", { name: "On step 2" }));
+      expect(screen.getByTestId("step-detail")).toHaveTextContent(
+        "inspect order 1042",
+      );
       expect(own).not.toHaveTextContent(C.untied.no_moment);
       expect(task).not.toHaveTextContent("Order-lookup worker");
       expect(task.dataset.step).toBe("");

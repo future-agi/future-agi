@@ -223,7 +223,12 @@ export default function CallWorkersPanel({
         <WorkerChecks workers={data.workers} />
       ) : null}
       {data.placements.length ? (
-        <PlacedChecks placements={data.placements} names={names} />
+        <PlacedChecks
+          placements={data.placements}
+          names={names}
+          stepOf={(key) => seq?.steps.find((one) => one.key === key)?.n ?? null}
+          onPick={setSelected}
+        />
       ) : null}
       {/* The diagram names them itself when it is drawn. */}
       {notObserved && !seq?.steps.length ? (
