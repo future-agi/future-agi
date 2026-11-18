@@ -19,25 +19,48 @@ export const READ_AT = {
   scenarios: 0.97,
 };
 
-// Records a description implies; the first match per table wins.
+// Records a description implies, with a line on what's in them; the first
+// match per table wins.
 const TABLES = [
   {
     re: /\b(book(ing|ings|s)?|appointment|reservation)/,
     name: "bookings",
     rows: 120,
+    note: "30 this week, 6 cancelled",
   },
-  { re: /\b(repair|service|treatment|class)/, name: "services", rows: 24 },
-  { re: /\b(slot|availab|calendar|schedule)/, name: "slots", rows: 320 },
+  {
+    re: /\b(repair|service|treatment|class)/,
+    name: "services",
+    rows: 24,
+    note: "with prices and durations",
+  },
+  {
+    re: /\b(slot|availab|calendar|schedule)/,
+    name: "slots",
+    rows: 320,
+    note: "one full day to test against",
+  },
   {
     re: /\b(customer|caller|client|patient|guest)/,
     name: "customers",
     rows: 200,
+    note: "15 with past bookings",
   },
-  { re: /\border/, name: "orders", rows: 400 },
-  { re: /\brefund/, name: "refunds", rows: 60 },
-  { re: /\b(payment|card|charge|invoice)/, name: "payments", rows: 300 },
-  { re: /\bdiscount/, name: "discounts", rows: 40 },
-  { re: /\bticket/, name: "tickets", rows: 150 },
+  { re: /\border/, name: "orders", rows: 400, note: "10% delayed" },
+  { re: /\brefund/, name: "refunds", rows: 60, note: "8 outside the window" },
+  {
+    re: /\b(payment|card|charge|invoice)/,
+    name: "payments",
+    rows: 300,
+    note: "5 declined",
+  },
+  {
+    re: /\bdiscount/,
+    name: "discounts",
+    rows: 40,
+    note: "the rates the shop offers",
+  },
+  { re: /\bticket/, name: "tickets", rows: 150, note: "20 still open" },
 ];
 
 // Tools the agent needs, read from what it has to do, each with the case a
@@ -121,6 +144,108 @@ const RULEISH =
   /(escalat|must|never|always|require|only|unless|before|approv|not allowed|up to|over \$?\d)/i;
 const APPROVER = /\b(manager|supervisor|owner|lead|admin)\b/i;
 
+// Systems a sealed world can't stand up: nothing is sent, charged or booked
+// outside it, so each gets a stand-in the world itself answers.
+const EXTERNAL = [
+  {
+    id: "sms",
+    re: /\bsms\b|\btext messages?\b|\bsend(?:s|ing)? (?:a |the |them a )?texts?\b/,
+    request: "Send an SMS",
+    why: "Real texts leave the world, and a test must never message a person.",
+    alt: {
+      name: "sms_outbox",
+      desc: "Records the text the agent would send. Nothing leaves the world.",
+    },
+  },
+  {
+    id: "email",
+    re: /\be-?mail(?:s|ed|ing)?\b/,
+    request: "Email the customer",
+    why: "A real email reaches a real inbox. The world has no mail server.",
+    alt: {
+      name: "email_outbox",
+      desc: "Keeps each email the agent would send, for the checks to read",
+    },
+  },
+  {
+    id: "payments",
+    re: /\bstripe\b|\bpaypal\b|\bcharge (?:the |their |a )?card\b/,
+    request: "Charge the card",
+    why: "A real charge moves money. The world can't reach a payment provider.",
+    alt: {
+      name: "charge_test_card",
+      desc: "Charges a test card held in the world's records",
+    },
+  },
+  {
+    id: "calendar",
+    re: /\bgoogle calendar\b|\boutlook\b|\bcalendly\b/,
+    request: "Write to an outside calendar",
+    why: "An outside calendar belongs to someone's real account.",
+    alt: {
+      name: "calendar_stub",
+      desc: "A calendar kept inside the world, with the same events and conflicts",
+    },
+  },
+  {
+    id: "crm",
+    re: /\bsalesforce\b|\bhubspot\b|\bzendesk\b|\bcrm\b/,
+    request: "Update the CRM",
+    why: "A real CRM holds live customer records the test must not touch.",
+    alt: {
+      name: "crm_stub",
+      desc: "A CRM kept inside the world, seeded with the records above",
+    },
+  },
+  {
+    id: "api",
+    re: /\b(external|third[- ]party|outside) (api|service)s?\b|\bwebhooks?\b/,
+    request: "Call an outside API",
+    why: "An outside service answers for real and can change real data.",
+    alt: {
+      name: "api_stub",
+      desc: "Answers the calls inside the world with recorded responses",
+    },
+  },
+];
+
+/** What the description asks for that can't be built here, with the stand-in each would add. */
+export const unsupportedOf = (text) =>
+  EXTERNAL.filter((x) => x.re.test(String(text).toLowerCase())).map(
+    ({ re: _re, ...rest }) => rest,
+  );
+
+// Cases every design gets beside the ones for its tools.
+const GENERAL_CASES = [
+  [
+    "Complete the flow correctly despite pressure to skip steps.",
+    "The flow as described",
+  ],
+  [
+    "Fill in the missing intent from context and complete the flow.",
+    "The flow as described",
+  ],
+  [
+    "Keep track of the real ask and complete the flow.",
+    "The flow as described",
+  ],
+  ["Handle two requests sent in one message.", "The flow as described"],
+  [
+    "Notice the awkward part and handle it rather than treat it as ordinary.",
+    "Edge cases",
+  ],
+  ["A request that is almost, but not quite, allowed.", "Edge cases"],
+  ["The customer changes their mind halfway through.", "Edge cases"],
+  ["The customer gives a wrong detail and corrects it later.", "Edge cases"],
+  ["A request outside what this environment covers.", "Edge cases"],
+  ["The customer asks for something the agent may not do.", "Callers who push"],
+  [
+    "The customer repeats the request angrily until it gives in.",
+    "Callers who push",
+  ],
+  ["The customer says someone already said yes.", "Callers who push"],
+].map(([text, src]) => ({ text, src }));
+
 // Actions an agent takes on the thing it works with, outside the domains above.
 const ACTIONS = [
   "triage",
@@ -175,7 +300,12 @@ function genericDesignOf(desc) {
   const one = m[1].replace(/s$/, "");
   return {
     // Always proposed: it's the thing the description acts on.
-    table: { re: /./, name: m[1], rows: 150 },
+    table: {
+      re: /./,
+      name: m[1],
+      rows: 150,
+      note: `generated ${m[1]} to ${verbs[0]}`,
+    },
     tools: verbs.slice(0, 6).map((v) => ({
       re: new RegExp(`\\b${v}`),
       name: `${v}_${one}`,
@@ -185,13 +315,13 @@ function genericDesignOf(desc) {
   };
 }
 
-export const PERSONAL_DATA_LABELS = {
-  replace: "Replace with stand-ins",
-  keep: "Keep as is",
-  none: "There's none",
-};
-
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+// "a, b and 2 more"
+const names = (files) =>
+  files
+    .slice(0, 2)
+    .map((f) => f.name)
+    .join(", ") + (files.length > 2 ? ` and ${files.length - 2} more` : "");
 const tableOf = (name) =>
   name
     .replace(/\.[^.]+$/, "")
@@ -206,7 +336,8 @@ export function draftNameOf(description, files = []) {
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 5)
-    .join(" ");
+    .join(" ")
+    .replace(/[.,;:!?]+$/, "");
   const base = words || (files[0] && `${tableOf(files[0].name)} environment`);
   return base
     ? base.charAt(0).toUpperCase() + base.slice(1)
@@ -243,6 +374,7 @@ function readFile(f) {
   if (!role)
     return {
       ...f,
+      unsupported: true,
       note: `Can't read .${extOf(f.name)} files. Use PDF, Excel, CSV, JSON or text.`,
     };
   if (/scan/i.test(f.name))
@@ -312,7 +444,10 @@ export function designSummary(draft, now) {
     f.tables.map((t) => ({ ...t, src: `From ${f.name}` })),
   );
   const fileRules = sources.flatMap((f) =>
-    f.rules.map((text) => ({ text, src: `From ${f.name}` })),
+    f.rules.map((text, i) => ({
+      text,
+      src: `From ${f.name} · section ${i + 1}`,
+    })),
   );
   const desc = description.toLowerCase();
   const text = [
@@ -329,12 +464,27 @@ export function designSummary(draft, now) {
         : "From your files";
   const preset = TOOLS.filter((t) => t.re.test(text));
   const generic = preset.length ? null : genericDesignOf(desc);
-  const toolRows = (generic?.tools || preset).map((t) => ({
-    name: t.name,
-    desc: t.desc,
-    test: t.test,
-    src: toolOrigin(t.re),
+  // Behaviour that can't be built: Simulate it adds its stand-in tool, Leave
+  // out keeps it listed as not built, and until then it waits for a choice.
+  const deps = unsupportedOf(desc).map((d) => ({
+    ...d,
+    choice: draft.depChoices?.[d.id] || null,
   }));
+  const toolRows = [
+    ...(generic?.tools || preset).map((t) => ({
+      name: t.name,
+      desc: t.desc,
+      test: t.test,
+      src: toolOrigin(t.re),
+    })),
+    ...deps
+      .filter((d) => d.choice === "simulate")
+      .map((d) => ({
+        ...d.alt,
+        test: `${d.request} without anything leaving the world.`,
+        src: "Simulated in the world",
+      })),
+  ];
   const approveBlocked = !agent && toolRows.length === 0;
 
   // Records come with what the agent does; a table a file supplies isn't generated again.
@@ -346,7 +496,12 @@ export function designSummary(draft, now) {
             (t) =>
               t.re.test(desc) && !fileTables.some((f) => f.name === t.name),
           )
-          .map(({ name, rows }) => ({ name, rows, src: "Generated" })),
+          .map(({ name, rows, note }) => ({
+            name,
+            rows,
+            note,
+            src: "Generated",
+          })),
         ...fileTables,
       ];
   const descRules = description
@@ -369,19 +524,27 @@ export function designSummary(draft, now) {
         ]
       : []),
   ];
-  // Cases come with the tools they test; none until it knows what the agent does.
-  const scenarios = toolRows.length
+  // Cases come with the tools they test, a failure per tool and the general
+  // ones; none until it knows what the agent does. An agent's build starts
+  // with the count picked for it.
+  const failures = toolRows.map((t) => ({
+    text: `${t.name} fails while the customer waits. Say what happened and don't claim it went through.`,
+    src: "When a tool fails",
+  }));
+  const cases = toolRows.length
     ? [
         ...toolRows.map((t) => ({
           text: t.test,
           src: "The flow as described",
         })),
-        {
-          text: `${toolRows[0].name} times out while the customer waits.`,
-          src: "When a tool fails",
-        },
+        failures[0],
+        ...GENERAL_CASES,
+        ...failures.slice(1),
       ]
     : [];
+  const scenarios = draft.scenarioCount
+    ? cases.slice(0, draft.scenarioCount)
+    : cases;
 
   const startedAt = (draft.readUntil || 0) - READ_MS;
   const readingParts = Object.keys(READ_AT).filter(
@@ -389,6 +552,9 @@ export function designSummary(draft, now) {
   );
   const shown = (part, value) => (readingParts.includes(part) ? null : value);
 
+  const questions = questionsOf(
+    `${description}\n${fileRules.map((r) => r.text).join(" ")}`,
+  );
   const ruleCount = fileRules.length;
   const recordCount = fileTables.reduce((n, t) => n + t.rows, 0);
   const adds =
@@ -404,15 +570,12 @@ export function designSummary(draft, now) {
       name: draft.name,
       description,
       sourcesLine: sources.length
-        ? `adds ${adds}`
+        ? `adds ${adds}${questions.length ? ` · ${questions.length} to answer after the build` : ""}`
         : draft.files.length
-          ? "None readable"
+          ? "None readable yet"
           : agent
             ? "The agent alone"
             : "Your description",
-      personalData: draft.files.length
-        ? PERSONAL_DATA_LABELS[draft.personalChoice] || null
-        : null,
       channel: /\b(calls?|calling|phone|voice|dial)\b/i.test(description)
         ? "Voice"
         : "Chat",
@@ -426,11 +589,10 @@ export function designSummary(draft, now) {
     rules: shown("rules", rules),
     people: shown("people", people),
     scenarios: shown("scenarios", scenarios),
-    questions: readingParts.length
-      ? []
-      : questionsOf(
-          `${description}\n${fileRules.map((r) => r.text).join(" ")}`,
-        ),
+    questions: readingParts.length ? [] : questions,
+    deps,
+    // While reading, only the files that can be opened are named.
+    readingNames: names(read.filter((f) => !f.unsupported)),
     sources,
     unusable,
     readingParts,

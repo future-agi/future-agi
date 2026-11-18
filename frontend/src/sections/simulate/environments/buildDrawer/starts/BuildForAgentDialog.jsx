@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
+import { sourceLabel } from "src/sections/agent-playground/connected/connectedAgentLabels";
 import { MONO, PreflightRow, useUiOnlyBuild } from "../forms/formBits";
 import BuildFilesField from "../forms/shared/BuildFilesField";
 import BuildTestField from "../forms/shared/BuildTestField";
@@ -298,7 +299,12 @@ function DialogBody({ agent, onClose, subtitle }) {
                   name,
                   description: testRequest,
                   files,
-                  agent: { id: agent.id, name: agent.name, version },
+                  agent: {
+                    id: agent.id,
+                    name: agent.name,
+                    version,
+                    source: agent.source ? sourceLabel(agent.source) : null,
+                  },
                   scenarioCount: count,
                 }),
               ),
