@@ -1652,6 +1652,50 @@
 - the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
 - an invalid boolean is refused without creating a configuration version
 
+### GW-E2E-007 — an admin applies a guardrail policy to one gateway key, first monitoring and then enforcing it
+
+**Goal:** An admin monitors and enforces a guardrail on one API key, corrects invalid keyword and built-in configurations without losing edits, and preserves cache isolation, org-wide protections and safe refusal of uninspectable selected content
+
+**Spec:** `flows/gateway/key-guardrail-policy.spec.ts:53`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a local mock provider, two gateway keys and enabled organization caching with a minted cache namespace
+2. open Guardrails Policies, create a Secret Detection block policy for key A in Monitor mode, picking the key by name; the dialog offers no Org-wide scope
+3. send the same fake AWS-key prompt twice with key A and twice with key B: A is monitored on each uncached echo, while B repeats from the exact cache
+4. switch the policy to Enforce in the dialog; the identical key A request is refused with content_blocked and key B still gets an exact-cache echo
+5. add an org-wide Secret Detection block with caching disabled and set the key policy back to Monitor; key A is still refused
+6. create the documented key policy body through the API; an unknown key ID is refused without creating a policy
+7. try an empty Keyword Blocklist in the policy dialog, retain its inline error and correct it through Configure; the saved selected key is blocked while clean and unselected requests pass
+8. reject malformed keyword creates and updates atomically; retain an edited draft on a real server validation error, then save the corrected draft
+9. correct syntax and family-invalid JSON for PII, Content Moderation, Secret Detection, Language Detection, Topic Restriction and Input Validation, including disabled-draft re-enable refusal without policy writes
+10. save each corrected policy for its own key, verify exact persisted and pushed configuration, then reload and reopen Configure
+11. send safe text with each corrected selected key and read its unique uncached mock echo
+12. refuse a selected native Responses request with previous_response_id without releasing content, verify its blocked log, and confirm ordinary chat still works
+13. correct malformed Prompt Injection JSON through Configure to instruction_override and HIGH with unknown metadata, save the intended key, reopen and send safe text
+14. reopen the existing Content Moderation policy, retain an unreachable count of 50 without writing, correct it to 3 and reopen the same metadata
+15. reject an active API alias collision including a disabled row, save it inactive, refuse activation through Save policy and save inactive without losing either raw check
+
+**Backend state verified:**
+
+- the gateway admin config carries enabled caching and the UI-saved key policy mode, block action and key A gateway key ID during the cache phase
+- both identical key A Monitor requests return skip_key_policy and have distinct uncached logs with exactly one would_block policy result and no triggered response header
+- unselected key B returns miss then hit_exact, and remains hit_exact after Enforce; all three exact request logs have no guardrail entry and cache_hit false, true, true
+- after the UI Enforce save, the identical key A request gets 403 content_blocked, no choices and an uncached blocked key-policy log
+- an org-wide block wins over a key policy in monitor mode for the same check
+- the documented request body is accepted verbatim, and an unknown key ID returns 400 without a new agentcc_guardrail_policy row
+- keyword correction persists exact words and the intended key in PostgreSQL and the pushed gateway config; selected matching requests are blocked while clean and unselected requests pass
+- invalid keyword creates and updates return 400 without partial policy or assignment changes; the real server error retains the UI draft and a corrected retry saves it
+- six built-in invalid drafts make no policy write, and correction retains the exact authored configuration and intended key in the policy API and PostgreSQL
+- all six corrected built-in policies reach the gateway with exact enabled checks, thresholds, configurations and selected gateway key IDs
+- safe text on every corrected selected key returns the unique mock echo without a guardrail trigger or cache reuse
+- a native Responses request with uninspectable selected input returns input_guardrail_unsupported without content and records the exact blocked selected-policy request
+- Prompt Injection invalid drafts make no policy write; correction preserves exact HIGH sensitivity, supported category, unknown metadata and intended key in API, PostgreSQL, pushed config and reopened JSON, with a safe uncached echo
+- an unreachable Content Moderation count retains the draft without writing; correcting it to 3 preserves the existing policy, key and metadata in API, PostgreSQL, pushed config and reopened JSON
+- an active alias collision including a disabled duplicate returns 400 without a row; inactive API save and UI activation refusal preserve both raw checks, and inactive UI save retains their exact options in API and PostgreSQL
+
 ## knowledge-base
 
 ### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file
@@ -3097,3 +3141,156 @@
 - the launch form asks launch-options for the epoch's own run and locks the model its spans named, gpt-4o-mini
 - the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
+
+### SIM-E2E-010 — an actor with no channel is named on Scenarios, and World state reads a read apart from a write
+
+**Goal:** A developer sees every actor of the cast on the scenarios that include it, speaking or not, and a trial's World state says what the agent only read apart from what it committed
+
+**Spec:** `flows/simulate/actors-world-changes.spec.ts:22`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment whose refunds include a world actor with no channel and one finished trial (e2e/lib/harness_environment_seed.py)
+2. read the cast (GET actors)
+3. check an edit to the actor (POST actor-validation)
+4. read the scenarios (GET harness-jobs/<id>/scenarios)
+5. read the trial (GET v3/call-executions/<id>)
+6. open the Actors tab and pick a side from Add actor
+7. open the Scenarios tab
+8. open the trial's World state
+
+**Backend state verified:**
+
+- the cast lists the actor with no channel
+- checking an edit to it finds nothing to fix and writes nothing
+- the refund scenario includes it by id
+- the trial's World state count 1 committed (issue_refund) and 1 read (lookup_order)
+
+**Browser observations:**
+
+- Add actor offers the caller's side and the world, and opens Add actor on the side picked
+- the Scenarios table names the actor, never its raw id
+- World state reads "1 read" and "Committed: issue_refund"
+
+### SIM-E2E-017 — the Tools card shows each tool's inputs with units, what it returns, and a production-only tool as Unsupported
+
+**Goal:** A developer inspects each tool of the test world: its inputs with units, the fields it returns, whether it changes records, whether it is reset between trials, and which tools only production answers
+
+**Spec:** `flows/simulate/tool-contract-view.spec.ts:13`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment whose contract records each tool's fields and one tool that reaches production (e2e/lib/harness_environment_seed.py)
+2. read the environment (GET harness-environments/<id>/)
+3. open the Contract tab
+4. expand lookup_order
+5. read issue_refund's Unsupported label
+
+**Backend state verified:**
+
+- the contract section names issue_refund production-only
+- lookup_order returns status and total
+
+**Browser observations:**
+
+- lookup_order reads "Reads only" and its returned fields with units
+- issue_refund reads Unsupported, never Simulated
+
+### SIM-E2E-019 — World state shows a faulted call apart from a commit, and an actor's change made during the call
+
+**Goal:** A developer reads what each trial did to the world: a call the scenario's test condition faulted, counted apart from what was committed, and what a world actor decided and committed during the call
+
+**Spec:** `flows/simulate/world-changes-fault-and-actor.spec.ts:14`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trial whose refund was faulted by its test condition (e2e/lib/harness_environment_seed.py)
+2. open its World state
+3. seed a trial where the world actor approved during the call
+4. open its World state
+
+**Backend state verified:**
+
+- seeded through the backend container; the World state record is the one ingestion keeps
+
+**Browser observations:**
+
+- the faulted trial reads 1 faulted and No change, never Committed: issue_refund
+- the actor trial names Dana Brooks, her committed approvals.put and her decision
+
+### SIM-E2E-020 — giving an actor an action only another actor holds is flagged before saving
+
+**Goal:** A developer adding an actor sees, before saving, that an action they give it is held only by another actor, and saves only once they confirm both should have it
+
+**Spec:** `flows/simulate/actor-permission-conflict.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment whose world actor alone may take approvals.put (e2e/lib/harness_environment_seed.py)
+2. check a new actor given approvals.put (POST actor-validation)
+3. open the Actors tab and add an actor in the world
+4. name it and give it approvals.put
+5. tick Both should have it
+
+**Backend state verified:**
+
+- the check names Dana Brooks as the only holder of approvals.put and writes nothing
+
+**Browser observations:**
+
+- the form says approvals.put is held only by Dana Brooks before anything is saved
+- Save to draft stays off until Both should have it is ticked
+
+### SIM-E2E-021 — World state flags a write committed twice
+
+**Goal:** A developer sees that the world committed the agent's refund twice after its first answer was lost, said apart from a single commit
+
+**Spec:** `flows/simulate/world-state-duplicate-and-refusal.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trial whose refund the world committed twice (e2e/lib/harness_environment_seed.py)
+2. read the trial (GET v3/call-executions/<id>)
+3. open its World state
+
+**Backend state verified:**
+
+- the trial's World state lists issue_refund among the writes committed twice
+
+**Browser observations:**
+
+- World state reads "Committed twice: issue_refund" and counts 1 duplicate
+
+### SIM-E2E-022 — World state says an approval was refused and the agent committed anyway
+
+**Goal:** A developer reads that an approver refused the agent's request and that the agent committed the change after the refusal, never that the agent waited for the decision and stopped
+
+**Spec:** `flows/simulate/world-state-duplicate-and-refusal.spec.ts:48`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trial where Dana Brooks refused the refund and the agent issued it anyway (e2e/lib/harness_environment_seed.py)
+2. read the trial (GET v3/call-executions/<id>)
+3. open its World state
+
+**Backend state verified:**
+
+- the trial's decision by Dana Brooks is refused and flagged committed after the refusal
+
+**Browser observations:**
+
+- her decision reads Refused
+- a line says the agent committed the change after Dana Brooks refused it
+- the approval names the refund the agent wrote after the decision

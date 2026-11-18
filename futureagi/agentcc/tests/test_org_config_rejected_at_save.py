@@ -34,8 +34,9 @@ def _versions(organization):
 
 
 class TestValidateOrgConfig:
+    @patch("agentcc.services.config_push._load_guardrail_policies", return_value=[])
     @patch("agentcc.services.config_push._assemble_providers", return_value={})
-    def test_names_every_rejected_field(self, _providers):
+    def test_names_every_rejected_field(self, _providers, _policies):
         config = AgentccOrgConfig(
             organization_id=uuid.uuid4(),
             routing=REJECTED_ROUTING,
@@ -48,8 +49,9 @@ class TestValidateOrgConfig:
         assert "routing.default_strategy" in str(rejected.value)
         assert "mcp.guardrails.custom_patterns" in str(rejected.value)
 
+    @patch("agentcc.services.config_push._load_guardrail_policies", return_value=[])
     @patch("agentcc.services.config_push._assemble_providers", return_value={})
-    def test_accepts_a_config_the_contract_accepts(self, _providers):
+    def test_accepts_a_config_the_contract_accepts(self, _providers, _policies):
         config = AgentccOrgConfig(
             organization_id=uuid.uuid4(), routing={"strategy": "round_robin"}
         )
