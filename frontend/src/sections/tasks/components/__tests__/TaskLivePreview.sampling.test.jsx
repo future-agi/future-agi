@@ -141,6 +141,47 @@ describe("persistent sampling preview", () => {
     ).toBeVisible();
   });
 
+  it("points only group picking at Preview sample; a percentage is sampled as new data arrives, or when a historical task runs", async () => {
+    show();
+    const pane = within(
+      screen.getByRole("region", { name: "Persistent preview" }),
+    );
+    expect(
+      pane.getByText(
+        "Test on this row checks evaluator mappings only. To see how many groups and rows are picked, use Preview sample in Data to evaluate.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Preview sample" }),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("radio", { name: "A percentage of matching spans" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Use row percentage" }),
+    );
+    expect(form.getValues("samplingPolicy")).toBeNull();
+    // The harness schedule is New incoming data.
+    expect(form.getValues("runType")).toBe("continuous");
+    expect(
+      pane.getByText(
+        "Test on this row checks evaluator mappings only. Rows are sampled as new data arrives.",
+      ),
+    ).toBeVisible();
+    expect(pane.queryByText(/Preview sample/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Preview sample" }),
+    ).not.toBeInTheDocument();
+    act(() => form.setValue("runType", "historical"));
+    expect(
+      await pane.findByText(
+        "Test on this row checks evaluator mappings only. Rows are sampled when the task runs.",
+      ),
+    ).toBeVisible();
+    expect(pane.queryByText(/as new data arrives/)).not.toBeInTheDocument();
+    expect(pane.queryByText(/Preview sample/)).not.toBeInTheDocument();
+  });
+
   it("mirrors valid counts by the persistent heading, clears policy edits, and never dirties or submits the summary", async () => {
     show();
     expect(

@@ -204,7 +204,20 @@ def test_current_session_sources_preserve_winners_counts_and_pages(
         task = EvalTask(
             project=project,
             row_type="sessions",
-            filters={},
+            # The page below projects usage. A sampling snapshot projects only
+            # the columns its task consumes, so request a usage-capable source.
+            filters={
+                "filters": [
+                    {
+                        "column_id": "total_tokens",
+                        "filter_config": {
+                            "filter_type": "number",
+                            "filter_op": "greater_than",
+                            "filter_value": 0,
+                        },
+                    }
+                ]
+            },
             sampling_policy={
                 "version": 1,
                 "mode": "closed",
@@ -252,8 +265,8 @@ def test_current_session_sources_preserve_winners_counts_and_pages(
                 for row in block
             ]
 
-        # build_id_query uses the usage branch; an unfiltered count uses the
-        # no-usage branch. Both must see exactly the same latest-live population.
+        # ID/count need no usage filter; pages project the child-aware totals.
+        # All three must see exactly the same latest-live population.
         ids = execute(builder().build_id_query())
         expected = {str(current), str(other)}
         assert {str(row[0]) for row in ids} == expected

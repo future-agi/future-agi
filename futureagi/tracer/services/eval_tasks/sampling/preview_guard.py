@@ -8,6 +8,7 @@ the preview is refused as unavailable rather than admitted unguarded.
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 import uuid
@@ -19,6 +20,8 @@ from django.core.cache import cache
 
 _PREFIX = "eval_sampling_preview"
 _clock = time.time
+
+logger = logging.getLogger(__name__)
 
 
 class PreviewThrottled(Exception):
@@ -83,4 +86,4 @@ def preview_slot(actor: str) -> Iterator[None]:
                 cache.delete(slot_key)
         except Exception:
             # The slot expires after ``hold`` seconds on its own.
-            pass
+            logger.warning("sampling.preview_slot_release_failed", exc_info=True)

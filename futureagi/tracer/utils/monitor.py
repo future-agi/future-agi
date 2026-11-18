@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     )
 
 import structlog
+from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import DurationField, ExpressionWrapper, F, Q
 from django.db.models.functions import Now
@@ -17,6 +18,7 @@ from slack_sdk.webhook import WebhookClient
 from tfc.temporal import temporal_activity
 from tfc.utils.email import email_helper
 from tfc.utils.error_codes import get_error_message
+from tfc.utils.webhook_delivery import post_webhook
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.monitor import (
     AlertTypeChoices,
@@ -197,12 +199,61 @@ def _send_slack_notification(
         )
 
 
+def _send_webhook_notification(
+    monitor: UserAlertMonitor,
+    message: str,
+    alert_type: str,
+    current_value: float | None = None,
+    threshold_value: float | None = None,
+) -> None:
+    """Sends a webhook notification for an alert."""
+    if not monitor.webhook_url:
+        return
+
+    app_url = (getattr(settings, "APP_URL", "") or "").rstrip("/")
+    dashboard_link = f"{app_url}/dashboard/alerts" if app_url else ""
+
+    payload = {
+        "event": "alert.triggered",
+        "alert_type": alert_type,
+        "monitor": {
+            "id": str(monitor.id),
+            "name": monitor.name,
+        },
+        "project": {
+            "id": str(monitor.project_id),
+            "name": monitor.project.name if monitor.project else None,
+        },
+        "metric": monitor.metric_type,
+        "current_value": current_value,
+        "threshold_value": threshold_value,
+        "message": message,
+        "timestamp": timezone.now().isoformat(),
+        "dashboard_url": dashboard_link,
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "FutureAGI-Alerts/1.0",
+    }
+
+    try:
+        post_webhook(monitor.webhook_url, json=payload, headers=headers, timeout=10)
+        logger.info("monitor_webhook_sent", monitor_id=str(monitor.id))
+    except Exception:  # noqa: BLE001 - best-effort delivery; logger.exception would log the URL's secrets
+        # Transport exceptions can embed the entire URL, including secret query
+        # parameters. Keep destination, payload and exception text out of logs.
+        logger.error("monitor_webhook_failed", monitor_id=str(monitor.id))
+
+
 def _handle_alert_trigger(
     monitor: UserAlertMonitor,
     message: str,
     alert_type: str,
     time_window_start: datetime | None = None,
     now: datetime | None = None,
+    current_value: float | None = None,
+    threshold_value: float | None = None,
 ) -> None:
     """Handles the actions when an alert is triggered."""
     UserAlertMonitorLog.objects.create(
@@ -220,6 +271,9 @@ def _handle_alert_trigger(
     )
     _send_alert_email(monitor, message, alert_type)
     _send_slack_notification(monitor, message, alert_type)
+    _send_webhook_notification(
+        monitor, message, alert_type, current_value, threshold_value
+    )
 
 
 @temporal_activity(
@@ -431,7 +485,15 @@ def _check_static_threshold(
         )
         if comparison_value is not None:
             message += f" The entire fixed-window 95% interval is beyond the threshold (nearest bound {comparison_value:.6g})."
-        _handle_alert_trigger(monitor, message, alert_type, time_window_start, now)
+        _handle_alert_trigger(
+            monitor,
+            message,
+            alert_type,
+            time_window_start,
+            now,
+            current_value=current_value,
+            threshold_value=threshold_val,
+        )
     return alert_type
 
 
@@ -498,7 +560,15 @@ def _check_percentage_change_threshold(
             f"({monitor.threshold_operator} {threshold_val:.2f}) based on historical data "
             f"(mean: {historical_mean:.2f}, stddev: {historical_stddev:.2f})."
         )
-        _handle_alert_trigger(monitor, message, alert_type, time_window_start, now)
+        _handle_alert_trigger(
+            monitor,
+            message,
+            alert_type,
+            time_window_start,
+            now,
+            current_value=current_value,
+            threshold_value=threshold_val,
+        )
 
 
 def _compare(value1: float, operator: str, value2: float) -> bool:

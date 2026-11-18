@@ -20,6 +20,7 @@ from tracer.serializers.filters import (
     eval_task_filters_field,
     filter_list_query_param_field,
 )
+from tracer.services.eval_tasks.configuration import update_task_configuration
 from tracer.services.eval_tasks.sampling.policy import (
     InvalidSamplingPolicy,
     policy_task_filters,
@@ -254,7 +255,9 @@ class EvalTaskUsageResponseSerializer(serializers.Serializer):
     result = EvalTaskUsageResultSerializer()
 
 
-class EvalTaskDetailsQuerySerializer(StrictInputSerializer):
+class EvalTaskDetailsQuerySerializer(serializers.Serializer):
+    # Not strict: clients (and browsers) add cache-busting query parameters
+    # to this GET; unknown keys are ignored, eval_id must still be a UUID.
     eval_id = serializers.UUIDField(required=True)
 
 
@@ -379,8 +382,10 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     project = serializers.PrimaryKeyRelatedField(
         queryset=Project.objects.all(), many=False
     )
+    # Primary: a task is usually created right after its eval configs, and
+    # a replica that has not applied them yet would reject their ids.
     evals = serializers.PrimaryKeyRelatedField(
-        queryset=CustomEvalConfig.objects.all(), many=True
+        queryset=CustomEvalConfig.objects.using("default"), many=True
     )
     name = serializers.CharField(min_length=1, max_length=255)
     sampling_rate = serializers.FloatField(min_value=1.0, max_value=100.0)
@@ -433,6 +438,19 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             "failed_spans",
             "progress",
         ]
+        read_only_fields = ["start_time", "end_time"]
+
+    def create(self, validated_data):
+        # Lifecycle timestamps are server-owned. A new continuous task's
+        # coverage floor is its creation time; a client start_time would
+        # backfill history from before the task existed, or skip arrivals
+        # until a future time.
+        validated_data.pop("start_time", None)
+        validated_data.pop("end_time", None)
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        return update_task_configuration(instance, validated_data)
 
     def get_progress(self, obj):
         if obj.run_type != RunType.HISTORICAL:
@@ -581,7 +599,9 @@ class EditEvalTaskSerializer(serializers.Serializer):
             raise serializers.ValidationError("At least one eval config is required.")
         try:
             eval_objects = list(
-                CustomEvalConfig.objects.filter(id__in=value, deleted=False)
+                CustomEvalConfig.objects.using("default").filter(
+                    id__in=value, deleted=False
+                )
             )
 
             if len(eval_objects) != len(value):

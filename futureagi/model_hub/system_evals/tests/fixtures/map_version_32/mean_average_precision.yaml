@@ -1,0 +1,40 @@
+eval_id: 187
+name: mean_average_precision
+description: Computes Mean Average Precision (MAP) for information retrieval. Averages precision at each relevant item across queries.
+eval_tags:
+- RAG
+- Retrieval Systems
+- NLP Metrics
+visible_ui: true
+permissions: {allow_edit: false, allow_copy: true}
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys: [reference, hypothesis]
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  config_params_desc: {hypothesis: "Retrieved items (JSON array)", reference: "Ground-truth relevant items (JSON array)"}
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+        def _p(v):
+            if v is None: return []
+            if isinstance(v, list): return v
+            if isinstance(v, str):
+                try:
+                    p = json.loads(v)
+                    if isinstance(p, list): return p
+                except: pass
+            return [v]
+        ret = _p(kwargs.get("hypothesis", output))
+        ref = _p(kwargs.get("reference", expected))
+        if not ref: return {"score": 0.0, "reason": "Empty reference"}
+        gt = set(str(x) for x in ref)
+        hits, sp = 0, 0.0
+        for rank, item in enumerate(ret, 1):
+            if str(item) in gt:
+                hits += 1
+                sp += hits/rank
+        ap = sp/len(gt)
+        return {"score": float(ap), "reason": f"MAP: {ap:.4f} ({hits} relevant in {len(ret)} retrieved)"}

@@ -2,6 +2,22 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import RlContractPanel from "../RlContractPanel";
 
+const tool = (name, description, writes) => ({
+  tool: name,
+  status: "simulated",
+  reset_between_trials: true,
+  runs_at: null,
+  writes,
+  description,
+  arguments: [],
+  returns: [],
+  requires: [],
+  refuses: "",
+  effect: writes ? "write" : "read",
+  effects: "",
+  tables: { recorded: false, read: [], changed: [], label: "Not recorded" },
+});
+
 // A voice environment with two tools, two hard rules and a seeded table —
 // enough to exercise the world (capability graph), the internals (tables +
 // tools) and the run-end card.
@@ -12,15 +28,28 @@ const voiceEnv = {
     { name: "lookup_account", desc: "Reads the caller's account." },
     { name: "issue_refund", desc: "Refunds a charge." },
   ],
-  rules: ["Never disclose another caller's data.", "Only refund verified callers."],
-  seed: { tables: [{ name: "customers", rows: 240, note: "40 with saved cards" }] },
+  rules: [
+    "Never disclose another caller's data.",
+    "Only refund verified callers.",
+  ],
+  worldTables: [
+    { name: "customers", rows: 240, note: "40 with saved cards", fields: [] },
+  ],
+  worldTotalRows: 240,
+  toolStatus: [
+    tool("lookup_account", "Reads the caller's account.", false),
+    tool("issue_refund", "Refunds a charge.", true),
+  ],
 };
 
 const renderPanel = (props = {}) =>
   render(
     <RlContractPanel
       env={voiceEnv}
-      envState={{ evals: [{ id: "task_success" }], agent: { name: "Support agent" } }}
+      envState={{
+        evals: [{ id: "task_success" }],
+        agent: { name: "Support agent" },
+      }}
       patch={vi.fn()}
       onGo={vi.fn()}
       {...props}
@@ -66,20 +95,28 @@ describe("RlContractPanel", () => {
   });
 
   it("has no seed row: the API carries no seed for it to describe", () => {
-    renderPanel({ env: { ...voiceEnv, endConditions: { ended_reasons: ["cancelled"] } } });
+    renderPanel({
+      env: { ...voiceEnv, endConditions: { ended_reasons: ["cancelled"] } },
+    });
     expect(screen.queryByText("Deterministic seed")).toBeNull();
   });
 
   it("says a template or fork has no end conditions because it was never built", () => {
     renderPanel({ env: { ...voiceEnv, endConditions: null } });
     expect(screen.getByText("Not authored yet")).toBeInTheDocument();
-    expect(screen.getByText("This environment hasn't been built, so it has none.")).toBeInTheDocument();
+    expect(
+      screen.getByText("This environment hasn't been built, so it has none."),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/The build writes these/)).toBeNull();
   });
 
   it("says the end conditions are not authored yet instead of showing sample ones", () => {
     renderPanel({ env: { ...voiceEnv, endConditions: null }, backed: true });
-    expect(screen.getByText(/The build writes these once it has read how a run of this agent ends/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /The build writes these once it has read how a run of this agent ends/,
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("Run end conditions")).toBeInTheDocument();
     expect(screen.getByText("Not authored yet")).toBeInTheDocument();
     expect(screen.queryByText("Terminate")).toBeNull();
@@ -98,23 +135,32 @@ describe("RlContractPanel", () => {
     expect(screen.queryByText("Writes data")).toBeNull();
   });
 
-  it("shows where a tool runs only when ALK reported an entrypoint for it", () => {
+  it("shows where a tool runs only when the contract says, in its words", () => {
     renderPanel({
       env: {
         ...voiceEnv,
-        toolEntrypoints: [
-          { tool: "issue_refund", module: "billing", callable: "refund" },
+        toolStatus: [
+          { ...voiceEnv.toolStatus[0] },
+          { ...voiceEnv.toolStatus[1], runs_at: "billing.refund" },
         ],
       },
     });
     expect(screen.getByText("billing.refund")).toBeInTheDocument();
-    // lookup_account has no entrypoint, so it carries no invented location.
+    // lookup_account has no location, so none is invented.
     expect(screen.queryByText(/lookup_account\./)).toBeNull();
   });
 
-  it("no longer mounts the dummy Actors section (commented out, to be picked up later)", () => {
-    renderPanel();
-    expect(screen.queryByText("Colleague with a different plan")).toBeNull();
+  it("has no actors section, because actors have their own tab", () => {
+    renderPanel({
+      env: {
+        ...voiceEnv,
+        id: "env-1",
+        versioning: { enabled: true },
+        callActors: [{ id: "friend" }],
+      },
+    });
+    expect(screen.queryByText("In the world")).toBeNull();
+    expect(screen.queryByText(/^Actors/)).toBeNull();
   });
 
   describe("template lock (read-only until forked)", () => {

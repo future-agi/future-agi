@@ -152,7 +152,7 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
                 ifNull(completion_tokens, 0) AS latest_completion_tokens,
                 unit_start AS latest_start_time, ifNull(cost, 0) AS latest_cost,
                 ifNull(total_tokens, 0) AS latest_total_tokens,
-                {usage_coverage_sql(attrs="attrs_string")} AS latest_usage_coverage,
+                {usage_coverage_sql(attrs="attrs_string", include_summary=True)} AS latest_usage_coverage,
                 {source_summary_sql(attrs="attrs_string")} AS latest_source_summary_present,
                 (isNull(parent_span_id) OR parent_span_id = '') AS latest_is_root,
                 multiIf(

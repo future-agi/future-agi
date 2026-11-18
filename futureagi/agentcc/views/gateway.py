@@ -18,6 +18,11 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ViewSet
 
+from agentcc.guardrail_settings import (
+    canonical_setting_keys,
+    normalize_guardrail_settings,
+    normalize_saved_guardrail_settings,
+)
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.models.request_log import AgentccRequestLog
@@ -72,6 +77,7 @@ from agentcc.services.gateway_client import (
     GatewayClientError,
     get_gateway_client,
 )
+from agentcc.services.org_config_service import get_or_create_org_config
 from agentcc.services.url_safety import ensure_provider_base_url_allowed
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
@@ -103,7 +109,9 @@ def _prepare_vertex_provider_config(provider_config):
             )
             or key.get("token_uri") != "https://oauth2.googleapis.com/token"
         ):
-            raise ValueError("The JSON must be a Google service-account key with a project ID.")
+            raise ValueError(
+                "The JSON must be a Google service-account key with a project ID."
+            )
         try:
             private_key = serialization.load_pem_private_key(
                 key["private_key"].encode(), password=None
@@ -131,6 +139,7 @@ def _prepare_vertex_provider_config(provider_config):
     config["api_format"] = "gemini"
     config.pop("api_key", None)
     return config
+
 
 # Public-facing URL shown to users in the dashboard (e.g. https://gateway.futureagi.com).
 # Falls back to AGENTCC_GATEWAY_URL if not set.
@@ -208,8 +217,29 @@ def _guardrail_check_key(checks, name):
     existing entry under either is reused instead of adding a duplicate.
     """
     aliases = [name, _RULE_TO_REGISTRY.get(name, name)]
-    aliases += [rule for rule, registry in _RULE_TO_REGISTRY.items() if registry == name]
+    aliases += [
+        rule for rule, registry in _RULE_TO_REGISTRY.items() if registry == name
+    ]
     return next((alias for alias in aliases if alias in checks), name)
+
+
+def _invalid_threshold_field(guardrail_config):
+    """The threshold field of an update-guardrail payload outside 0..1, if any.
+
+    A guardrail's confidence threshold is a score from 0 to 1. A value such as
+    50 (meant as 50%) would never trigger, and the policy API refuses it.
+    """
+    for field in ("threshold", "confidence_threshold"):
+        if field not in guardrail_config or guardrail_config[field] is None:
+            continue
+        value = guardrail_config[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not 0 <= value <= 1
+        ):
+            return field
+    return None
 
 
 def _guardrail_check_fields(guardrail_config):
@@ -227,9 +257,7 @@ def _guardrail_check_fields(guardrail_config):
 # User-facing health-check failure text. The raw GatewayClientError carries the
 # internal gateway URL and upstream response bodies; those go to the logs only.
 HEALTH_CHECK_UNREACHABLE = "The gateway could not be reached."
-HEALTH_CHECK_TIMED_OUT = (
-    "The gateway did not respond before the health-check timeout."
-)
+HEALTH_CHECK_TIMED_OUT = "The gateway did not respond before the health-check timeout."
 HEALTH_CHECK_UNEXPECTED = (
     "The health check could not be completed because of a server error."
 )
@@ -605,10 +633,15 @@ class AgentccGatewayViewSet(ViewSet):
             def updater(cfg):
                 for field, value in config_patch.items():
                     existing = getattr(cfg, field, None)
+                    if field == "guardrails" and isinstance(existing, dict):
+                        existing = normalize_saved_guardrail_settings(existing)
+                        value = canonical_setting_keys(value)
                     if isinstance(existing, dict) and isinstance(value, dict):
-                        setattr(cfg, field, _deep_merge(existing, value))
-                    else:
-                        setattr(cfg, field, value)
+                        value = _deep_merge(existing, value)
+                    if field == "guardrails" and isinstance(value, dict):
+                        # A patched value is a new write: refuse ambiguous settings.
+                        value = normalize_guardrail_settings(value)
+                    setattr(cfg, field, value)
 
             new_config, synced = self._update_org_config(
                 org,
@@ -990,6 +1023,9 @@ class AgentccGatewayViewSet(ViewSet):
             guardrail_config = request.validated_data.get("config")
             if not guardrail_name or not guardrail_config:
                 return self._gm.bad_request("name and config are required")
+            invalid = _invalid_threshold_field(guardrail_config)
+            if invalid:
+                return self._gm.bad_request(f"{invalid} must be a number from 0 to 1")
 
             def updater(cfg):
                 guardrails = cfg.guardrails or {}
@@ -1781,34 +1817,7 @@ class AgentccGatewayViewSet(ViewSet):
     # --- Per-org config helpers ---
 
     def _get_or_create_org_config(self, org):
-        with transaction.atomic():
-            config = (
-                AgentccOrgConfig.no_workspace_objects.select_for_update()
-                .filter(
-                    organization=org,
-                    is_active=True,
-                    deleted=False,
-                )
-                .first()
-            )
-            if config:
-                normalized = normalize_cost_tracking_config(config.cost_tracking)
-                if normalized != config.cost_tracking:
-                    config.cost_tracking = normalized
-                    config.save(update_fields=["cost_tracking", "updated_at"])
-                return config
-            config, _ = AgentccOrgConfig.no_workspace_objects.get_or_create(
-                organization=org,
-                version=1,
-                is_active=True,
-                deleted=False,
-                defaults={"cost_tracking": default_cost_tracking_config()},
-            )
-            normalized = normalize_cost_tracking_config(config.cost_tracking)
-            if normalized != config.cost_tracking:
-                config.cost_tracking = normalized
-                config.save(update_fields=["cost_tracking", "updated_at"])
-            return config
+        return get_or_create_org_config(org)
 
     def _update_org_config(self, org, updater_fn, user=None, desc=""):
         with transaction.atomic():

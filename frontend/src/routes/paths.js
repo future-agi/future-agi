@@ -45,7 +45,7 @@ export const paths = {
       workspaceIntegrationDetail: (workspaceId, id) =>
         `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations/${id}`,
       mcpServer: `${ROOTS.DASHBOARD}/settings/mcp-server`,
-      falconAIConnectors: `${ROOTS.DASHBOARD}/settings/falcon-ai-connectors`,
+      falconAIConnectors: `${ROOTS.DASHBOARD}/settings/connectors`,
       orgSettings: `${ROOTS.DASHBOARD}/settings/org-settings`,
       usageSummary: `${ROOTS.DASHBOARD}/settings/usage-summary`,
       billing: `${ROOTS.DASHBOARD}/settings/billing`,
@@ -135,6 +135,7 @@ export const paths = {
         root: `${ROOTS.DASHBOARD}/gateway/guardrails`,
         overview: `${ROOTS.DASHBOARD}/gateway/guardrails`,
         configuration: `${ROOTS.DASHBOARD}/gateway/guardrails/configuration`,
+        policies: `${ROOTS.DASHBOARD}/gateway/guardrails/policies`,
         analytics: `${ROOTS.DASHBOARD}/gateway/guardrails/analytics`,
         feedback: `${ROOTS.DASHBOARD}/gateway/guardrails/feedback`,
         playground: `${ROOTS.DASHBOARD}/gateway/guardrails/playground`,

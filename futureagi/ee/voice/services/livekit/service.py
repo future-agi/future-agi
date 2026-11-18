@@ -388,7 +388,8 @@ class LivekitService(VoiceServiceBlueprint):
         self, raw_data: dict[str, Any], call_data_stored: bool
     ) -> FAGICallData:
         """Build FAGICallData from raw dict (already fetched from DB)."""
-        from ee.voice.semantics import FAGICallData; from simulate.semantics import CallExecutionStatus, CallType
+        from ee.voice.semantics import FAGICallData
+        from simulate.semantics import CallExecutionStatus, CallType
 
         lk_data = raw_data.get(PROVIDER_KEY, {})
 
@@ -550,7 +551,8 @@ class LivekitService(VoiceServiceBlueprint):
         service_provider_call_id stores the room name (call_{execution_id}),
         which is what initiate_inbound_call returns as provider_call_id.
         """
-        from ee.voice.semantics import FAGICallData; from simulate.semantics import CallExecutionStatus, CallType
+        from ee.voice.semantics import FAGICallData
+        from simulate.semantics import CallExecutionStatus, CallType
 
         provider_data = call_execution.provider_call_data or {}
         lk_data = provider_data.get(PROVIDER_KEY, {})

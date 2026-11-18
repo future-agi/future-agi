@@ -34,14 +34,22 @@ vi.mock("src/utils/axios", () => ({
 // Discovery adapters have their own production-picker interaction suite. This
 // harness makes selected typed values explicit without a catalog/network.
 vi.mock("./sampling_field_picker", () => {
-  const SamplingFieldPicker = ({ onChange, label = "Group field" }) => (
-    <button onClick={() => onChange({ source: "metadata", key: "language" })}>
-      {`Choose ${label.toLowerCase()}`}
-    </button>
+  const SamplingFieldPicker = ({
+    onChange,
+    label = "Group field",
+    helperText,
+  }) => (
+    <>
+      <button onClick={() => onChange({ source: "metadata", key: "language" })}>
+        {`Choose ${label.toLowerCase()}`}
+      </button>
+      {helperText && <p>{helperText}</p>}
+    </>
   );
   SamplingFieldPicker.propTypes = {
     onChange: PropTypes.func,
     label: PropTypes.string,
+    helperText: PropTypes.string,
   };
   const SamplingValuePicker = ({ onChange }) => (
     <button onClick={() => onChange(["French", "English"])}>
@@ -178,6 +186,81 @@ describe("two-choice task data selection", () => {
     expect(
       NewTaskValidationSchema().parse(form.getValues()).samplingPolicy.default,
     ).toEqual({ target_n: 100 });
+  });
+
+  it("drops the selection summary while the custom percentage is invalid and never shows a cleared limit as 0", async () => {
+    show();
+    const input = screen.getByRole("spinbutton", {
+      name: "Custom percentage (%)",
+    });
+    for (const invalid of [0, 101]) {
+      await userEvent.clear(input);
+      await userEvent.type(input, String(invalid));
+      // The typed value is kept as entered; only the summary echo goes.
+      expect(form.getValues("samplingRate")).toBe(invalid);
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(
+        screen.getByText("Enter a percentage from 1 to 100."),
+      ).toBeVisible();
+      // One error, under the field. The disabled method names its reason.
+      const groups = screen.getByRole("radio", {
+        name: "Pick whole groups of spans",
+      });
+      expect(groups).toBeDisabled();
+      expect(groups).toHaveAccessibleDescription(
+        "Enter a valid percentage to switch to group picking.",
+      );
+      expect(
+        screen.queryByText(/Choose a valid percentage/),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("Data selection summary"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(new RegExp(`About ${invalid}%`)),
+      ).not.toBeInTheDocument();
+    }
+    await userEvent.clear(input);
+    await userEvent.type(input, "25");
+    expect(screen.getByLabelText("Data selection summary")).toHaveTextContent(
+      "About 25% of filter-matching spans. Stop after processing 100,000 matching rows, not after selecting that many evaluations.",
+    );
+    const groupPicking = screen.getByRole("radio", {
+      name: "Pick whole groups of spans",
+    });
+    expect(groupPicking).toBeEnabled();
+    expect(groupPicking).not.toHaveAttribute("aria-describedby");
+    expect(
+      screen.queryByText(
+        "Enter a valid percentage to switch to group picking.",
+      ),
+    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Custom limit" }));
+    const limit = screen.getByRole("spinbutton", {
+      name: "Matching rows to process",
+    });
+    await userEvent.clear(limit);
+    expect(form.getValues("spansLimit")).toBe("");
+    expect(screen.getByLabelText("Data selection summary")).toHaveTextContent(
+      "About 25% of filter-matching spans. The processing limit is not set yet.",
+    );
+    expect(
+      screen.getByLabelText("Data selection summary"),
+    ).not.toHaveTextContent(/\b0 matching rows/);
+    for (const invalid of ["0", "-5", "1000001", "2.5"]) {
+      await userEvent.clear(limit);
+      await userEvent.type(limit, invalid);
+      const summary = screen.getByLabelText("Data selection summary");
+      expect(summary).toHaveTextContent(
+        "About 25% of filter-matching spans. The processing limit must be a whole number from 1 to 1,000,000.",
+      );
+      expect(summary).not.toHaveTextContent(/Stop after processing/);
+    }
+    await userEvent.clear(limit);
+    await userEvent.type(limit, "2500");
+    expect(screen.getByLabelText("Data selection summary")).toHaveTextContent(
+      "Stop after processing 2,500 matching rows",
+    );
   });
 
   const combinations = ["spans", "traces", "sessions"].flatMap((rowType) =>
@@ -829,7 +912,9 @@ describe("two-choice task data selection", () => {
           expect(figure).toHaveTextContent("end users of your application");
         if (unit === "attribute")
           expect(
-            screen.getByText(/project’s configured contact attribute/),
+            screen.getByText(
+              /project’s contact attribute \(if one is set in project settings\)/,
+            ),
           ).toBeVisible();
       }
     },

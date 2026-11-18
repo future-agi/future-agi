@@ -140,14 +140,19 @@ export function isSimpleSamplingPolicy(policy) {
   });
 }
 
+// One rule for the percentage: its field error, the method switch, the
+// selection summary and the save guard below can never disagree.
+export const isValidSamplingRate = (value) =>
+  value !== "" &&
+  value != null &&
+  Number.isFinite(Number(value)) &&
+  Number(value) >= 1 &&
+  Number(value) <= 100;
+
 export function samplingContextError(values) {
   const policy = values.samplingPolicy;
   if (!policy)
-    return values.samplingRate !== "" &&
-      values.samplingRate != null &&
-      Number.isFinite(Number(values.samplingRate)) &&
-      Number(values.samplingRate) >= 1 &&
-      Number(values.samplingRate) <= 100
+    return isValidSamplingRate(values.samplingRate)
       ? ""
       : "Enter a percentage from 1 to 100.";
   if (!pickLevels(values.rowType || "spans").includes(policy.sampling_unit))

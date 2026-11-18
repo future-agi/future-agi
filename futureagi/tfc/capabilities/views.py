@@ -52,8 +52,8 @@ class CapabilitiesView(APIView):
             "metrics_enabled": metrics_enabled(org=org),
         }
 
-        is_admin_view = (
-            location == DeploymentLocation.SELF_HOSTED and self._is_admin(request)
+        is_admin_view = location == DeploymentLocation.SELF_HOSTED and self._is_admin(
+            request
         )
         if is_admin_view:
             response_data["license"] = self._get_license_details()
@@ -88,9 +88,15 @@ class CapabilitiesView(APIView):
         return {
             "issued_to": snapshot.issued_to,
             "band": snapshot.band,
-            "license_type": snapshot.license_type.value if snapshot.license_type else None,
-            "expires_at": snapshot.expires_at.isoformat() if snapshot.expires_at else None,
-            "grace_ends_at": snapshot.grace_ends_at.isoformat() if snapshot.grace_ends_at else None,
+            "license_type": snapshot.license_type.value
+            if snapshot.license_type
+            else None,
+            "expires_at": snapshot.expires_at.isoformat()
+            if snapshot.expires_at
+            else None,
+            "grace_ends_at": snapshot.grace_ends_at.isoformat()
+            if snapshot.grace_ends_at
+            else None,
             "features_count": len(snapshot.features),
             "state": snapshot.state.value,
         }
@@ -119,9 +125,7 @@ class CapabilitiesView(APIView):
                 OrganizationRoles.OWNER,
                 OrganizationRoles.ADMIN,
             )
-            membership = user.organization_memberships.filter(
-                organization=org
-            ).first()
+            membership = user.organization_memberships.filter(organization=org).first()
             if membership and membership.role in admin_roles:
                 return True
         except Exception:

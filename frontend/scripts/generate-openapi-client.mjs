@@ -130,11 +130,13 @@ function normalizeHostStatusSpec(spec) {
       schemas: Object.fromEntries(
         Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
           name,
-          // Busy pauses have no measured row count; both the pause and its
-          // rows can be null. Normalize this one shared response component,
-          // not every legacy endpoint's Swagger nullability at once.
           name.startsWith("HostUpdateStatusResponse") ||
-          name === "MetricCalculationPaused"
+          // Busy pauses have no measured row count; both the pause and its rows can be null.
+          name === "MetricCalculationPaused" ||
+          // Every non-ready source state sends kind and the ids as explicit null.
+          name === "EvalLogSourceNavigation" ||
+          // A log row sends explicit null for ids its source does not have.
+          name === "EvalApiLogRowResponseResult"
             ? normalizeHostStatusSchema(schema)
             : schema,
         ]),
@@ -607,6 +609,7 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
       "EvalRollupSpanApiValue",
       "EvalRollupEvalApiChoicesMap",
       "EvalRollupEvalApiAggregate",
+      "EvidenceLabelApiValue",
       "ModelListEntryApiBestFor",
       "ModelListEntryApiUseCase",
       "ModelListEntryApiCutoff",
@@ -1170,6 +1173,21 @@ export type ${jsonAlias} = JsonValueApi;`,
       "expires_at: string | null;",
       "APIKeyBulkItemApi.expires_at nullable",
     );
+    // An organization API key without expiry is created with, and returned
+    // with, expires_at: null.
+    for (const [type, anchor] of [
+      ["CreateSecretKeyApi", "expires_at?: string;"],
+      ["SecretKeyCreateResultApi", "expires_at: string;"],
+      ["SecretKeyListItemApi", "expires_at: string;"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export interface ${type} {`,
+        anchor,
+        anchor.replace("string;", "string | null;"),
+        `${type}.expires_at nullable`,
+      );
+    }
 
     // The compact conversation record passes provider values on as they were
     // logged, and the times it computes are null when the provider gave none.
@@ -1200,6 +1218,15 @@ export type ${jsonAlias} = JsonValueApi;`,
       ["ConversationTurnApi", "start"],
       ["ConversationTurnApi", "end"],
       ["ConversationTurnApi", "at"],
+      // An evidence case's times and fingerprint are null when the source is
+      // gone; an import from outside Observe has no project or agent version.
+      ["EvidenceTurnApi", "at"],
+      ["EvidenceImportCaseApi", "changed_since_import"],
+      ["EvidenceImportCaseApi", "started_at"],
+      ["EvidenceImportCaseApi", "ended_at"],
+      ["EvidenceImportApi", "project_id"],
+      ["EvidenceImportApi", "agent_version_id"],
+      ["EvidenceDraftRefApi", "id"],
     ]) {
       schemas = assertReplaceRegexInNamedBlock(
         schemas,
@@ -1648,7 +1675,8 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
     );
 
-    const modelListResponse = "export const ModelHubApiModelsListListResponse = zod.object({";
+    const modelListResponse =
+      "export const ModelHubApiModelsListListResponse = zod.object({";
     for (const [field, schema] of [
       ["next", "zod.string()"],
       ["previous", "zod.string()"],
@@ -1714,6 +1742,47 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         `conversation evidence ${label} nullable`,
       );
     }
+
+    // An evidence import (alone, or inside Add's answer) has label values of any
+    // JSON, and case times, fingerprint, project and agent version that can be
+    // null. A case's turns come before its tool calls, so the first "at" in the
+    // block is the turn's.
+    for (const evidenceImportResponse of [
+      "export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({",
+      "export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse = zod.object({",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        evidenceImportResponse,
+        /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+        "jsonValueSchema",
+        "evidence label values → recursive JSON value",
+      );
+      for (const [anchor, label] of [
+        [/("project_id": zod\.string\(\)\.uuid\(\))/, "project_id"],
+        [/("agent_version_id": zod\.string\(\)\.uuid\(\))/, "agent_version_id"],
+        [/("changed_since_import": zod\.boolean\(\))/, "changed_since_import"],
+        [/("started_at": zod\.string\(\)\.datetime\([^)]*\))/, "started_at"],
+        [/("ended_at": zod\.string\(\)\.datetime\([^)]*\))/, "ended_at"],
+        [/("at": zod\.string\(\)\.datetime\([^)]*\))/, "turn at"],
+      ]) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          evidenceImportResponse,
+          anchor,
+          "$1.nullable()",
+          `evidence import ${label} nullable`,
+        );
+      }
+    }
+    // Add sends a null draft id for a piece with no open draft.
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesBody = zod.object({",
+      /("id": zod\.string\(\)\.uuid\(\))/g,
+      "$1.nullable()",
+      "evidence Add draft ids nullable",
+    );
 
     for (const responseName of [
       "ModelHubDevelopsGetDatasetTableListResponse",
@@ -2311,6 +2380,20 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       );
     }
 
+    // The same organization API key expiry fields, in the zod schemas.
+    for (const name of [
+      "AccountsKeyGenerateSecretKeyBody",
+      "AccountsKeyGenerateSecretKeyResponse",
+      "AccountsKeyGetSecretKeysResponse",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${name} =`,
+        /("expires_at": zod\.string\(\)\.datetime\(\{[^}]*\}\))/g,
+        "$1.nullable()",
+        `${name}.expires_at nullable`,
+      );
+    }
     fs.writeFileSync(zodOutputPath, zod);
   }
   await formatGeneratedFiles();

@@ -624,21 +624,24 @@ def _retire_pending_pages(results: QuerySet[EvalLogger], *, write: WriteScope) -
     before taking the next page's eval locks, preserving the retirement lock
     order without loading a whole backlog or retaining issue locks across pages.
     """
-    from tracer.services.eval_tasks.entries import soft_delete_eval_results
+    from tracer.services.eval_tasks.recalculate import drop_pending_entries
 
+    results = results.using("default")
+    remaining = results
     dropped = 0
     while True:
         with write():
             ids = list(
-                results.select_for_update(of=("self",))
+                remaining.select_for_update(of=("self",))
                 .order_by("pk")
                 .values_list("pk", flat=True)[:BATCH_SIZE]
             )
             if not ids:
                 return dropped
-            dropped += soft_delete_eval_results(
-                results.filter(pk__in=ids).order_by("pk")
-            )
+            dropped += drop_pending_entries(results.filter(pk__in=ids).order_by("pk"))
+            # A busy Recalculate journal is deliberately skipped. Advance even
+            # then so the pass finishes and the next reconcile can retry it.
+            remaining = results.filter(pk__gt=ids[-1])
 
 
 def reconcile_policy(task: EvalTask) -> ReconcileResult:
@@ -709,11 +712,18 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                         member, policy, version, frozen_at=cohort.frozen_at
                     )
             trace_witnesses = witnesses.read(metadata.keys())
-            materialize_options = {"sampling_metadata": metadata}
-            if trace_witnesses:
-                materialize_options["trace_filter_witnesses"] = trace_witnesses
             with fence.write() as locked:
-                materialize_pending(locked, metadata.keys(), **materialize_options)
+                if trace_witnesses:
+                    materialize_pending(
+                        locked,
+                        metadata.keys(),
+                        sampling_metadata=metadata,
+                        trace_filter_witnesses=trace_witnesses,
+                    )
+                else:
+                    materialize_pending(
+                        locked, metadata.keys(), sampling_metadata=metadata
+                    )
                 requeued, dropped = _requeue_and_drop(
                     locked,
                     resolved=ResolvedRowSet(tuple(candidates), tuple(metadata), full),

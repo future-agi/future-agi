@@ -17,10 +17,15 @@ class Migration(migrations.Migration):
             name="sampling_policy",
             field=models.JSONField(blank=True, default=None, null=True),
         ),
+        # Collectors and older pods insert projects outside the Django ORM, so
+        # the column is created WITH its database default in one statement:
+        # there is no window where it is NOT NULL without a default.
         migrations.AddField(
             model_name="project",
             name="sampling_contact_attribute",
-            field=models.CharField(blank=True, default="", max_length=200),
+            field=models.CharField(
+                blank=True, default="", db_default="", max_length=200
+            ),
         ),
         migrations.CreateModel(
             name="EvalSamplingCohort",

@@ -204,6 +204,79 @@ def test_live_audit_report_flags_sample_ratio_mismatch():
     }
 
 
+def test_audit_response_contract_accepts_missing_and_present_empty_groups():
+    """A group attribute can be absent (null) or present with an empty value."""
+    from pathlib import Path
+
+    from tracer.serializers.eval_sampling import SamplingAuditResponseSerializer
+
+    policy = {
+        "mode": "closed",
+        "sampling_unit": "session",
+        "strata": [],
+        "group_by": [{"source": "span", "key": "locale"}],
+        "default": {"filters": [], "rate": 50},
+    }
+    cells = [
+        {
+            "stratum": label("default", [True, "en"]),
+            "population": 10,
+            "achieved": 5,
+            "probability": 0.5,
+            "population_check": "match",
+        },
+        {
+            "stratum": label("default", [True, ""]),
+            "population": 4,
+            "achieved": 2,
+            "probability": 0.5,
+            "population_check": "match",
+        },
+        {
+            "stratum": label("default", [False, ""]),
+            "population": 6,
+            "achieved": 3,
+            "probability": 0.5,
+            "population_check": "match",
+        },
+    ]
+    report = audit_report(policy, cells)
+    _slice, locale = report["balance"]
+    assert {(row["value"], row["present"]) for row in locale["categories"]} == {
+        ("en", True),
+        ("", True),
+        (None, False),
+    }
+    response = SamplingAuditResponseSerializer(
+        data={
+            "status": True,
+            "result": {
+                **report,
+                "cohort_id": str(uuid.uuid4()),
+                "policy_version": "v1",
+                "mode": "closed",
+                "sampling_unit": "session",
+                "coordination": "independent",
+                "frozen_at": timezone.now().isoformat(),
+                "complete": True,
+                "population_source": "frozen_snapshot",
+                "notes": [],
+            },
+        }
+    )
+    assert response.is_valid(), response.errors
+    published = json.loads(
+        (
+            Path(__file__).resolve().parents[3]
+            / "api_contracts"
+            / "openapi"
+            / "swagger.json"
+        ).read_text()
+    )["definitions"]["SamplingBalanceCategory"]["properties"]["value"]
+    assert published.get("x-nullable") is True
+    assert "minLength" not in published
+
+
 def test_parse_stratum_reads_clickhouse_identities():
     assert parse_stratum('["vip",["[true,\\"en\\"]","[false,\\"\\"]"]]') == (
         "vip",

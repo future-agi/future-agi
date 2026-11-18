@@ -936,6 +936,8 @@ class DashboardMetricsCatalogResponseSerializer(serializers.Serializer):
 class CommaSeparatedListField(serializers.Field):
     """Query-param helper for explicit comma-separated lists."""
 
+    swagger_empty_input_default = ""
+
     class Meta:
         swagger_schema_fields = {
             "type": "string",
@@ -985,7 +987,7 @@ class DashboardMetricsCatalogQuerySerializer(StrictInputSerializer):
         trim_whitespace=True,
     )
     category = serializers.ChoiceField(
-        choices=(*DASHBOARD_METRIC_TYPES, "metric"),
+        choices=("", *DASHBOARD_METRIC_TYPES, "metric"),
         required=False,
         allow_blank=True,
         default="",
@@ -1014,13 +1016,13 @@ class DashboardMetricsCatalogQuerySerializer(StrictInputSerializer):
         help_text="Filter by the active definition's source grain, before projection.",
     )
     role = serializers.ChoiceField(
-        choices=("metric", "dimension"),
+        choices=("", "metric", "dimension"),
         required=False,
         allow_blank=True,
         default="",
     )
     source = serializers.ChoiceField(
-        choices=PROPERTY_CATALOG_METRIC_SOURCES,
+        choices=("", *PROPERTY_CATALOG_METRIC_SOURCES),
         required=False,
         allow_blank=True,
         default="",

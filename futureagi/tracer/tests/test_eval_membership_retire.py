@@ -245,7 +245,7 @@ def test_sampling_stale_retirement_uses_bounded_fenced_pages(
     from django.db import connection
 
     from tracer.models.observation_span import EvalEntryStatus
-    from tracer.services.eval_tasks import entries
+    from tracer.services.eval_tasks import recalculate
     from tracer.services.eval_tasks.sampling import pending, service
 
     issue, evals = issue_with_three
@@ -271,7 +271,7 @@ def test_sampling_stale_retirement_uses_bounded_fenced_pages(
     # A baseline without the page helper must fail on its bulk-delete behavior,
     # not on a missing test-control constant.
     monkeypatch.setattr(service, "BATCH_SIZE", 2, raising=False)
-    original = entries.soft_delete_eval_results
+    original = recalculate.drop_pending_entries
     pages = []
 
     def retire(results):
@@ -281,13 +281,40 @@ def test_sampling_stale_retirement_uses_bounded_fenced_pages(
         pages.append(count)
         return original(results)
 
-    monkeypatch.setattr(entries, "soft_delete_eval_results", retire)
+    monkeypatch.setattr(recalculate, "drop_pending_entries", retire)
     assert not connection.in_atomic_block
     assert service.reconcile_policy(eval_task).dropped == 3
     assert not connection.in_atomic_block
     assert pages == [2, 1]
     assert not ErrorClusterTraces.objects.filter(cluster=issue).exists()
     assert TraceErrorGroup.all_objects.get(pk=issue.pk).deleted
+
+
+def test_sampling_retirement_advances_past_a_busy_recalculation(issue_with_three, monkeypatch):
+    from django.db import transaction
+
+    from tracer.models.observation_span import EvalEntryStatus
+    from tracer.services.eval_tasks import recalculate
+    from tracer.services.eval_tasks.sampling import service
+
+    _, evals = issue_with_three
+    results = EvalLogger.objects.filter(pk__in=[ev.pk for ev in evals])
+    results.update(status=EvalEntryStatus.PENDING)
+    expected = sorted(ev.pk for ev in evals)
+    seen = []
+    drop = recalculate.drop_pending_entries
+
+    def skip_first(page):
+        (pk,) = page.values_list("pk", flat=True)
+        assert pk not in seen  # fail immediately rather than spin on a skipped row
+        seen.append(pk)
+        return 0 if pk == expected[0] else drop(page)
+
+    monkeypatch.setattr(service, "BATCH_SIZE", 1)
+    monkeypatch.setattr(recalculate, "drop_pending_entries", skip_first)
+    assert service._retire_pending_pages(results, write=transaction.atomic) == 2
+    assert seen == expected
+    assert list(results.values_list("pk", flat=True)) == expected[:1]
 
 
 def test_deleting_one_eval_retires_its_membership_and_recounts(issue_with_three):
@@ -717,10 +744,10 @@ def test_retire_and_revive_each_record_an_alert_event(
 ):
     issue, evals = issue_with_three
     cfg = evals[0].custom_eval_config
-    with patch(
-        "tracer.services.feed_alerts.events.record_issue_event"
-    ) as record:
-        soft_delete_eval_results(EvalLogger.objects.filter(id__in=[e.id for e in evals]))
+    with patch("tracer.services.feed_alerts.events.record_issue_event") as record:
+        soft_delete_eval_results(
+            EvalLogger.objects.filter(id__in=[e.id for e in evals])
+        )
         retire = record.call_args.kwargs
         assert retire["source_key"].startswith(f"eval-retire:{issue.pk}:")
         assert retire["before"]["occurrences"] == 3

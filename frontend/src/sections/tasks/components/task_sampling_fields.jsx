@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { Button, Slider, Stack, TextField, Typography } from "@mui/material";
 import { useController } from "react-hook-form";
+import { isValidSamplingRate } from "./simpleSamplingPolicy";
 
 export function RowLimitField({ control }) {
   const {
@@ -84,14 +85,9 @@ export function SamplingRateField({ control }) {
     fieldState: { error },
   } = useController({ control, name: "samplingRate" });
   const rate = Number(value) || 0;
-  const rateError =
-    value === "" ||
-    value == null ||
-    !Number.isFinite(Number(value)) ||
-    rate < 1 ||
-    rate > 100
-      ? "Enter a percentage from 1 to 100."
-      : "";
+  const rateError = isValidSamplingRate(value)
+    ? ""
+    : "Enter a percentage from 1 to 100.";
   return (
     <Stack spacing={1}>
       <Stack

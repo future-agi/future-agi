@@ -136,7 +136,7 @@ export default function TaskSchedulingSection({ control, isEdit = false }) {
                 <Typography
                   variant="body2"
                   sx={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     fontWeight: 600,
                     color: active ? "primary.main" : "text.primary",
                   }}

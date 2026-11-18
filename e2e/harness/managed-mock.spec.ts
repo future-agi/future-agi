@@ -76,6 +76,112 @@ for (const [name, mutate] of unsafeRoutes) {
   });
 }
 
+test('managed mock accepts the committed local exact-cache fixture in both capability modes', () => {
+  expect(parse(source).cache).toEqual({ enabled: true, backend: 'memory', default_ttl: '30m', max_entries: 10000,
+    semantic: { enabled: false }, edge: { enabled: false } });
+  for (const background of [false, true]) {
+    validateMockRouting(source, background);
+    // YAML mapping order is not part of the safety contract.
+    const cfg = parse(source);
+    cfg.cache = Object.fromEntries(Object.entries(cfg.cache).reverse());
+    validateMockRouting(stringify(cfg), background);
+  }
+});
+
+// CacheConfig/SemanticCacheConfig/CacheEdgeConfig in internal/config/config.go:
+// even disabled external-backend options are outside this exact local fixture.
+const unsafeCaches: [string, (cfg: any) => void][] = [
+  ['null section', c => { c.cache = null; }],
+  ['empty section', c => { c.cache = {}; }],
+  ['array section', c => { c.cache = []; }],
+  ['scalar section', c => { c.cache = 'memory'; }],
+  ['Redis backend', c => { c.cache.backend = 'redis'; }],
+  ['disk backend', c => { c.cache.backend = 'disk'; }],
+  ['external Redis address', c => { c.cache.redis = { address: 'redis.invalid:6379' }; }],
+  ['external Redis cluster', c => { c.cache.redis = { addresses: ['redis.invalid:6379'] }; }],
+  ['address field', c => { c.cache.address = 'cache.invalid:6379'; }],
+  ['unknown field', c => { c.cache.unknown = false; }],
+  ['disabled exact cache', c => { c.cache.enabled = false; }],
+  ['string enabled', c => { c.cache.enabled = 'true'; }],
+  ['non-string backend', c => { c.cache.backend = ['memory']; }],
+  ['changed TTL', c => { c.cache.default_ttl = '60m'; }],
+  ['equivalent but unpinned TTL', c => { c.cache.default_ttl = '1800s'; }],
+  ['numeric TTL', c => { c.cache.default_ttl = 1800; }],
+  ['changed capacity', c => { c.cache.max_entries = 10001; }],
+  ['string capacity', c => { c.cache.max_entries = '10000'; }],
+  ['semantic backend', c => { c.cache.semantic.backend = 'qdrant'; }],
+  ['semantic address', c => { c.cache.semantic.qdrant = { url: 'https://vector.invalid' }; }],
+  ['edge model routes', c => { c.cache.edge.cacheable_models = ['gpt-4o']; }],
+  ['edge opt-in override', c => { c.cache.edge.require_opt_in = false; }],
+];
+for (const key of ['enabled', 'backend', 'default_ttl', 'max_entries', 'semantic', 'edge']) {
+  unsafeCaches.push([`missing ${key}`, c => { delete c.cache[key]; }],
+    [`env-expanded ${key}`, c => { c.cache[key] = '${UNTRUSTED_CACHE}'; }]);
+}
+for (const key of ['semantic', 'edge']) {
+  for (const [name, value] of Object.entries({ enabled: { enabled: true }, string: { enabled: 'false' },
+    numeric: { enabled: 0 }, empty: {}, null: null, array: [], scalar: false,
+    unknown: { enabled: false, unknown: false }, env: { enabled: '${UNTRUSTED_CACHE}' } })) {
+    unsafeCaches.push([`${key} ${name}`, c => { c.cache[key] = value; }]);
+  }
+}
+for (const [name, mutate] of unsafeCaches) {
+  test(`managed mock rejects cache ${name} before registration`, async () => {
+    const cfg = parse(source); mutate(cfg);
+    for (const background of [false, true]) {
+      const fake = registrationDouble();
+      await expect(registerMockModel(fake.actor, fake.probe, () => validateMockRouting(stringify(cfg), background)))
+        .rejects.toThrow('STOP: managed mock unexpected cache configuration');
+      expect(fake.calls).toEqual([]);
+      expect(fake.readCount()).toBe(0);
+    }
+  });
+}
+
+for (const [name, mutate] of [
+  // Both stack recipes mount this same cache-bearing fixture; no no-cache variant.
+  ['missing cache', (c: any) => { delete c.cache; }],
+  ['unknown root', (c: any) => { c.unknown = {}; }],
+  ['root Redis', (c: any) => { c.redis = { enabled: true, address: 'redis.invalid:6379' }; }],
+  ['root edge', (c: any) => { c.edge = { enabled: true }; }],
+] as const) {
+  test(`managed mock rejects ${name} sections`, () => {
+    const cfg = parse(source); mutate(cfg);
+    expect(() => validateMockRouting(stringify(cfg))).toThrow('STOP: managed mock unexpected gateway sections');
+  });
+}
+
+test('managed mock expects exactly the guardrail engine switch org checks need', () => {
+  expect(parse(source).guardrails).toEqual({ enabled: true, fail_open: true, default_timeout: '5s' });
+  validateMockRouting(source);
+  validateMockRouting(source, true);
+});
+
+// Anything beyond that switch is refused, with the reason, before registration.
+const unsafeGuardrails: [string, (cfg: any) => void, string][] = [
+  ['static guardrail rule', c => { c.guardrails.rules = [{ name: 'external', stage: 'pre', mode: 'sync',
+    action: 'block', config: { url: 'https://guardrail.invalid/check' } }]; }, 'unexpected guardrails configuration'],
+  ['streaming guardrail check', c => { c.guardrails.streaming = { enabled: true, check_interval: 1 }; },
+    'unexpected guardrails configuration'],
+  ['guardrail engine off', c => { c.guardrails.enabled = false; }, 'unexpected guardrails configuration'],
+  ['non-boolean failure default', c => { c.guardrails.fail_open = 'true'; }, 'unexpected guardrails configuration'],
+  ['changed guardrail timeout', c => { c.guardrails.default_timeout = '30s'; }, 'unexpected guardrails configuration'],
+  ['env-expanded guardrail timeout', c => { c.guardrails.default_timeout = '${GUARDRAIL_TIMEOUT}'; },
+    'unexpected guardrails configuration'],
+  ['empty guardrails section', c => { c.guardrails = null; }, 'unexpected guardrails configuration'],
+  ['missing guardrails section', c => { delete c.guardrails; }, 'unexpected gateway sections'],
+];
+for (const [name, mutate, reason] of unsafeGuardrails) {
+  test(`managed mock rejects a ${name} before registration`, async () => {
+    const cfg = parse(source); mutate(cfg);
+    const fake = registrationDouble();
+    await expect(registerMockModel(fake.actor, fake.probe, () => validateMockRouting(stringify(cfg))))
+      .rejects.toThrow(`STOP: managed mock ${reason}`);
+    expect(fake.calls).toEqual([]);
+    expect(fake.readCount()).toBe(0);
+  });
+}
+
 test('managed mock rejects duplicate YAML keys before registration', async () => {
   const fake = registrationDouble();
   await expect(registerMockModel(fake.actor, fake.probe, () => validateMockRouting(`${source}\nproviders: {}\n`)))
@@ -101,10 +207,38 @@ const backgroundEnvironment = {
   AGENTCC_INTERNAL_URL: 'http://agentcc-gateway:8080',
   AGENTCC_GATEWAY_INTERNAL_URL: 'http://agentcc-gateway:8080', MODEL_SERVING_URL: 'http://mock-llm:8080',
   ENV_TYPE: 'local', EE_LICENSE_KEY: '', NO_STARTUP_DB_MUTATIONS: 'true', OTEL_ENABLED: 'false',
-  FUTURE_AGI_TELEMETRY_DISABLED: 'true', TEMPORAL_HOST: 'temporal:7233', TEMPORAL_NAMESPACE: 'default',
+  FUTURE_AGI_TELEMETRY_DISABLED: 'true', FUTURE_AGI_TELEMETRY_URL: 'http://127.0.0.1:9',
+  TEMPORAL_HOST: 'temporal:7233', TEMPORAL_NAMESPACE: 'default',
   DJANGO_SETTINGS_MODULE: 'tfc.settings.e2e', MAILGUN_API_KEY: '',
   TEMPORAL_ALL_QUEUES: 'true', TEMPORAL_EXCLUDED_QUEUES: 'simulation_runner',
 };
+
+for (const evalBackground of [false, true]) {
+  for (const service of ['backend', 'worker', 'app']) {
+    test(`managed mock pins telemetry to loopback for ${service} (background=${evalBackground})`, () => {
+      const env = service === 'app' ? composedStandaloneEnvironment() : { ...backgroundEnvironment };
+      const validate = (values: Record<string, string>) => service === 'app'
+        ? validateStandaloneAppEnvironment(values, evalBackground)
+        : validateMockEnvironment(service, values, evalBackground);
+      expect(env.FUTURE_AGI_TELEMETRY_URL).toBe('http://127.0.0.1:9');
+      validate(env);
+      for (const value of [undefined, '', 'https://telemetry.invalid', 'http://127.0.0.1:9000']) {
+        const changed: Record<string, string> = { ...env };
+        if (value === undefined) delete changed.FUTURE_AGI_TELEMETRY_URL;
+        else changed.FUTURE_AGI_TELEMETRY_URL = value;
+        expect(() => validate(changed)).toThrow(`required ${service} FUTURE_AGI_TELEMETRY_URL mismatch`);
+      }
+    });
+  }
+}
+
+for (const file of ['e2e.env', 'standalone-e2e.env']) {
+  test(`managed mock stack env pins telemetry including the registration ping (${file})`, () => {
+    const env = readFileSync(new URL(`../stack/${file}`, import.meta.url), 'utf8');
+    expect(env.match(/^FUTURE_AGI_TELEMETRY_DISABLED=.*$/gm)).toEqual(['FUTURE_AGI_TELEMETRY_DISABLED=true']);
+    expect(env.match(/^FUTURE_AGI_TELEMETRY_URL=.*$/gm)).toEqual(['FUTURE_AGI_TELEMETRY_URL=http://127.0.0.1:9']);
+  });
+}
 
 test('managed mock allows only exact local Slack fixtures on application services', () => {
   const slack = {
@@ -416,6 +550,7 @@ const fakeDockerScript = `#!/bin/sh
 if [ -n "$FAKE_DOCKER_FAIL" ]; then echo "$FAKE_DOCKER_FAIL $*" >&2; exit 1; fi
 case " $* " in
   *" context inspect "*) cat "$FAKE_DOCKER/context.json" ;;
+  *" network inspect e2e-link-network "*) cat "$FAKE_DOCKER/link-network.json" ;;
   *" network inspect "*) cat "$FAKE_DOCKER/network.json" ;;
   *" compose "*" config "*) cat "$FAKE_DOCKER/config.json" ;;
   *" compose "*" ps "*) cat "$FAKE_DOCKER/ps.txt" ;;
@@ -425,7 +560,8 @@ esac
 `;
 const repoFile = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
 type FakeContainer = { service: string; ports?: Record<string, string>; cmd?: string[]; entrypoint?: string[];
-  env?: Record<string, string>; extraHosts?: string[]; mounts?: [string, string][] };
+  env?: Record<string, string>; extraHosts?: string[]; mounts?: [string, string][];
+  volumes?: [string, string, boolean][] };
 
 function fakeStack(stack: 'standalone' | 'distributed') {
   const project = stack === 'standalone' ? 'futureagi-e2e-standalone' : 'futureagi-e2e';
@@ -437,34 +573,55 @@ function fakeStack(stack: 'standalone' | 'distributed') {
   const mockSlack: FakeContainer = { service: 'mock-slack', cmd: ['node', '/srv/server.mjs'], entrypoint: ['docker-entrypoint.sh'],
     ports: { '8080/tcp': port(E2E.slackMockUrl) },
     mounts: [[repoFile('stack/mock-slack/server.mjs'), '/srv/server.mjs']] };
+  const mockGoogle: FakeContainer = { service: 'mock-google', cmd: ['/srv/server.py'], entrypoint: ['python'],
+    ports: { '28443/tcp': port(E2E.googleMockUrl) },
+    mounts: [[repoFile('stack/mock-google/server.py'), '/srv/server.py']],
+    volumes: [['/owned/google-tls', '/tls', true]] };
   const stores: FakeContainer[] = [{ service: 'postgres', ports: { '5432/tcp': port(E2E.pgUrl) } },
     { service: 'clickhouse', ports: { '8123/tcp': port(E2E.chUrl) } }];
   const services: FakeContainer[] = stack === 'standalone' ? [{ service: 'app', env: composedStandaloneEnvironment(),
     ports: { '3000/tcp': port(E2E.appUrl), '8000/tcp': port(E2E.apiUrl), '8080/tcp': port(E2E.gatewayUrl) },
     extraHosts: ['code-executor:127.0.0.1', 'agentcc-gateway:127.0.0.1'],
+    volumes: [['/owned/google-tls', '/run/google-fixture-tls', false]],
     mounts: [[gatewayConfig, '/etc/futureagi/secrets/agentcc.yaml'], ['/dev/null', '/etc/futureagi/secrets/vertex.json'],
       [repoFile('stack/backend/settings_e2e.py'), '/app/backend/tfc/settings/e2e.py'],
       [repoFile('stack/backend/urls_e2e.py'), '/app/backend/tfc/urls_e2e.py'],
       [repoFile('stack/backend/e2e_clean_signup.py'), '/app/backend/accounts/views/e2e_clean_signup.py'],
-      [repoFile('stack/backend/e2e_feed_issue.py'), '/app/backend/tracer/views/e2e_feed_issue.py']],
-  }, mock, ...stores] : [{ service: 'agentcc-gateway', cmd: ['--config', '/app/config.yaml'],
+      [repoFile('stack/backend/e2e_feed_issue.py'), '/app/backend/tracer/views/e2e_feed_issue.py'],
+      [repoFile('stack/backend/e2e_google.py'), '/app/backend/tfc/views/e2e_google.py']],
+  }, mock, mockGoogle, ...stores] : [{ service: 'agentcc-gateway', cmd: ['--config', '/app/config.yaml'],
     entrypoint: ['/app/agentcc-gateway'], ports: { '8080/tcp': port(E2E.gatewayUrl) },
-    mounts: [[gatewayConfig, '/app/config.yaml']] }, mock, mockSlack,
-  { service: 'backend', ports: { '80/tcp': port(E2E.apiUrl) }, env: { OPENAI_API_KEY: 'e2e-mock' } },
+    mounts: [[gatewayConfig, '/app/config.yaml']] }, mock, mockSlack, mockGoogle,
+  { service: 'backend', ports: { '80/tcp': port(E2E.apiUrl) }, env: { OPENAI_API_KEY: 'e2e-mock', REQUESTS_CA_BUNDLE: '/run/google-fixture-tls/ca.pem' },
+    volumes: [['/owned/google-tls', '/run/google-fixture-tls', false]] },
   { service: 'worker' }, { service: 'frontend', ports: { '80/tcp': port(E2E.appUrl) } }, ...stores];
   const containers = services.map((c, i) => ({
     Id: String(i + 1).repeat(64), Image: `sha256:${String(i + 1).repeat(64)}`,
     State: { Running: true, StartedAt: '2999-01-01T00:00:00Z' },
     Config: { Labels: { 'com.docker.compose.service': c.service, 'com.docker.compose.project': project },
-      Env: Object.entries(c.env ?? {}).map(([key, value]) => `${key}=${value}`), Cmd: c.cmd ?? [], Entrypoint: c.entrypoint ?? [] },
+      // Keep shared application telemetry defaults separate from service-specific fixtures.
+      Env: Object.entries({
+        ...(['backend', 'worker'].includes(c.service) ? { FUTURE_AGI_TELEMETRY_URL: 'http://127.0.0.1:9' } : {}),
+        ...c.env,
+      }).map(([key, value]) => `${key}=${value}`), Cmd: c.cmd ?? [], Entrypoint: c.entrypoint ?? [] },
     HostConfig: { ExtraHosts: c.extraHosts ?? null },
-    Mounts: (c.mounts ?? []).map(([Source, Destination]) => ({ Type: 'bind', Source, Destination, RW: false })),
-    NetworkSettings: { Networks: { [network]: { NetworkID: 'e2e-network', Aliases: [c.service], IPAddress: '172.18.0.2' } },
+    Mounts: [
+      ...(c.mounts ?? []).map(([Source, Destination]) => ({ Type: 'bind', Source, Destination, RW: false })),
+      ...(c.volumes ?? []).map(([Source, Destination, RW]) => ({ Type: 'volume', Source, Destination, RW })),
+    ],
+    NetworkSettings: { Networks: { [network]: { NetworkID: 'e2e-network', Aliases: [c.service], IPAddress: '172.18.0.2' },
+      ...(['app', 'backend', 'worker'].includes(c.service) ? {
+        [`${project}_link-public`]: { NetworkID: 'e2e-link-network', Aliases: [c.service], IPAddress: '11.23.0.2' },
+      } : {}) },
       Ports: Object.fromEntries(Object.entries(c.ports ?? {}).map(([p, host]) => [p, [{ HostIp: '127.0.0.1', HostPort: host }]])) },
   }));
   return {
     'context.json': [{ Endpoints: { docker: { Host: 'unix:///var/run/docker.sock' } } }],
-    'config.json': { name: project, networks: { default: { name: network } }, services: {} },
+    'config.json': { name: project, networks: { default: { name: network },
+      'link-public': { name: `${project}_link-public` } }, services: {} },
+    'link-network.json': [{ Driver: 'bridge', Internal: true, Labels: {
+      'com.docker.compose.project': project, 'com.docker.compose.network': 'link-public',
+    } }],
     'ps.txt': containers.map(c => c.Id).join('\n'),
     'containers.json': containers,
     'network.json': [{ Driver: 'bridge', Labels: { 'com.docker.compose.project': project, 'com.docker.compose.network': 'default' } }],
@@ -507,7 +664,7 @@ for (const variant of ['valid', 'writable', 'wrong-source', 'wrong-destination',
       Destination: variant === 'wrong-destination' ? '/app' : '/run/futureagi-host-update',
       RW: variant === 'writable' };
     if (variant === 'worker') worker.Mounts = [mount];
-    else backend.Mounts = variant === 'extra' ? [mount, { ...mount, Destination: '/extra' }] : [mount];
+    else backend.Mounts.push(...(variant === 'extra' ? [mount, { ...mount, Destination: '/extra' }] : [mount]));
     const inspect = () => withFakeDocker(dir, 'distributed', files, () => inspectManagedMock());
     if (variant === 'valid') expect(inspect().services.map(service => service.service)).toContain('backend');
     else expect(inspect).toThrow('STOP: managed mock');
@@ -519,8 +676,8 @@ for (const stack of ['standalone', 'distributed'] as const) {
     test.skip(!offlineEndpoints(), 'attach mode points the harness at another host');
     const receipt = withFakeDocker(testInfo.outputPath('docker'), stack, fakeStack(stack), () => inspectManagedMock());
     expect(receipt.services.map(s => s.service)).toEqual(stack === 'standalone'
-      ? ['app', 'mock-llm', 'postgres', 'clickhouse']
-      : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
+      ? ['app', 'mock-llm', 'mock-google', 'postgres', 'clickhouse']
+      : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'mock-google', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
   });
 
   test(`managed mock refuses a ${stack} network the project does not own`, ({}, testInfo) => {
@@ -543,8 +700,8 @@ test('managed stack routing has runtime labels, network and read-only source pro
   // Standalone runs the gateway, backend, worker and UI in one `app` container
   // (lib/managed-mock-standalone.ts).
   expect(receipt.services.map(s => s.service)).toEqual(process.env.E2E_STACK === 'standalone'
-    ? ['app', 'mock-llm', 'postgres', 'clickhouse']
-    : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
+    ? ['app', 'mock-llm', 'mock-google', 'postgres', 'clickhouse']
+    : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'mock-google', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
   expect(receipt.gatewaySha).toMatch(/^[a-f0-9]{64}$/);
   expect(receipt.mockSha).toMatch(/^[a-f0-9]{64}$/);
   await testInfo.attach('verified-managed-mock', { contentType: 'application/json', body: JSON.stringify(receipt) });

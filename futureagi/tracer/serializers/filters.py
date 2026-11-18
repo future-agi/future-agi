@@ -1055,6 +1055,8 @@ class SessionBoundedFilterListQueryParamField(BoundedFilterListQueryParamField):
 
 
 class JsonObjectQueryParamField(serializers.Field):
+    swagger_empty_input_default = "{}"
+
     class Meta:
         swagger_schema_fields = JSON_OBJECT_QUERY_PARAM_SCHEMA
 
