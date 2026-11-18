@@ -2848,6 +2848,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 id__in=eval_task_ids,
             )
             with transaction.atomic(using="default"):
+                # Check the locked writer rows; a replica can miss a running task.
                 locked = dict(
                     eval_tasks.select_for_update(of=("self",))
                     .order_by("pk")
@@ -2903,6 +2904,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
 
             with transaction.atomic(using="default"):
                 try:
+                    # Check the locked writer row; a replica may still say Running.
                     eval_task = self._scope_eval_task_queryset(
                         EvalTask.objects.select_for_update(of=("self",))
                     ).get(id=eval_task_id)
@@ -2953,6 +2955,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
 
             with transaction.atomic(using="default"):
                 try:
+                    # Check the locked writer row; a replica may still say Paused.
                     eval_task = self._scope_eval_task_queryset(
                         EvalTask.objects.select_for_update(of=("self",))
                     ).get(id=eval_task_id)

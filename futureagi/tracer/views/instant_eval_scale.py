@@ -1722,8 +1722,8 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         # A stalled run (it says running, but no workflow drains it) is
         # restarted, or nothing would answer the requeued rows.
         running = task.status in ACTIVE and not _workflow_gone(task)
-        if not running and (stopped := self._stopped_with_rows_left(task, run)):
-            return stopped
+        if not running and (refused := self._replacement_refusal(task, run)):
+            return refused
         if not running and (busy := self._busy(request, task)):
             return busy
         # Checked again: the key may have gone since the run started.
@@ -1761,12 +1761,13 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
                 self._restart(task)
         return self._restarted(task, f"Retrying {retried:,} answers.", retried=retried)
 
-    def _stopped_with_rows_left(self, task, run):
-        """A 409 for a run that stopped with rows still to read (every row,
-        if it stopped before picking them): paused, or stalled (its task
-        ended, or its workflow is gone). Restarting it for a retry or "read
-        more" would read all of them, past what that action checked and
-        confirmed. Resuming is the way on: it checks them all."""
+    def _replacement_refusal(self, task, run):
+        """Retry failed and Read more replace the existing run. Only suggest
+        Resume for unread rows if a replacement is allowed in the first place."""
+        if refusal := start_refusal(task):
+            return self._gm.bad_request(refusal.instant)
+        # A replacement would also read the old unanswered rows, beyond the
+        # rows this action priced and confirmed. Resume checks them all.
         if run is None or not _rows_left(task, run):
             return None
         message = (
@@ -1798,8 +1799,8 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             )
         if run is None or run.rows_requested >= run.population:
             return self._gm.bad_request("This run already reads every row of its view.")
-        if stopped := self._stopped_with_rows_left(task, run):
-            return stopped
+        if refused := self._replacement_refusal(task, run):
+            return refused
         if busy := self._busy(request, task):
             return busy
         if missing := _jev_key_missing(self._gm, task.project, _questions(task)):
