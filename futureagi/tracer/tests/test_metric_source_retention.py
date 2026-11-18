@@ -204,6 +204,45 @@ def test_sql_completion_cannot_republish_after_policy_change(
     assert job.state != "succeeded" and job.result == {} and job.output_bytes == 0
 
 
+@pytest.mark.parametrize("offset_us", [-1, 0, 1])
+def test_saved_metric_sql_uses_erasure_completion_boundary(tenants, policy, offset_us):
+    (actor, project, _), _ = tenants
+    result = {"rows": [[9]]}
+    job = metric_job(actor, project, state="succeeded", result=result)
+    step = timedelta(microseconds=1)
+    MetricErasureRequest.objects.create(
+        organization_key=actor.organization_id,
+        project_key=project.pk,
+        scope_kind="project",
+        requested_at=job.created_at - 3 * step,
+        started_at=job.created_at - 2 * step,
+        status="done",
+        completed_at=job.created_at + offset_us * step,
+    )
+    # Completion strictly before creation is safe. Equal timestamps overlap.
+    assert sql_service.snapshot(job)["result"] == (result if offset_us < 0 else {})
+
+
+def test_legacy_expiry_receipt_keeps_its_request_time_fence(tenants, policy):
+    from tracer.sql_workbench.metric_retention import result_allowed
+
+    (actor, project, _), _ = tenants
+    job = metric_job(actor, project)
+    step = timedelta(microseconds=1)
+    # Historical scheduled expiry stored the pass start as its completion.
+    # Upgrading must not make an already-invalid saved result reusable.
+    MetricErasureRequest.objects.create(
+        organization_key=actor.organization_id,
+        project_key=project.pk,
+        scope_kind="history",
+        store_payload={"protocol": "metric_expiry"},
+        requested_at=job.created_at + step,
+        completed_at=job.created_at - step,
+        status="done",
+    )
+    assert not result_allowed(job)
+
+
 def test_saved_sql_expiry_stays_erased_after_policy_extension(tenants, policy):
     (actor, project, _), _ = tenants
     job = metric_job(actor, project, state="succeeded", result={"rows": [[1]]})
@@ -311,7 +350,9 @@ def test_pending_privacy_work_bypasses_paused_batch_interval(
     admission.release(reservation, now=timezone.now())
 
 
-def test_erasure_remains_queued_if_initial_sql_cleanup_fails(tenants, policy, monkeypatch):
+def test_erasure_remains_queued_if_initial_sql_cleanup_fails(
+    tenants, policy, monkeypatch
+):
     from tracer.sql_workbench import metric_retention
 
     (actor, project, _), _ = tenants
@@ -335,7 +376,9 @@ def test_erasure_remains_queued_if_initial_sql_cleanup_fails(tenants, policy, mo
 
 
 def test_sql_database_failure_cannot_roll_back_a_queued_erasure(
-    tenants, policy, monkeypatch,
+    tenants,
+    policy,
+    monkeypatch,
 ):
     from django.db import connection, transaction
 
@@ -364,14 +407,28 @@ def test_finality_projection_cannot_drop_winner_keys():
     from tracer.services.derived_metrics.bounded_reads import windowed_rows_select
     from tracer.services.derived_metrics.storage import FIELD_VALUES
 
-    kwargs = {"org_id": uuid4(), "project_id": uuid4(), "predicate": "status = 'open'", "params": {}}
+    kwargs = {
+        "org_id": uuid4(),
+        "project_id": uuid4(),
+        "predicate": "status = 'open'",
+        "params": {},
+    }
     with pytest.raises(ValueError, match="complete winner keys"):
-        windowed_rows_select(FIELD_VALUES, None, columns=("bucket_start", "status"), **kwargs)
+        windowed_rows_select(
+            FIELD_VALUES, None, columns=("bucket_start", "status"), **kwargs
+        )
     sql, _ = windowed_rows_select(
-        FIELD_VALUES, None, columns=(
-            *FIELD_VALUES.logical_key, "generation", FIELD_VALUES.version_column,
-            "bucket_start", "status", "is_deleted",
-        ), **kwargs,
+        FIELD_VALUES,
+        None,
+        columns=(
+            *FIELD_VALUES.logical_key,
+            "generation",
+            FIELD_VALUES.version_column,
+            "bucket_start",
+            "status",
+            "is_deleted",
+        ),
+        **kwargs,
     )
     assert "inputs" not in sql and "user_id" not in sql
 

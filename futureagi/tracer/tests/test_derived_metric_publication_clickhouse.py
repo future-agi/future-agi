@@ -67,11 +67,12 @@ def field_query(
     user="",
     group="region-a",
     metric=None,
+    version=1,
 ):
     metric = metric or uuid4()
     replacements = {
         "field_id": "toUUID(%(test_metric)s)",
-        "field_version": "toUInt32(1)",
+        "field_version": "toUInt32(%(test_version)s)",
         "level": "'conversation'",
         "unit_id": "%(test_unit)s",
         "session_id": "%(test_unit)s",
@@ -99,6 +100,7 @@ def field_query(
         columns.append(f"{expr} AS {name}")
     return "SELECT " + ", ".join(columns), {
         "test_metric": str(metric),
+        "test_version": version,
         "test_unit": unit_id,
         "test_user": user,
         "test_start": start,

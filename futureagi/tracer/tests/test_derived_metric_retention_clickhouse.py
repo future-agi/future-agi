@@ -89,8 +89,19 @@ def seed_fields_and_buckets(writer, definition, specs):
     payloads = []
     for unit, at, n, user in specs:
         sql, params = field_query(
-            unit, n=n, start=at, metric=definition.metric_id, user=user
+            unit,
+            n=n,
+            start=at,
+            metric=definition.metric_id,
+            version=definition.version,
+            user=user,
         )
+        if definition.level == "span":
+            # A span-only backfill can publish pinned field evidence without
+            # conversation lifecycle rows or redundant membership dependencies.
+            sql = f"SELECT * REPLACE('span' AS level, '' AS session_id) FROM ({sql})"
+            payloads += writer.freeze(attempt, FIELD_VALUES, sql, params)
+            continue
         payloads += writer.freeze(attempt, FIELD_VALUES, sql, params)
         bound = {"seed_unit": unit, "seed_user": user, "seed_at": at}
         writer.freeze(

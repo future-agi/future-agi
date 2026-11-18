@@ -350,7 +350,10 @@ class RefreshWriter:
                 for v in (inherited, ceilings.get("retention_floor"))
                 if v
             ]
-            if head and head.published_by.source_ceilings.get("recovery_blocked"):
+            if head and (
+                head.published_by.source_ceilings.get("recovery_blocked")
+                or MetricRefreshAttempt.blocked_expiry_handoffs(head).exists()
+            ):
                 ceilings["recovery_blocked"] = True
             private_cleanup = [
                 value
@@ -1419,9 +1422,9 @@ class RefreshWriter:
 
         with serialized_project(self.lease.project_id):
             registered = tuple(
-                MetricRefreshAttempt.objects.filter(
-                    project_id=self.lease.project_id
-                ).values_list("id", flat=True)
+                MetricRefreshAttempt.objects.filter(project_id=self.lease.project_id)
+                .exclude(abort_reason=MetricRefreshAttempt.GC_BLOCKED_HANDOFF)
+                .values_list("id", flat=True)
             ) or (UUID(int=0),)
             through = MetricProjectRefresh.objects.get(
                 project_id=self.lease.project_id
@@ -1734,6 +1737,10 @@ class RefreshWriter:
                     raise MetricStateConflict(
                         "refresh definition is expired or outside project"
                     )
+            if head and MetricRefreshAttempt.blocked_expiry_handoffs(head).exists():
+                # abort_stale would consume a sanitized handoff as ordinary
+                # work, but the missing owner cannot be rediscovered from it.
+                raise MetricAdmissionUnproven("metric_admission_unproven")
             prior = self.abort_stale()
             # A replacement MUST rediscover old memberships, including candidates
             # unique to the failed pass, rather than silently dropping that work.

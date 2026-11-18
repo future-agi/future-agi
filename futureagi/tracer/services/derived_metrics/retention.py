@@ -20,6 +20,8 @@ import json
 from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
 from functools import wraps
+from itertools import groupby
+from operator import itemgetter
 from uuid import UUID
 
 from django.db import connection
@@ -273,6 +275,16 @@ def _delete(store, table, predicate, params):
     )
 
 
+def _frozen_batch_sources(writer, attempt, table):
+    from tracer.services.derived_metrics.publication import FrozenRows
+    from tracer.services.derived_metrics.refresh import TABLE_KIND, payload_select
+
+    for number, plan in enumerate(writer.plans(attempt, kind=TABLE_KIND[table.name])):
+        yield payload_select(
+            table, [FrozenRows.from_plan(plan)], prefix=f"capture_{number}"
+        )
+
+
 class ProposalCaptures:
     """Pass-scoped session captures of one PREPARED proposal (SessionCapture).
 
@@ -311,22 +323,12 @@ class ProposalCaptures:
 
     def overlay(self, table, attempt=None):
         """One attempt's frozen batches for one table, never a mutable read."""
-        from tracer.services.derived_metrics.publication import FrozenRows
-        from tracer.services.derived_metrics.refresh import TABLE_KIND, payload_select
-
         attempt = attempt or self.draft
-        writer = self.writer
-
-        def sources():
-            for number, plan in enumerate(
-                writer.plans(attempt, kind=TABLE_KIND[table.name])
-            ):
-                yield payload_select(
-                    table, [FrozenRows.from_plan(plan)], prefix=f"capture_{number}"
-                )
-
         capture = self._capture(
-            ("overlay", str(attempt.id), table.name), table.schema, sources, "overlay"
+            ("overlay", str(attempt.id), table.name),
+            table.schema,
+            lambda: _frozen_batch_sources(self.writer, attempt, table),
+            "overlay",
         )
         return capture.select, {}
 
@@ -509,6 +511,61 @@ def _current_retained(fields, cutoff_parameter, owners=None):
     return (
         f"unit_start >= toDateTime64(%({cutoff_parameter})s, 6, 'UTC') "
         f"AND canonical_session_id IN ({owners})"
+    )
+
+
+def _field_expiry(writer, stack, fields, params, parameter, expired_units, *, spans):
+    """The immutable removal predicate shared by fields, state and totals.
+
+    A conversation's oldest member is still its anchor. A span, however, has
+    one versioned source row: two recipe versions may have observed opposite
+    sides of a start correction. Consult the terminal source revision ONLY for
+    those disputed identities. Absence, deletion and an expired winner prove
+    no exemption. A live winner never rescues an expired *field* anchor.
+    """
+    unit_expired = f"(level, unit_id) IN ({expired_units})"
+    if not spans:
+        return unit_expired, False
+    from tracer.services.derived_metrics.frozen_relations import (
+        CAPTURE_BYTES,
+        CAPTURE_ROWS,
+    )
+    from tracer.services.derived_metrics.unit_reads import source_identity_relation
+
+    cutoff = f"toDateTime64(%({parameter})s, 6, 'UTC')"
+    disputed = (
+        f"SELECT unit_id FROM ({fields}) WHERE level = 'span' GROUP BY unit_id "
+        f"HAVING min(unit_start) < {cutoff} AND max(unit_start) >= {cutoff}"
+    )
+    if not writer.store.execute(f"SELECT 1 FROM ({disputed}) LIMIT 1", params):
+        return unit_expired, False
+    # One bounded read of mutable source metadata (no value/label payload).
+    # Reconnects replay the frozen IDs, never reclassify between copy and fold.
+    winners = (
+        "SELECT trace_id, id, argMax(tuple(start_time, is_deleted), _version) AS winner "
+        "FROM spans PREWHERE project_id = toUUID(%(disputed_project)s) AND (trace_id, id) IN "
+        f"(SELECT JSONExtractString(unit_id, 1), JSONExtractString(unit_id, 2) FROM ({disputed})) "
+        "WHERE org_id = toUUID(%(disputed_org)s) OR isNull(org_id) GROUP BY trace_id, id "
+        f"HAVING winner.2 = 0 AND winner.1 >= {cutoff}"
+    )
+    pairs = writer.store.execute(
+        "SELECT trace_id, id FROM (SELECT trace_id, id, count() OVER () AS n, "
+        "sum(length(formatRow('RowBinary', trace_id, id))) OVER () AS bytes "
+        f"FROM ({winners} LIMIT {CAPTURE_ROWS + 1})) "
+        f"WHERE throwIf(n > {CAPTURE_ROWS} OR bytes > {CAPTURE_BYTES}, 'metric_span_identity_budget') = 0",
+        {
+            **params,
+            "disputed_project": str(writer.lease.project_id),
+            "disputed_org": str(writer.org_id),
+        },
+    )
+    if not pairs:
+        return unit_expired, True
+    proven = stack.enter_context(source_identity_relation(writer.store, pairs))
+    return (
+        f"({unit_expired} AND (level != 'span' OR unit_start < {cutoff} OR unit_id NOT IN "
+        f"(SELECT toJSONString(tuple(trace_id, span_id)) FROM ({proven.select}))))",
+        True,
     )
 
 
@@ -727,18 +784,19 @@ def _expired_aggregates(writer, head, cutoff):
 def retirement_plan(writer, draft, head, definitions, cutoff, *, captures=None):
     """Convert proposed anchor changes to one complete privacy checkpoint.
 
-    Old and new anchors are considered BEFORE publication. Expiring proposals
-    contribute anonymous pre-fold parts at their NEW anchor, and every former
-    bucket is rebuilt without the old field. No reader can observe an interim
-    expired field or both its live and retired contribution. The draft is PG-only
+    Old and new anchors are considered BEFORE publication. Expired fields and
+    their contributions are dropped together; a wholly retained quarter that
+    loses a contributor is rebuilt from the surviving fields. The draft is PG-only
     and its private bytes are purged with the predecessor revisions after publish.
     The draft overlay and the retained-owner set are captured once per pass;
     the committed head side of the proposal stays inline (never a copy).
     """
-    if captures is None:
-        with ProposalCaptures(writer, draft, head) as owned:
-            return _retirement_plan(writer, draft, head, definitions, cutoff, owned)
-    return _retirement_plan(writer, draft, head, definitions, cutoff, captures)
+    with ExitStack() as scratch:
+        if captures is None:
+            captures = scratch.enter_context(ProposalCaptures(writer, draft, head))
+        return _retirement_plan(
+            writer, draft, head, definitions, cutoff, captures, scratch
+        )
 
 
 class _PolicyWriter:
@@ -815,7 +873,7 @@ def _floor_ceilings(writer, head, cutoff, span_dirty):
     return ceilings
 
 
-def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
+def _retirement_plan(writer, draft, head, definitions, cutoff, captures, scratch):
     from tracer.services.derived_metrics.span_evidence import (
         require_retirement_evidence,
     )
@@ -903,12 +961,20 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
             [{"level": "span", "bucket_start": value} for value in sorted(span_dirty)],
         )
     owners = captures.owners(cutoff)
+    removal, _ = _field_expiry(
+        writer,
+        scratch,
+        fields,
+        params,
+        "retire_cutoff",
+        expired,
+        spans=span_definitions,
+    )
+    retain = f"NOT ({removal})"
     retained = (
-        _retained_fields(
-            fields, f"(level, unit_id) NOT IN ({expired})", "retire_cutoff", owners
-        )
+        _retained_fields(fields, retain, "retire_cutoff", owners)
         if span_definitions
-        else f"SELECT * FROM ({fields}) WHERE (level, unit_id) NOT IN ({expired})"
+        else f"SELECT * FROM ({fields}) WHERE {retain}"
     )
     ledger = {}
     for chunk in draft.ledger_chunks.exclude(part="cleanup_intent"):
@@ -1003,61 +1069,460 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures):
             collect_payloads=False,
             row_limit=MAX_COMPACTION_ROWS,
         )
-    # Copy only whole retained buckets; the boundary bucket is unavailable.
-    buckets, bp = captures.proposal(BUCKET_TOTALS)
-    buckets = f"SELECT * FROM ({buckets}) WHERE is_deleted = 0 AND bucket_start >= toDateTime64(%(aggregate_cutoff)s, 6, 'UTC')"
-    bp = {**bp, "aggregate_cutoff": cutoff}
-    recomputed = tuple(
-        (UUID(str(d.metric_id)), d.version) for d in definitions if d.level != "user"
-    )
-    dirty = tuple(
-        sorted(
-            {
-                str(entry["bucket_start"])
-                for entries in ledger.values()
-                for entry in entries
-                if "bucket_start" in entry
-            }
-        )
-    )
-    if recomputed and dirty:
-        # Never freeze the same logical key twice in one attempt: merges would
-        # invalidate the earlier batch's physical visibility receipt.
-        buckets = (
-            f"SELECT * FROM ({buckets}) WHERE NOT ((metric_id, metric_version) IN %(retire_recomputed)s "
-            "AND bucket_start IN (SELECT parseDateTimeBestEffort(arrayJoin(%(retire_dirty)s), 'UTC')))"
-        )
-        bp.update(retire_recomputed=recomputed, retire_dirty=list(dirty))
-    writer.freeze(
+    _freeze_retained_buckets(
+        writer,
         attempt,
-        BUCKET_TOTALS,
-        buckets,
-        bp,
-        collect_payloads=False,
-        row_limit=MAX_COMPACTION_ROWS,
+        head,
+        definitions,
+        cutoff,
+        fields=fields,
+        removal=removal,
+        retained=retained,
+        params=params,
+        proposal_totals=captures.proposal(BUCKET_TOTALS),
+        dirty_entries=(
+            entry
+            for part in ("dirty_before", "dirty_after")
+            for entry in ledger.get(part, ())
+            if "bucket_start" in entry
+        ),
     )
-    # Exactly the successor's frozen live fields and anonymous parts, captured
-    # once (one batch per INSERT) rather than inlined into every bucket page.
-    live, lp = captures.overlay(FIELD_VALUES, attempt=attempt)
-    new_retired, nrp = captures.overlay(RETIRED_PARTS, attempt=attempt)
-    for definition in definitions:
-        if definition.level != "user":
-            writer._freeze_buckets(
-                attempt,
-                head,
-                definition,
-                live,
-                lp,
-                complete_fields=True,
-                retired_override=(new_retired, nrp),
-            )
     MetricRefreshAttempt.abort(
         draft.id, reason="retention_replan", **writer.lease.check()
     )
     return attempt
 
 
-def purge_checkpoint(writer, attempt, manifest, *, recovery_pending=False, now=None):
+def _checkpoint_bucket_windows(store, affected):
+    """Page distinct recipe/quarter keys; never round-trip the whole capture."""
+    from tracer.services.derived_metrics.changes import keyset_after, utc
+    from tracer.services.derived_metrics.refresh import BUCKET_WINDOWS_PER_FOLD
+
+    order = ", ".join(affected.columns)
+    remaining = affected.digest[0]
+    after, bound = "1", {}
+    while rows := store.execute(
+        f"{affected.select} WHERE {after} ORDER BY {order} LIMIT {BUCKET_WINDOWS_PER_FOLD}",
+        bound,
+    ):
+        remaining -= len(rows)
+        for (metric, version), group in groupby(rows, key=itemgetter(0, 1)):
+            yield (str(metric), version), [utc(start) for _, _, start in group]
+        if remaining <= 0 or len(rows) < BUCKET_WINDOWS_PER_FOLD:
+            break
+        after, bound = keyset_after(affected.columns, rows[-1], "checkpoint_after")
+    if remaining:
+        raise MetricStateConflict("retention bucket-key coverage changed")
+
+
+def _checkpoint_key_pages(store, keys, params):
+    """Partition the entire total-key space, not just the keys to rebuild."""
+    from tracer.services.derived_metrics.changes import keyset_after
+    from tracer.services.derived_metrics.frozen_relations import (
+        CAPTURE_BYTES,
+        CAPTURE_ROWS,
+        SessionCapture,
+    )
+
+    schema = (
+        ("field_id", "UUID"),
+        ("field_version", "UInt32"),
+        ("bucket_start", "DateTime('UTC')"),
+    )
+    fields = tuple(name for name, _ in schema)
+    totals = ("metric_id", "metric_version", "bucket_start")
+    # These three RowBinary types are fixed width (16 + 4 + 4). Let the
+    # checked capture reject even a singleton if its configured cap is smaller.
+    limit = max(1, min(CAPTURE_ROWS, CAPTURE_BYTES // 24))
+    after = lower = "1"
+    lo = {}
+    while True:
+        sql = (
+            f"SELECT * FROM ({keys}) WHERE {after} "
+            f"ORDER BY {', '.join(fields)} LIMIT {limit}"
+        )
+        with SessionCapture(
+            store,
+            schema=schema,
+            sources=lambda sql=sql, bound={**params, **lo}: [(sql, bound)],
+            role="checkpoint_bucket_keys",
+        ) as page:
+            upper, hi = "1", {}
+            if page.digest[0] == limit:
+                last = store.execute(
+                    f"{page.select} ORDER BY field_id DESC, field_version DESC, "
+                    "bucket_start DESC LIMIT 1"
+                )[0]
+                beyond, hi = keyset_after(totals, last, "checkpoint_hi")
+                upper = f"NOT ({beyond})"
+            # Even an empty last page owns the untouched tail of the key space.
+            yield page, f"({lower}) AND ({upper})", {**lo, **hi}
+            if not hi:
+                return
+        after, lo = keyset_after(fields, last, "checkpoint_lo")
+        lower, _ = keyset_after(totals, last, "checkpoint_lo")
+
+
+def _checkpoint_live_windows(store, retained, params, recipe, starts):
+    """Bisect only a rejected INPUT, before a fold could append any output."""
+    from tracer.services.derived_metrics.frozen_relations import (
+        FrozenRelationOverflow,
+        SessionCapture,
+    )
+
+    sql = (
+        f"SELECT * FROM ({retained}) WHERE is_deleted = 0 AND status != 'open' "
+        "AND field_id = toUUID(%(checkpoint_metric)s) "
+        "AND field_version = %(checkpoint_version)s AND bucket_start IN %(checkpoint_starts)s"
+    )
+    bound = {
+        **params,
+        "checkpoint_metric": recipe[0],
+        "checkpoint_version": recipe[1],
+        "checkpoint_starts": tuple(starts),
+    }
+    with ExitStack() as scratch:
+        try:
+            live = scratch.enter_context(
+                SessionCapture(
+                    store,
+                    schema=FIELD_VALUES.schema,
+                    sources=lambda: [(sql, bound)],
+                    role="checkpoint_bucket_fields",
+                )
+            )
+        except FrozenRelationOverflow:
+            if len(starts) == 1:
+                # Input is the immutable retained proposal, not mutable source.
+                # Use the fold's identity scan instead of materializing the
+                # quarter. No output has been appended for this window yet.
+                yield starts, sql, bound
+                return
+        else:
+            yield starts, live.select, {}
+            return
+    mid = len(starts) // 2
+    for half in (starts[:mid], starts[mid:]):
+        yield from _checkpoint_live_windows(store, retained, params, recipe, half)
+
+
+def _uncovered_quarters(writer, head, fields, params, *, where, having=None):
+    """Check only requested recipe/quarter keys. A missing field count is zero.
+
+    Discovery additionally requires an actual removal on the field side. Do
+    not truncate an over-budget backfill nomination and publish the remainder.
+    """
+    from tracer.services.derived_metrics.changes import utc
+    from tracer.services.derived_metrics.publication import MAX_BATCH_ROWS
+    from tracer.services.derived_metrics.refresh import MetricAdmissionUnproven
+
+    totals, bp = committed_rows_select(
+        BUCKET_TOTALS,
+        head,
+        org_id=writer.org_id,
+        project_id=writer.lease.project_id,
+        param_prefix="coverage_totals",
+    )
+    total = (
+        "SELECT metric_id AS field_id, metric_version AS field_version, bucket_start, "
+        f"sum(unit_count) AS n FROM ({totals}) WHERE is_deleted = 0 AND ({where}) "
+        "GROUP BY field_id, field_version, bucket_start"
+    )
+    live = (
+        f"SELECT field_id, field_version, bucket_start, count() AS n FROM ({fields}) "
+        f"WHERE is_deleted = 0 AND status != 'open' AND ({where}) "
+        "GROUP BY field_id, field_version, bucket_start"
+    )
+    if having:
+        live += f" HAVING {having}"
+    join = "INNER" if having else "LEFT"
+    rows = writer.store.execute(
+        f"SELECT t.field_id, t.field_version, t.bucket_start FROM ({total}) t "
+        f"{join} JOIN ({live}) l ON t.field_id = l.field_id AND "
+        "t.field_version = l.field_version AND t.bucket_start = l.bucket_start "
+        f"WHERE t.n > ifNull(l.n, 0) LIMIT {MAX_BATCH_ROWS + 1}",
+        {**params, **bp},
+    )
+    if len(rows) > MAX_BATCH_ROWS:
+        raise MetricAdmissionUnproven(
+            "too many uncovered quarters; bounded backfill required"
+        )
+    return {(str(metric), version, utc(at)) for metric, version, at in rows}
+
+
+def _require_bucket_coverage(
+    writer, head, recipe, starts, fields, params, source_backed
+):
+    """A complete parent can legitimately shrink. An incomplete one needs a source backfill."""
+    from tracer.services.derived_metrics.refresh import MetricAdmissionUnproven
+
+    if head is None:
+        return
+    previous, pp = committed_rows_select(
+        FIELD_VALUES,
+        head,
+        org_id=writer.org_id,
+        project_id=writer.lease.project_id,
+        key_in={"field_id": (recipe[0],), "field_version": (recipe[1],)},
+        param_prefix="coverage_parent",
+    )
+    proof = {
+        "coverage_metric": recipe[0],
+        "coverage_version": recipe[1],
+        "coverage_starts": tuple(starts),
+    }
+    scope = (
+        "field_id = toUUID(%(coverage_metric)s) AND field_version = %(coverage_version)s "
+        "AND bucket_start IN %(coverage_starts)s"
+    )
+    deficient = _uncovered_quarters(
+        writer, head, previous, {**pp, **proof}, where=scope
+    )
+    if deficient and (
+        deficient - source_backed
+        or _uncovered_quarters(
+            writer,
+            head,
+            fields,
+            {**params, **proof, "coverage_starts": tuple(q[2] for q in deficient)},
+            where=scope,
+        )
+    ):
+        raise MetricAdmissionUnproven("uncovered retention quarter requires backfill")
+
+
+def _repair_span_quarters(
+    writer, scratch, head, definitions, fields, params, cutoff, removal, as_of
+):
+    """Backfill deficient retained quarters losing a span, without an intermediate head.
+
+    The PG-only drafts use ordinary bounded source capture, sampling, forward
+    coverage and admission. Do not admit a new identity on a privacy pass.
+    """
+    from tracer.services.derived_metrics.backfill import forward_coverage_start
+    from tracer.services.derived_metrics.frozen_relations import SessionCapture
+    from tracer.services.derived_metrics.queries import Scope
+    from tracer.services.derived_metrics.refresh import MetricAdmissionUnproven
+    from tracer.services.derived_metrics.span_evidence import freeze_span_fields
+    from tracer.services.derived_metrics.span_sampling import SpanSamplingContext
+
+    missing = _uncovered_quarters(
+        writer,
+        head,
+        fields,
+        params,
+        where="bucket_start >= %(expiry_cutoff)s",
+        having=f"countIf(level = 'span' AND ({removal})) > 0",
+    )
+    if not missing:
+        return fields, None, set(), []
+    recipes = {(str(d.metric_id), d.version): d for d in definitions}
+    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
+    drafts = []
+    for recipe, group in groupby(sorted(missing), key=itemgetter(0, 1)):
+        definition = recipes.get(recipe)
+        if definition is None:
+            raise MetricStateConflict("retention definition is unavailable")
+        with serialized_project(scope.project):
+            current = MetricProjectRefresh.for_project(scope.project).head_manifest
+            if current is None or current.pk != head.pk or current.revoked_at:
+                raise MetricStateConflict("retention base changed or expired")
+            _require_retention_definitions(writer, [definition])
+            draft = writer.begin(
+                purpose="backfill",
+                versions=[
+                    {
+                        "id": getattr(definition, "id", None),
+                        "metric_id": definition.metric_id,
+                        "version": definition.version,
+                        "level": definition.level,
+                    }
+                ],
+                ledger={
+                    "dirty_after": [
+                        {"level": "span", "bucket_start": at} for _, _, at in group
+                    ]
+                },
+            )
+        coverage = forward_coverage_start(definition)
+        with SpanSamplingContext(
+            writer, draft, [definition], scope, as_of=as_of
+        ) as sampling:
+            freeze_span_fields(
+                writer,
+                draft,
+                head,
+                definition,
+                scope,
+                as_of=as_of,
+                cutoff=max(cutoff, coverage) if coverage else cutoff,
+                sampling=sampling,
+            )
+        drafts.append(draft)
+    # One aggregate input budget, not a separate 128 MiB allowance for every
+    # deficient recipe. Reconnects replay immutable ledger batches only.
+    overlay = scratch.enter_context(
+        SessionCapture(
+            writer.store,
+            schema=FIELD_VALUES.schema,
+            sources=lambda: (
+                source
+                for draft in drafts
+                for source in _frozen_batch_sources(writer, draft, FIELD_VALUES)
+            ),
+            role="checkpoint_span_backfill",
+        )
+    ).select
+    key = ", ".join(FIELD_VALUES.logical_key)
+    # A source-only arrival cannot fill a missing historical identity. Nor can
+    # we silently drop a previously retained member which now needs another
+    # destination backfilled. Leave these ambiguous cases to ordinary backfill.
+    eligible = f"SELECT {key} FROM ({fields}) WHERE is_deleted = 0 AND NOT ({removal})"
+    if writer.store.execute(
+        f"SELECT 1 FROM ({overlay}) WHERE (is_deleted = 0) != (({key}) IN ({eligible})) LIMIT 1",
+        params,
+    ):
+        raise MetricAdmissionUnproven("uncovered span membership requires backfill")
+    replacements = f"SELECT * FROM ({overlay}) WHERE is_deleted = 0"
+    # Both this quarter and the former quarter of EVERY displaced identity
+    # must be folded from the very same repaired fields. Never copy a stale
+    # total at the other end of the move.
+    former = (
+        f"SELECT DISTINCT field_id, field_version, bucket_start FROM ({fields}) "
+        f"WHERE ({key}) IN (SELECT {key} FROM ({replacements}))"
+    )
+    repaired = (
+        f"SELECT * FROM (({fields}) UNION ALL ({replacements})) "
+        f"ORDER BY generation DESC, {FIELD_VALUES.version_column} DESC LIMIT 1 BY {key}"
+    )
+    return repaired, former, missing, [draft.pk for draft in drafts]
+
+
+def _freeze_retained_buckets(
+    writer,
+    attempt,
+    head,
+    definitions,
+    cutoff,
+    *,
+    fields,
+    removal,
+    retained,
+    params,
+    proposal_totals=None,
+    extra_keys=None,
+    repaired=(),
+    dirty_entries=(),
+):
+    """Copy and rebuild disjoint quarters of one immutable checkpoint proposal."""
+    from tracer.services.derived_metrics.changes import utc
+    from tracer.services.derived_metrics.publication import MAX_BATCH_ROWS
+
+    recipes = {(str(d.metric_id), d.version): d for d in definitions}
+    # Ordinary dirty quarters belong to the recipes actually computed by the
+    # draft, not every old recipe loaded only to retire a pinned contribution.
+    draft_versions = {
+        (str(v["metric_id"]), v["version"]) for v in attempt.metric_versions
+    }
+    computed = [
+        key
+        for key, d in recipes.items()
+        if d.level != "user" and (not draft_versions or key in draft_versions)
+    ]
+    dirty, span_starts = set(), set()
+    if computed:
+        for entry in dirty_entries:
+            at = utc(datetime.fromisoformat(str(entry["bucket_start"])))
+            if at >= cutoff:
+                dirty.add(at)
+                if entry.get("level") == "span":
+                    span_starts.add(at)
+    dirty = sorted(dirty)
+    empty_retired = f"SELECT * FROM {RETIRED_PARTS.name} WHERE 0", {}
+    # Partition by time only when ordinary dirty nominations exceed one bind
+    # page. The first and last intervals also cover wholly untouched quarters.
+    for i in range(0, max(1, len(dirty)), MAX_BATCH_ROWS):
+        window = "bucket_start >= toDateTime64(%(checkpoint_floor)s, 6, 'UTC')"
+        wp = {"checkpoint_floor": dirty[i] if i else cutoff}
+        if i + MAX_BATCH_ROWS < len(dirty):
+            window += " AND bucket_start < %(checkpoint_until)s"
+            wp["checkpoint_until"] = dirty[i + MAX_BATCH_ROWS]
+        # Use the very same expired-unit relation as the field copy, AFTER
+        # collapse. Span and conversation versions can both disagree on starts.
+        keys = (
+            f"SELECT DISTINCT field_id, field_version, bucket_start FROM ({fields}) "
+            f"WHERE level IN ('span', 'conversation') AND is_deleted = 0 "
+            f"AND status != 'open' AND {window} AND ({removal})"
+        )
+        if extra_keys:
+            keys += f" UNION DISTINCT SELECT * FROM ({extra_keys}) WHERE {window}"
+        bound = {**params, **wp}
+        if dirty:
+            keys += (
+                " UNION DISTINCT SELECT toUUID(recipe.1) AS field_id, "
+                "toUInt32(recipe.2) AS field_version, bucket_start FROM "
+                "(SELECT toDateTime(arrayJoin(%(quarter_page)s), 'UTC') AS bucket_start) AS quarters "
+                "CROSS JOIN (SELECT arrayJoin(%(checkpoint_recipes)s) AS recipe) AS recipes"
+            )
+            bound.update(
+                quarter_page=dirty[i : i + MAX_BATCH_ROWS], checkpoint_recipes=computed
+            )
+        for page, key_range, bounds in _checkpoint_key_pages(writer.store, keys, bound):
+            where = (
+                f"is_deleted = 0 AND {window} AND {key_range} AND "
+                f"(metric_id, metric_version, bucket_start) NOT IN ({page.select})"
+            )
+            if proposal_totals is None:
+                writer.freeze_current(
+                    attempt,
+                    BUCKET_TOTALS,
+                    head,
+                    where=where,
+                    params={**wp, **bounds},
+                    large_pages=True,
+                )
+            else:
+                totals, bp = proposal_totals
+                writer.freeze(
+                    attempt,
+                    BUCKET_TOTALS,
+                    f"SELECT * FROM ({totals}) WHERE {where}",
+                    {**bp, **wp, **bounds},
+                    collect_payloads=False,
+                    row_limit=MAX_COMPACTION_ROWS,
+                )
+            if not page.digest[0]:
+                continue
+            for recipe, starts in _checkpoint_bucket_windows(writer.store, page):
+                definition = recipes.get(recipe)
+                if definition is None:
+                    raise MetricStateConflict("retention definition is unavailable")
+                if definition.level == "user":
+                    continue
+                source_backed = set(repaired)
+                if definition.level == "span" and recipe in computed:
+                    source_backed.update(
+                        (*recipe, at) for at in starts if at in span_starts
+                    )
+                _require_bucket_coverage(
+                    writer, head, recipe, starts, fields, params, source_backed
+                )
+                for batch, live, live_params in _checkpoint_live_windows(
+                    writer.store, retained, params, recipe, starts
+                ):
+                    writer._freeze_buckets(
+                        attempt,
+                        head,
+                        definition,
+                        live,
+                        live_params,
+                        complete_fields=True,
+                        retired_override=empty_retired,
+                        _dirty_starts=batch,
+                    )
+
+
+def purge_checkpoint(writer, attempt, manifest, *, recovery_pending=False):
     """Retry cleanup from a logically safe head; revocation happened at publish."""
     if connection.in_atomic_block:
         raise MetricStateConflict("physical purge requires an outer commit boundary")
@@ -1073,10 +1538,10 @@ def purge_checkpoint(writer, attempt, manifest, *, recovery_pending=False, now=N
             else None,
             through_generation=head.generation,
         )
-    return finish_pending_expiry(writer, now=now)
+    return finish_pending_expiry(writer)
 
 
-def finish_pending_expiry(writer, *, now=None, expiry_id=None):
+def finish_pending_expiry(writer, *, expiry_id=None):
     """Drain obligations independently of ledger/manifest GC and horizon changes.
 
     A successful early DELETE is NOT a completion receipt. Unknown submission
@@ -1256,9 +1721,12 @@ def finish_pending_expiry(writer, *, now=None, expiry_id=None):
                 f"SELECT count() FROM {table.name} WHERE {predicate}", params
             ) != [(0,)]:
                 raise MetricStateConflict("physical expiry scrub is incomplete")
+        # Saved SQL jobs can overlap the scrub. The pass start is a cutoff
+        # input, not evidence that the final verification had finished.
+        completed_at = writer.lease.clock()
         MetricErasureRequest.objects.filter(id=obligation.id).update(
             status="done",
-            completed_at=now or writer.lease.clock(),
+            completed_at=completed_at,
             receipts={
                 "write_barrier": {"drained": submissions.count()},
                 "final_scrub": {
@@ -1281,7 +1749,7 @@ def finish_pending_expiry(writer, *, now=None, expiry_id=None):
             store_payload__through_generation__lte=through,
         ).exclude(status="done").update(
             status="done",
-            completed_at=now or writer.lease.clock(),
+            completed_at=completed_at,
             receipts={"expiry_scrub": {"through_generation": through}},
         )
         # Namespace receipts have served their proof; no private rows or
@@ -1656,6 +2124,11 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
     idempotently retried; it must not be reported as a completed physical erase.
     All old physical revisions are deleted, not merely the current allowlist.
     """
+    with ExitStack() as scratch:
+        return _expire_project(writer, definitions, retention_days, now, as_of, scratch)
+
+
+def _expire_project(writer, definitions, retention_days, now, as_of, scratch):
     if connection.in_atomic_block:
         raise MetricStateConflict("physical purge requires an outer commit boundary")
     definitions = list(definitions)
@@ -1711,17 +2184,12 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         FIELD_VALUES, head, org_id=writer.org_id, project_id=project_id
     )
     params.update(p)
-    # Expiry belongs to the logical conversation, not a physical revision
-    # or one member span. A stored earlier anchor expires every field version
-    # and every dependency of that unit, even if another version/member has
-    # a newer timestamp. These predicates are AFTER committed-row collapse.
+    # An old anchor nominates the unit after collapse. It is conclusive for
+    # a conversation; _field_expiry resolves conflicting span starts before
+    # deciding which versioned fields and contributions to remove.
     expired_units = (
         f"SELECT DISTINCT level, unit_id FROM ({fields}) "
         "WHERE unit_start < toDateTime64(%(expiry_cutoff)s, 6, 'UTC')"
-    )
-    retained_units = (
-        f"SELECT DISTINCT level, unit_id FROM ({fields}) "
-        f"WHERE (level, unit_id) NOT IN ({expired_units})"
     )
     span_definitions = [d for d in definitions if d.level == "span"]
     span_dirty = (
@@ -1734,6 +2202,10 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         .exclude(status="done")
         .exists()
         and not any(recovery.values())
+        and not (
+            not head.published_by.source_ceilings.get("recovery_blocked")
+            and MetricRefreshAttempt.blocked_expiry_handoffs(head).exists()
+        )
         and not _expired_aggregates(writer, head, cutoff)
         and not span_dirty
         and not (
@@ -1757,7 +2229,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         )
         return {
             "unlimited": unlimited,
-            "purged": finish_pending_expiry(writer, now=now) if pending else False,
+            "purged": finish_pending_expiry(writer) if pending else False,
         }
     recovery, recovery_blocked = _classify_recovery(
         writer,
@@ -1770,6 +2242,29 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
     recovery_pending = any(recovery.values())
     # Native reads stay outside the lifecycle lock below.
     floor_terms = _floor_ceilings(writer, head, cutoff, span_dirty)
+    removal, disputed = _field_expiry(
+        writer,
+        scratch,
+        fields,
+        params,
+        "expiry_cutoff",
+        expired_units,
+        spans=span_definitions,
+    )
+    extra_keys, repaired, repair_drafts = None, set(), []
+    parent_fields = fields
+    if disputed:
+        fields, extra_keys, repaired, repair_drafts = _repair_span_quarters(
+            writer,
+            scratch,
+            head,
+            span_definitions,
+            fields,
+            params,
+            cutoff,
+            removal,
+            as_of or now,
+        )
     with serialized_project(project_id):
         # Classification ran without the lifecycle lock. Revocation need not
         # change the head id or lease when there were no open predecessors, so
@@ -1777,6 +2272,12 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         current = MetricProjectRefresh.for_project(project_id).head_manifest
         if current is None or current.id != head.id or current.revoked_at is not None:
             raise MetricStateConflict("retention base changed or expired")
+        for draft_id in repair_drafts:
+            MetricRefreshAttempt._locked_open(
+                draft_id,
+                state=MetricRefreshAttempt.State.PREPARED,
+                **writer.lease.check(),
+            )
         _require_retention_definitions(writer, definitions)
         # Register the successor under the same lock as these fresh checks:
         # subsequent revocations must abort it before any copy can publish.
@@ -1784,6 +2285,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             purpose="compaction",
             ceilings={
                 "retention_cutoff": cutoff,
+                **({"as_of": as_of or now} if repair_drafts else {}),
                 **floor_terms,
                 "recovery_pending": recovery_pending,
                 # Expired handoffs are discharged without retaining their ids
@@ -1810,21 +2312,22 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         # No ClickHouse work inside this short atomic handoff. An interrupted
         # append rolls it all back, leaving every predecessor and its ledger
         # available to the next fenced writer.
-        for predecessor in predecessors:
+        for predecessor in (*predecessors, *repair_drafts):
             MetricRefreshAttempt.abort(
                 predecessor, reason="retention_replan", **writer.lease.check()
             )
         # Yielded passes' ledgers are in this checkpoint's handoff too.
         writer.mark_yields_carried()
+    retain = f"NOT ({removal})"
+    retained_units = f"SELECT DISTINCT level, unit_id FROM ({fields}) WHERE {retain}"
+    owners = _owner_relation(parent_fields, "expiry_cutoff")
+    retained = f"SELECT * FROM ({fields}) WHERE {retain}"
     if span_definitions:
+        retained = _retained_fields(fields, retain, "expiry_cutoff", owners)
         writer.freeze(
             attempt,
             FIELD_VALUES,
-            _retained_fields(
-                fields,
-                f"(level, unit_id) NOT IN ({expired_units})",
-                "expiry_cutoff",
-            ),
+            retained,
             params,
             collect_payloads=False,
             row_limit=MAX_COMPACTION_ROWS,
@@ -1834,7 +2337,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             attempt,
             FIELD_VALUES,
             head,
-            where=f"(level, unit_id) NOT IN ({expired_units})",
+            where=retain,
             params=params,
             large_pages=True,
         )
@@ -1844,31 +2347,14 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
         "dirty_before",
         [{"level": "span", "bucket_start": value} for value in sorted(span_dirty)],
     )
-    for table in (BUCKET_TOTALS, UNIT_STATE, SOURCE_DEPENDENCIES):
-        where = "1"
-        if table == BUCKET_TOTALS and span_definitions and span_dirty:
-            where = (
-                "NOT ((metric_id, metric_version) IN %(expiry_span_metrics)s "
-                "AND bucket_start IN %(expiry_span_buckets)s)"
-            )
-            params.update(
-                expiry_span_metrics=tuple(
-                    (UUID(str(d.metric_id)), d.version) for d in span_definitions
-                ),
-                expiry_span_buckets=tuple(sorted(span_dirty)),
-            )
-        if table == BUCKET_TOTALS:
-            where = f"({where}) AND is_deleted = 0 AND bucket_start >= toDateTime64(%(expiry_cutoff)s, 6, 'UTC')"
+    for table in (UNIT_STATE, SOURCE_DEPENDENCIES):
         if table == SOURCE_DEPENDENCIES:
             # B04's unit_start is the SPAN start. A recent member does not
             # make an expired conversation's private membership retainable.
-            where = (
-                "canonical_session_id IN (SELECT unit_id FROM "
-                f"({retained_units}) WHERE level = 'conversation')"
-            )
-        elif table == UNIT_STATE:
+            where = f"canonical_session_id IN ({owners})"
+        else:
             where = f"(level, unit_id) IN ({retained_units})"
-        if table == SOURCE_DEPENDENCIES and any(d.level == "span" for d in definitions):
+        if table == SOURCE_DEPENDENCIES and span_definitions:
             sql, bound = committed_rows_select(
                 table, head, org_id=writer.org_id, project_id=project_id
             )
@@ -1889,32 +2375,34 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             attempt,
             table,
             head,
-            where=_current_retained(fields, "expiry_cutoff"),
+            where=_current_retained(parent_fields, "expiry_cutoff", owners),
             params=params,
             large_pages=True,
         )
-    if span_definitions:
-        # The checkpoint's complete live fields and anonymous parts, captured
-        # once (one frozen batch per INSERT), never inlined into bucket pages.
-        with ProposalCaptures(writer, attempt, head) as captures:
-            new_live, nlp = captures.overlay(FIELD_VALUES, attempt=attempt)
-            new_retired, nrp = captures.overlay(RETIRED_PARTS, attempt=attempt)
-            for definition in span_definitions:
-                writer._freeze_buckets(
-                    attempt,
-                    head,
-                    definition,
-                    new_live,
-                    nlp,
-                    complete_fields=True,
-                    retired_override=(new_retired, nrp),
-                )
+    # Only removal and source-repaired keys need new totals. Carried recovery
+    # nominations still belong to the next refresh; do not consume them here.
+    _freeze_retained_buckets(
+        writer,
+        attempt,
+        head,
+        definitions,
+        cutoff,
+        fields=fields,
+        removal=removal,
+        retained=retained,
+        params=params,
+        extra_keys=extra_keys,
+        repaired=repaired,
+    )
+    # The successor ledger now owns every output byte. Release source/repair
+    # scratch before publication can revoke the parent and scrub those drafts.
+    scratch.close()
     writer.seal(attempt, cursors={"pending_expiry": False})
     manifest = writer.stage_and_publish(attempt)
     # Revocations and cleanup intent are ALREADY committed with this manifest.
     # Never roll PG back to evidence removed by a physical mutation.
     complete = purge_checkpoint(
-        writer, attempt, manifest, recovery_pending=recovery_pending, now=now
+        writer, attempt, manifest, recovery_pending=recovery_pending
     )
     return {"unlimited": unlimited, "purged": complete, "manifest": str(manifest.id)}
 

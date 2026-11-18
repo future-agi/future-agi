@@ -434,12 +434,16 @@ BUCKET_INPUT_BYTES = 32 * 1024 * 1024
 class BucketRangeOverflow(ValueError):
     """Discard the scratch namespace; avoid retrying the same oversized range."""
 
-    def __init__(self, count, size, *, indivisible=False):
+    def __init__(self, count, size, *, indivisible=False, byte_limit=None):
         self.indivisible = indivisible
         # Count includes physical revisions. A smaller raw prefix may still end
         # in the same indivisible key; target=1 is the terminal fail-closed case.
         self.target_rows = max(
-            1, min(count // 2, int(count * BUCKET_INPUT_BYTES / max(size, 1) / 2))
+            1,
+            min(
+                count // 2,
+                int(count * (byte_limit or BUCKET_INPUT_BYTES) / max(size, 1) / 2),
+            ),
         )
         super().__init__("bucket physical revision/byte budget exceeded")
 
@@ -476,6 +480,18 @@ class BucketFieldScan:
     def __init__(self, plan, store, target_rows):
         if type(target_rows) is not int or not 1 <= target_rows <= BUCKET_INPUT_ROWS:
             raise ValueError("invalid bucket input range size")
+        self.byte_limit = BUCKET_INPUT_BYTES
+        if plan.complete_fields:
+            from tracer.services.derived_metrics.frozen_relations import (
+                CAPTURE_BYTES,
+                CAPTURE_ROWS,
+                FrozenRelationOverflow,
+            )
+
+            if CAPTURE_ROWS < 1:
+                raise FrozenRelationOverflow("checkpoint input budget is empty")
+            target_rows = min(target_rows, CAPTURE_ROWS)
+            self.byte_limit = min(self.byte_limit, CAPTURE_BYTES)
         self.plan, self.store, self.target_rows = plan, store, target_rows
         self.ranges = []
         self.exhausted_routes = []
@@ -561,9 +577,18 @@ class BucketFieldScan:
                     f"FROM ({union}) LIMIT {BUCKET_INPUT_ROWS + 1})",
                     bound,
                 )[0]
-                if count > BUCKET_INPUT_ROWS or size > BUCKET_INPUT_BYTES:
+                if count > BUCKET_INPUT_ROWS or size > self.byte_limit:
+                    indivisible = tuple(first) == upper
+                    if self.plan.complete_fields and indivisible:
+                        from tracer.services.derived_metrics.frozen_relations import (
+                            FrozenRelationOverflow,
+                        )
+
+                        raise FrozenRelationOverflow(
+                            "checkpoint field exceeds input budget"
+                        )
                     raise BucketRangeOverflow(
-                        count, size, indivisible=tuple(first) == upper
+                        count, size, indivisible=indivisible, byte_limit=self.byte_limit
                     )
                 if self.plan.complete_fields:
                     current = union  # complete-empty must never fall back to parent

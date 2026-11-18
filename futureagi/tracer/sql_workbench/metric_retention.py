@@ -181,17 +181,19 @@ def invalidate_scope(organization_id, project_id=None):
 def result_allowed(job):
     if not uses_metrics(job.sql):
         return True
+    # A job created before deletion finished may have read the old native rows.
+    overlaps_job = ~Q(status="done") | Q(completed_at__gte=job.created_at)
     return (
         window_retained(job.organization_id, job.start)
         and not erasures(job.organization_id, job.project_id)
-        .filter(Q(requested_at__gte=job.created_at) | ~Q(status="done"))
+        # Older scheduled-expiry receipts stored the pass start as completion.
+        # Never weaken their previous request-time fence during an upgrade.
+        .filter(overlaps_job | Q(requested_at__gte=job.created_at))
         .exists()
         and not snapshot_deletions(
             job.organization_id, job.project_id, job.start, job.end
         )
-        # A query admitted during deletion can have read the old native rows.
-        # Completion (not request creation) is the safe lower bound for reuse.
-        .filter(Q(completed_at__gte=job.created_at) | ~Q(status="done"))
+        .filter(overlaps_job)
         .exists()
     )
 

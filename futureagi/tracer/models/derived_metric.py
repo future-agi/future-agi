@@ -1022,6 +1022,9 @@ class MetricRefreshAttempt(models.Model):
         State.VERIFIED: (State.COMMITTED, State.ABORTED),
     }
     OPEN_STATES = (State.PREPARED, State.STAGING, State.VERIFIED)
+    # History GC has dropped the payload and unregistered the native namespace;
+    # the audit row alone bridges a blocked handoff until the head moves.
+    GC_BLOCKED_HANDOFF = "blocked_handoff_gc"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     project = models.ForeignKey(
@@ -1479,6 +1482,22 @@ class MetricRefreshAttempt(models.Model):
             attempt_id=attempt_id, verified_at__isnull=True
         ).count()
         raise MetricStateConflict(f"{missing} batches have no visibility receipt")
+
+    @classmethod
+    def blocked_expiry_handoffs(cls, head):
+        """Unpublished scheduled expiry already stripped an unproven owner.
+
+        That classification belongs to the base until a successor carries the
+        bit. Neither an empty private ledger nor a change of writer is proof.
+        Once the head moves, its own ceilings are authoritative again.
+        """
+        return cls.objects.filter(
+            project_id=head.project_id,
+            parent_manifest_id=head.pk,
+            purpose=cls.Purpose.COMPACTION,
+            source_ceilings__has_key="retention_cutoff",
+            source_ceilings__recovery_blocked=True,
+        ).exclude(state=cls.State.COMMITTED)
 
     @classmethod
     def abort(
@@ -2115,6 +2134,14 @@ class MetricReadManifest(models.Model):
                 if refresh.head_manifest_id
                 else None
             )
+            if (
+                parent
+                and not attempt.source_ceilings.get("recovery_blocked")
+                and MetricRefreshAttempt.blocked_expiry_handoffs(parent).exists()
+            ):
+                # A writer prepared before classification cannot publish an
+                # unblocked sibling over the same base, even on replay.
+                raise MetricStateConflict("blocked recovery requires a durable handoff")
             if parent and parent.published_by.source_ceilings.get("recovery_pending"):
                 forwarded = attempt.source_ceilings.get("recovery_pending")
                 consumed = attempt.source_ceilings.get("consumes_recovery") == str(

@@ -515,6 +515,21 @@ def collect_history(project_id, *, now=None, limit=1000):
         )
         retained = list(manifests.exclude(id__in=candidates))
         keep_attempts = set(recoverable.values_list("id", flat=True))
+        blocker = None
+        if not head.published_by.source_ceilings.get("recovery_blocked"):
+            # Once reduced to a bare audit row, keep one classifier for this
+            # base. A failed expiry with any payload still takes NORMAL GC.
+            blocker = (
+                MetricRefreshAttempt.blocked_expiry_handoffs(head)
+                .only("id", "abort_reason")
+                .order_by("-generation")
+                .first()
+            )
+            if (
+                blocker is not None
+                and blocker.abort_reason == MetricRefreshAttempt.GC_BLOCKED_HANDOFF
+            ):
+                keep_attempts.add(blocker.pk)
         for manifest in retained:
             keep_attempts.add(manifest.published_by_id)
             keep_attempts.update(a for _, a in manifest.allowed_attempts())
@@ -566,6 +581,15 @@ def collect_history(project_id, *, now=None, limit=1000):
             },
         )
         manifests.filter(id__in=candidates).delete()
+        if blocker is not None and blocker.pk in expired_attempts:
+            # Its native cleanup is in the intent above. Drop its frozen PG
+            # payload/receipts too, but not the only durable blocked bit.
+            blocker.ledger_chunks.all().delete()
+            blocker.batches.all().delete()
+            attempts.filter(pk=blocker.pk).update(
+                abort_reason=MetricRefreshAttempt.GC_BLOCKED_HANDOFF
+            )
+            expired_attempts.remove(blocker.pk)
         attempts.filter(id__in=expired_attempts).delete()
         return intent
 
