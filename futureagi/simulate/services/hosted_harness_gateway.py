@@ -160,6 +160,23 @@ _PROGRESS_FILE_TIMEOUT_SECONDS = 5
 _PROVIDER_UNREACHABLE_GRACE_SECONDS = 180
 
 
+def _retire_stale_chat_lease(lease: HostedHarnessConversationLease | None) -> str:
+    """Under the conversation's lock: end a chat sandbox of its own that is no longer
+    live and is not wanted. The provider ref of the sandbox to delete, if it has one;
+    an attempt's sandbox belongs to the attempt, whose cleanup still reads its spend."""
+    state = HostedHarnessConversationLease.State
+    if (
+        lease is None
+        or lease.attempt_id is not None
+        or lease.state not in (state.ACTIVE, state.STARTING)
+    ):
+        return ""
+    lease.state = state.EXPIRED
+    lease.save(update_fields=["state", "updated_at"])
+    ref = str(lease.provider_ref or "")
+    return "" if ref.startswith("pending:") else ref
+
+
 def _empty_workspace_archive() -> bytes:
     stream = io.BytesIO()
     with tarfile.open(fileobj=stream, mode="w:gz"):
@@ -3140,6 +3157,7 @@ class HostedHarnessGateway:
         }
         from simulate.services.harness_versioning import rebuild
         from simulate.services.hosted_harness_conversation import (
+            give_up_platform_landing,
             platform_landing_pending,
             settle_stop_only_queue,
         )
@@ -3150,10 +3168,25 @@ class HostedHarnessGateway:
             if rebuild.landing_pending(job):
                 # A rebuild's result is landing; chat restarts once it has.
                 return None
-            if platform_landing_pending(job, conversation):
+            wanted = rebuild.wanted_agent_version(job, conversation)
+            # Only a start that will claim a cold sandbox gives up on the files: a kept
+            # warm sandbox that runs as the wanted agent, or a repeated ensure with
+            # nothing waiting, is not waiting. A live sandbox of another agent is
+            # replaced by the claim, so that start gives up like a cold one. This is
+            # outside the atomic block below: it takes the environment's lock first.
+            kept = HostedHarnessConversationLease.no_workspace_objects.filter(
+                conversation=conversation
+            ).first()
+            keeps_warm = (
+                runtime_is_live(kept)
+                and kept.attempt_id is None
+                and rebuild.runs_as_wanted_agent(kept, wanted)
+            )
+            if not keeps_warm and _unacked_commands(conversation).exists():
+                give_up_platform_landing(job=job, conversation=conversation)
+            if platform_landing_pending(job=job, conversation=conversation):
                 # The build check's files are still publishing; chat starts once they settle.
                 return None
-            wanted = rebuild.wanted_agent_version(job, conversation)
         if job.state not in terminal_states:
             attempt = (
                 HostedHarnessAttempt.no_workspace_objects.filter(
@@ -3171,6 +3204,7 @@ class HostedHarnessGateway:
         claim_ref = f"pending:{uuid.uuid4()}"
         claim_hash = hashlib.sha256(claim_ref.encode()).hexdigest()
         retired_ref = ""
+        nothing_to_start = False
         with transaction.atomic():
             conversation = (
                 HostedHarnessConversation.no_workspace_objects.select_for_update().get(
@@ -3200,11 +3234,20 @@ class HostedHarnessGateway:
                 live = lease
             elif runtime_start_pending(lease, now=now):
                 return lease
-            elif not runtime_is_live(lease, now=now) and settle_stop_only_queue(
-                conversation
-            ):
+            elif (
                 # Nothing is running, so a Stop has nothing to stop.
-                return None
+                (
+                    not runtime_is_live(lease, now=now)
+                    and settle_stop_only_queue(conversation)
+                )
+                # A start asked for twice, or late, after what it was for is gone. A
+                # live sandbox of another agent is not replaced by an idle one either:
+                # a start with nothing waiting starts nothing.
+                or (attempt is None and not _unacked_commands(conversation).exists())
+            ):
+                # Whatever chat sandbox of its own the lease still names is retired.
+                retired_ref = _retire_stale_chat_lease(lease)
+                nothing_to_start = True
             else:
                 live = None
                 # A chat sandbox of its own is retired here; an attempt's sandbox belongs to
@@ -3243,12 +3286,32 @@ class HostedHarnessGateway:
                         "updated_at",
                     ]
                 )
+        if nothing_to_start:
+            if retired_ref and not self._delete_chat_sandbox(
+                retired_ref, conversation.id
+            ):
+                # The recovery sweep sends the stop again.
+                rebuild._mark_sandbox_stop_unsent(str(conversation.id), retired_ref)
+            return None
         if live is not None:
-            if attempt is None:
-                self._renew_chat_idle_window(live)
+            if (
+                attempt is None
+                and not self._renew_chat_idle_window(live)
+                and claim_again
+            ):
+                # A close or a release ended the lease while it was renewed: what waits
+                # for a sandbox starts one now, not at the recovery sweep.
+                return self.ensure_conversation_runtime(
+                    job,
+                    conversation=conversation,
+                    endpoint_base_url=endpoint_base_url,
+                    claim_again=False,
+                )
             return live
-        if retired_ref:
-            self._delete_chat_sandbox(retired_ref, conversation.id)
+        if retired_ref and not self._delete_chat_sandbox(retired_ref, conversation.id):
+            # The lease row now names the claim, so there is no mark to leave on it:
+            # the stop is asked for as a task, which retries.
+            self._schedule_retired_stop(conversation.id, retired_ref)
         try:
             if attempt is not None:
                 return self._start_chat_in_sandbox(
@@ -3300,7 +3363,21 @@ class HostedHarnessGateway:
             )
         return started
 
-    def _delete_chat_sandbox(self, provider_ref: str, conversation_id: Any) -> None:
+    @staticmethod
+    def _schedule_retired_stop(conversation_id: Any, provider_ref: str) -> None:
+        from simulate.tasks import harness_nudges as tasks
+
+        try:
+            tasks.schedule_sandbox_stop(str(conversation_id), provider_ref)
+        except Exception:  # noqa: BLE001 - the sandbox still dies at its provider's limit
+            logger.exception(
+                "retired conversation sandbox stop not scheduled conversation=%s",
+                conversation_id,
+            )
+
+    def _delete_chat_sandbox(self, provider_ref: str, conversation_id: Any) -> bool:
+        """Delete a retired chat sandbox. False when it could not be deleted and is
+        still there; a sandbox already gone counts as deleted."""
         try:
             self.client.delete(
                 self.client.get(
@@ -3310,15 +3387,34 @@ class HostedHarnessGateway:
                 wait=True,
             )
         except SandboxNotFoundError:
-            pass
+            return True
         except Exception:
             logger.exception(
                 "retired conversation sandbox deletion failed conversation=%s",
                 conversation_id,
             )
+            return False
+        return True
 
-    def _renew_chat_idle_window(self, lease: HostedHarnessConversationLease) -> None:
-        """Keep a chat sandbox for the idle window after the user's latest message."""
+    @staticmethod
+    def _start_still_holds_lease(
+        lease: HostedHarnessConversationLease, provider_ref: str
+    ) -> bool:
+        """Whether the lease a finished start issued still names its sandbox and is not
+        expired or released."""
+        gone = HostedHarnessConversationLease.State
+        return (
+            HostedHarnessConversationLease.no_workspace_objects.filter(
+                id=lease.id, provider_ref=provider_ref
+            )
+            .exclude(state__in=(gone.EXPIRED, gone.RELEASED))
+            .exists()
+        )
+
+    def _renew_chat_idle_window(self, lease: HostedHarnessConversationLease) -> bool:
+        """Keep a chat sandbox for the idle window after the user's latest message.
+        Whether the lease is still the one that was renewed: ``False`` when a close, a
+        release or a new claim got to the row first."""
         ttl_seconds = _chat_idle_seconds()
         try:
             self.client.renew_ttl(
@@ -3333,10 +3429,14 @@ class HostedHarnessGateway:
                 "conversation sandbox renewal failed conversation=%s",
                 lease.conversation_id,
             )
-            return
+            return True
         gone = HostedHarnessConversationLease.State
         renewed = (
-            HostedHarnessConversationLease.no_workspace_objects.filter(id=lease.id)
+            # The row survives a re-claim, so the claim's own ref fences the renewal
+            # too.
+            HostedHarnessConversationLease.no_workspace_objects.filter(
+                id=lease.id, provider_ref=lease.provider_ref
+            )
             .exclude(state__in=(gone.EXPIRED, gone.RELEASED))
             .update(
                 expires_at=timezone.now() + timedelta(seconds=ttl_seconds),
@@ -3349,6 +3449,7 @@ class HostedHarnessGateway:
                 "conversation sandbox renewal refused conversation=%s",
                 lease.conversation_id,
             )
+        return bool(renewed)
 
     def _start_chat_sandbox(
         self,
@@ -3363,7 +3464,8 @@ class HostedHarnessGateway:
 
         With ``agent_version`` the sandbox gets that version's agent settings and
         source; secret refs name its credentials only, never a value. ``None`` when
-        ``claim_ref``'s claim was given up meanwhile; the new sandbox is deleted.
+        ``claim_ref``'s claim was given up meanwhile, or the lease was ended before the
+        start finished; the new sandbox is deleted.
         """
         workspace_archive = chat_workspace_for(
             job, conversation, chat_state=load_workspace_archive(conversation)
@@ -3540,6 +3642,12 @@ class HostedHarnessGateway:
                 ),
             )
             sandbox.fs.upload_file(str(command.cmd_id).encode(), _CHAT_COMMAND_ID_FILE)
+            if not self._start_still_holds_lease(capability.lease, str(sandbox.id)):
+                # The lease was ended while this start ran (a retire, a close, a
+                # re-claim): the sandbox is nobody's, and the lease is not revived.
+                if not self._delete_chat_sandbox(str(sandbox.id), conversation.id):
+                    self._schedule_retired_stop(conversation.id, str(sandbox.id))
+                return None
             record_runtime_started(conversation)
             return capability.lease
         except Exception:

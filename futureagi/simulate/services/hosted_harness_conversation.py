@@ -10,9 +10,9 @@ import tarfile
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import partial
-from typing import Any
+from typing import Any, TypedDict
 
 from django.conf import settings
 from django.db import transaction
@@ -56,6 +56,11 @@ logger = logging.getLogger(__name__)
 # polled for this long is gone, whatever its provider still reports.
 RUNTIME_STALE_SECONDS = 90
 _HEARTBEAT_WRITE_SECONDS = 5
+# The idle settle deletes a chat's own sandbox only after its process has been silent this
+# long. A live process polls every few seconds, so ten minutes of silence is a dead one;
+# the shorter stale mark above only decides what to restart, and a process that is merely
+# slow (a stalled network, a paused host) must not lose its sandbox to it.
+RUNTIME_DEAD_SECONDS = max(10 * 60, 6 * RUNTIME_STALE_SECONDS)
 # Restarts that keep failing back off, then give up so the user is not left waiting forever.
 RUNTIME_RETRY_BACKOFF_SECONDS = 60
 RUNTIME_GIVE_UP_SECONDS = 15 * 60
@@ -192,7 +197,12 @@ def settle_stop_only_queue(conversation: HostedHarnessConversation) -> bool:
     )
     settle_interrupted_turn(conversation)
     conversation.state = HostedHarnessConversation.State.COLD
-    conversation.save(update_fields=["state", "active_invocation_id", "updated_at"])
+    # Nothing runs to take an answer, and the next message would go out as a reply to a
+    # question no sandbox is waiting on.
+    conversation.blocking_input = None
+    conversation.save(
+        update_fields=["state", "active_invocation_id", "blocking_input", "updated_at"]
+    )
     return True
 
 
@@ -203,12 +213,71 @@ def _command_ids(turn: HostedHarnessConversationEvent) -> list[str]:
     return [str(command_id)] if command_id else []
 
 
+def _turn_finished_well(turn: HostedHarnessConversationEvent) -> bool:
+    """A turn that reported success, or one reported again with no outcome after its own
+    end was lost (``replayed``) that nothing says went badly: no stop, no failure.
+
+    Only what happened since the command's latest start counts: a turn that was
+    interrupted, then run again in full, is judged on the run that was replayed."""
+    payload = turn.payload or {}
+    if payload.get("outcome") == "success":
+        return True
+    command_id = payload.get("command_message_id")
+    if not payload.get("replayed") or not command_id:
+        return False
+    earlier = HostedHarnessConversationEvent.no_workspace_objects.filter(
+        conversation_id=turn.conversation_id,
+        sequence__lt=turn.sequence,
+        payload__command_message_id=command_id,
+    )
+    started = (
+        earlier.filter(kind="turn_started")
+        .order_by("-sequence")
+        .values_list("sequence", flat=True)
+        .first()
+    )
+    if started is not None:
+        earlier = earlier.filter(sequence__gt=started)
+    # Read in Python: a JSON key that is missing is NULL in SQL, and a filter on it
+    # would skip the very row that reported no outcome.
+    for kind, earlier_payload in earlier.filter(
+        kind__in=("turn_interrupted", "turn_completed")
+    ).values_list("kind", "payload"):
+        if kind == "turn_interrupted":
+            return False
+        earlier_payload = earlier_payload or {}
+        if earlier_payload.get("outcome") == "success":
+            continue
+        # An earlier replay with no outcome says nothing about how the turn went.
+        if earlier_payload.get("replayed") and "outcome" not in earlier_payload:
+            continue
+        return False
+    return True
+
+
+def latest_turn_finished_well(
+    conversation_id: Any, *, after_sequence: int = 0
+) -> HostedHarnessConversationEvent | None:
+    """The newest turn after ``after_sequence`` that ``_turn_finished_well`` accepts:
+    one that reported success, or was replayed with nothing bad before it."""
+    candidates = HostedHarnessConversationEvent.no_workspace_objects.filter(
+        Q(payload__outcome="success") | Q(payload__replayed=True),
+        conversation_id=conversation_id,
+        kind="turn_completed",
+        sequence__gt=after_sequence,
+    ).order_by("-sequence")
+    for turn in candidates.iterator():
+        if _turn_finished_well(turn):
+            return turn
+    return None
+
+
 def _platform_check_checkpoint(
     turn: HostedHarnessConversationEvent | None,
 ) -> HostedHarnessConversationEvent | None:
     """The checkpoint a successful platform turn after the build (its check) committed,
     chosen as its promotion chooses it."""
-    if turn is None or (turn.payload or {}).get("outcome") != "success":
+    if turn is None or not _turn_finished_well(turn):
         return None
     command = HostedHarnessConversationMessage.no_workspace_objects.filter(
         conversation_id=turn.conversation_id,
@@ -240,43 +309,123 @@ PLATFORM_LANDING_WAIT_SECONDS = (
 )
 
 
+class ConversationCheckpointEntry(TypedDict, total=False):
+    """What the environment records of a conversation's published checkpoint
+    (``metadata.conversation_checkpoints[<conversation id>]``). Entries written before
+    ``refused_sequence`` existed lack it; the others are as they always were."""
+
+    digest: str
+    sequence: int
+    content_revision: str
+    # A platform turn's checkpoint at or below this sequence was refused for good.
+    refused_sequence: int
+    # The drafts the conversation's workspace was composed on.
+    draft_basis: dict[str, Any]
+
+
+def parse_checkpoint_entry(raw: Any) -> ConversationCheckpointEntry:
+    """A recorded entry as a typed one. Fields it does not know are kept as they are,
+    and an entry from before ``refused_sequence`` parses without it."""
+    if not isinstance(raw, dict):
+        return {}
+    entry: dict[str, Any] = dict(raw)
+    for name in ("sequence", "refused_sequence"):
+        if name in entry:
+            try:
+                entry[name] = int(entry[name] or 0)
+            except (TypeError, ValueError):
+                del entry[name]
+    return entry  # type: ignore[return-value]
+
+
+def _unsettled_platform_landing(
+    *, job: HostedHarnessJob, conversation: HostedHarnessConversation
+) -> tuple[HostedHarnessConversationEvent, HostedHarnessConversationEvent] | None:
+    """The platform's check turn and its checkpoint, when the files have neither landed
+    nor been refused."""
+    environment = job.environment or job
+    if environment.state != HostedHarnessJob.State.COMPLETED:
+        # The promotion publishes nothing to it, so nothing will land.
+        return None
+    turn = (
+        conversation.events.filter(kind="turn_completed").order_by("-sequence").first()
+    )
+    committed = _platform_check_checkpoint(turn)
+    if committed is None:
+        return None
+    settled = parse_checkpoint_entry(
+        (
+            ((environment.payload or {}).get("metadata") or {}).get(
+                "conversation_checkpoints"
+            )
+            or {}
+        ).get(str(conversation.id))
+    )
+    if (
+        settled.get("digest") != committed.payload["digest"]
+        and settled.get("sequence", 0) < committed.sequence
+        and settled.get("refused_sequence", 0) < committed.sequence
+    ):
+        return turn, committed
+    return None
+
+
 def platform_landing_pending(
-    job: HostedHarnessJob, conversation: HostedHarnessConversation, *, now=None
+    *,
+    job: HostedHarnessJob,
+    conversation: HostedHarnessConversation,
+    now: datetime | None = None,
 ) -> bool:
     """The platform's own turn after the build (its check) succeeded and its files have
     neither landed nor been refused: a sandbox started now would hold the files from
     before it. A publish that never settles holds chat no longer than
-    ``PLATFORM_LANDING_WAIT_SECONDS``."""
+    ``PLATFORM_LANDING_WAIT_SECONDS``; ``give_up_platform_landing`` then fences it."""
     now = now or timezone.now()
-    environment = job.environment or job
-    if environment.state != HostedHarnessJob.State.COMPLETED:
-        # The promotion publishes nothing to it, so nothing will land.
-        return False
-    turn = (
-        conversation.events.filter(kind="turn_completed").order_by("-sequence").first()
+    unsettled = _unsettled_platform_landing(job=job, conversation=conversation)
+    return unsettled is not None and now - unsettled[0].created_at <= timedelta(
+        seconds=PLATFORM_LANDING_WAIT_SECONDS
     )
-    if turn is None or now - turn.created_at > timedelta(
+
+
+PLATFORM_LANDING_NOT_KEPT = (
+    "The build's check changed your files, but they were not published in time, so "
+    "those changes were not kept. Ask again if you want them."
+)
+
+
+def give_up_platform_landing(
+    *,
+    job: HostedHarnessJob,
+    conversation: HostedHarnessConversation,
+    now: datetime | None = None,
+) -> bool:
+    """Chat stops waiting for a check's files that never settled: they are refused for
+    good, so a late landing neither replaces what chat starts from nor makes the
+    person's next save stale, and the person is told once. Whether it gave up."""
+    now = now or timezone.now()
+    unsettled = _unsettled_platform_landing(job=job, conversation=conversation)
+    if unsettled is None or now - unsettled[0].created_at <= timedelta(
         seconds=PLATFORM_LANDING_WAIT_SECONDS
     ):
         return False
-    committed = _platform_check_checkpoint(turn)
-    if committed is None:
+    if not record_platform_landing_refused(
+        conversation_id=str(conversation.id), turn_sequence=unsettled[0].sequence
+    ):
         return False
-    settled = (
-        ((environment.payload or {}).get("metadata") or {}).get(
-            "conversation_checkpoints"
+    try:
+        _post_chat_line(str(conversation.id), PLATFORM_LANDING_NOT_KEPT)
+    except Exception:  # noqa: BLE001 - the fence holds; chat still starts
+        logger.exception(
+            "conversation landing give-up not reported conversation=%s", conversation.id
         )
-        or {}
-    ).get(str(conversation.id)) or {}
-    return (
-        settled.get("digest") != committed.payload["digest"]
-        and int(settled.get("sequence") or 0) < committed.sequence
-        and int(settled.get("refused_sequence") or 0) < committed.sequence
-    )
+    return True
 
 
-def record_platform_landing_refused(conversation_id: str, turn_sequence: int) -> None:
-    """A platform turn's files were refused for good: chat stops waiting for them."""
+def record_platform_landing_refused(
+    *, conversation_id: str, turn_sequence: int
+) -> bool:
+    """A platform turn's files were refused for good: chat stops waiting for them.
+    Whether this call recorded it."""
     try:
         committed = _platform_check_checkpoint(
             HostedHarnessConversationEvent.no_workspace_objects.filter(
@@ -286,7 +435,7 @@ def record_platform_landing_refused(conversation_id: str, turn_sequence: int) ->
             ).first()
         )
         if committed is None:
-            return
+            return False
         job = (
             HostedHarnessConversation.no_workspace_objects.select_related("job")
             .get(id=conversation_id)
@@ -299,23 +448,33 @@ def record_platform_landing_refused(conversation_id: str, turn_sequence: int) ->
             payload = dict(environment.payload or {})
             metadata = dict(payload.get("metadata") or {})
             checkpoints = dict(metadata.get("conversation_checkpoints") or {})
-            entry = dict(checkpoints.get(str(conversation_id)) or {})
-            if int(entry.get("refused_sequence") or 0) >= committed.sequence:
-                return
+            entry = parse_checkpoint_entry(checkpoints.get(str(conversation_id)))
+            if (
+                entry.get("refused_sequence", 0) >= committed.sequence
+                # The files landed between the read above and this lock: they are kept,
+                # not fenced.
+                or entry.get("digest") == committed.payload["digest"]
+                or entry.get("sequence", 0) >= committed.sequence
+            ):
+                return False
             entry["refused_sequence"] = committed.sequence
             checkpoints[str(conversation_id)] = entry
             metadata["conversation_checkpoints"] = checkpoints
             payload["metadata"] = metadata
             environment.payload = payload
             environment.save(update_fields=["payload", "updated_at"])
+        return True
     except Exception:  # noqa: BLE001 - chat still starts at the give-up
         logger.exception(
             "conversation landing refusal not recorded conversation=%s",
             conversation_id,
         )
+        return False
 
 
-def start_chat_after_platform_landing(conversation_id: str, turn_sequence: int) -> None:
+def start_chat_after_platform_landing(
+    *, conversation_id: str, turn_sequence: int
+) -> None:
     """A platform turn's files landed or were refused: a person's message that waited on
     them starts now, not at the recovery sweep's next pass."""
     from simulate.services.hosted_harness_ingress import _public_base_url
@@ -339,7 +498,13 @@ def start_chat_after_platform_landing(conversation_id: str, turn_sequence: int) 
             return
         if not _unacked_commands(command.conversation).exists():
             return
-        schedule_conversation_runtime(conversation_id, _public_base_url(None))
+        # Under an id of its own: a start that is running has read the wait already, and
+        # a request for its id would merge into it and be dropped.
+        schedule_conversation_runtime(
+            conversation_id,
+            _public_base_url(None),
+            wakeup=f"landing-{turn_sequence}",
+        )
     except Exception:  # noqa: BLE001 - the recovery sweep starts it
         logger.exception(
             "conversation start after landing failed conversation=%s", conversation_id
@@ -497,6 +662,30 @@ def _settle_idle(conversation_id) -> int:
             or conversation.state not in _ACTIVE_CONVERSATION_STATES
         ):
             return 0
+        if (
+            lease is not None
+            and lease.attempt_id is None
+            and lease.state == HostedHarnessConversationLease.State.ACTIVE
+            and not lease.provider_ref.startswith("pending:")
+            and lease.heartbeat_at is not None
+            and timezone.now() - lease.heartbeat_at
+            > timedelta(seconds=RUNTIME_DEAD_SECONDS)
+        ):
+            # Its process is gone, not slow: the lease ends and the sandbox is not left to
+            # idle to the provider's limit. Only the lease as it was read: a process whose
+            # poll landed since keeps it, and the chat stays as it is.
+            if not HostedHarnessConversationLease.no_workspace_objects.filter(
+                id=lease.id,
+                state=HostedHarnessConversationLease.State.ACTIVE,
+                provider_ref=lease.provider_ref,
+                heartbeat_at__lt=timezone.now()
+                - timedelta(seconds=RUNTIME_DEAD_SECONDS),
+            ).update(
+                state=HostedHarnessConversationLease.State.EXPIRED,
+                updated_at=timezone.now(),
+            ):
+                return 0
+            stop_chat_sandbox_after_commit(conversation.id, lease.provider_ref)
         settle_interrupted_turn(conversation)
         conversation.state = HostedHarnessConversation.State.COLD
         conversation.save(update_fields=["state", "active_invocation_id", "updated_at"])
@@ -1481,7 +1670,16 @@ def _project_event(
                 )
             )
         # Only a finished turn leaves a complete suite; checkpoints taken mid-turn are scratch.
-        if payload.get("outcome") == "success":
+        if payload.get("outcome") == "success" or (
+            payload.get("replayed")
+            and _turn_finished_well(
+                HostedHarnessConversationEvent(
+                    conversation_id=conversation.id,
+                    sequence=event["sequence"],
+                    payload=payload,
+                )
+            )
+        ):
             conversation_id, sequence = str(conversation.id), event["sequence"]
             transaction.on_commit(
                 lambda: _schedule_checkpoint_promotion(conversation_id, sequence)
@@ -2077,6 +2275,11 @@ def promote_turn_checkpoint(
 
 def report_checkpoint_rejection(conversation_id: str, message: str) -> None:
     """Tell the person in chat that a turn's changes were not saved, and why."""
+    _post_chat_line(conversation_id, f"These changes were not saved: {message}")
+
+
+def _post_chat_line(conversation_id: str, content: str) -> None:
+    """A line from the chat that stays as it is; it starts no turn."""
     with transaction.atomic():
         conversation = (
             HostedHarnessConversation.no_workspace_objects.select_for_update()
@@ -2092,7 +2295,7 @@ def report_checkpoint_rejection(conversation_id: str, message: str) -> None:
             kind=HostedHarnessConversationMessage.Kind.MESSAGE,
             state=HostedHarnessConversationMessage.State.FAILED,
             stage=conversation.current_stage,
-            content=f"These changes were not saved: {message}",
+            content=content,
         )
         conversation.next_message_sequence += 1
         conversation.save(update_fields=["next_message_sequence", "updated_at"])
@@ -2263,11 +2466,15 @@ def promote_conversation_checkpoint(
         current_revision = str(metadata.get("authoring_revision") or observed_revision)
         checkpoints = dict(metadata.get("conversation_checkpoints") or {})
         conversation_id = str(conversation.id)
-        published = dict(checkpoints.get(conversation_id) or {})
-        published_sequence = int(published.get("sequence") or 0)
+        published = parse_checkpoint_entry(checkpoints.get(conversation_id))
+        published_sequence = published.get("sequence", 0)
         if published.get("digest") == digest:
             return environment
         if sequence < published_sequence:
+            return environment
+        # Refused for good when chat gave up waiting: a late landing stays out.
+        refused_sequence = published.get("refused_sequence", 0)
+        if refused_sequence and sequence <= refused_sequence:
             return environment
         # A composed workspace records its draft basis before anything is published.
         if sequence == published_sequence and published.get("digest"):
@@ -2276,11 +2483,13 @@ def promote_conversation_checkpoint(
                 "the conversation sequence is already bound to another checkpoint",
                 status_code=409,
             )
-        entry = {
+        entry: ConversationCheckpointEntry = {
             "digest": digest,
             "sequence": sequence,
             "content_revision": content_revision,
         }
+        if refused_sequence:
+            entry["refused_sequence"] = refused_sequence
 
         def store_checkpoints() -> HostedHarnessJob:
             metadata["conversation_checkpoints"] = checkpoints

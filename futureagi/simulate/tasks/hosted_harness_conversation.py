@@ -37,13 +37,20 @@ def ensure_hosted_harness_conversation_runtime(
         close_old_connections()
 
 
-def schedule_conversation_runtime(conversation_id: str, endpoint_base_url: str):
-    """Ask for a runtime; requests for one conversation coalesce while a start is running."""
+def schedule_conversation_runtime(
+    conversation_id: str, endpoint_base_url: str, *, wakeup: str | None = None
+):
+    """Ask for a runtime; requests for one conversation coalesce while a start runs.
+
+    A ``wakeup`` is a request that must not be absorbed by a start that is running: that
+    start may have read the state before what the wakeup is about happened. It has an id
+    of its own, and repeats of the same wakeup coalesce."""
     from temporalio.common import WorkflowIDConflictPolicy
 
+    task_id = f"hosted-conversation-runtime-{conversation_id}"
     return ensure_hosted_harness_conversation_runtime.apply_async(
         args=[conversation_id, endpoint_base_url],
-        task_id=f"hosted-conversation-runtime-{conversation_id}",
+        task_id=f"{task_id}-{wakeup}" if wakeup else task_id,
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )
 
@@ -81,10 +88,16 @@ def promote_hosted_harness_conversation_checkpoint(
         }:
             # The person has to act (rename, or ask again), so they need to see why.
             report_checkpoint_rejection(conversation_id, exc.message)
-        record_platform_landing_refused(conversation_id, turn_sequence)
-        start_chat_after_platform_landing(conversation_id, turn_sequence)
+        record_platform_landing_refused(
+            conversation_id=conversation_id, turn_sequence=turn_sequence
+        )
+        start_chat_after_platform_landing(
+            conversation_id=conversation_id, turn_sequence=turn_sequence
+        )
         return ""
-    start_chat_after_platform_landing(conversation_id, turn_sequence)
+    start_chat_after_platform_landing(
+        conversation_id=conversation_id, turn_sequence=turn_sequence
+    )
     return str(environment.id) if environment is not None else ""
 
 
@@ -110,6 +123,18 @@ def recover_hosted_harness_conversations() -> dict[str, int]:
                 conversation_id, base_url
             )
         )
+    finally:
+        close_old_connections()
+    try:
+        from simulate.services.harness_versioning.rebuild import (
+            resend_unsent_sandbox_stops,
+        )
+
+        resent = resend_unsent_sandbox_stops()
+        if resent:
+            counts["stops_resent"] = resent
+    except Exception:  # noqa: BLE001 - the next tick sends them
+        logger.exception("hosted_conversation_stop_resend_failed")
     finally:
         close_old_connections()
     if counts.get("restarted") or counts.get("settled") or counts.get("abandoned"):

@@ -22,6 +22,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.services import hosted_harness
+from simulate.services.harness_versioning import rebuild
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_hosted_job,
@@ -304,6 +305,34 @@ def test_a_stop_that_cannot_be_scheduled_still_ends_the_claim(
 
 
 @pytest.mark.django_db
+def test_a_stop_that_could_not_be_scheduled_is_sent_again_by_the_sweep(
+    organization, inline, django_capture_on_commit_callbacks, monkeypatch
+):
+    real = nudge_tasks.schedule_sandbox_stop
+
+    def unreachable(*_args):
+        raise RuntimeError("scheduler unreachable")
+
+    monkeypatch.setattr(nudge_tasks, "schedule_sandbox_stop", unreachable)
+    ctx = _checked(organization, django_capture_on_commit_callbacks)
+    _turn(ctx, ctx.check)
+    assert _lease(ctx).state == Lease.State.EXPIRED
+    assert _names(inline, STOP) == []
+
+    # The scheduler is back; the next sweep sends the stop the lease still owes.
+    monkeypatch.setattr(nudge_tasks, "schedule_sandbox_stop", real)
+    # The sweep closes stale connections itself; the test's own must stay open.
+    monkeypatch.setattr(conversation_tasks, "close_old_connections", lambda: None)
+    sweep = conversation_tasks.recover_hosted_harness_conversations._original_func
+    sweep()
+
+    assert _names(inline, STOP) == [[str(ctx.conversation.id), "sandbox-check"]]
+    # Once sent, later sweeps do not send it again.
+    sweep()
+    assert _names(inline, STOP) == [[str(ctx.conversation.id), "sandbox-check"]]
+
+
+@pytest.mark.django_db
 def test_a_stop_during_the_check_stops_its_sandbox_when_the_turn_ends(
     organization, inline, django_capture_on_commit_callbacks
 ):
@@ -463,7 +492,9 @@ def test_a_stop_with_nothing_running_starts_no_sandbox(
 ):
     ctx = _checked(organization, django_capture_on_commit_callbacks)
     _turn(ctx, ctx.check)
-    assert platform_landing_pending(_job(ctx), ctx.conversation) is False
+    assert (
+        platform_landing_pending(job=_job(ctx), conversation=ctx.conversation) is False
+    )
     live = None
     elsewhere = queue == "live_elsewhere"
     if queue in ("live_runtime", "live_elsewhere"):
@@ -515,6 +546,121 @@ def test_a_stop_with_nothing_running_starts_no_sandbox(
         start.assert_not_called()
         assert set(states.values()) == {Message.State.COMPLETED}
         assert _conversation(ctx).state == Conversation.State.COLD
+
+
+def _stale_chat_sandbox(organization, capture):
+    """A person's chat in a sandbox of its own that has idled out: the lease is still
+    ACTIVE on paper, its heartbeat and deadline have run out, nothing is waiting."""
+    ctx = _built(organization, capture)
+    _finished(ctx)
+    first = enqueue_message(ctx.job, content="hi", client_request_id="p0")[1]
+    _sandbox(ctx, "sandbox-chat", after=ctx.build.sequence)
+    _turn(ctx, first)
+    Lease.no_workspace_objects.filter(conversation=ctx.conversation).update(
+        heartbeat_at=timezone.now() - timedelta(minutes=31),
+        expires_at=timezone.now() - timedelta(minutes=1),
+    )
+    assert _lease(ctx).state == Lease.State.ACTIVE
+    return ctx
+
+
+@pytest.mark.django_db
+def test_a_stop_with_nothing_running_retires_the_stale_chat_sandbox(
+    organization, inline, django_capture_on_commit_callbacks
+):
+    ctx = _stale_chat_sandbox(organization, django_capture_on_commit_callbacks)
+    stop = enqueue_message(
+        ctx.job, content="", client_request_id="stop-it", kind="interrupt"
+    )[1]
+
+    result, start, delete = _ensure(ctx)
+
+    assert result is None
+    start.assert_not_called()
+    stop.refresh_from_db()
+    assert stop.state == Message.State.COMPLETED
+    # The sandbox is not left to run until its provider's limit.
+    delete.assert_called_once_with("sandbox-chat", ctx.conversation.id)
+    assert _lease(ctx).state == Lease.State.EXPIRED
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("case", ["late_after_the_checks_retire", "stale_sandbox"])
+def test_an_ensure_with_nothing_queued_starts_no_sandbox(
+    organization, inline, django_capture_on_commit_callbacks, case
+):
+    if case == "stale_sandbox":
+        ctx = _stale_chat_sandbox(organization, django_capture_on_commit_callbacks)
+    else:
+        ctx = _checked(organization, django_capture_on_commit_callbacks)
+        _turn(ctx, ctx.check)
+        assert _lease(ctx).state == Lease.State.EXPIRED
+    assert (
+        platform_landing_pending(job=_job(ctx), conversation=ctx.conversation) is False
+    )
+
+    # The start was asked for twice, and both arrive after nothing is left to run.
+    first = _ensure(ctx)
+    second = _ensure(ctx)
+
+    for result, start, _delete in (first, second):
+        assert result is None
+        start.assert_not_called()
+    assert _lease(ctx).state == Lease.State.EXPIRED
+    assert _conversation(ctx).state != Conversation.State.STARTING
+    if case == "stale_sandbox":
+        first[2].assert_called_once_with("sandbox-chat", ctx.conversation.id)
+        second[2].assert_not_called()
+
+
+@pytest.mark.django_db
+def test_a_landing_wakeup_sent_while_a_start_runs_still_starts_the_chat(
+    organization, storage, inline, django_capture_on_commit_callbacks, monkeypatch
+):
+    from simulate.services import hosted_harness_conversation as conversation_module
+
+    ctx = _checked_with_files(organization, django_capture_on_commit_callbacks)
+    enqueue_message(ctx.job, content="run them", client_request_id="p1")
+    running = f"hosted-conversation-runtime-{ctx.conversation.id}"
+    asked = []
+
+    def apply_async(*, args, task_id=None, **_options):
+        # A request for the id of a run that is going merges into it and is dropped.
+        if task_id != running:
+            asked.append(list(args))
+
+    monkeypatch.setattr(
+        conversation_tasks.ensure_hosted_harness_conversation_runtime,
+        "apply_async",
+        apply_async,
+    )
+    real = conversation_module.platform_landing_pending
+    reads = []
+
+    def read_then_settle(*args, **kwargs):
+        value = real(*args, **kwargs)
+        reads.append(value)
+        if len(reads) == 1:
+            # This start has read "pending"; before it returns, the files land and the
+            # promotion's wakeup is sent.
+            _publish(ctx, {"digest": ctx.digest, "sequence": ctx.checkpoint_sequence})
+            conversation_module.start_chat_after_platform_landing(
+                conversation_id=str(ctx.conversation.id),
+                turn_sequence=ctx.turn_sequence,
+            )
+        return value
+
+    monkeypatch.setattr(
+        conversation_module, "platform_landing_pending", read_then_settle
+    )
+
+    started = _ensure(ctx)[1].called
+    if not started:
+        # Not started by the run itself: the wakeup must have been asked for on its own.
+        assert asked, "the wakeup merged into the running start and was lost"
+        started = _ensure(ctx)[1].called
+
+    assert started
 
 
 def _checked_with_files(organization, capture):
@@ -575,7 +721,9 @@ def test_the_wait_ends_when_the_publish_cannot_land(
     organization, storage, inline, django_capture_on_commit_callbacks, settled
 ):
     ctx = _checked_with_files(organization, django_capture_on_commit_callbacks)
-    assert platform_landing_pending(_job(ctx), ctx.conversation) is True
+    assert (
+        platform_landing_pending(job=_job(ctx), conversation=ctx.conversation) is True
+    )
 
     if settled == "refused":
         # An older landing, and the drafts its workspace was composed on.
@@ -585,8 +733,13 @@ def test_the_wait_ends_when_the_publish_cannot_land(
             "draft_basis": {"token": "t0"},
         }
         _publish(ctx, earlier)
-        assert platform_landing_pending(_job(ctx), ctx.conversation) is True
-        record_platform_landing_refused(str(ctx.conversation.id), ctx.turn_sequence)
+        assert (
+            platform_landing_pending(job=_job(ctx), conversation=ctx.conversation)
+            is True
+        )
+        record_platform_landing_refused(
+            conversation_id=str(ctx.conversation.id), turn_sequence=ctx.turn_sequence
+        )
         assert _job(ctx).payload["metadata"]["conversation_checkpoints"] == {
             str(ctx.conversation.id): {
                 **earlier,
@@ -598,7 +751,9 @@ def test_the_wait_ends_when_the_publish_cannot_land(
             state=HostedHarnessJob.State.FAILED
         )
 
-    assert platform_landing_pending(_job(ctx), ctx.conversation) is False
+    assert (
+        platform_landing_pending(job=_job(ctx), conversation=ctx.conversation) is False
+    )
 
 
 @pytest.mark.django_db
@@ -615,10 +770,17 @@ def test_the_wait_ends_just_past_its_bound(
     )
 
     # Exactly at the bound the wait holds; a microsecond past, it does not.
-    assert platform_landing_pending(_job(ctx), ctx.conversation, now=bound) is True
     assert (
         platform_landing_pending(
-            _job(ctx), ctx.conversation, now=bound + timedelta(microseconds=1)
+            job=_job(ctx), conversation=ctx.conversation, now=bound
+        )
+        is True
+    )
+    assert (
+        platform_landing_pending(
+            job=_job(ctx),
+            conversation=ctx.conversation,
+            now=bound + timedelta(microseconds=1),
         )
         is False
     )
@@ -719,7 +881,9 @@ def test_a_settled_check_starts_the_waiting_chat(
     record = conversation_tasks.ensure_hosted_harness_conversation_runtime.apply_async
 
     def apply_async(*, args, **options):
-        waits_at_start.append(platform_landing_pending(_job(ctx), ctx.conversation))
+        waits_at_start.append(
+            platform_landing_pending(job=_job(ctx), conversation=ctx.conversation)
+        )
         record(args=args, **options)
 
     monkeypatch.setattr(
@@ -783,3 +947,226 @@ def test_the_stop_step_deletes_the_sandbox(monkeypatch, provider):
     result = stop(str(uuid4()), "sandbox-check")
     assert result == ("stopped" if provider == "present" else "gone")
     assert deleted == (["sandbox-check"] if provider == "present" else [])
+
+
+def _not_kept_lines(ctx):
+    return list(
+        Message.no_workspace_objects.filter(
+            conversation=ctx.conversation,
+            role=Message.Role.ASSISTANT,
+            content__contains="were not kept",
+        )
+    )
+
+
+def _fenced(ctx):
+    entry = (
+        ((_job(ctx).payload or {}).get("metadata") or {}).get(
+            "conversation_checkpoints"
+        )
+        or {}
+    ).get(str(ctx.conversation.id)) or {}
+    return "refused_sequence" in entry
+
+
+def _past_the_wait(ctx):
+    HostedHarnessConversationEvent.no_workspace_objects.filter(
+        conversation=ctx.conversation, sequence=ctx.turn_sequence
+    ).update(
+        created_at=timezone.now() - timedelta(seconds=PLATFORM_LANDING_WAIT_SECONDS + 1)
+    )
+
+
+def _live_sandbox(ctx, provider_ref="sandbox-live"):
+    """A chat sandbox of its own that still polls."""
+    lease = issue_conversation_capability(
+        ctx.conversation,
+        endpoint_base_url=URL,
+        provider_ref=provider_ref,
+        attempt=None,
+        ttl_seconds=3600,
+    ).lease
+    Lease.no_workspace_objects.filter(id=lease.id).update(
+        state=Lease.State.ACTIVE, heartbeat_at=timezone.now()
+    )
+    return lease
+
+
+@pytest.mark.django_db
+def test_a_kept_warm_sandbox_past_the_wait_gives_up_on_nothing(
+    organization, storage, inline, django_capture_on_commit_callbacks
+):
+    ctx = _checked_with_files(organization, django_capture_on_commit_callbacks)
+    live = _live_sandbox(ctx)
+    enqueue_message(ctx.job, content="run them", client_request_id="p1")
+    _past_the_wait(ctx)
+
+    result, start, _delete = _ensure(ctx)
+
+    assert result.id == live.id
+    start.assert_not_called()
+    assert _not_kept_lines(ctx) == []
+    assert not _fenced(ctx)
+
+
+@pytest.mark.django_db
+def test_a_repeated_ensure_with_nothing_queued_past_the_wait_gives_up_on_nothing(
+    organization, storage, inline, django_capture_on_commit_callbacks
+):
+    ctx = _checked_with_files(organization, django_capture_on_commit_callbacks)
+    _past_the_wait(ctx)
+
+    for _ in range(2):
+        result, start, _delete = _ensure(ctx)
+        assert result is None
+        start.assert_not_called()
+
+    assert _not_kept_lines(ctx) == []
+    assert not _fenced(ctx)
+
+
+@pytest.mark.django_db
+def test_a_live_sandbox_of_another_agent_is_not_replaced_by_an_idle_one(
+    organization, inline, django_capture_on_commit_callbacks, monkeypatch
+):
+    ctx = _built(organization, django_capture_on_commit_callbacks)
+    _finished(ctx)
+    _live_sandbox(ctx)
+    before = _conversation(ctx).state
+    # It runs as another agent than chat wants, and nothing is running or waiting.
+    monkeypatch.setattr(rebuild, "runs_as_wanted_agent", lambda _lease, _wanted: False)
+
+    first = _ensure(ctx)
+    second = _ensure(ctx)
+
+    for result, start, _delete in (first, second):
+        assert result is None
+        start.assert_not_called()
+    first[2].assert_called_once_with("sandbox-live", ctx.conversation.id)
+    second[2].assert_not_called()
+    assert _lease(ctx).state == Lease.State.EXPIRED
+    assert _conversation(ctx).state == before
+
+
+@pytest.mark.django_db
+def test_the_sweep_sends_only_recent_unsent_stops(
+    organization, inline, django_capture_on_commit_callbacks
+):
+    ctx = _checked(organization, django_capture_on_commit_callbacks)
+    _turn(ctx, ctx.check)
+    assert _lease(ctx).state == Lease.State.EXPIRED
+    asked = len(_names(inline, STOP))
+    # The stop could not be scheduled, and the mark is older than any sandbox lives.
+    Lease.no_workspace_objects.filter(conversation=ctx.conversation).update(
+        fence_hash=rebuild.SANDBOX_STOP_UNSENT,
+        updated_at=timezone.now() - timedelta(hours=3),
+    )
+
+    assert rebuild.resend_unsent_sandbox_stops() == 0
+    assert len(_names(inline, STOP)) == asked
+
+    # A mark written now is a recent one.
+    rebuild._mark_sandbox_stop_unsent(str(ctx.conversation.id), "sandbox-check")
+
+    assert rebuild.resend_unsent_sandbox_stops() == 1
+    assert _names(inline, STOP)[asked:] == [[str(ctx.conversation.id), "sandbox-check"]]
+    assert rebuild.resend_unsent_sandbox_stops() == 0
+
+
+@pytest.mark.django_db
+def test_the_sweeps_window_follows_the_chat_idle_ttl(
+    organization, inline, django_capture_on_commit_callbacks, settings
+):
+    ctx = _checked(organization, django_capture_on_commit_callbacks)
+    _turn(ctx, ctx.check)
+    # A sandbox lives for the chat idle window, which is configurable: past 2 hours.
+    settings.ALK_HOSTED_CHAT_TTL_SECONDS = 4 * 3600
+    asked = len(_names(inline, STOP))
+
+    def marked(age):
+        then = timezone.now() - age
+        Lease.no_workspace_objects.filter(conversation=ctx.conversation).update(
+            fence_hash=rebuild.SANDBOX_STOP_UNSENT, updated_at=then, expires_at=then
+        )
+
+    marked(timedelta(hours=5))
+    assert rebuild.resend_unsent_sandbox_stops() == 0
+
+    marked(timedelta(hours=3))
+    assert rebuild.resend_unsent_sandbox_stops() == 1
+    assert _names(inline, STOP)[asked:] == [[str(ctx.conversation.id), "sandbox-check"]]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("expired_ago_hours, resent", [(3, 0), (0.1, 1)])
+def test_the_sweep_looks_only_at_leases_that_expired_recently(
+    organization, inline, django_capture_on_commit_callbacks, expired_ago_hours, resent
+):
+    ctx = _checked(organization, django_capture_on_commit_callbacks)
+    _turn(ctx, ctx.check)
+    # The mark is recent either way; what differs is when the lease expired.
+    Lease.no_workspace_objects.filter(conversation=ctx.conversation).update(
+        fence_hash=rebuild.SANDBOX_STOP_UNSENT,
+        updated_at=timezone.now(),
+        expires_at=timezone.now() - timedelta(hours=expired_ago_hours),
+    )
+
+    assert rebuild.resend_unsent_sandbox_stops() == resent
+
+
+def _live_other_agents_sandbox(ctx, monkeypatch):
+    ctx_lease = _live_sandbox(ctx)
+    # It runs as another agent than chat wants.
+    monkeypatch.setattr(rebuild, "runs_as_wanted_agent", lambda _lease, _wanted: False)
+    return ctx_lease
+
+
+def _failing_gateway():
+    gateway = _gateway()
+    gateway.client.delete.side_effect = RuntimeError("provider down")
+    return gateway
+
+
+@pytest.mark.django_db
+def test_a_retired_sandbox_that_could_not_be_deleted_is_stopped_by_the_sweep(
+    organization, inline, django_capture_on_commit_callbacks, monkeypatch
+):
+    ctx = _built(organization, django_capture_on_commit_callbacks)
+    _finished(ctx)
+    _live_other_agents_sandbox(ctx, monkeypatch)
+    gateway = _failing_gateway()
+
+    # Nothing is waiting, so nothing starts and the live sandbox is retired.
+    with patch.object(gateway, "_start_chat_sandbox") as start:
+        result = gateway.ensure_conversation_runtime(
+            _job(ctx), conversation=ctx.conversation, endpoint_base_url=URL
+        )
+
+    assert result is None
+    start.assert_not_called()
+    assert _lease(ctx).state == Lease.State.EXPIRED
+    assert _lease(ctx).fence_hash == rebuild.SANDBOX_STOP_UNSENT
+    asked = len(_names(inline, STOP))
+    assert rebuild.resend_unsent_sandbox_stops() == 1
+    assert _names(inline, STOP)[asked:] == [[str(ctx.conversation.id), "sandbox-live"]]
+
+
+@pytest.mark.django_db
+def test_a_replaced_sandbox_that_could_not_be_deleted_is_stopped_again(
+    organization, inline, django_capture_on_commit_callbacks, monkeypatch
+):
+    ctx = _built(organization, django_capture_on_commit_callbacks)
+    _finished(ctx)
+    _live_other_agents_sandbox(ctx, monkeypatch)
+    enqueue_message(ctx.job, content="hi", client_request_id="p1")
+    gateway = _failing_gateway()
+
+    # A message waits, so the claim replaces the live sandbox of another agent.
+    with patch.object(gateway, "_start_chat_sandbox") as start:
+        gateway.ensure_conversation_runtime(
+            _job(ctx), conversation=ctx.conversation, endpoint_base_url=URL
+        )
+
+    start.assert_called_once()
+    # The lease row names the claim now, so the stop is asked for as a task.
+    assert _names(inline, STOP) == [[str(ctx.conversation.id), "sandbox-live"]]
