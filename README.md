@@ -405,7 +405,7 @@ Future AGI is an **open-source ecosystem** — each SDK is independently usable,
 
 | Repo | Install | Languages | Purpose |
 |---|---|---|---|
-| [**traceAI**](https://github.com/future-agi/traceAI) | `pip install fi-instrumentation-otel`<br>`npm i @traceai/fi-core` | Python · TS · Java · C# | **Zero-config OTel tracing** for 50+ AI frameworks |
+| [**traceAI**](https://github.com/future-agi/traceAI) | `pip install -U "fi-instrumentation-otel>=1.5.0"`<br>`npm i "@traceai/fi-core@^1.4.0"` | Python · TS · Java · C# | **Zero-config OTel tracing** for 50+ AI frameworks |
 | [**agent-learning-kit**](https://github.com/future-agi/agent-learning-kit) | `pip install agent-learning-kit` | Python · TS | **Local-first testing, simulation, red teaming, and optimization** for AI agents |
 | [**futureagi**](https://github.com/future-agi/futureagi-sdk) | `pip install futureagi` | Python | Platform SDK — datasets, prompts, KB, experiments |
 | [**agentcc**](https://github.com/future-agi/agent-command-center-sdk) | `pip install agentcc`<br>`npm i @agentcc/client` | Python · TS (+ LangChain · LlamaIndex · React · Vercel) | Gateway client SDKs |

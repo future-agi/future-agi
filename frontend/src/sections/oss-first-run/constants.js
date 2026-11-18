@@ -90,8 +90,8 @@ export const getSetupMeta = (setup) =>
 // `collector_http_url`): the default FI_COLLECTOR_OTLP_HTTP_PORT.
 export const LOCAL_COLLECTOR_URL = "http://localhost:4318";
 
-// The API's default address, for the SDK's FI_BASE_URL when the screen is not
-// given the URL it reached the API on.
+// The API's default address, for the SDK's FI_BASE_URL when the screen is
+// given no API URL.
 export const LOCAL_API_URL = "http://localhost:8000";
 
 const withoutTrailingSlash = (url) => url.replace(/\/+$/, "");
@@ -107,11 +107,18 @@ const accountStep = ({ authenticated, accountExists }) => {
 };
 
 // FI_BASE_URL is the API (API calls), FI_TRACES_URL the collector (spans).
+// On Future AGI Cloud the SDK defaults apply, so neither is shown.
+const traceEnv = ({ apiUrl, collectorUrl, cloud }) =>
+  cloud
+    ? "set `FI_API_KEY` and `FI_SECRET_KEY`"
+    : `set \`FI_API_KEY\`, \`FI_SECRET_KEY\`, \`FI_BASE_URL=${withoutTrailingSlash(apiUrl || LOCAL_API_URL)}\` and \`FI_TRACES_URL=${withoutTrailingSlash(collectorUrl || LOCAL_COLLECTOR_URL)}\``;
+
 export const nextSteps = ({
   authenticated,
   accountExists,
   apiUrl,
   collectorUrl,
+  cloud = false,
 }) => [
   {
     id: "account",
@@ -126,7 +133,7 @@ export const nextSteps = ({
   {
     id: "trace",
     icon: "solar:code-square-linear",
-    text: `Send your first trace from this machine: \`pip install -U "fi-instrumentation-otel>=1.5.0"\`, set \`FI_API_KEY\`, \`FI_SECRET_KEY\`, \`FI_BASE_URL=${withoutTrailingSlash(apiUrl || LOCAL_API_URL)}\` and \`FI_TRACES_URL=${withoutTrailingSlash(collectorUrl || LOCAL_COLLECTOR_URL)}\`, then call \`register()\`.`,
+    text: `Send your first trace from this machine: \`pip install -U "fi-instrumentation-otel>=1.5.0"\`, ${traceEnv({ apiUrl, collectorUrl, cloud })}, then call \`register()\`.`,
     link: { href: TRACING_DOCS_URL, label: "Tracing guide" },
   },
 ];

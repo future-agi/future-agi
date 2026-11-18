@@ -6,6 +6,11 @@ import { LAUNCH_MODE } from "../constants";
 
 const mockRefetch = vi.fn();
 let mockData = null;
+// The signed-in SDK URLs (useSdkUrls): null before sign-in and while loading.
+const NO_SDK_URLS = { isLoading: false, apiUrl: null, tracesUrl: null };
+let mockSdkUrls = NO_SDK_URLS;
+let mockIsCloud = false;
+const mockUseSdkUrls = vi.fn(() => mockSdkUrls);
 
 vi.mock("src/api/ossSetup/oss-setup", () => ({
   useSetupChecks: () => ({
@@ -16,7 +21,15 @@ vi.mock("src/api/ossSetup/oss-setup", () => ({
   }),
 }));
 
-// The URL the browser reaches the API on: the SDK's FI_BASE_URL.
+vi.mock("src/hooks/useSdkUrls", () => ({
+  useSdkUrls: (options) => mockUseSdkUrls(options),
+}));
+vi.mock("src/hooks/useDeploymentMode", () => ({
+  useDeploymentMode: () => ({ isCloud: mockIsCloud }),
+}));
+
+// The URL the browser reaches the API on: FI_BASE_URL before sign-in, and
+// until the signed-in SDK URLs arrive.
 vi.mock("src/config-global", async (importOriginal) => ({
   ...(await importOriginal()),
   HOST_API: "http://localhost:8100/",
@@ -73,6 +86,8 @@ const SSL_LOCAL = check({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockSdkUrls = NO_SDK_URLS;
+  mockIsCloud = false;
   mockData = {
     status: "issues",
     mode: "live",
@@ -252,6 +267,47 @@ describe("ValidationStep", () => {
       screen.getByText("FI_BASE_URL=http://localhost:8100"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/localhost:4318/)).toBeNull();
+  });
+
+  it("asks the backend for the SDK URLs only once signed in", async () => {
+    mockData = { status: "ok", mode: "live", checks: [check()] };
+    renderStep();
+    expect(await screen.findByText("Next up")).toBeInTheDocument();
+    expect(mockUseSdkUrls).toHaveBeenCalledWith({ enabled: false });
+    expect(mockUseSdkUrls).not.toHaveBeenCalledWith({ enabled: true });
+  });
+
+  it("takes both SDK URLs from the backend once signed in", async () => {
+    mockSdkUrls = {
+      isLoading: false,
+      apiUrl: "https://api.example.com",
+      tracesUrl: "https://otlp.example.com",
+    };
+    mockData = {
+      status: "ok",
+      mode: "live",
+      collector_http_url: "http://localhost:4320",
+      checks: [check()],
+    };
+    renderStep(LAUNCH_MODE.LIVE, vi.fn(), { authenticated: true });
+    expect(mockUseSdkUrls).toHaveBeenCalledWith({ enabled: true });
+    expect(
+      await screen.findByText("FI_BASE_URL=https://api.example.com"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("FI_TRACES_URL=https://otlp.example.com"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/localhost:8100|localhost:4320/)).toBeNull();
+  });
+
+  it("shows neither SDK URL on Future AGI Cloud", async () => {
+    mockIsCloud = true;
+    mockData = { status: "ok", mode: "live", checks: [check()] };
+    renderStep(LAUNCH_MODE.LIVE, vi.fn(), { authenticated: true });
+    expect(await screen.findByText("Next up")).toBeInTheDocument();
+    expect(screen.getByText(/Send your first trace/)).toBeInTheDocument();
+    expect(screen.queryByText(/FI_BASE_URL/)).toBeNull();
+    expect(screen.queryByText(/FI_TRACES_URL/)).toBeNull();
   });
 
   it("does not ask a signed-in operator to create an account", async () => {

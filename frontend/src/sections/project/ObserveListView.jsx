@@ -17,6 +17,7 @@ import PropTypes from "prop-types";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import EmptyState from "src/components/empty-state";
 import { quickstartTracing } from "src/components/empty-state/quickstarts";
+import { useSdkUrls } from "src/hooks/useSdkUrls";
 import VolumeBarChart from "./VolumeBarChart";
 import TagEditor from "./TagEditor";
 import { buildProjectListApiFilters } from "./common";
@@ -272,6 +273,8 @@ const ObserveListView = forwardRef(
     useEffect(() => {
       onFirstRunChange?.(isFirstRun);
     }, [isFirstRun, onFirstRunChange]);
+    // Off Cloud, the quickstart points the SDK at this install.
+    const sdkUrls = useSdkUrls({ enabled: isFirstRun });
 
     if (isFirstRun) {
       return (
@@ -280,7 +283,7 @@ const ObserveListView = forwardRef(
           title="No traces yet"
           description="Instrument your app once and every LLM call, tool call and agent step shows up here as a trace, grouped by project."
           docsHref="https://docs.futureagi.com/docs/observe"
-          quickstart={quickstartTracing("my-project")}
+          quickstart={quickstartTracing("my-project", sdkUrls)}
         />
       );
     }
