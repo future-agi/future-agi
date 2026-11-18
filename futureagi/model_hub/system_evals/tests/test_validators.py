@@ -585,9 +585,50 @@ def test_numeric_similarity_distinct_large_integers_never_match(first, second):
     }
 
 
-def test_numeric_similarity_very_long_digit_run_is_non_finite():
+@pytest.mark.parametrize(
+    "other",
+    ["Order number: 9,007,199,254,740,993", "Order number: 9007199254740993e0"],
+)
+def test_numeric_similarity_large_integer_never_matches_a_rounded_spelling(other):
+    # 9007199254740992 is exact as a float; the other value only rounds to it.
     evaluate = _load_eval("numeric_similarity")
-    assert evaluate(None, "9" * 5000, 1, None) == {
+    exact = "Order number: 9007199254740992"
+    assert evaluate(None, exact, other, None) == {
         "score": 0.0,
-        "reason": "Cannot calculate: Non-finite number in output",
+        "reason": "Cannot calculate: Long integer identifier in output",
+    }
+    assert evaluate(None, other, exact, None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in expected",
+    }
+    assert evaluate(None, exact, "9,007,199,254,740,992", None)["score"] == 1.0
+
+
+@pytest.mark.parametrize("length", [400, 5000])
+def test_numeric_similarity_very_long_digit_run_is_an_identifier(length):
+    evaluate = _load_eval("numeric_similarity")
+    assert evaluate(None, "9" * length, 1, None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in output",
+    }
+
+
+@pytest.mark.parametrize(
+    ("text", "value"), [("v.-2", -2), ("version.+3", 3), ("Rs.-5", -5)]
+)
+def test_numeric_similarity_signed_number_after_word_dot(text, value):
+    evaluate = _load_eval("numeric_similarity")
+    for left, right in [(text, value), (value, text)]:
+        assert evaluate(None, left, right, None) == {
+            "score": 1.0,
+            "reason": "Numeric Similarity: 1.000",
+        }
+
+
+@pytest.mark.parametrize("text", ["v.2", "version.2"])
+def test_numeric_similarity_version_after_dot(text):
+    evaluate = _load_eval("numeric_similarity")
+    assert evaluate(None, text, 2, None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Version identifier in output",
     }

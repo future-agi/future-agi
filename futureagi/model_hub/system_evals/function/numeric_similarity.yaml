@@ -24,15 +24,18 @@ config:
     def evaluate(input, output, expected, context, **kwargs):
         import math
         import re
+        from decimal import Decimal
         pred = kwargs.get("output", output)
         ref = kwargs.get("expected", expected)
         def to_number(value, name):
+            # Returns (number, error, value as written, identifier error held back).
             if value is None:
-                return None, f"{name} is None"
+                return None, f"{name} is None", None, None
+            held = None
             if not isinstance(value, (int, float)):
                 text = str(value).strip()
                 if not text:
-                    return None, f"{name} is empty"
+                    return None, f"{name} is empty", None, None
                 # A decimal point may end a mantissa (2.e3), but not start a range (2..10).
                 # A leading decimal stands alone (.5); after a word the dot is punctuation (Rs.500).
                 match = re.search(
@@ -40,36 +43,47 @@ config:
                     text,
                 )
                 if not match:
-                    return None, f"No numeric value found in {name}"
+                    return None, f"No numeric value found in {name}", None, None
                 token = match.group()
                 prefix = text[:match.start()]
+                if token[0].isdigit() and re.search(r'\w\.$', prefix):
+                    prefix = prefix[:-1]
                 # A dotted version is not a decimal; don't score just its prefix.
                 if (re.match(r'\.\d', text[match.end():])
-                        or re.search(r'\b(?:v\.?|version(?:\.|\s*[:=]?\s*))$', prefix, re.I)):
-                    return None, f"Version identifier in {name}"
-                # Labels and zero padding indicate an identifier; magnitude alone does not.
-                # Digits a float cannot hold exactly are rejected too, so two different
-                # integers (Order number: 9007199254740992 / ...993) never compare equal.
+                        or re.search(r'\b(?:v|version\s*[:=]?\s*)$', prefix, re.I)):
+                    return None, f"Version identifier in {name}", None, None
+                # Long ungrouped digit strings can be IDs, not measurements.
+                # Converting them to float can even equate two different IDs,
+                # so only integers a float holds exactly are read as numbers.
                 if re.fullmatch(r'[-+]?\d{16,}\.?', token):
                     digits = token.strip('+-.')
-                    approx = float(digits)
+                    integer = int(digits) if len(digits) <= 309 else None
+                    spare = integer.bit_length() - 53 if integer is not None else 0
                     if (re.search(r'\b(?:id|identifier)\s*[:=#]?\s*$', prefix, re.I)
-                            or digits.startswith('0')
-                            or (math.isfinite(approx) and approx != int(digits))):
-                        return None, f"Long integer identifier in {name}"
+                            or digits.startswith('0') or integer is None
+                            or integer.bit_length() > 1024
+                            or (spare > 0 and integer % (1 << spare))):
+                        return None, f"Long integer identifier in {name}", None, None
+                    if integer >= 2**53:
+                        held = f"Long integer identifier in {name}"
                 value = token.replace(",", "")
             try:
                 number = float(value)
             except OverflowError:
-                return None, f"Non-finite number in {name}"
+                return None, f"Non-finite number in {name}", None, None
             if not math.isfinite(number):
-                return None, f"Non-finite number in {name}"
-            return number, None
+                return None, f"Non-finite number in {name}", None, None
+            return number, None, Decimal(value), held
         prediction = to_number(pred, "output")
         reference = to_number(ref, "expected")
         errors = [error for error in (prediction[1], reference[1]) if error]
         if errors:
             return {"score": 0.0, "reason": f"Cannot calculate: {'; '.join(errors)}"}
+        # A large integer must not match a different value that rounds to the same float.
+        if prediction[0] == reference[0] and prediction[2] != reference[2]:
+            errors = [error for error in (prediction[3], reference[3]) if error]
+            if errors:
+                return {"score": 0.0, "reason": f"Cannot calculate: {'; '.join(errors)}"}
         pred_num = prediction[0]
         ref_num = reference[0]
         diff = abs(pred_num - ref_num)
