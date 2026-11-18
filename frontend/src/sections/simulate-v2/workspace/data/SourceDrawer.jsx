@@ -97,7 +97,6 @@ export default function SourceDrawer({
   focusTab = null,
   readOnly = false,
   onReviewRefresh = null,
-  onReconnect = null,
 }) {
   const source = (envState.sources || []).find((s) => s.id === sourceId);
   /* How it's used: two summary lines until Change opens the options. */
@@ -299,17 +298,8 @@ export default function SourceDrawer({
             <Typography
               sx={{ typography: "s3", color: "status.warning.fg", flex: 1 }}
             >
-              {`Access revoked · keeping your copy · refresh is blocked`}
+              {`Removed from the Knowledge base · keeping your copy`}
             </Typography>
-            {!readOnly && (
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => onReconnect?.(source)}
-              >
-                Reconnect
-              </Button>
-            )}
           </Stack>
         )}
 
@@ -576,7 +566,7 @@ export default function SourceDrawer({
                         sx={{ typography: "s3", color: "text.tertiary" }}
                       >
                         {c.key
-                          ? "key"
+                          ? "stable ID"
                           : c.ref
                             ? `→ ${c.ref}`
                             : c.sensitive
@@ -649,7 +639,7 @@ export default function SourceDrawer({
                 <PersonalDataChoice
                   suggested={pd.suggested}
                   choice={pd.choice}
-                  columns={pd.columns}
+                  columns={pd.found}
                   readOnly={readOnly}
                   onChoose={(c) =>
                     patch(personalChoicePatch(envState, source, c))
@@ -804,17 +794,17 @@ export default function SourceDrawer({
                     {`${source.kb.collection} · your copy${source.kb.leftOut?.length ? ` · ${source.kb.leftOut.length} ${source.kb.leftOut.length === 1 ? "change" : "changes"} left out` : ""}`}
                   </KV>
                   <KV label="Snapshot">
-                    A copy of that revision. It isn&apos;t linked live — edits
-                    in the Knowledge base don&apos;t change this environment.
+                    A copy of the file as you added it. Edits in the Knowledge
+                    base don&apos;t change this environment.
                   </KV>
                   <KV label="Refresh">
                     {source.revoked
-                      ? `Access revoked · keeping your copy · refresh is blocked`
+                      ? `Removed from the Knowledge base · keeping your copy`
                       : refresh
                         ? `Changed in the Knowledge base since you added it${refresh.note ? ` — ${refresh.note}` : ""}`
-                        : "Up to date. A new revision waits for you to review it; it is never pulled in on its own."}
+                        : "Up to date. If the file changes, you review it first — it is never pulled in on its own."}
                   </KV>
-                  {(refresh || source.revoked) && !readOnly && (
+                  {refresh && !readOnly && (
                     <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
                       {refresh && (
                         <Button
@@ -823,15 +813,6 @@ export default function SourceDrawer({
                           onClick={() => onReviewRefresh?.(source)}
                         >
                           Review refresh
-                        </Button>
-                      )}
-                      {source.revoked && (
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={() => onReconnect?.(source)}
-                        >
-                          Reconnect
                         </Button>
                       )}
                     </Stack>
@@ -1047,5 +1028,4 @@ SourceDrawer.propTypes = {
   focusTab: PropTypes.string,
   readOnly: PropTypes.bool,
   onReviewRefresh: PropTypes.func,
-  onReconnect: PropTypes.func,
 };

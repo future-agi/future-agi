@@ -13,7 +13,6 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
-import { ConfirmDialog } from "src/components/custom-dialog";
 import { SectionCard } from "../../components/primitives";
 import {
   participantViewsOf,
@@ -93,9 +92,8 @@ export default function SourcesSection({
     };
   }, [readingUntil]);
   const isReading = (x) => (x?.readUntil || 0) > now;
-  /* A source with a newer revision being reviewed; one asking to be reconnected. */
+  /* A source whose Knowledge base file changed, being reviewed. */
   const [refreshing, setRefreshing] = useState(null);
-  const [reconnecting, setReconnecting] = useState(null);
   /* The open source lives in the URL (?source=), so a citation in builder chat can open it. */
   const [params, setParams] = useSearchParams();
   const open = params.get("source");
@@ -373,7 +371,7 @@ export default function SourcesSection({
                       {isReading(s)
                         ? "Reading…"
                         : s.revoked
-                          ? "Access revoked"
+                          ? "Removed"
                           : problem
                             ? problem.short
                             : s.inEnv
@@ -462,17 +460,8 @@ export default function SourcesSection({
                         <Typography
                           sx={{ typography: "s3", color: "status.warning.fg" }}
                         >
-                          {`Access revoked · keeping your copy · refresh blocked`}
+                          {`Removed from the Knowledge base · keeping your copy`}
                         </Typography>
-                        {!readOnly && !s.revoked.requested && (
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={() => setReconnecting(s.id)}
-                          >
-                            Reconnect
-                          </Button>
-                        )}
                       </Stack>
                     )}
                     {choosing && (
@@ -604,7 +593,6 @@ export default function SourcesSection({
         focusTab={openTab}
         readOnly={readOnly}
         onReviewRefresh={(src) => setRefreshing(src.id)}
-        onReconnect={(src) => setReconnecting(src.id)}
       />
       <SideDrawer open={!!review} onClose={() => setReview(null)} width={560}>
         <Stack sx={{ height: "100%" }}>
@@ -723,39 +711,6 @@ export default function SourcesSection({
           sourceId={refreshing}
         />
       )}
-      <ConfirmDialog
-        open={!!reconnecting}
-        onClose={() => setReconnecting(null)}
-        title="Ask for access again?"
-        content={(() => {
-          const r = sources.find((x) => x.id === reconnecting);
-          return `${r?.owner || "The owner"} took access to ${r?.name || "this file"} away. The environment keeps using your copy, refresh stays blocked until access is back, and nothing switches to another source.`;
-        })()}
-        action={
-          <Button
-            size="small"
-            variant="contained"
-            color="primary"
-            onClick={() => {
-              const r = sources.find((x) => x.id === reconnecting);
-              patch({
-                sources: (envState.sources || []).map((x) =>
-                  x.id === reconnecting
-                    ? { ...x, revoked: { ...x.revoked, requested: true } }
-                    : x,
-                ),
-              });
-              enqueueSnackbar(
-                `Asked ${r?.owner || "the owner"} to restore access to ${r?.name}.`,
-                { variant: "info" },
-              );
-              setReconnecting(null);
-            }}
-          >
-            Ask for access
-          </Button>
-        }
-      />
     </SectionCard>
   );
 }

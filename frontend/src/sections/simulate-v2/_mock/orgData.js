@@ -981,8 +981,8 @@ export const dataProposalOf = (
         id: `personal-${s.id}`,
         kind: "personal",
         title: `Personal data in ${s.name}`,
-        detail: pd.columns.length
-          ? `The builder found columns that look personal: ${pd.columns.join(", ")}.`
+        detail: pd.found.length
+          ? `The builder found columns that look personal: ${pd.found.join(", ")}.`
           : "The builder found conversations that name people.",
         cite: { sourceId: s.id, ref: s.name },
         sourceId: s.id,

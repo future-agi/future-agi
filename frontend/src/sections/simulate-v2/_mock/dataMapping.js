@@ -283,6 +283,10 @@ export const personalDataOf = (source) => {
   const columns = (source?.parsed?.columns || [])
     .filter((c) => isPersonalColumn(source, c))
     .map((c) => c.name);
+  /* Only the builder's own guesses — a column the person marked isn't "found". */
+  const found = (source?.parsed?.columns || [])
+    .filter((c) => c.sensitive && source?.privacy?.[c.name] !== NOT_PERSONAL)
+    .map((c) => c.name);
   const has =
     columns.length > 0 ||
     (source?.parsed?.kind === "text" &&
@@ -290,6 +294,7 @@ export const personalDataOf = (source) => {
   return {
     has,
     columns,
+    found,
     suggested: "replace",
     choice: source?.personalChoice || null,
   };

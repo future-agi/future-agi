@@ -3,7 +3,7 @@
   something to show on first open: a Knowledge base policy one revision
   behind, an order export one revision behind (its refresh fails validation
   until the missing customers are dealt with), a customers file, a Knowledge
-  base file whose access was revoked, a transcript still waiting on a
+  base file removed from the Knowledge base, a transcript still waiting on a
   personal-data choice, and an archived export that can be restored.
 
   The stored copy of the prototype's state predates these, so they are added
