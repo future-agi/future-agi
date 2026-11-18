@@ -30,9 +30,11 @@ import {
 import logger from "./utils/logger";
 import { GoogleReCaptchaProvider } from "react-google-recaptcha-v3";
 import { initPostHog } from "./utils/PostHog";
+import { initGoogleAnalytics } from "./utils/googleAnalytics";
 // Google Ads, Reddit and X (Twitter) pixels are disabled. Google Analytics
-// loads through Google Tag Manager when the build sets VITE_GTM_ID (see
-// index.html). To restore a pixel, uncomment its import and call below.
+// loads from VITE_GA_ID (googleAnalytics.js) and Google Tag Manager from
+// VITE_GTM_ID (index.html). To restore a pixel, uncomment its import and call
+// below.
 // import { initGoogleAds } from "./utils/googleAds";
 // import { initReddit } from "./utils/redditAds";
 // import { initTwitter } from "./utils/twitterAds";
@@ -154,6 +156,9 @@ Sentry.init({
 
 // Initialize PostHog (autocapture, session replay, web vitals)
 initPostHog();
+
+// Google Analytics 4 (no-op unless the build sets VITE_GA_ID).
+initGoogleAnalytics();
 
 // Ad pixels are disabled (see the imports above).
 // initGoogleAds();
