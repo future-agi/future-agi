@@ -40498,6 +40498,12 @@ export const SimulateApiHarnessEnvironmentsActorLimitsResponse = zod.object({
       .describe(
         "Each attached file's role, by path. An evaluator-only file is never among `files`.",
       ),
+    seed_records_loaded: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether attached seed-records files reach what the agent's tools read, as the sealed rules say: false when the agent's tools serve their own data, so seed records are context only; null when the sealed release does not say.",
+      ),
   }),
   limits: zod
     .object({
@@ -41098,6 +41104,12 @@ export const SimulateApiHarnessEnvironmentsAcceptUnresolvedResponse =
         .optional()
         .describe(
           "Each attached file's role, by path. An evaluator-only file is never among `files`.",
+        ),
+      seed_records_loaded: zod
+        .boolean()
+        .optional()
+        .describe(
+          "Whether attached seed-records files reach what the agent's tools read, as the sealed rules say: false when the agent's tools serve their own data, so seed records are context only; null when the sealed release does not say.",
         ),
     }),
     limits: zod
@@ -41792,6 +41804,12 @@ export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
       .optional()
       .describe(
         "Each attached file's role, by path. An evaluator-only file is never among `files`.",
+      ),
+    seed_records_loaded: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether attached seed-records files reach what the agent's tools read, as the sealed rules say: false when the agent's tools serve their own data, so seed records are context only; null when the sealed release does not say.",
       ),
   }),
   limits: zod
@@ -42660,6 +42678,12 @@ export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
       .optional()
       .describe(
         "Each attached file's role, by path. An evaluator-only file is never among `files`.",
+      ),
+    seed_records_loaded: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether attached seed-records files reach what the agent's tools read, as the sealed rules say: false when the agent's tools serve their own data, so seed records are context only; null when the sealed release does not say.",
       ),
   }),
   limits: zod
@@ -43576,6 +43600,12 @@ export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
       .describe(
         "Each attached file's role, by path. An evaluator-only file is never among `files`.",
       ),
+    seed_records_loaded: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether attached seed-records files reach what the agent's tools read, as the sealed rules say: false when the agent's tools serve their own data, so seed records are context only; null when the sealed release does not say.",
+      ),
   }),
   limits: zod
     .object({
@@ -44168,6 +44198,12 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
       .optional()
       .describe(
         "Each attached file's role, by path. An evaluator-only file is never among `files`.",
+      ),
+    seed_records_loaded: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether attached seed-records files reach what the agent's tools read, as the sealed rules say: false when the agent's tools serve their own data, so seed records are context only; null when the sealed release does not say.",
       ),
   }),
   limits: zod
@@ -49325,6 +49361,12 @@ export const SimulateApiHarnessEnvironmentsUploadFileResponse = zod.object({
       .describe(
         "Each attached file's role, by path. An evaluator-only file is never among `files`.",
       ),
+    seed_records_loaded: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether attached seed-records files reach what the agent's tools read, as the sealed rules say: false when the agent's tools serve their own data, so seed records are context only; null when the sealed release does not say.",
+      ),
   }),
   limits: zod
     .object({
@@ -49929,6 +49971,12 @@ export const SimulateApiHarnessEnvironmentsFileRoleResponse = zod.object({
       .optional()
       .describe(
         "Each attached file's role, by path. An evaluator-only file is never among `files`.",
+      ),
+    seed_records_loaded: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether attached seed-records files reach what the agent's tools read, as the sealed rules say: false when the agent's tools serve their own data, so seed records are context only; null when the sealed release does not say.",
       ),
   }),
   limits: zod

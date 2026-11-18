@@ -612,6 +612,13 @@ class HarnessActorKnowledgeSourcesSerializer(serializers.Serializer):
         required=False,
         help_text="Each attached file's role, by path. An evaluator-only file is never among `files`.",
     )
+    seed_records_loaded = serializers.BooleanField(
+        allow_null=True,
+        required=False,
+        help_text="Whether attached seed-records files reach what the agent's tools read, as the sealed rules say: "
+        "false when the agent's tools serve their own data, so seed records are context only; null when the sealed "
+        "release does not say.",
+    )
 
 
 class HarnessActorUnresolvedSerializer(serializers.Serializer):

@@ -107825,6 +107825,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             enum: ["policy", "seed_records", "evaluator_only"],
           },
         },
+        seed_records_loaded: {
+          title: "Seed records loaded",
+          description:
+            "Whether attached seed-records files reach what the agent's tools read, as the sealed rules say: false when the agent's tools serve their own data, so seed records are context only; null when the sealed release does not say.",
+          type: "boolean",
+          "x-nullable": true,
+        },
       },
     },
     HarnessActorLimitField: {

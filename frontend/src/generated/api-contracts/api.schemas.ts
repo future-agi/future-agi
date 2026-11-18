@@ -20483,6 +20483,8 @@ export interface HarnessActorKnowledgeSourcesApi {
   records: HarnessActorRecordSourceApi[];
   /** Each attached file's role, by path. An evaluator-only file is never among `files`. */
   roles?: HarnessActorKnowledgeSourcesApiRoles;
+  /** Whether attached seed-records files reach what the agent's tools read, as the sealed rules say: false when the agent's tools serve their own data, so seed records are context only; null when the sealed release does not say. */
+  seed_records_loaded?: boolean;
 }
 
 export interface HarnessActorUnresolvedApi {

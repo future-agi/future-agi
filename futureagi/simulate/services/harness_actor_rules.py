@@ -89,6 +89,8 @@ class ActorRules(TypedDict, total=False):
     limit_defaults: dict[str, dict[str, object]]
     # How a `knowledge/roles.json` key is read, by the release that sealed it.
     knowledge_roles: KnowledgeRoleKeys
+    # Whether attached seed-records files can reach what the agent's tools read; None when the release could not tell.
+    seed_records_loaded: bool | None
 
 
 class WorldAction(TypedDict):
@@ -109,6 +111,8 @@ class KnowledgeSources(TypedDict):
     records: list[RecordSource]
     # Each attached file's role, by path; an evaluator-only file is never among `files`.
     roles: dict[str, str]
+    # Whether seed-records files reach what the agent's tools read, as the sealed rules say; None when unsaid.
+    seed_records_loaded: bool | None
 
 
 def text_of(value: object) -> str:
@@ -431,7 +435,15 @@ def knowledge_sources(
         ),
         "records": records,
         "roles": dict(sorted(file_roles(environment_files).items())),
+        "seed_records_loaded": _seed_records_loaded(rules),
     }
+
+
+def _seed_records_loaded(rules: ActorRules) -> bool | None:
+    """The sealed answer, read as given: False only when the release said attached seed records cannot reach the
+    agent's tools (they serve their own data), so they are context only."""
+    sealed = rules.get("seed_records_loaded")
+    return sealed if isinstance(sealed, bool) else None
 
 
 def world_stores(environment: HostedHarnessJob) -> object:

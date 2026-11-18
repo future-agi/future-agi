@@ -300,3 +300,21 @@ def test_a_role_typo_names_the_roles_there_are(user, workspace, storage, auth_cl
     for response, typo in ((refused, "seed_record"), (uploaded, "polcy")):
         assert response.status_code == 400, response.content
         assert response.json()["message"] == f"role: {expected.format(typo)}"
+
+
+@pytest.mark.parametrize(
+    "sealed, served",
+    [
+        ({"seed_records_loaded": False}, False),
+        ({"seed_records_loaded": True}, True),
+        ({}, None),
+    ],
+    ids=["context-only", "loaded", "unsaid"],
+)
+def test_whether_seed_records_reach_the_agents_tools_is_served_as_sealed(
+    sealed, served
+):
+    """The attach UI reads it: false when the agent's tools serve their own data, so seed records are context only."""
+    sources = harness_actor_rules.knowledge_sources({}, sealed, [])
+
+    assert sources["seed_records_loaded"] is served
