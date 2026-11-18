@@ -625,6 +625,42 @@ def test_a_call_whose_first_read_has_not_run_says_its_record_is_still_coming(
 
 
 @pytest.mark.django_db
+def test_a_call_still_being_read_says_whether_its_version_declares_any_participant(
+    user, workspace, storage, settings, auth_client
+):
+    """A single-agent app's call is still read after it ends; the 202 says no participant is declared, so the drawer
+    shows no Participants tab meanwhile. A version that declares one says so, and the tab waits for the record."""
+    from django.utils import timezone
+
+    from simulate.models import CallExecution
+    from simulate.services.harness_worker_states import job_for_call
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-declared", storage), key="d")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.CANCELLED, completed_at=timezone.now()
+    )
+    url = f"/simulate/v3/call-executions/{call.id}/workers/"
+    version = job_for_call(call).environment_version
+    documents = dict(version.documents or {})
+    documents["contract"] = {**(documents.get("contract") or {}), "workers": []}
+    type(version).objects.filter(id=version.id).update(documents=documents)
+
+    single = auth_client.get(url)
+    assert single.status_code == 202, single.content
+    assert single.json()["participants_declared"] is False
+
+    documents["contract"]["workers"] = [{"id": "refund", "name": "Refund worker"}]
+    type(version).objects.filter(id=version.id).update(documents=documents)
+    multi = auth_client.get(url)
+    assert multi.status_code == 202, multi.content
+    assert multi.json()["participants_declared"] is True
+
+
+@pytest.mark.django_db
 def test_another_workspace_or_organization_cannot_read_a_call_s_workers(
     user, workspace, storage, settings, auth_client
 ):
@@ -801,7 +837,9 @@ def test_a_worker_read_out_of_retries_marks_the_call_unreadable(monkeypatch):
     monkeypatch.setattr(alk_sim, "attempt_reset", lambda _call: None)
     monkeypatch.setattr(alk_sim, "record_worker_timeline", lambda *_a, **_k: 1 / 0)
     monkeypatch.setattr(
-        alk_sim, "mark_read", lambda call, failed: marked.append((call, failed))
+        alk_sim,
+        "mark_read",
+        lambda call, failed, attempt=None: marked.append((call, failed)),
     )
 
     with pytest.raises(ZeroDivisionError):
@@ -4671,6 +4709,12 @@ def test_each_worker_says_how_the_world_held_it_in_the_trial_and_in_the_contract
                 else {}
             ),
             **({"notices": list(notices)} if notices else {}),
+            # And the workers the harness stopped, or whose deadline did not hold, kept beside them as sealed.
+            **{
+                key: world[key]
+                for key in ("stopped_workers", "unenforced_deadlines")
+                if world.get(key)
+            },
         }
         workers = harness_worker_states.served_workers(
             None, timeline, {"harness_trial_state": trial}, bindings
@@ -4691,6 +4735,49 @@ def test_each_worker_says_how_the_world_held_it_in_the_trial_and_in_the_contract
     only_lookup = {"door": True, "worker_channels": True, "state_changes": ran[:1]}
     assert served(only_lookup) == {
         "order_lookup": "held_at_world",
+        "refund": "unknown",
+        "audit": "not_enforced",
+    }
+    # Stopped at its own deadline before any call at the door (G3, call 3fa596ee): its deadline was enforced, so it
+    # never reads "not confirmed" beside "Stopped when its deadline passed".
+    stopped = {
+        **only_lookup,
+        "stopped_workers": [
+            {
+                "worker": "refund",
+                "process": "refund",
+                "at": 1794988795.067226,
+                "reason": "deadline_passed",
+            }
+        ],
+    }
+    assert served(stopped) == {
+        "order_lookup": "held_at_world",
+        "refund": "held_at_world",
+        "audit": "not_enforced",
+    }
+    # A separate worker that kept running after its cancel (Rishav, #4137 1379): its deadline did not hold, so its limits
+    # read not enforced even though its calls reached the door; by the notice or the sealed list alike.
+    ran_on = {"worker": "refund", "reason": "it kept running after its cancel"}
+    by_notice = {
+        "code": "worker_deadline_not_enforced",
+        "message": "Not held.",
+        "workers": ["refund"],
+    }
+    for trial_shape, notices in (
+        ({**proxied, "unenforced_deadlines": [ran_on]}, ()),
+        (proxied, [by_notice]),
+    ):
+        assert served(trial_shape, notices) == {
+            "order_lookup": "held_at_world",
+            "refund": "not_enforced",
+            "audit": "not_enforced",
+        }
+    # The harness could not read which workers it stopped (ALK `world_actors.stopped_workers_unreadable`): every
+    # separate worker's limits are not confirmed, even one seen at the door, never "enforced" or "none stopped".
+    unreadable = {**proxied, "stopped_workers_unreadable": True}
+    assert served(unreadable) == {
+        "order_lookup": "unknown",
         "refund": "unknown",
         "audit": "not_enforced",
     }
@@ -4728,4 +4815,291 @@ def test_each_worker_says_how_the_world_held_it_in_the_trial_and_in_the_contract
         "unknown",
         "not_enforced",
     )
-    assert separate["enforcement_label"].startswith("Not known")
+    # Said in product words: no channel, door or world in what the card shows.
+    assert (
+        separate["enforcement_label"]
+        == "Not confirmed yet: no run has shown this participant's own calls"
+    )
+    assert shared["enforcement_label"] == (
+        "Limits can't be enforced: this participant runs inside the app, so its calls can't be told apart"
+    )
+
+
+def _nothing_recorded(declared_ids):
+    """A record whose read found nothing: no spans, no hand-offs, every declared worker not observed."""
+    return {
+        "events": [],
+        "messages": [],
+        "workers": [
+            {
+                "id": one,
+                "name": one,
+                "state": "not_observed",
+                "observed": False,
+                "worker_id": f"agent/{one}",
+                "undeclared": False,
+                "instance_ids": [],
+            }
+            for one in declared_ids
+        ],
+        "collection": "no_evidence",
+        "project_id": None,
+        "started_at": None,
+        "coordinator": None,
+        "collected_at": "2026-11-18T06:35:38.646461+00:00",
+        "tree_complete": True,
+        "events_omitted": 0,
+        "spans_received": False,
+        "messages_omitted": 0,
+    }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("job_failure", "lost"),
+    [
+        (
+            {
+                "code": "sandbox_disappeared",
+                "stage": "running",
+                "domain": "infrastructure",
+                "message": "provider sandbox disappeared before terminal delivery",
+            },
+            True,
+        ),
+        (None, False),
+    ],
+)
+def test_a_call_lost_to_infrastructure_never_reads_as_an_app_that_sent_nothing(
+    user, workspace, storage, settings, auth_client, job_failure, lost
+):
+    """A call whose sandbox vanished before it sealed (job failed, domain infrastructure, no receipt) kept nothing: the
+    record says the attempt was lost and its workers are not known. A call that ended normally with no traces keeps
+    today's reading: nothing recorded, workers not observed."""
+    from simulate.models import CallExecution, HostedHarnessJob
+    from simulate.services.harness_workers import WORKERS_KEY
+
+    job, _attempt, call = _cut_short_run(
+        user, workspace, storage, settings, "il" if lost else "ok"
+    )
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        state=HostedHarnessJob.State.FAILED
+        if lost
+        else HostedHarnessJob.State.COMPLETED,
+        failure=job_failure,
+    )
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.FAILED
+        if lost
+        else CallExecution.CallStatus.COMPLETED,
+        ended_reason="provider sandbox disappeared before terminal delivery"
+        if lost
+        else None,
+        call_metadata={WORKERS_KEY: _nothing_recorded(["order_lookup", "refund"])},
+    )
+
+    body = auth_client.get(f"/simulate/v3/call-executions/{call.id}/workers/").json()
+
+    assert body["collection"] == ("infrastructure_lost" if lost else "no_evidence")
+    assert {one["state"] for one in body["workers"]} == {
+        "unknown" if lost else "not_observed"
+    }
+
+
+@pytest.mark.django_db
+def test_a_read_in_flight_when_the_call_is_rerun_never_writes_onto_the_new_attempt(
+    user, workspace, storage, settings
+):
+    """The read starts on attempt 1; while its spans are being read, the user reruns the call. The read's record and
+    its read note belong to attempt 1, so neither lands on attempt 2."""
+    from unittest.mock import patch
+
+    from simulate.models import CallExecution
+    from simulate.services import harness_workers
+    from simulate.services.call_rerun import clear_call_for_rerun
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-fence", storage), key="f")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+
+    class _RerunWhileReading(_Reader):
+        def list_by_trace_ids(self, *args, **kwargs):
+            clear_call_for_rerun(
+                CallExecution.objects.get(id=call.id), clear_metadata=False
+            )
+            return super().list_by_trace_ids(*args, **kwargs)
+
+    with (
+        patch(
+            "simulate.services.harness_workers.list_run_traces", return_value=_traced()
+        ),
+        patch(
+            "simulate.services.harness_workers.get_reader",
+            return_value=_RerunWhileReading(SPANS),
+        ),
+    ):
+        written = harness_workers.record_call_workers(str(call.id))
+
+    call.refresh_from_db()
+    assert written is None
+    assert harness_workers.WORKERS_KEY not in call.call_metadata
+    assert harness_workers.READ_KEY not in call.call_metadata
+    # A failed-read note for the replaced attempt is dropped the same way.
+    harness_workers.mark_read(call.id, failed=True, attempt=None)
+    call.refresh_from_db()
+    assert harness_workers.READ_KEY not in call.call_metadata
+
+
+@pytest.mark.django_db
+def test_a_rerun_while_the_read_lists_the_call_s_traces_never_lets_the_old_attempt_through(
+    user, workspace, storage, settings
+):
+    """The rerun lands during the trace list, before any span is read: the read stays attempt 1's, so its record and
+    read note never land on attempt 2."""
+    from unittest.mock import patch
+
+    from simulate.models import CallExecution
+    from simulate.services import harness_workers
+    from simulate.services.call_rerun import clear_call_for_rerun
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-fence-list", storage), key="g")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+
+    def rerun_while_listing(*args, **kwargs):
+        clear_call_for_rerun(
+            CallExecution.objects.get(id=call.id), clear_metadata=False
+        )
+        return _traced()
+
+    with (
+        patch(
+            "simulate.services.harness_workers.list_run_traces",
+            side_effect=rerun_while_listing,
+        ),
+        patch(
+            "simulate.services.harness_workers.get_reader", return_value=_Reader(SPANS)
+        ),
+    ):
+        written = harness_workers.record_call_workers(str(call.id))
+
+    call.refresh_from_db()
+    assert written is None
+    assert harness_workers.WORKERS_KEY not in call.call_metadata
+    assert harness_workers.READ_KEY not in call.call_metadata
+
+
+@pytest.mark.django_db
+def test_an_attempt_rerun_before_its_first_read_is_read_from_its_snapshot(
+    user, workspace, storage, settings, auth_client
+):
+    """The user reruns the call in the delay before its first worker read: that attempt never got a read of its own,
+    so its record is built from the tool calls its snapshot sealed, never 204 for ever."""
+    from simulate.models import CallExecution
+    from simulate.models.test_execution import CallExecutionSnapshot
+    from simulate.services.call_rerun import clear_call_for_rerun
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-early", storage), key="e")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    handed = {
+        "type": "delegated",
+        "id": "ev-1",
+        "worker_id": "refund",
+        "by": "Returns coordinator",
+        "relationship": "observed",
+        "at": 1_763_000_000.0,
+    }
+    sealed = {
+        "name": "refund",
+        "arguments": {"input": "refund order 1042"},
+        "ok": True,
+        "at": 1_763_000_000.0,
+        "worker_id": "Returns coordinator",
+        "delegated_to": "refund",
+        "worker_events": [handed, {**handed, "type": "returned", "status": "ok"}],
+    }
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.COMPLETED,
+        provider_call_data={"livekit": {"tool_calls": [sealed]}},
+    )
+    call.refresh_from_db()
+
+    clear_call_for_rerun(call, clear_metadata=False)
+    snapshot = CallExecutionSnapshot.objects.get(call_execution=call)
+    earlier = auth_client.get(
+        f"/simulate/v3/call-executions/{call.id}/workers/",
+        {"attempt": str(snapshot.id)},
+    )
+
+    assert earlier.status_code == 200, earlier.content
+    body = earlier.json()
+    assert body["state"] == "recorded"
+    assert [one["kind"] for one in body["steps"] if one["kind"] == "handoff"] == [
+        "handoff"
+    ]
+    assert body["spans_received"] is False
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("sealed_events", [True, False])
+def test_a_span_store_that_cannot_be_reached_never_loses_a_sealed_record(
+    user, workspace, storage, settings, sealed_events
+):
+    """Listing the call's traces times out. A call whose tool calls carry the harness's sealed worker events is still
+    recorded from them (spans only add models and tokens); a call that sealed none still fails the read, as before."""
+    from unittest.mock import patch
+
+    from simulate.models import CallExecution
+    from simulate.services import harness_workers
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(
+        _environment(user, workspace, f"workers-ch-{sealed_events}", storage), key="c"
+    )
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    handed = {
+        "type": "delegated",
+        "id": "ev-1",
+        "worker_id": "refund",
+        "by": "Returns coordinator",
+        "relationship": "observed",
+        "at": 1_763_000_000.0,
+    }
+    row = {
+        "name": "refund",
+        "arguments": {"input": "refund order 1042"},
+        "ok": True,
+        "at": 1_763_000_000.0,
+        "worker_id": "Returns coordinator",
+        "delegated_to": "refund",
+    }
+    if sealed_events:
+        row["worker_events"] = [handed, {**handed, "type": "returned", "status": "ok"}]
+    CallExecution.objects.filter(id=call.id).update(
+        provider_call_data={"livekit": {"tool_calls": [row]}}
+    )
+
+    with patch(
+        "simulate.services.harness_workers.list_run_traces",
+        side_effect=TimeoutError("clickhouse timed out"),
+    ):
+        if sealed_events:
+            timeline = harness_workers.record_call_workers(str(call.id))
+        else:
+            with pytest.raises(TimeoutError):
+                harness_workers.record_call_workers(str(call.id))
+            return
+
+    call.refresh_from_db()
+    stored = call.call_metadata[harness_workers.WORKERS_KEY]
+    assert stored == timeline and stored["collection"] == "complete"
+    assert any(one["type"] == "delegated" for one in stored["events"])

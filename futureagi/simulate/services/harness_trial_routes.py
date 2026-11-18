@@ -3,7 +3,7 @@ trials first went different ways. Read from each trial's worker record; nothing 
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -124,20 +124,45 @@ def _route(
     ]
 
 
-def _merged(routes: Iterable[list[RouteColumn]]) -> list[RouteColumn]:
-    """The columns of every trial in one order: each trial's own order kept, a column first seen in a later trial
-    placed after the column it followed there."""
+def _lined_up(
+    routes: list[list[RouteColumn]],
+) -> tuple[list[RouteColumn], list[list[int]]]:
+    """The columns of every trial in one order, and each trial's steps' column positions. Each trial's own order is
+    kept: a step repeating the column just before it stays in it (`repeated`), and a hand-off a trial makes after a
+    column that another trial made it before gets a column of its own, so two trials that made the same hand-offs in a
+    different order never line up as one route."""
     merged: list[RouteColumn] = []
+    placed: list[list[RouteColumn]] = []
     for route in routes:
         at = -1
+        mine: list[RouteColumn] = []
         for column in route:
-            keys = [one["key"] for one in merged]
-            if column["key"] in keys:
-                at = max(at, keys.index(column["key"]))
-            else:
+            if at >= 0 and merged[at]["key"] == column["key"]:
+                mine.append(merged[at])
+                continue
+            later = next(
+                (
+                    j
+                    for j in range(at + 1, len(merged))
+                    if merged[j]["key"] == column["key"]
+                ),
+                None,
+            )
+            if later is None:
                 at += 1
-                merged.insert(at, column)
-    return merged
+                merged.insert(at, RouteColumn(**column))
+            else:
+                at = later
+            mine.append(merged[at])
+        placed.append(mine)
+    positions = {id(one): index for index, one in enumerate(merged)}
+    # A hand-off with a second column keeps its key apart, so each column's key is its own.
+    seen: dict[str, int] = {}
+    for one in merged:
+        seen[one["key"]] = seen.get(one["key"], 0) + 1
+        if seen[one["key"]] > 1:
+            one["key"] = f"{one['key']}#{seen[one['key']]}"
+    return merged, [[positions[id(one)] for one in mine] for mine in placed]
 
 
 def _cell(found: list[tuple[int, RouteCellState]]) -> RouteCell:
@@ -187,16 +212,19 @@ def trial_routes(
         for index, one in enumerate(trials)
         if one.route in COMPARED
     }
-    columns = _merged([column for column, _, _ in route] for route in routes.values())
+    columns, positions = _lined_up(
+        [[column for column, _, _ in route] for route in routes.values()]
+    )
+    at = dict(zip(routes, positions, strict=True))
     lined: list[RouteTrial] = []
     for index, one in enumerate(trials):
         route = routes.get(index)
         cells = None
         if route is not None:
-            found: dict[str, list[tuple[int, RouteCellState]]] = {}
-            for column, number, state in route:
-                found.setdefault(column["key"], []).append((number, state))
-            cells = [_cell(found.get(column["key"], [])) for column in columns]
+            found: dict[int, list[tuple[int, RouteCellState]]] = {}
+            for position, (_, number, state) in zip(at[index], route, strict=True):
+                found.setdefault(position, []).append((number, state))
+            cells = [_cell(found.get(position, [])) for position in range(len(columns))]
         lined.append(
             {
                 "number": index + 1,

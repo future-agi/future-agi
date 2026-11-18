@@ -548,3 +548,60 @@ describe("CallWorkersPanel, the scenario's trials", () => {
     routes = undefined;
   });
 });
+
+describe("CallWorkersPanel, a record not read yet or lost", () => {
+  it("says an earlier attempt with no hand-off had none, instead of loading for ever", () => {
+    result = { data: null, isLoading: false, isError: false };
+    render(<CallWorkersPanel callExecutionId="c1" attempt="a1" />);
+    expect(screen.getByText(C.noHandOffInAttempt)).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("says a stopped call's participants are still being collected, instead of hiding them", async () => {
+    const { COLLECTING_WORKERS } = await import(
+      "src/api/simulate-environments/runDetail"
+    );
+    result = { data: COLLECTING_WORKERS, isLoading: false, isError: false };
+    render(<CallWorkersPanel callExecutionId="c1" callStatus="cancelled" />);
+    expect(
+      screen.getByText("Collecting this call's participants…"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("still waits while the latest attempt's record is unread", () => {
+    result = { data: null, isLoading: false, isError: false };
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+  });
+
+  it("says an attempt lost to an infrastructure failure was lost, never that the app sent nothing", () => {
+    result = {
+      data: {
+        ...TIMELINE,
+        events: [],
+        steps: [],
+        turns: [],
+        collection: "infrastructure_lost",
+        workers: WORKERS.map((one) => ({
+          ...one,
+          observed: false,
+          state: "unknown",
+        })),
+        counts: counts(0, 0),
+      },
+      isLoading: false,
+      isError: false,
+    };
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.getByTestId("infrastructure-lost")).toHaveTextContent(
+      C.infrastructureLost,
+    );
+    expect(screen.queryByText(C.noEvidence)).toBeNull();
+    // Its workers are not known, never "Not observed".
+    expect(screen.getByTestId("workers-unknown")).toHaveTextContent(
+      "Not known: the attempt was lost to an infrastructure failure",
+    );
+    expect(screen.queryByText(/^Not observed:/)).toBeNull();
+  });
+});

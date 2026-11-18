@@ -151,7 +151,8 @@ export function participantsFromRecord(record) {
     },
     // Declared but no spans or tool calls of theirs arrived; they may still have run.
     notObserved: (record.workers || [])
-      .filter((worker) => !worker.observed)
+      // A worker of an attempt lost to the infrastructure is not known, never "no events sent".
+      .filter((worker) => !worker.observed && worker.state !== "unknown")
       .map((worker) => worker.name),
     turns,
   };

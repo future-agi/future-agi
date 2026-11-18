@@ -1596,6 +1596,9 @@ def _world_change_fields(world: dict[str, Any]) -> dict[str, Any]:
         if world.get("worker_channels") is True:
             # And it held each separate worker on its own channel: the only evidence a worker was held.
             kept["worker_channels"] = True
+    if world.get("stopped_workers_unreadable") is True:
+        # Which workers the harness stopped could not be read: never read as "none was".
+        kept["stopped_workers_unreadable"] = True
     records = world.get("records")
     if world.get("unreadable") or (
         isinstance(records, dict) and records.get("unreadable")
@@ -1690,6 +1693,7 @@ def _ingest_hosted_transcript(
                     "duplicates",
                     "shared_records",
                     "stopped_workers",
+                    "unenforced_deadlines",
                 )
                 if isinstance(world, dict) and isinstance(world.get(key), list)
             }

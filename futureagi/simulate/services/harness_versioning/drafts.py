@@ -662,6 +662,7 @@ def record_draft(
     checked = wanted | set(checked or ())
     split, prepared = _prepared(environment, archives.read_archive(body))
     require_checkpoint_scenarios(prepared.scenarios)
+    from simulate.selectors.environment_documents import recorded_contract
     from simulate.selectors.stage_outputs import stage_output
     from simulate.services.harness_actor_rules import actor_rules, cast_records
     from simulate.services.harness_tool_reach import door_targets
@@ -675,7 +676,12 @@ def record_draft(
     cast = cast_records(split.environment)
     require_valid_faults(
         prepared.scenarios,
-        targets=door_targets(prepared.contract, actor_rules(split.environment), cast),
+        # Judged on the contract the draft runs with, as its build reaches each tool, not the authored one.
+        targets=door_targets(
+            recorded_contract(prepared.environment_documents),
+            actor_rules(split.environment),
+            cast,
+        ),
         cast=cast,
         before=before
         if isinstance(before, list)

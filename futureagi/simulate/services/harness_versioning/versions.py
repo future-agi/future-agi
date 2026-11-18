@@ -207,32 +207,29 @@ def run_contract(
     compare.
 
     A build can amend the authored contract while it builds (a tool served from the agent's tools service instead
-    of imported, say) and seals the amended one, so a version ``built`` from this tree has the sealed contract. A
-    version whose authored contract is the default version's, unchanged, runs with the default's; any other has
-    its own authored contract until a build seals it. A save (``full_build`` False) seals the author's entries
-    again, so each tool it did not change is reached as the default version runs it.
+    of imported, say) and seals the amended one, so a version a full build sealed from this tree has the sealed
+    contract. A save (``full_build`` False) reseals, and any other version records, the author's entries again, so
+    each tool it did not change is reached as the default version runs it, recorded here so a later read stops at
+    this version instead of walking back through its ancestry.
     """
     from simulate.selectors.environment_documents import (
         reach_as_built,
-        recorded_contract,
+        version_contract,
     )
 
     default = job.environment_version
+    authored = _json(split.environment, "contract.json")
+    authored = authored if isinstance(authored, dict) else {}
     sealed = _json(split.sealed, archives.SEALED_CONTRACT) if built else None
     if isinstance(sealed, dict) and sealed:
-        if full_build:
-            return sealed
-        return reach_as_built(
-            job, sealed, _json(split.environment, "contract.json"), default
-        )
+        return sealed if full_build else reach_as_built(job, sealed, authored, default)
     if default is not None and default.contract_hash_raw == hashing.contract_hash_raw(
         split.environment
     ):
-        inherited = recorded_contract(default.documents)
+        inherited = version_contract(job)
         if inherited:
             return inherited
-    authored = _json(split.environment, "contract.json")
-    return authored if isinstance(authored, dict) else {}
+    return reach_as_built(job, authored, authored, default)
 
 
 def prepare_pieces(

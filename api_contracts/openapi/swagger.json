@@ -60835,7 +60835,7 @@
         "/simulate/v3/call-executions/{call_execution_id}/workers/": {
             "get": {
                 "operationId": "simulate_v3_call_execution_workers",
-                "description": "Which of a multi-agent app's workers did what in this trial, read from the spans the app exported.",
+                "description": "Which of a multi-agent app's participants did what in this trial, read from the traces the app sent.",
                 "parameters": [
                     {
                         "name": "attempt",
@@ -161397,7 +161397,7 @@
                 },
                 "code": {
                     "title": "Code",
-                    "description": "The world's refusal code, as the harness sealed it.",
+                    "description": "Why the world refused the call, as a code.",
                     "type": "string"
                 },
                 "reason": {
@@ -162184,13 +162184,13 @@
                 },
                 "actions_truncated": {
                     "title": "Actions truncated",
-                    "description": "This record's own actions were cut; null for a trial sealed before the harness said so.",
+                    "description": "This record's own actions were cut; null for a trial recorded before this was reported.",
                     "type": "boolean",
                     "x-nullable": true
                 },
                 "truncation": {
                     "title": "Truncation",
-                    "description": "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed before the harness said which; null when nothing was cut.",
+                    "description": "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial recorded before this was reported; null when nothing was cut.",
                     "type": "string",
                     "enum": [
                         "actions",
@@ -162202,7 +162202,7 @@
             }
         },
         "StoppedWorker": {
-            "description": "Workers whose own process the harness ended when their deadline passed.",
+            "description": "Participants running on their own that the run stopped when their deadline passed.",
             "required": [
                 "worker",
                 "process",
@@ -162223,7 +162223,7 @@
                 },
                 "at": {
                     "title": "At",
-                    "description": "When the harness ended it, seconds since the epoch.",
+                    "description": "When the run stopped it, in seconds since the epoch.",
                     "type": "number"
                 },
                 "reason": {
@@ -162348,12 +162348,12 @@
                 },
                 "shared_records_truncated": {
                     "title": "Shared records truncated",
-                    "description": "More records were touched by more than one participant than the trial kept; null for a trial sealed before the harness said so.",
+                    "description": "More records were touched by more than one participant than the trial kept; null for a trial recorded before this was reported.",
                     "type": "boolean",
                     "x-nullable": true
                 },
                 "stopped_workers": {
-                    "description": "Workers whose own process the harness ended when their deadline passed.",
+                    "description": "Participants running on their own that the run stopped when their deadline passed.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/StoppedWorker"
@@ -163094,7 +163094,8 @@
                         "cancelled",
                         "infrastructure",
                         "not_observed",
-                        "observed_no_end"
+                        "observed_no_end",
+                        "unknown"
                     ]
                 },
                 "cut_short": {
@@ -163120,7 +163121,7 @@
                 },
                 "enforcement": {
                     "title": "Enforcement",
-                    "description": "How the world held it to its limits in this trial: on its own channel (only when the trial shows it), not at all, bypassed, or not known.",
+                    "description": "How its limits were enforced in this trial: enforced (only when the trial shows its own calls), not enforced, skipped, or not known.",
                     "type": "string",
                     "enum": [
                         "held_at_world",
@@ -163136,7 +163137,7 @@
                 },
                 "channel_bypassed": {
                     "title": "Channel bypassed",
-                    "description": "It reached the world on the shared address instead of its own channel in this trial, so its limits were not held there and its own checks were not graded.",
+                    "description": "Its calls went through the main app in this trial, so its limits were not enforced and its own checks were not graded.",
                     "type": "boolean",
                     "default": false
                 }
@@ -163271,7 +163272,7 @@
                 },
                 "refusal_code": {
                     "title": "Refusal code",
-                    "description": "The world's refusal code, as the harness sealed it.",
+                    "description": "Why the world refused the call, as a code.",
                     "type": "string"
                 },
                 "launch": {
@@ -163432,7 +163433,7 @@
                 },
                 "refusal_code": {
                     "title": "Refusal code",
-                    "description": "The world's refusal code, as the harness sealed it.",
+                    "description": "Why the world refused the call, as a code.",
                     "type": "string"
                 },
                 "launch": {
@@ -163563,7 +163564,8 @@
                         "cancelled",
                         "infrastructure",
                         "not_observed",
-                        "observed_no_end"
+                        "observed_no_end",
+                        "unknown"
                     ]
                 },
                 "did_not_finish": {
@@ -163826,7 +163828,8 @@
                         "complete",
                         "partial",
                         "unavailable",
-                        "no_evidence"
+                        "no_evidence",
+                        "infrastructure_lost"
                     ]
                 },
                 "steps": {
@@ -163908,7 +163911,8 @@
         "CallWorkersPending": {
             "required": [
                 "pending",
-                "next_read_at"
+                "next_read_at",
+                "participants_declared"
             ],
             "type": "object",
             "properties": {
@@ -163920,6 +163924,11 @@
                     "title": "Next read at",
                     "type": "string",
                     "minLength": 1
+                },
+                "participants_declared": {
+                    "title": "Participants declared",
+                    "description": "The run's agent version declares at least one participant, so this call's record is worth waiting for; false for a single-agent app.",
+                    "type": "boolean"
                 }
             }
         },
@@ -167044,7 +167053,8 @@
                         "partial",
                         "pending",
                         "not_finished",
-                        "unreadable"
+                        "unreadable",
+                        "no_evidence"
                     ]
                 },
                 "cells": {

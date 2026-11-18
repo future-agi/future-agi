@@ -27834,7 +27834,7 @@ export interface BlockedCallApi {
 export interface TrialRefusedActionApi {
   /** @minLength 1 */
   action: string;
-  /** The world's refusal code, as the harness sealed it. */
+  /** Why the world refused the call, as a code. */
   code: string;
   reason: string;
 }
@@ -28223,7 +28223,7 @@ export interface SharedRecordActionApi {
 }
 
 /**
- * Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed before the harness said which; null when nothing was cut.
+ * Which bound cut it: its own actions, the trial's list of records, or unknown on a trial recorded before this was reported; null when nothing was cut.
  */
 export type SharedRecordApiTruncation =
   (typeof SharedRecordApiTruncation)[keyof typeof SharedRecordApiTruncation];
@@ -28250,21 +28250,21 @@ export interface SharedRecordApi {
   actions: SharedRecordActionApi[];
   committed_writes: number;
   truncated: boolean;
-  /** This record's own actions were cut; null for a trial sealed before the harness said so. */
+  /** This record's own actions were cut; null for a trial recorded before this was reported. */
   actions_truncated?: boolean;
-  /** Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed before the harness said which; null when nothing was cut. */
+  /** Which bound cut it: its own actions, the trial's list of records, or unknown on a trial recorded before this was reported; null when nothing was cut. */
   truncation?: SharedRecordApiTruncation;
 }
 
 /**
- * Workers whose own process the harness ended when their deadline passed.
+ * Participants running on their own that the run stopped when their deadline passed.
  */
 export interface StoppedWorkerApi {
   /** @minLength 1 */
   worker: string;
   /** @minLength 1 */
   process: string;
-  /** When the harness ended it, seconds since the epoch. */
+  /** When the run stopped it, in seconds since the epoch. */
   at: number;
   /** @minLength 1 */
   reason: string;
@@ -28303,9 +28303,9 @@ export interface TrialStateApi {
   notices: TrialNoticeApi[];
   /** Records two or more participants named in this trial, and what the world made of each call. */
   shared_records?: SharedRecordApi[];
-  /** More records were touched by more than one participant than the trial kept; null for a trial sealed before the harness said so. */
+  /** More records were touched by more than one participant than the trial kept; null for a trial recorded before this was reported. */
   shared_records_truncated?: boolean;
-  /** Workers whose own process the harness ended when their deadline passed. */
+  /** Participants running on their own that the run stopped when their deadline passed. */
   stopped_workers?: StoppedWorkerApi[];
 }
 
@@ -28498,6 +28498,7 @@ export const CallWorkersResponseApiCollection = {
   partial: "partial",
   unavailable: "unavailable",
   no_evidence: "no_evidence",
+  infrastructure_lost: "infrastructure_lost",
 } as const;
 
 export type CallWorkersResponseApiWorkerDepths = { [key: string]: number };
@@ -28524,6 +28525,7 @@ export const CallWorkerApiState = {
   infrastructure: "infrastructure",
   not_observed: "not_observed",
   observed_no_end: "observed_no_end",
+  unknown: "unknown",
 } as const;
 
 export type CleanupApiStatus =
@@ -28559,7 +28561,7 @@ export interface WorkerCheckApi {
 }
 
 /**
- * How the world held it to its limits in this trial: on its own channel (only when the trial shows it), not at all, bypassed, or not known.
+ * How its limits were enforced in this trial: enforced (only when the trial shows its own calls), not enforced, skipped, or not known.
  */
 export type CallWorkerApiEnforcement =
   (typeof CallWorkerApiEnforcement)[keyof typeof CallWorkerApiEnforcement];
@@ -28590,11 +28592,11 @@ export interface CallWorkerApi {
   stopped_at?: number;
   cleanup?: CleanupApi;
   checks: WorkerCheckApi[];
-  /** How the world held it to its limits in this trial: on its own channel (only when the trial shows it), not at all, bypassed, or not known. */
+  /** How its limits were enforced in this trial: enforced (only when the trial shows its own calls), not enforced, skipped, or not known. */
   enforcement?: CallWorkerApiEnforcement;
   /** @minLength 1 */
   enforcement_label?: string;
-  /** It reached the world on the shared address instead of its own channel in this trial, so its limits were not held there and its own checks were not graded. */
+  /** Its calls went through the main app in this trial, so its limits were not enforced and its own checks were not graded. */
   channel_bypassed?: boolean;
 }
 
@@ -28691,7 +28693,7 @@ export interface CallWorkerEventApi {
   output?: CallWorkerEventApiOutput;
   input_omitted?: boolean;
   output_omitted?: boolean;
-  /** The world's refusal code, as the harness sealed it. */
+  /** Why the world refused the call, as a code. */
   refusal_code?: string;
   launch?: CallWorkerEventApiLaunch;
   relationship?: CallWorkerEventApiRelationship;
@@ -28797,7 +28799,7 @@ export interface CallWorkerEventOrNullApi {
   output?: CallWorkerEventOrNullApiOutput;
   input_omitted?: boolean;
   output_omitted?: boolean;
-  /** The world's refusal code, as the harness sealed it. */
+  /** Why the world refused the call, as a code. */
   refusal_code?: string;
   launch?: CallWorkerEventOrNullApiLaunch;
   relationship?: CallWorkerEventOrNullApiRelationship;
@@ -28835,6 +28837,7 @@ export const CallWorkerStepApiEndState = {
   infrastructure: "infrastructure",
   not_observed: "not_observed",
   observed_no_end: "observed_no_end",
+  unknown: "unknown",
 } as const;
 
 export type CallWorkerStepApiRelationship =
@@ -28963,6 +28966,8 @@ export interface CallWorkersPendingApi {
   pending: boolean;
   /** @minLength 1 */
   next_read_at: string;
+  /** The run's agent version declares at least one participant, so this call's record is worth waiting for; false for a single-agent app. */
+  participants_declared: boolean;
 }
 
 export type RunDashboardMetricApiUnit =
@@ -29850,6 +29855,7 @@ export const RouteTrialApiRoute = {
   pending: "pending",
   not_finished: "not_finished",
   unreadable: "unreadable",
+  no_evidence: "no_evidence",
 } as const;
 
 export type RouteCellApiState =

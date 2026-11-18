@@ -1817,6 +1817,87 @@ describe("actor turns in a call", () => {
 });
 
 describe("useCallWorkers", () => {
+  it("reads a pending record again even when its next read is already past, never turning the poll off", async () => {
+    const { readAgainDelay, READ_AGAIN_MIN_MS } = await import("../runDetail");
+    const now = Date.parse("2026-11-17T10:00:00Z");
+    // Past (a late answer, a client clock ahead of the server's): the shortest positive wait, never 0.
+    expect(readAgainDelay("2026-11-17T09:59:30Z", now)).toBe(READ_AGAIN_MIN_MS);
+    expect(readAgainDelay("2026-11-17T10:00:35Z", now)).toBe(35000);
+    expect(readAgainDelay(null, now)).toBe(false);
+    // An unreadable time still reads again, never NaN (which would leave the poll in an unknown state).
+    expect(readAgainDelay("not a date", now)).toBe(READ_AGAIN_MIN_MS);
+  });
+
+  it.each([
+    ["already past", () => new Date(Date.now() - 30_000).toISOString()],
+    ["unreadable", () => "not a date"],
+  ])(
+    "reads a pending record again shortly when its next read is %s",
+    async (_label, nextReadAt) => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const { useCallWorkers, READ_AGAIN_MIN_MS } = await import(
+          "../runDetail"
+        );
+        axios.get.mockReset();
+        axios.get.mockResolvedValue({
+          status: 202,
+          data: {
+            pending: true,
+            next_read_at: nextReadAt(),
+            participants_declared: true,
+          },
+        });
+        const client = new QueryClient();
+        const Wrapper = ({ children }) => (
+          <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        );
+        Wrapper.propTypes = { children: PropTypes.node };
+        const { result } = renderHook(() => useCallWorkers("call-late"), {
+          wrapper: Wrapper,
+        });
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(axios.get).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(READ_AGAIN_MIN_MS + 100);
+        await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("keeps the record shown while a status change re-reads the same call, but never another call's", async () => {
+    const { useCallWorkers } = await import("../runDetail");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const record = { workers: [], events: [], pending: false };
+    axios.get.mockReset();
+    axios.get.mockResolvedValueOnce({ status: 200, data: record });
+    let release;
+    axios.get.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ status: 200, data: record });
+        }),
+    );
+    const { result, rerender } = renderHook(
+      ({ id, status }) => useCallWorkers(id, status),
+      { wrapper: Wrapper, initialProps: { id: "call-1", status: "ongoing" } },
+    );
+    await waitFor(() => expect(result.current.data).toEqual(record));
+    rerender({ id: "call-1", status: "completed" });
+    // Re-reading: the same call's record stays, so the open tab never blanks.
+    expect(result.current.data).toEqual(record);
+    rerender({ id: "call-2", status: "completed" });
+    expect(result.current.data).toBeUndefined();
+    release?.();
+  });
+
   it("reads an empty answer (204) as no worker record, not a failure", async () => {
     const { useCallWorkers } = await import("../runDetail");
     axios.get.mockResolvedValueOnce({ status: 204, data: "" });
@@ -1834,7 +1915,7 @@ describe("useCallWorkers", () => {
     expect(result.current.data).toBe(null);
   });
 
-  it("shows Participants once a call has a record, and not while it is still coming or has none", async () => {
+  it("shows Participants once a call has a record or while a multi-agent call's is collected, and not when it has none", async () => {
     const { useHasWorkers } = await import("../runDetail");
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -1861,7 +1942,22 @@ describe("useCallWorkers", () => {
     expect(
       await has("still-coming", {
         status: 202,
-        data: { pending: true, next_read_at: "2026-11-17T10:00:35+00:00" },
+        data: {
+          pending: true,
+          next_read_at: "2026-11-17T10:00:35+00:00",
+          participants_declared: true,
+        },
+      }),
+    ).toBe(true);
+    // A single-agent call is read after it ends too: no tab appears for the wait and vanishes after it.
+    expect(
+      await has("single-agent", {
+        status: 202,
+        data: {
+          pending: true,
+          next_read_at: "2026-11-17T10:00:35+00:00",
+          participants_declared: false,
+        },
       }),
     ).toBe(false);
     expect(await has("none", { status: 204, data: "" })).toBe(false);
@@ -1958,7 +2054,9 @@ describe("useCallWorkers", () => {
   it("reads again once at the time the API says, and stops once nothing is due", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      const { useCallWorkers } = await import("../runDetail");
+      const { useCallWorkers, COLLECTING_WORKERS } = await import(
+        "../runDetail"
+      );
       const record = { workers: [], events: [], pending: false };
       const at = (seconds) =>
         new Date(Date.now() + seconds * 1000).toISOString();
@@ -1966,7 +2064,11 @@ describe("useCallWorkers", () => {
       axios.get
         .mockResolvedValueOnce({
           status: 202,
-          data: { pending: true, next_read_at: at(35) },
+          data: {
+            pending: true,
+            next_read_at: at(35),
+            participants_declared: true,
+          },
         })
         .mockResolvedValueOnce({
           status: 200,
@@ -1984,12 +2086,12 @@ describe("useCallWorkers", () => {
         wrapper: Wrapper,
       });
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
-      expect(result.current.data).toBe(null);
+      expect(result.current.data).toBe(COLLECTING_WORKERS);
       // Nothing is read before the time the API gave.
       await vi.advanceTimersByTimeAsync(30_000);
       expect(axios.get).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(5_000);
-      await waitFor(() => expect(result.current.data).not.toBe(null));
+      await waitFor(() => expect(result.current.data.workers).toEqual([]));
       await vi.advanceTimersByTimeAsync(600_000);
       await waitFor(() => expect(result.current.data).toEqual(record));
       await vi.advanceTimersByTimeAsync(60 * 60_000);
