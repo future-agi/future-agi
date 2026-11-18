@@ -284,7 +284,6 @@ ConnectSteps.propTypes = {
 
 /* How many scenarios the build generates — the same range the product's build accepts. */
 function ScenarioCount({ value, onChange, ok, credits = null }) {
-  const n = Number(value);
   return (
     <Box
       sx={{
@@ -318,7 +317,7 @@ function ScenarioCount({ value, onChange, ok, credits = null }) {
             }}
           >
             {ok
-              ? `We'll generate ${n.toLocaleString()} scenario${n === 1 ? "" : "s"} when it builds${credits?.need ? ` · ≈ ${credits.need.toLocaleString()} credits, once — running them is priced in the run plan` : ""}. Set any number up to ${MAX_BUILD_SCENARIOS.toLocaleString()}.`
+              ? `${credits?.need ? `≈ ${credits.need.toLocaleString()} credits · ` : ""}up to ${MAX_BUILD_SCENARIOS.toLocaleString()}`
               : `Between 1 and ${MAX_BUILD_SCENARIOS.toLocaleString()}.`}
           </Typography>
         </Box>

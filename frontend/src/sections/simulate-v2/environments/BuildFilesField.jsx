@@ -48,7 +48,7 @@ export default function BuildFilesField({ files, onChange }) {
   };
   return (
     <Box>
-      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+      <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
         Files and data
         <Box
           component="span"
@@ -56,9 +56,6 @@ export default function BuildFilesField({ files, onChange }) {
         >
           optional
         </Box>
-      </Typography>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.75 }}>
-        Your policy and records, used instead of generated ones.
       </Typography>
       <Box
         onDragOver={(e) => {

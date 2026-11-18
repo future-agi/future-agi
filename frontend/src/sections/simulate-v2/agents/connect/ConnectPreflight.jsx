@@ -71,7 +71,7 @@ export default function ConnectPreflight({
             ? "Checking the source and credentials…"
             : blockedReason ||
               (required
-                ? "Preflight checks the source and credentials before building."
+                ? "Checks the source and credentials."
                 : "Optional — check the source and credentials now. You can connect without it and finish setting up later.")}
         </Typography>
         {/* The next step while the build waits for it: the purple button.

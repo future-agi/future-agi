@@ -18,7 +18,7 @@ const MONO = "ui-monospace, Menlo, monospace";
 /* What happens to a credential, truthfully (RSI PRD, "Credentials"). A
    platform key's own use is said by the field that asks for it. */
 const HELPER =
-  "Stored encrypted and used only by Future AGI — never shown again, never sent to the improver.";
+  "Stored encrypted — never shown again.";
 
 /**
  * A credential field in a connect form: it takes the key itself, or a

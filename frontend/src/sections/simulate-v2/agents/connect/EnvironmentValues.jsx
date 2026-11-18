@@ -66,7 +66,6 @@ export default function EnvironmentValues({
   const names = [
     ...new Set([...expectedNames, ...values.map((v) => v.name), ...extraNames]),
   ];
-  const missing = names.filter((n) => !byName.has(n));
   /* The code reads these with no fallback — a run can't start without them.
      Optional ones are read with a default; the code runs without them. */
   const isOptional = (n) => optionalNames.includes(n);
@@ -244,9 +243,7 @@ export default function EnvironmentValues({
         sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}
       >
         <HintLine hint="Secrets resolve inside the sandbox and are never stored, logged or put in pull requests.">
-          {expectedNames.length
-            ? "What this agent's code reads. Test credentials only — never a production key."
-            : "Test credentials and settings our sandbox runs your code with — never a production key."}
+          Test credentials only — never a production key.
         </HintLine>
       </Typography>
 
@@ -263,7 +260,7 @@ export default function EnvironmentValues({
             sx={{ color: "text.subtitle", flexShrink: 0 }}
           />
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            {`Filled from ${fromOthers.join(", ")}, already connected from this repository${missing.length ? ` — ${missing.length === 1 ? "one value" : `${missing.length} values`} left to add.` : "."}`}
+            {`Filled from ${fromOthers.join(", ")}`}
           </Typography>
         </Stack>
       )}
@@ -427,18 +424,6 @@ export default function EnvironmentValues({
                     />
                   )}
                 </Box>
-                <Typography
-                  noWrap
-                  sx={{
-                    typography: "s3",
-                    color: "text.subtitle",
-                    width: { sm: 120 },
-                    flexShrink: 0,
-                    textAlign: { sm: "right" },
-                  }}
-                >
-                  {v?.from ? `from ${v.from}` : ""}
-                </Typography>
                 {expected ? (
                   <Box
                     sx={{
@@ -491,8 +476,7 @@ export default function EnvironmentValues({
             minWidth: 0,
           }}
         >
-          {fileError ||
-            "Credential file: Google service-account JSON only, up to 5 MiB."}
+          {fileError || "Google service-account JSON, up to 5 MiB"}
         </Typography>
         <Button
           variant="outlined"
@@ -598,7 +582,7 @@ export default function EnvironmentValues({
           >
             {domains.length > MAX_EGRESS_DOMAINS
               ? `${domains.length} domains — the sandbox allows at most ${MAX_EGRESS_DOMAINS}.`
-              : "Optional. Public hostnames for hardcoded APIs or TURN endpoints — everything else is firewalled while the agent runs."}
+              : "Optional — everything else is blocked while the agent runs."}
           </Typography>
         </Box>
       )}

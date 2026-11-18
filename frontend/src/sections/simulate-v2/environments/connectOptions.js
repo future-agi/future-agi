@@ -125,7 +125,7 @@ export const CLOSED_REACH_LABELS = { phone: "Phone line", chat: "Chat channel", 
 /* What a platform API key is used for — said where the key is entered. */
 export const PLATFORM_KEY_SCOPE = "This key reads your agent, creates test copies or drafts and places test calls. We never edit, publish or delete your live agent.";
 /* The key field's own line: how it's kept and what it's for (RSI PRD, "Credentials"). */
-export const PLATFORM_KEY_HELPER = "Stored encrypted. Used only to read the agent, make test copies and place test calls — never shown again, never sent to the improver.";
+export const PLATFORM_KEY_HELPER = "Stored encrypted — never shown again.";
 
 /* Retired, so it's said in the framework path. */
 export const OPENAI_AGENT_BUILDER_NOTE = "OpenAI agents come in as code, through the Agents SDK.";

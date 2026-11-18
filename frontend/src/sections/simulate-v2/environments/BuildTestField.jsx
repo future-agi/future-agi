@@ -51,7 +51,7 @@ export default function BuildTestField({
           error
             ? "Say what it should test — a sentence is enough."
             : optional
-              ? "Leave it empty and the builder proposes what to test from the agent's prompt, code and tools."
+              ? "Leave empty to let the builder propose tests from the agent."
               : undefined
         }
         InputProps={{ sx: { typography: "s2" } }}
