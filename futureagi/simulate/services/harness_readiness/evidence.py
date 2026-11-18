@@ -978,6 +978,42 @@ def _cost(runs: list[Any]) -> Reading:
     )
 
 
+# The OS user the agent's own tools service runs as: a door running as it shares the agent's access.
+AGENT_TOOLS_USER = "svc-tools"
+
+
+def hidden_material(certificate: Mapping[str, Any]) -> Reading:
+    """Whether the check that made ``certificate`` kept grading material out of the agent's reach: Supported only
+    when each process ran as its own OS user and the world's door ran apart from the agent's tools. A certificate
+    made before the check recorded it reads not run."""
+    runtime = certificate.get("runtime") if isinstance(certificate, Mapping) else None
+    runtime = runtime if isinstance(runtime, Mapping) else {}
+    isolation = runtime.get("process_isolation")
+    door_user = runtime.get("door_user")
+    if not isinstance(isolation, str) or not isolation:
+        return Reading(
+            "not_run",
+            "isolation_not_recorded",
+            "This pairing's check did not record whether the agent could read the grading material. Treat its "
+            "runs as not blind",
+        )
+    if isolation != "per_user":
+        return Reading(
+            "limited",
+            "not_isolated",
+            "Not isolated: the agent runs with the same access as the grader, so it could read the grading "
+            "material. Treat its runs as not blind",
+        )
+    if not isinstance(door_user, str) or not door_user or door_user == AGENT_TOOLS_USER:
+        return Reading(
+            "limited",
+            "door_not_isolated",
+            "The agent's processes are kept apart, but the world's door shares the agent's tools' access, so the "
+            "graded call log could be read or changed. Treat its runs as not blind",
+        )
+    return Reading("passed")
+
+
 def observed(pairing: Pairing, runs: list[Any]) -> dict[str, Reading]:
     """What this agent's ``runs`` on this environment version show for the rows no check
     measures; they hold no case and never lower the answer."""

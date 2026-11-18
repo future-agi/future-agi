@@ -1784,7 +1784,14 @@ class HarnessCapabilityRowSerializer(serializers.Serializer):
     blocked_by = serializers.CharField(allow_null=True)
     stale_because = serializers.CharField(allow_null=True)
     was = serializers.ChoiceField(choices=_READINESS_STATUSES, allow_null=True)
-    evidence = HarnessCapabilityEvidenceSerializer(many=True)
+    evidence = HarnessCapabilityEvidenceSerializer(
+        many=True,
+        help_text=(
+            "What the row read, one line each. The children row lists its seven checklist items (stable_ids, "
+            "delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, "
+            "unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item."
+        ),
+    )
     checked_at = serializers.CharField(allow_null=True)
     fix = HarnessCapabilityFixSerializer(allow_null=True)
     consequence = serializers.CharField(

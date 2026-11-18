@@ -108565,6 +108565,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         evidence: {
+          description:
+            "What the row read, one line each. The children row lists its seven checklist items (stable_ids, delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item.",
           type: "array",
           items: {
             $ref: "#/definitions/HarnessCapabilityEvidence",
@@ -132604,6 +132606,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessCapabilityEvidence: {
+      description:
+        "What the row read, one line each. The children row lists its seven checklist items (stable_ids, delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item.",
       required: ["check", "result"],
       type: "object",
       properties: {
@@ -144244,6 +144248,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         evidence: {
+          description:
+            "What the row read, one line each. The children row lists its seven checklist items (stable_ids, delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item.",
           type: "array",
           items: {
             $ref: "#/definitions/HarnessCapabilityEvidence",

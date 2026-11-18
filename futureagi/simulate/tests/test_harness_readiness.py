@@ -1316,6 +1316,44 @@ class TestApi:
         assert header["capability_snapshot"]["answer"]["kind"] == "ready"
         assert _get(auth_client, environment.id).json()["answer"]["kind"] == "blocked"
 
+    def test_the_run_header_report_has_the_capabilities_report_s_shape(
+        self, user, workspace, storage, auth_client, django_capture_on_commit_callbacks
+    ):
+        """The run dialog and the run header read one report: the run's kept snapshot carries every field and row
+        field GET capabilities serves, less what only a selection adds, and an old snapshot reads the same way."""
+        from simulate.serializers.harness_environment import (
+            HarnessCapabilityReportSerializer,
+        )
+
+        environment = _environment(user, workspace, storage, "rd-api-shape")
+        _certify(environment, storage)
+        run = _committed_run(environment, django_capture_on_commit_callbacks)
+        live = _get(auth_client, environment.id).json()
+
+        def header():
+            return auth_client.get(
+                f"/simulate/v3/test-executions/{run.test_execution_id}/calls/"
+            ).json()["execution"]["capability_snapshot"]
+
+        selection_only = {"needed_by", "affected"}
+        kept = header()
+        assert set(kept) == set(live) - {"selection"}
+        assert [set(row) for row in kept["rows"]] == [
+            set(row) - selection_only for row in live["rows"]
+        ]
+        assert HarnessCapabilityReportSerializer(data=kept).is_valid()
+
+        # A snapshot kept before workers and blockers were read serves them as the report does now.
+        old = {
+            key: value
+            for key, value in run.capability_snapshot.items()
+            if key not in ("workers", "blockers")
+        }
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            capability_snapshot=old
+        )
+        assert set(header()) == set(kept)
+
 
 class TestDoneWhen:
     def test_production_only_refund_tool_blocks_routing_then_goes_stale(
@@ -1512,6 +1550,49 @@ class TestReviewFollowUps:
             },
             True,
         )
+
+    def test_certification_files_after_a_file_larger_than_the_read_limit_are_read(
+        self, storage
+    ):
+        """A bundle member bigger than the certification read limit, sorted before the certification files, is
+        streamed past, never kept, and the files after it are read in full."""
+        import os
+
+        from simulate.services.harness_readiness import evidence
+
+        large = "a-large/world.bin"
+        body = archives.pack_archive(
+            {
+                large: os.urandom(evidence._MAX_CERTIFICATION_BYTES + 1024),
+                harness_readiness.TOOL_CERTIFICATION: json.dumps(
+                    {"tools": TOOLS}
+                ).encode(),
+                harness_readiness.ACTION_CERTIFICATION: json.dumps(
+                    {"actions": ACTIONS}
+                ).encode(),
+            }
+        )
+        storage.objects["harness-sealed/stream/large-first.tar.gz"] = body
+
+        found = archives.stream_members(
+            "harness-sealed/stream/large-first.tar.gz",
+            {
+                large,
+                harness_readiness.TOOL_CERTIFICATION,
+                harness_readiness.ACTION_CERTIFICATION,
+            },
+            evidence._MAX_CERTIFICATION_BYTES,
+        )
+        files, readable = evidence._read_once(
+            "harness-sealed/stream/large-first.tar.gz"
+        )
+
+        assert large not in found
+        assert json.loads(found[harness_readiness.TOOL_CERTIFICATION]) == {
+            "tools": TOOLS
+        }
+        assert readable is True
+        assert (files["tools"], files["actions"]) == (TOOLS, ACTIONS)
 
     def test_an_archive_without_the_certification_files_is_not_read_to_its_end(
         self, storage
@@ -2970,7 +3051,7 @@ class TestObservedRows:
         [
             ("files", "Nothing records the files the agent writes yet"),
             ("browser", "Nothing records the agent's browser yet"),
-            ("hidden_material", "Treat this run as not blind"),
+            ("hidden_material", "Treat its runs as not blind"),
         ],
     )
     def test_each_unmeasured_row_names_what_it_lacks(
@@ -2987,6 +3068,61 @@ class TestObservedRows:
         assert row["reason"] != "No check measures this yet"
         # Naming what is missing changes no status and holds no case.
         assert report["answer"]["kind"] == "ready"
+
+    @pytest.mark.parametrize(
+        ("runtime", "status", "code"),
+        [
+            (
+                {"process_isolation": "per_user", "door_user": "svc-door"},
+                "supported",
+                None,
+            ),
+            (
+                {"process_isolation": "fixed_user", "door_user": "svc-door"},
+                "partial",
+                "not_isolated",
+            ),
+            ({"process_isolation": "fixed_user"}, "partial", "not_isolated"),
+            (
+                {"process_isolation": "per_user", "door_user": "svc-tools"},
+                "partial",
+                "door_not_isolated",
+            ),
+            ({"process_isolation": "per_user"}, "partial", "door_not_isolated"),
+            ({"harness_version": "0.3.7"}, "untested", "isolation_not_recorded"),
+        ],
+        ids=[
+            "isolated",
+            "fixed_user",
+            "fixed_no_door",
+            "door_with_tools",
+            "no_door_user",
+            "old_certificate",
+        ],
+    )
+    def test_hidden_material_reads_the_isolation_the_check_recorded(
+        self, user, workspace, storage, runtime, status, code
+    ):
+        """Supported only when every process ran as its own user and the door apart from the agent's tools; a
+        certificate from before the check recorded it reads Untested. It never holds a case back."""
+        environment = _environment(user, workspace, storage, f"ob-hidden-{code}")
+        _certify(environment, storage)
+        bundle = HarnessAssembledBundle._base_manager.get(
+            job_id=environment.id, state="ready"
+        )
+        HarnessAssembledBundle._base_manager.filter(id=bundle.id).update(
+            certificate={**bundle.certificate, "runtime": runtime}
+        )
+        cache.clear()
+
+        report = _report(environment)
+        row = _rows(report)["hidden_material"]
+
+        assert (row["status"], row["reason_code"]) == (status, code)
+        assert row["status"] != "supported" or runtime.get("door_user") == "svc-door"
+        assert report["answer"]["kind"] == "ready"
+        if status != "supported":
+            assert "not from a blind test" in row["consequence"]
 
     def test_a_run_nothing_measured_reads_no_cost(self, user, workspace, storage):
         environment = _environment(user, workspace, storage, "ob-cost-none")
