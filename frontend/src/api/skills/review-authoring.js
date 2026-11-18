@@ -23,15 +23,17 @@ export function useReviewSubjects(kind, page, search = '') {
 }
 // A listed application run's reduced state, as a status badge; anything else stays unrecorded.
 // Shared presentation preserves both text and application outcome vocabulary.
+/** The release options for one candidate: its evidence (mapped), targets, recipients and the subject. */
+export async function loadReviewOptions(kind, resourceId, candidateId, config = {}) {
+  const [value, resource] = await Promise.all([
+    axios.get(apiPath('/model-hub/skills/release-requests/options/'), { ...config, params: { resource_id: resourceId, kind, candidate_version_id: candidateId } }).then(skillV11Result),
+    axios.get(kind === 'agent_context' ? contextEndpoints.detail(resourceId) : endpoints.detail(resourceId), config).then(skillV11Result).catch(() => null),
+  ]);
+  return { ...value, subject: resource?.context || resource, evidence: value.evidence.map((row) => ({ ...mapEvidenceRef(row), outcome: evidenceOutcome(row), counts: row.counts || undefined, completedAt: row.completed_at })), targets: value.targets.map((item) => ({ ...item, target: mapTargetConfiguration(item.target) })) };
+}
 export function useReviewOptions(kind, resourceId, candidateId) {
   return useSkillV11Query({ parts: ['review-options', kind, resourceId, candidateId], enabled: Boolean(resourceId && candidateId),
-    load: async (config) => {
-      const [value, resource] = await Promise.all([
-        axios.get(apiPath('/model-hub/skills/release-requests/options/'), { ...config, params: { resource_id: resourceId, kind, candidate_version_id: candidateId } }).then(skillV11Result),
-        axios.get(kind === 'agent_context' ? contextEndpoints.detail(resourceId) : endpoints.detail(resourceId), config).then(skillV11Result).catch(() => null),
-      ]);
-      return { ...value, subject: resource?.context || resource, evidence: value.evidence.map((row) => ({ ...mapEvidenceRef(row), outcome: evidenceOutcome(row), counts: row.counts || undefined, completedAt: row.completed_at })), targets: value.targets.map((item) => ({ ...item, target: mapTargetConfiguration(item.target) })) };
-    } });
+    load: (config) => loadReviewOptions(kind, resourceId, candidateId, config) });
 }
 export async function prepareReleaseReview(input, config) {
   const body = { resource_id: input.resourceId, kind: input.kind, candidate_version_id: input.candidateId,

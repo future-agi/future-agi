@@ -123,7 +123,8 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     await ownerPage.getByRole('button', { name: 'Connect an app', exact: true }).click();
     const dialog = ownerPage.getByRole('dialog');
     await dialog.getByLabel('App name', { exact: true }).fill('Refund agent');
-    await dialog.getByLabel('Config file', { exact: true }).setInputFiles(manifestPath);
+    // The config file input sits beside the entry button, which opens it; the dialog shows what it read.
+    await ownerPage.getByLabel('Config file', { exact: true }).setInputFiles(manifestPath);
     await expect(dialog.getByText(manifest.entrypoint, { exact: true })).toBeVisible();
     await ownerPage.screenshot({ path: `${output}/shots/00-register-target.png` });
     const created = ownerPage.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/contexts/${id}/bindings/`) && res.request().method() === 'POST');

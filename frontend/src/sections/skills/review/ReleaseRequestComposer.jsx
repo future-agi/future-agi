@@ -238,7 +238,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
     preparePacket(selected);
   };
   const selectedCount = selected.length + pendingRefs.filter((ref) => !selected.some((item) => evidenceKey(item) === evidenceKey(ref))).length;
-  const carriedPending = pendingRefs.some((ref) => carriedKeys.has(evidenceKey(ref)));
+  const carriedPending = pendingRefs.filter((ref) => carriedKeys.has(evidenceKey(ref))).length;
   // One reading of the evidence for the footer, the helper line and Continue (UXF-17): ticked but
   // private rows are named as not attached; no evidence is a warning beside Continue, never a block.
   const evidenceState = !candidate || !options.data ? { text: '' }
@@ -299,7 +299,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
           {/* UXF-17: one line above the table; each row has a checkbox and a neutral Private tag. */}
           {hasPrivate && <Stack spacing={0.5}>
             <Typography variant="s3" color="text.secondary">{PRIVATE_RESULTS_NOTE}</Typography>
-            {carriedPending && <Typography variant="s3" color="text.secondary">Your test result from Tests is ticked but private, so it isn&apos;t attached until you share it.</Typography>}
+            {carriedPending > 0 && <Typography variant="s3" color="text.secondary">{carriedPending === 1 ? 'Your test result is ticked but private, so it isn\u2019t attached until you share it.' : `Your ${carriedPending} test results are ticked but private, so they aren\u2019t attached until you share them.`}</Typography>}
           </Stack>}
           {/* The one bulk button: share the ticked private results and attach everything selected. */}
           {pendingRefs.length > 0 && <Button variant="outlined" size="small" sx={{ alignSelf: 'flex-start' }} disabled={busy}

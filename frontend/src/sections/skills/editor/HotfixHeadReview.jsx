@@ -111,7 +111,7 @@ export function FileChanges({ files, beforeTitle = "Before", afterTitle = "After
 }
 FileChanges.propTypes = { files: PropTypes.array, beforeTitle: PropTypes.string, afterTitle: PropTypes.string };
 
-function HeadReview({ scopeKey, session, onPreview, onAcknowledge, onAcknowledged }) {
+function HeadReview({ scopeKey, session, onPreview, onAcknowledge, onAcknowledged, compareRequest = 0 }) {
   const [preview, setPreview] = useState(null);
   const [confirmed, setConfirmed] = useState(false);
   const operation = useAuthoringOperation(scopeKey);
@@ -127,6 +127,16 @@ function HeadReview({ scopeKey, session, onPreview, onAcknowledge, onAcknowledge
     }, { action: "preview-head", editSequence: session.editSequence }, { retainUnknown: false });
     if (result) setPreview(result);
   };
+  // The editor's "behind latest" notice can start the same comparison (each request is a new count);
+  // it runs the one prepare below, so nothing is acknowledged without the tick and button here.
+  const latestPrepare = useRef(prepare);
+  latestPrepare.current = prepare;
+  const handledRequest = useRef(compareRequest);
+  useEffect(() => {
+    if (compareRequest === handledRequest.current) return;
+    handledRequest.current = compareRequest;
+    if (compareRequest > 0 && onPreview) latestPrepare.current();
+  }, [compareRequest, onPreview]);
   const acknowledge = async () => {
     if (!current || !confirmed) return;
     const result = await operation.run(async (input, options) => {
@@ -156,6 +166,6 @@ function HeadReview({ scopeKey, session, onPreview, onAcknowledge, onAcknowledge
     </>}
   </Stack>;
 }
-HeadReview.propTypes = { scopeKey: PropTypes.string.isRequired, session: PropTypes.object.isRequired, onPreview: PropTypes.func, onAcknowledge: PropTypes.func, onAcknowledged: PropTypes.func };
+HeadReview.propTypes = { scopeKey: PropTypes.string.isRequired, session: PropTypes.object.isRequired, onPreview: PropTypes.func, onAcknowledge: PropTypes.func, onAcknowledged: PropTypes.func, compareRequest: PropTypes.number };
 export default function HotfixHeadReview(props) { return <HeadReview key={props.scopeKey} {...props} />; }
 HotfixHeadReview.propTypes = HeadReview.propTypes;

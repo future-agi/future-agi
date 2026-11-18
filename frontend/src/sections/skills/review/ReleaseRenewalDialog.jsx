@@ -17,6 +17,7 @@ import { ClosableDialog } from "src/components/custom-dialog";
 import { evidenceTitle, relativeReviewTime } from '../utils/review-display';
 import Acknowledgment, { useAcknowledgment } from '../components/Acknowledgment';
 import TechnicalDetails from "../components/TechnicalDetails";
+import IdentityChip from "../components/IdentityChip";
 import { RENEW_REQUEST, labelDisplayName } from '../utils/terms';
 import { counted } from './reviewPresentation';
 import StatusBadge from "src/components/status-badge";
@@ -236,12 +237,18 @@ export default function ReleaseRenewalDialog({
                 ))}
               </TableBody>
             </Table>
-            {/* The evidence in one line; only results that are removed get their own row. */}
+            {/* The evidence in one line, naming each kept result (its exact ID on hover or focus), so the
+                reviewer checks which results carry over without opening anything. Only
+                results that are removed get their own row, with the exact ID that leaves the request. */}
             <Stack spacing={1}>
-              <Typography variant="s1" data-testid="renewal-evidence">{keptEvidenceLine(value.packet.evidence.length)}</Typography>
+              <Stack direction="row" flexWrap="wrap" columnGap={1.5} rowGap={0.5} alignItems="center" sx={{ minWidth: 0 }}>
+                <Typography variant="s1" data-testid="renewal-evidence">{keptEvidenceLine(value.packet.evidence.length)}</Typography>
+                {value.packet.evidence.map((ref) => <IdentityChip key={`${ref.source}:${ref.sourceId}`} inline concealed kind="id" label={evidenceTitle(ref, value.packet.transition.version, value.packet.transition.expectedVersion)} value={ref.sourceId} />)}
+              </Stack>
               {value.removedEvidence.map((row) => <Stack spacing={0.5} key={`${row.source}:${row.sourceId}`}>
                 <Stack direction="row" gap={1} alignItems="center"><Typography variant="s1">{evidenceTitle(row, value.packet.transition.version, value.packet.transition.expectedVersion)}</Typography><StatusBadge status="expired" label={row.reason === 'evidence_expired' ? 'Removed (expired)' : 'Removed (unavailable)'} /></Stack>
                 <Typography variant="s3" color="text.secondary">{REASONS[row.reason] || 'Evidence unavailable'}. It is not replaced.</Typography>
+                <Typography variant="s3" color="text.secondary" component="code" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.sourceId} is removed from the renewed request.</Typography>
               </Stack>)}
             </Stack>
             {/* Each changed rule with its values at approval and now, open while there is something to read. */}
@@ -250,7 +257,6 @@ export default function ReleaseRenewalDialog({
                 {rules.map((row, index) => <RuleChange key={`${row.field}:${index}`} row={row} />)}
                 <TechnicalDetails title="Technical details">
                   {value.packet.target && <Typography variant="s3">App configuration r{value.packet.target.revision}</Typography>}
-                  {value.removedEvidence.map((row) => <Typography key={row.sourceId} variant="s3" component="code" display="block" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.sourceId} is removed from the renewed request.</Typography>)}
                   {value.changes.map((row) => <Typography key={row.item} variant="s3" component="code" display="block" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{row.item}</Typography>)}
                   <Typography component="pre" variant="s3" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(value.changes, null, 2)}</Typography>
                 </TechnicalDetails>

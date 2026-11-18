@@ -16,6 +16,8 @@ import { releaseTitle, WAITING_FOR_APPROVAL } from './reviewPresentation';
 import { skillsRouteSx } from '../components/routeGutter';
 import StatusBadge from 'src/components/status-badge';
 import { reviewComposerUrl } from '../utils/review-links';
+import { loadReviewOptions } from 'src/api/skills/review-authoring';
+import { publishedDraftResults } from './evidenceSuggestions';
 import ReleaseRequestPanel, { useReviewedOperation } from './ReleaseRequestPanel';
 import ReleaseRequestComposer from './ReleaseRequestComposer';
 import ReleaseRenewalDialog from './ReleaseRenewalDialog';
@@ -175,14 +177,19 @@ function DraftReviewController({ scopeKey, contextId, viewState, View }) {
   };
   return <View scopeKey={scopeKey} state={state} name={detail.data?.context.name} draftReview={draftReview} canPublish={data?.releaseState.permissions.canPublish === true}
     onRetry={refresh} onRefresh={refresh}
-    onPublish={async (input, options) => { const receipt = await acknowledgeThenPublish(input, options); // A repair published from older content is verified next: open its application tests directly.
+    onPublish={async (input, options) => { const receipt = await acknowledgeThenPublish(input, options); // A repair published from older content is verified next: open its Run a test view directly.
       const repair = input.baseVersion != null && input.expectedHeadVersion != null && input.baseVersion !== input.expectedHeadVersion;
-      navigate(`${paths.dashboard.skills.contextDetail(contextId)}?version=${receipt.version.number}${repair ? '&tab=tests' : ''}`); return receipt; }}
+      navigate(`${paths.dashboard.skills.contextDetail(contextId)}?version=${receipt.version.number}${repair ? '&tab=tests&tests=run' : ''}`); return receipt; }}
     publishOperation={publishOperation}
     oneStepOperation={oneStep}
     onPublishAndRequest={async (input, options) => {
       const receipt = await acknowledgeThenPublish(input, options);
-      navigate(reviewComposerUrl({ kind: 'agent_context', subjectId: contextId, name: detail.data?.context.name || '', candidateId: receipt.version.id, number: receipt.version.number, digest: receipt.version.digest }));
+      // The author's own settled results for exactly these bytes travel with the request (UXF-17): they
+      // arrive ticked and private, and nothing is shared or attached until the author confirms it there.
+      const evidence = await loadReviewOptions('agent_context', contextId, receipt.version.id)
+        .then((value) => publishedDraftResults(value.evidence, { subjectId: contextId, subjectKind: 'agent_context', digest: receipt.version.digest }))
+        .catch(() => []);
+      navigate(reviewComposerUrl({ kind: 'agent_context', subjectId: contextId, name: detail.data?.context.name || '', candidateId: receipt.version.id, number: receipt.version.number, digest: receipt.version.digest, evidence }));
       return receipt;
     }} />;
 }

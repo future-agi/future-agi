@@ -39,6 +39,9 @@ it('shows every changed precondition and removed evidence before creating the ne
   fireEvent.click(screen.getByRole('button', { name: 'Changed values' }));
   expect(screen.queryByText('transition.expected_release_revision')).not.toBeInTheDocument();
   expect(screen.getByText('Removed (expired)')).toBeVisible();
+  // The exact ID leaving the request, and each kept result's ID, are on the dialog without opening anything.
+  expect(screen.getByText(/ is removed from the renewed request\.$/)).toBeVisible();
+  for (const ref of preview.packet.evidence) expect(screen.getByTitle(ref.sourceId)).toBeVisible();
   expect(screen.queryByText(/packet/)).not.toBeInTheDocument();
   const create = screen.getByRole('button', { name: 'Approve again' });
   expect(create).toBeDisabled();

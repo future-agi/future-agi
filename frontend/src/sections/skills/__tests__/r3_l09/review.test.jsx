@@ -96,13 +96,14 @@ describe("typed release evidence", () => {
     );
     expect(screen.getByText("Answer check · v7 vs v4")).toBeVisible();
     expect(screen.getByText("Application test · v7 vs v4")).toBeVisible();
-    // The evidence row states its outcome once; the exact grading counts and the evidence ID are read in Inspect.
-    expect(screen.queryByText(/attempts graded/)).not.toBeInTheDocument();
+    // The evidence row states its outcome once and its exact grading counts as its coverage (§16: the evidence
+    // the reviewer's tick covers is open); the evidence ID is on the row title's hover and read in full in Inspect.
+    expect(screen.getAllByText(/2\/4 attempts graded · 2 incomplete · 1 regression/)).toHaveLength(1);
     expect(screen.queryByText(/Evidence ID/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByText("Application test · v7 vs v4").closest("tr"));
     expect(
       screen.getAllByText(/2\/4 attempts graded · 2 incomplete · 1 regression/),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expect(screen.getByText("Evidence ID")).toBeVisible();
     expect(screen.getAllByText(/human disagreement/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Operator-recorded, unimported/)).toBeVisible();

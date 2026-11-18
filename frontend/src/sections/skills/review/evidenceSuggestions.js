@@ -22,3 +22,14 @@ export function suggestedEvidence(evidence, packet, carried = [], now = Date.now
   if (!records.length || records.some((ref) => !Number.isFinite(Date.parse(ref.completedAt)))) return [];
   return [evidenceSelection([...records].sort((a, b) => Date.parse(b.completedAt) - Date.parse(a.completedAt))[0])];
 }
+
+/**
+ * The results a publish hands to its release request: the author's own private, settled results
+ * for exactly the bytes just published (tested as the saved draft). They are carried as refs only;
+ * the composer pre-ticks them and attaches nothing until the author confirms sharing them.
+ */
+export function publishedDraftResults(evidence, { subjectId, subjectKind, digest }, now = Date.now()) {
+  const packet = { subjectId, subjectKind, candidateDigest: digest, target: null };
+  return evidence.filter((ref) => ref.visibility === 'private' && ref.candidateDigest === digest
+    && evidenceProblems(ref, packet, now).every((reason) => reason.startsWith('Private')));
+}

@@ -169,10 +169,13 @@ it('states evidence, impact, permissions and files once in a key/value table, wi
   expect(screen.getByRole('button', { name: 'Apps affected' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Technical details' })).toBeVisible();
   ['Counts by app', 'Version details', 'Compared content'].forEach((text) => expect(screen.queryByRole('button', { name: text })).not.toBeInTheDocument());
-  fireEvent.click(screen.getByRole('button', { name: 'What was compared' }));
+  // The reviewer's tick covers what the release affects, so the compared fingerprints are open; each is named
+  // ("Before", "Candidate") with its exact digest on hover or focus, never a hash as content.
+  expect(screen.getByRole('button', { name: 'What was compared' })).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByText('No changes in recognized static declarations. This is not a safety certification.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Copy full Before' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Copy full Candidate' })).toBeVisible();
+  expect(screen.getByTitle(capabilities.beforeDigest)).toHaveTextContent('Before');
 });
 it('keeps the target configuration out of the summary and its digest under Technical details', () => {
   const target = { bindingId: 'binding', environmentId: null, revision: 2, configurationDigest: 'd'.repeat(64) };

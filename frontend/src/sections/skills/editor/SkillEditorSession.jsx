@@ -104,6 +104,9 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
   // opens it: skills proposed by a migration, or a dependency/head update that needs its retry.
   const proposedLinksPending = isContext && Array.isArray(contextControls.proposedLinks) && contextControls.proposedLinks.length > 0 && !(initialDraft.contextSpec?.links?.length);
   const [detailsOpen, setDetailsOpen] = useState(Boolean(proposedLinksPending));
+  // A draft behind the latest version offers its head comparison in the notice, so it is reachable
+  // without opening the panel; starting it opens the panel where the comparison and its tick live.
+  const [compareRequest, setCompareRequest] = useState(0);
   useEffect(() => { if (isContext && session.mutationError) setDetailsOpen(true); }, [isContext, session.mutationError]);
   const validation = useDraftChecks(session.files, skill.name, 600, !isContext);
   const publishPending = !isContext && (savingState(session) || !validation.current);
@@ -220,7 +223,6 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
     onPreserved={() => guard.allow(() => navigate(paths.dashboard.skills.root, location.state?.reopenMigration ? { state: { reopenMigration: location.state.reopenMigration } } : undefined))} />;
 
   const linkCount = session.resolvedLock?.links?.length || 0;
-  const purposeText = (session.description ?? session.contextSpec?.description ?? '').trim();
   const detailsNotes = [proposedLinksPending && 'Proposed skills need review', stale && `Latest is v${skill.latestVersion}`, session.mutationError && 'An update needs a retry'].filter(Boolean);
 
   return <Stack spacing={2} data-slot="editor-session" sx={{ flex: { xs: '1 0 auto', md: '1 1 0%' }, minHeight: 0, ...(isContext ? { overflowY: { md: 'auto' }, px: { md: 0.5 }, mx: { md: -0.5 } } : {}) }}>
@@ -246,23 +248,26 @@ function EditorSession({ skill, initialDraft, refetchDraft, kind = 'skill', reso
         </Menu>
       </Box>} sx={{ flexWrap: 'wrap', rowGap: 1.5, flexShrink: 0 }} />
     {operationError && <Alert severity="error">{operationError}</Alert>}
-    {stale && <Alert severity="warning" sx={{ flexShrink: 0 }} action={!isContext && <Button color="inherit" disabled={locked || saving || session.status === 'conflict'} onClick={compareLatest}>Compare</Button>}>
+    {stale && <Alert severity="warning" sx={{ flexShrink: 0 }} action={!isContext ? <Button color="inherit" disabled={locked || saving || session.status === 'conflict'} onClick={compareLatest}>Compare</Button>
+      : !detailsOpen && <Button color="inherit" disabled={locked || !contextControls.previewHead || Boolean(session.mutationError)} onClick={() => { setDetailsOpen(true); setCompareRequest((count) => count + 1); }}>Compare with latest version</Button>}>
       {isContext ? `The content origin remains v${session.baseVersion}. Latest is v${skill.latestVersion}; review it separately without copying its files.` : `v${skill.latestVersion} was published after you started. Compare your saved draft with the latest version before publishing.`}
     </Alert>}
     {isContext && <Box data-slot="context-details" sx={{ flexShrink: 0, minWidth: 0, border: 1, borderColor: 'divider', borderRadius: 1 }}>
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1, py: 0.5, minWidth: 0 }}>
+      <Stack direction="row" alignItems="center" flexWrap="wrap" columnGap={1} rowGap={0.5} sx={{ px: 1, py: 0.5, minWidth: 0 }}>
         <Button size="small" aria-expanded={detailsOpen} aria-controls="context-details-panel" onClick={() => setDetailsOpen((open) => !open)} sx={{ flexShrink: 0 }}
           startIcon={<Iconify icon={detailsOpen ? 'solar:alt-arrow-down-linear' : 'solar:alt-arrow-right-linear'} width={16} />}>Linked skills and settings</Button>
-        <Typography variant="s3" color="text.secondary" noWrap sx={{ minWidth: 0, flex: 1 }}>{linkCount} linked skill{linkCount === 1 ? '' : 's'} · {purposeText || 'No purpose yet'}</Typography>
+        <Typography variant="s3" color="text.secondary" noWrap sx={{ flexShrink: 0 }}>{linkCount} linked skill{linkCount === 1 ? '' : 's'}</Typography>
+        {/* The purpose is one line, so it is edited in the summary row itself: changing it never opens the
+            panel or takes room from the editor. It is versioned with the instructions and accepted skills. */}
+        <TextField label="Context purpose" size="small" value={session.description ?? session.contextSpec?.description ?? ''} placeholder="No purpose yet" onChange={(event) => session.editFields({ description: event.target.value })} disabled={locked} inputProps={{ maxLength: 1024, title: 'Versioned with the standing instructions and accepted skills.' }} sx={{ flex: '1 1 240px', minWidth: 0, my: 0.5 }} />
         {detailsNotes.length > 0 && <Typography variant="s3" color="status.warning.fg" sx={{ flexShrink: 0, display: { xs: 'none', sm: 'block' } }}>{detailsNotes.join(' · ')}</Typography>}
       </Stack>
       {/* Collapsed means hidden, not unmounted: the links and head review keep their previews and acknowledgments. */}
       <Box id="context-details-panel" role="region" aria-label="Linked skills and settings" hidden={!detailsOpen} sx={{ px: 1.5, pb: 1.5 }}>
         <Stack spacing={2} sx={{ minWidth: 0 }}>
           {detailsNotes.length > 0 && <Typography variant="s3" color="status.warning.fg" sx={{ display: { xs: 'block', sm: 'none' } }}>{detailsNotes.join(' · ')}</Typography>}
-          <TextField label="Context purpose" size="small" value={session.description ?? session.contextSpec?.description ?? ''} onChange={(event) => session.editFields({ description: event.target.value })} disabled={locked} inputProps={{ maxLength: 1024 }} helperText="Versioned with the standing instructions and accepted skills." />
           <ContextLinksPanel scopeKey={scopeKey} session={session} availableSkills={contextControls.availableSkills} upstream={contextControls.upstream} onPreview={contextControls.previewDependencies} onApply={contextControls.applyDependencies} proposedLinks={contextControls.proposedLinks} readOnly={locked} />
-          <HotfixHeadReview scopeKey={scopeKey} session={session} onPreview={locked ? undefined : contextControls.previewHead} onAcknowledge={locked ? undefined : contextControls.acknowledgeHead} />
+          <HotfixHeadReview scopeKey={scopeKey} session={session} compareRequest={compareRequest} onPreview={locked ? undefined : contextControls.previewHead} onAcknowledge={locked ? undefined : contextControls.acknowledgeHead} />
         </Stack>
       </Box>
     </Box>}

@@ -584,13 +584,11 @@ describe("reviewed examples", () => {
       />,
     );
     expect(screen.queryByLabelText("Fixture 1 name")).not.toBeInTheDocument();
-    fireEvent.mouseDown(screen.getByLabelText("Required skill"));
-    fireEvent.click(screen.getByRole("option", { name: "skills/refund" }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Required skill" })).getByRole("radio", { name: "skills/refund" }));
     // A skill without an action is not a complete expectation.
     expect(screen.getByRole("button", { name: "Save example" })).toBeDisabled();
     expect(screen.getByText("Choose both a skill and an action, or leave both as Not specified.")).toBeInTheDocument();
-    fireEvent.mouseDown(screen.getByLabelText("Required business action"));
-    fireEvent.click(screen.getByRole("option", { name: "Issue a refund" }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Required business action" })).getByRole("radio", { name: "Issue a refund" }));
     fireEvent.click(
       screen.getByLabelText("I reviewed the request, supplied facts and expected behavior"),
     );

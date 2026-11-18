@@ -44,6 +44,19 @@ describe('ReleaseReviewBody files', () => {
     expect(screen.getByRole('button', { name: /^Actions for / })).toBeVisible();
   });
 
+  it("states each result's ID and exact grading counts, the target configuration and the compared fingerprints without opening anything", () => {
+    const target = { bindingId: 'binding', environmentId: null, revision: 2, configurationDigest: `sha256:${'c'.repeat(64)}` };
+    const summaries = [{ source: 'skills_text', sourceId: 'run', graded: 1, planned: 1, incomplete: 0, regressions: 0, disagreements: 0 }];
+    const capabilities = { changes: [], beforeDigest: `sha256:${'a'.repeat(64)}`, afterDigest: `sha256:${'b'.repeat(64)}` };
+    render(<ReleaseReviewBody packet={{ ...packet, target }} evidence={packet.evidence} summaries={summaries} capabilities={capabilities} changes={[]} dependencyChanges={[]} checks={{ items: [], summary: { errors: 0, warnings: 0 } }} />);
+    expect(screen.getByText('1/1 attempts graded · 0 incomplete · 0 regressions')).toBeVisible();
+    expect(screen.getByTitle('run')).toBeVisible();
+    expect(screen.getByTitle(target.configurationDigest)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'What was compared' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByTitle(capabilities.beforeDigest)).toBeVisible();
+    expect(screen.getByTitle(capabilities.afterDigest)).toBeVisible();
+  });
+
   it('says once that private results need sharing', () => {
     expect(PRIVATE_RESULTS_NOTE).toBe('Private results are visible only to you; sharing lets the reviewer see them.');
   });

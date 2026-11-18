@@ -269,8 +269,10 @@ export async function createDriver({ jobId, runId, registration }) {
             await expect.poll(async () => (await read(`contexts/${parent.id}/draft/`, signal)).files.find(file => file.path === 'AGENTS.md').content, { timeout: 120_000 }).toBe(root);
             if (index === 0) { await page.unroute(pattern); if (raceError) throw raceError; requireValue(raced, 'Save race did not execute'); }
             const purpose = 'Reviewed purchasing purpose; retain the accepted shared policy.';
+            // The purpose is edited in the summary row; the linked settings disclosure is opened only if the field is not on screen.
             const details = page.getByRole('button', {name:'Linked skills and settings', exact:true});
-            if (await details.getAttribute('aria-expanded') === 'false') await operator.click(details, `parent-${index}-open-linked-settings`);
+            const purposeField = page.getByRole('textbox', { name: 'Context purpose', exact: true });
+            if (!(await purposeField.isVisible()) && await details.getAttribute('aria-expanded') === 'false') await operator.click(details, `parent-${index}-open-linked-settings`);
             await fill('Context purpose', purpose, `parent-${index}-purpose-edit`);
             await expect.poll(async () => (await read(`contexts/${parent.id}/draft/`, signal)).context_spec.description).toBe(purpose);
             const saved = await read(`contexts/${parent.id}/draft/`, signal);

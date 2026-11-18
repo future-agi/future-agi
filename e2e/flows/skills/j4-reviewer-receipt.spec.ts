@@ -120,7 +120,9 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await expect(page.getByText('Candidate policy requiring independent approval.', { exact: false }).first()).toBeVisible();
     const otherChecks = page.getByRole('button', { name: 'Other checks', exact: true });
     if (await otherChecks.count()) await otherChecks.click();
-    await page.getByRole('button', { name: 'What was compared', exact: true }).click();
+    // The compared fingerprints are open in the reviewer's view; open them only if they are closed.
+    const compared = page.getByRole('button', { name: 'What was compared', exact: true });
+    if (await compared.getAttribute('aria-expanded') !== 'true') await compared.click();
     await expect(page.getByText('No changes in recognized static declarations. This is not a safety certification.', { exact: true })).toBeVisible();
     const inspected = await api(reviewer, 'POST', 'release-requests/inspection/', {
       resource_id: id, kind: 'skill', candidate_version_id: candidate.version.id, label: 'production',

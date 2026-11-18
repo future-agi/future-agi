@@ -109,14 +109,33 @@ function TargetSection({ contextId, version, canWrite, targets }) {
   const create = useCreateNativeTarget(contextId);
   const qualify = useQualifyNativeTarget(contextId);
   const [review, setReview] = useState(null);
-  const configuration = useRuntimeConfiguration(contextId, Boolean(review));
-  const [error, setError] = useState('');
   const target = targets.data.targets[0];
+  // An unpinned target has one thing to do before it can be tested: review and pin what is running.
+  // That review is shown here, not behind a button that only opens it. The pin itself stays explicit.
+  const inline = Boolean(target && !target.qualified && canWrite);
+  const reviewing = review || (inline ? target : null);
+  const configuration = useRuntimeConfiguration(contextId, Boolean(reviewing));
+  const [error, setError] = useState('');
   const pin = async () => {
     setError('');
-    try { await qualify.mutateAsync({ bindingId: review.bindingId, revision: review.revision, configuration: configuration.data }); setReview(null); }
+    try { await qualify.mutateAsync({ bindingId: reviewing.bindingId, revision: reviewing.revision, configuration: configuration.data }); setReview(null); }
     catch { setError('Could not pin this configuration. Reopen the review to compare the latest target revision.'); }
   };
+  const pinReview = <>
+    <Typography variant="m1">Pin the application configuration</Typography>
+    {configuration.isError ? <ErrorState title="The runtime did not describe itself" onRetry={configuration.refetch} /> : configuration.isLoading || !configuration.data ? <ContentSkeleton label="Reading the runtime's measured configuration" /> : <>
+      <Typography variant="s1" data-testid="pin-sentence">{pinSentence(configuration.data)}</Typography>
+      <TechnicalDetails title="Technical details">
+        <Stack spacing={0.5} component="dl" sx={{ m: 0 }}>
+          {[['Code version', configuration.data.code_commit ?? configuration.data.codeCommit], ['Entrypoint', configuration.data.entrypoint], ['Runtime', configuration.data.runtime_version ?? configuration.data.runtimeVersion],
+            ['Packages', `${configuration.data.packages.length} pinned`], ['Model', configuration.data.model.model_id ?? configuration.data.model.modelId], ['Side effects', sideEffectText(configuration.data.side_effect_policy ?? configuration.data.sideEffectPolicy)]]
+            .map(([label, value]) => <Stack key={label} direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 0, sm: 1 }}><Typography component="dt" variant="s3" color="text.secondary" sx={{ width: { sm: 120 }, flexShrink: 0 }}>{label}</Typography><Typography component="dd" variant="s1" sx={{ m: 0, overflowWrap: 'anywhere' }}>{value}</Typography></Stack>)}
+        </Stack>
+        <Typography variant="s3" color="text.secondary" sx={{ mt: 1 }}>The runtime measured these from its live image and mounts. Each test launch measures them again and refuses a mismatch.</Typography>
+      </TechnicalDetails>
+    </>}
+    {error && <Alert severity="error">{error}</Alert>}
+  </>;
   return <Section title={<Typography component="span" variant="m3">Application target</Typography>}>
     {!target ? <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }} sx={{ minWidth: 0 }}>
       <Typography variant="s1">No application is registered for this context.</Typography>
@@ -124,26 +143,18 @@ function TargetSection({ contextId, version, canWrite, targets }) {
     </Stack> : <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', sm: 'center' }} sx={{ minWidth: 0 }}>
       <Typography variant="s1">{target.name}</Typography>
       <StatusBadge status={target.qualified ? 'info' : 'unknown'} role={target.qualified ? 'info' : 'warning'} label={target.qualified ? 'App configuration pinned' : 'App configuration not pinned'} />
-      <Button size="small" variant="outlined" disabled={!canWrite} onClick={() => setReview(target)}>Show app configuration</Button>
-      <Button size="small" variant="outlined" disabled={!canWrite} onClick={() => setReview(target)}>Change</Button>
+      {!inline && <Button size="small" variant="outlined" disabled={!canWrite} onClick={() => setReview(target)}>Show app configuration</Button>}
+      {!inline && <Button size="small" variant="outlined" disabled={!canWrite} onClick={() => setReview(target)}>Change</Button>}
+    </Stack>}
+    {inline && !review && <Stack spacing={1.5} role="group" aria-label="Pin the application configuration" sx={{ mt: 1.5, p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1, minWidth: 0 }}>
+      {pinReview}
+      <Box><Button color="primary" variant="contained" disabled={!configuration.data || qualify.isPending} onClick={pin}>Pin this configuration</Button></Box>
     </Stack>}
     <TechnicalDetails title="App version info"><Stack spacing={1}><Typography variant="s3" color="text.secondary">Runtime: {targets.data.runtime.runtime} · evidence class: {targets.data.runtime.evidenceClass || 'unstated'}</Typography>{target?.qualified && <IdentityChip value={target.configurationDigest} label="Configuration" />}</Stack></TechnicalDetails>
     {create.isError && <Alert severity="error">Could not add the target. Check the runtime and your access, then retry.</Alert>}
     {review && <ClosableDialog open onClose={() => setReview(null)} maxWidth="sm" fullWidth>
       <Stack spacing={1.5} sx={{ p: 3 }}>
-        <Typography variant="m1">Pin the application configuration</Typography>
-        {configuration.isError ? <ErrorState title="The runtime did not describe itself" onRetry={configuration.refetch} /> : configuration.isLoading || !configuration.data ? <ContentSkeleton label="Reading the runtime's measured configuration" /> : <>
-          <Typography variant="s1" data-testid="pin-sentence">{pinSentence(configuration.data)}</Typography>
-          <TechnicalDetails title="Technical details">
-            <Stack spacing={0.5} component="dl" sx={{ m: 0 }}>
-              {[['Code version', configuration.data.code_commit ?? configuration.data.codeCommit], ['Entrypoint', configuration.data.entrypoint], ['Runtime', configuration.data.runtime_version ?? configuration.data.runtimeVersion],
-                ['Packages', `${configuration.data.packages.length} pinned`], ['Model', configuration.data.model.model_id ?? configuration.data.model.modelId], ['Side effects', sideEffectText(configuration.data.side_effect_policy ?? configuration.data.sideEffectPolicy)]]
-                .map(([label, value]) => <Stack key={label} direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 0, sm: 1 }}><Typography component="dt" variant="s3" color="text.secondary" sx={{ width: { sm: 120 }, flexShrink: 0 }}>{label}</Typography><Typography component="dd" variant="s1" sx={{ m: 0, overflowWrap: 'anywhere' }}>{value}</Typography></Stack>)}
-            </Stack>
-            <Typography variant="s3" color="text.secondary" sx={{ mt: 1 }}>The runtime measured these from its live image and mounts. Each test launch measures them again and refuses a mismatch.</Typography>
-          </TechnicalDetails>
-        </>}
-        {error && <Alert severity="error">{error}</Alert>}
+        {pinReview}
         <Stack direction="row" justifyContent="flex-end" spacing={1}>
           <Button onClick={() => setReview(null)}>Cancel</Button>
           <Button color="primary" variant="contained" disabled={!configuration.data || qualify.isPending} onClick={pin}>Pin this configuration</Button>
@@ -598,11 +609,11 @@ NoRunsYet.propTypes = { count: PropTypes.number.isRequired, onRun: PropTypes.fun
 
 // The context Tests tab in the shared sub-tabs (UXF-04): Results (the result in focus, then History),
 // Run a test (the answer check or the application test) and Cases (the test cases), in that order in
-// every state. Results opens by default. Two hand-offs open Run a test instead, because the person
-// arrived to run something: a reproduction from a trace (`seed`) and the editor's saved-draft answer
-// check (`draftHandoff`). Every panel stays mounted, so the application test keeps its operation key,
+// every state. Results opens by default. Three hand-offs open Run a test instead, because the person
+// arrived to run something: a reproduction from a trace (`seed`), the editor's saved-draft answer
+// check (`draftHandoff`) and a just-published repair, which is verified next (`runHandoff`). Every panel stays mounted, so the application test keeps its operation key,
 // plan and spend tick, and the answer check keeps its preview and tick, while another tab is open.
-export default function ContextNativePanel({ contextId, versions, viewed, cases, casesState, onRetryCases, canWrite, productionVersion, seed, children, reviewedCases, state, answerHistory, renderAnswer, answerRunId, historyPagination, latestAnswer, draftHandoff = false }) {
+export default function ContextNativePanel({ contextId, versions, viewed, cases, casesState, onRetryCases, canWrite, productionVersion, seed, children, reviewedCases, state, answerHistory, renderAnswer, answerRunId, historyPagination, latestAnswer, draftHandoff = false, runHandoff = false }) {
   const targets = useNativeTargets(contextId);
   const runs = useNativeRuns(contextId);
   const [selected, setSelected] = useState(null);
@@ -610,7 +621,7 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
   const [selection, setSelection] = useState(null);
   const [chosenKind, setKind] = useState(null);
   const [planCeiling, setPlanCeiling] = useState(null);
-  const [tab, setTab] = useState(() => (seed || draftHandoff ? 'run' : DEFAULT_TESTS_SUB_TAB));
+  const [tab, setTab] = useState(() => (seed || draftHandoff || runHandoff ? 'run' : DEFAULT_TESTS_SUB_TAB));
   const resultRegion = useRef(null);
   const answerForm = useRef(null);
   const applicationForm = useRef(null);
@@ -701,4 +712,4 @@ export default function ContextNativePanel({ contextId, versions, viewed, cases,
   </Stack>;
   return <TestsSubTabs value={tab} onChange={setTab} label="Context tests views" results={resultsPanel} run={runPanel} cases={reviewedCases} />;
 }
-ContextNativePanel.propTypes = { contextId: PropTypes.string.isRequired, versions: PropTypes.array.isRequired, viewed: PropTypes.object, cases: PropTypes.array.isRequired, casesState: PropTypes.oneOf(['loading', 'error']), onRetryCases: PropTypes.func, canWrite: PropTypes.bool.isRequired, productionVersion: PropTypes.number, seed: PropTypes.object, children: PropTypes.oneOfType([PropTypes.node, PropTypes.func]), reviewedCases: PropTypes.node, state: PropTypes.string, answerHistory: PropTypes.object, renderAnswer: PropTypes.func, answerRunId: PropTypes.string, historyPagination: PropTypes.node, latestAnswer: PropTypes.object, draftHandoff: PropTypes.bool };
+ContextNativePanel.propTypes = { contextId: PropTypes.string.isRequired, versions: PropTypes.array.isRequired, viewed: PropTypes.object, cases: PropTypes.array.isRequired, casesState: PropTypes.oneOf(['loading', 'error']), onRetryCases: PropTypes.func, canWrite: PropTypes.bool.isRequired, productionVersion: PropTypes.number, seed: PropTypes.object, children: PropTypes.oneOfType([PropTypes.node, PropTypes.func]), reviewedCases: PropTypes.node, state: PropTypes.string, answerHistory: PropTypes.object, renderAnswer: PropTypes.func, answerRunId: PropTypes.string, historyPagination: PropTypes.node, latestAnswer: PropTypes.object, draftHandoff: PropTypes.bool, runHandoff: PropTypes.bool };

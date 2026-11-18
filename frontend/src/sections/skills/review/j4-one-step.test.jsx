@@ -10,7 +10,7 @@ import { useExecuteReleaseRequest, useReleaseRequest, useRenewalPreview, useRevi
 import { useSkillV11Query } from 'src/api/skills/testing';
 import { useContextDetail, useContextDraft } from 'src/api/skills/context-authoring';
 import { useAcknowledgeContextHead, usePublishContext } from 'src/api/skills/context-production';
-import { useReviewCandidates, useReviewOptions, useReviewSubjects, usePrepareReleaseReview, useSubmitReleaseReview, useShareReleaseEvidence } from 'src/api/skills/review-authoring';
+import { loadReviewOptions, useReviewCandidates, useReviewOptions, useReviewSubjects, usePrepareReleaseReview, useSubmitReleaseReview, useShareReleaseEvidence } from 'src/api/skills/review-authoring';
 
 // J4 one-step paths: identities carried forward, single-target default, one
 // explicit batch share decision, and renewal opened directly on refusal.
@@ -28,6 +28,7 @@ vi.mock('src/api/skills/review-production', () => ({
 }));
 vi.mock('src/api/skills/review-authoring', () => ({
   useReviewSubjects: vi.fn(), useReviewCandidates: vi.fn(), useReviewOptions: vi.fn(), usePrepareReleaseReview: vi.fn(), useSubmitReleaseReview: vi.fn(), useShareReleaseEvidence: vi.fn(),
+  loadReviewOptions: vi.fn(async () => ({ evidence: [] })),
 }));
 
 afterEach(cleanup);
@@ -138,6 +139,21 @@ it('acknowledges the reviewed head with the same identity, publishes and carries
   expect(navigated.to).toContain('compose=1');
   expect(navigated.to).toContain('candidate=v2');
   expect(navigated.to).toContain('number=2');
+});
+
+it("carries only the author's own settled private results for exactly the published bytes", async () => {
+  navigated.to = null;
+  installDraft({ revision: 3, digest: 'sha256:candidate', headAcknowledged: false });
+  useAcknowledgeContextHead.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ revision: 4, reviewFingerprint: 'fp4' }) });
+  usePublishContext.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ version: { id: 'v2', number: 2, digest: 'sha256:candidate' } }) });
+  const later = new Date(Date.now() + 86_400_000).toISOString();
+  const ref = (sourceId, extra = {}) => ({ source: 'skills_text', sourceId, subjectId: 'context', subjectKind: 'agent_context', candidateDigest: 'sha256:candidate', status: 'completed', visibility: 'private', payloadExpiresAt: later, configuration: { text: {} }, ...extra });
+  loadReviewOptions.mockResolvedValueOnce({ evidence: [ref('run-a'), ref('run-b'), ref('shared', { visibility: 'workspace' }), ref('other-bytes', { candidateDigest: 'sha256:other' }), ref('running', { status: 'running' })] });
+  render(<MemoryRouter><ContextReviewController scopeKey="org:ws:author" contextId="context" View={PublishStub} /></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: 'One step' }));
+  await waitFor(() => expect(navigated.to).toContain('candidate=v2'));
+  expect(loadReviewOptions).toHaveBeenCalledWith('agent_context', 'context', 'v2');
+  expect(new URLSearchParams(navigated.to.split('?')[1]).get('evidence')).toBe('skills_text:run-a,skills_text:run-b');
 });
 
 it('keeps an unknown publish outcome retryable without a second head acknowledgment or key', async () => {

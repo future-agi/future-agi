@@ -122,7 +122,6 @@ it('captures an authorized trace from the span into its delivered context and sh
   fireEvent.change(screen.getByRole('textbox', { name: 'Case name' }), { target: { value: 'Regression' } });
   fireEvent.change(screen.getByRole('textbox', { name: 'Expected answer must contain' }), { target: { value: 'Reviewed answer' } });
   fireEvent.click(screen.getByRole('checkbox', { name: /confirmed the expected behavior independently/ }));
-  fireEvent.click(screen.getByRole('checkbox', { name: /Share this redacted request/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Save test case' }));
   await screen.findByText(/Test case saved/);
   const saved = axios.post.mock.calls.find(([url]) => url.endsWith('/accept/'));

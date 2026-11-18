@@ -585,8 +585,10 @@ export async function createDriver({ jobId, runId, registration }) {
       }
 
       if (stage.id === 'inspect-declared-cohort') {
-        // The recovery view has been idle for minutes and the browser throttles an idle tab's timers; the operator refreshes the facts once.
-        await operator.click(authorPage.getByRole('button', { name: 'Check again', exact: true }), 'refresh-final-cohort');
+        // The operator reads the cohort's own "As of" time: a view refreshed in the last 30 seconds is current;
+        // an older one (an idle tab's throttled timers) is refreshed once with "Check again".
+        const asOf = await authorPage.getByText(/Moving production doesn.t update running apps/).locator('time').first().getAttribute('datetime').catch(() => null);
+        if (!asOf || Date.now() - Date.parse(asOf) > 30_000) await operator.click(authorPage.getByRole('button', { name: 'Check again', exact: true }), 'refresh-final-cohort');
         const cohort = await consumers(signal);
         const table = authorPage.getByRole('table', { name: 'Recovery cohort' });
         await expect(table).toBeVisible();

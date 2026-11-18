@@ -131,8 +131,11 @@ export async function createDriver({ jobId, runId, registration }) {
           if (!await appMode.isChecked()) await op.click(appMode, 'choose-application-test');
           // The application's production binding already exists; a deployment without one registers it here.
           if (await page.getByRole('button', { name: 'Add application target', exact: true }).count()) await op.click(page.getByRole('button', { name: 'Add application target', exact: true }), 'add-application-target');
-          await op.click(page.getByRole('button', { name: 'Show app configuration', exact: true }), 'review-runtime-configuration');
-          await expect(page.getByText('Pin the application configuration')).toBeVisible();
+          // An unpinned target shows its pin review in place; the button that only opens it is clicked only when it is not shown.
+          const pinReview = page.getByText('Pin the application configuration');
+          await pinReview.first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
+          if (!(await pinReview.first().isVisible())) await op.click(page.getByRole('button', { name: 'Show app configuration', exact: true }), 'review-runtime-configuration');
+          await expect(pinReview.first()).toBeVisible();
           await expect(page.getByTestId('pin-sentence')).toContainText(`code version ${commit.slice(0, 7)}`);
           await shot('01-pin-configuration');
           await op.click(page.getByRole('button', { name: 'Pin this configuration', exact: true }), 'pin-application-configuration');
@@ -176,10 +179,12 @@ export async function createDriver({ jobId, runId, registration }) {
           // Chosen from the context's own skills and the application's actions; nothing is typed.
           await op.click(dialog.getByLabel('Required skill', { exact: true }), 'open-required-skill');
           await op.click(page.getByRole('option', { name: /refund-policy$/ }), 'choose-required-skill');
-          await op.click(dialog.getByLabel('Required business action', { exact: true }), 'open-required-action');
-          await op.click(page.getByRole('option', { name: 'Issue a refund', exact: true }), 'choose-required-action');
-          await op.click(dialog.getByRole('checkbox', { name: /confirmed the expected behavior/ }), 'confirm-expected-behavior');
-          await op.click(dialog.getByRole('checkbox', { name: /workspace/ }), 'acknowledge-workspace-sharing');
+          // Four actions are one visible choice (a radio group); the fifteen skills stay a select.
+          await op.click(dialog.getByRole('radiogroup', { name: 'Required business action' }).getByRole('radio', { name: 'Issue a refund', exact: true }), 'choose-required-action');
+          // One tick states both the independent check of the expected behavior and the workspace sharing consent.
+          const confirmation = dialog.getByRole('checkbox', { name: /confirmed the expected behavior.*with the workspace/ });
+          await op.click(confirmation, 'confirm-expected-behavior-and-sharing');
+          await expect(confirmation).toBeChecked();
           const decision = { packet_sha256: digest({ source: state.source, expected: 'receipt' }), preconditions_sha256: digest({ suiteRevision: before.revision, contextId: input.contextId }) };
           await dialog.getByText('Required application behavior').scrollIntoViewIfNeeded();
           await op.review('review-captured-case', state.source.segments.map((_, i) => `segment-${i}`), [], async () => { await shot('02-captured-case-review'); }, decision);
@@ -221,11 +226,14 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.transition('historical-context', () => op.click(page.getByRole('button', { name: `Repair from the failing v${input.versions.recorded}`, exact: true }), 'repair-from-recorded'));
           await op.click(page.getByRole('checkbox', { name: 'Save a recovery checkpoint and suspend my current draft.', exact: true }), 'confirm-preservation');
           await op.click(page.getByRole('button', { name: 'Preserve and suspend draft', exact: true }), 'preserve-and-suspend');
-          // The head-review control is now under the linked settings disclosure.
+          // The head comparison is offered by the behind-latest notice; the linked settings disclosure that
+          // also holds it is opened only when no comparison control is on screen.
           const settings = page.getByRole('button', {name:'Linked skills and settings', exact:true});
+          const compare = page.getByRole('button', { name: 'Compare with latest version', exact: true });
           await expect(settings).toBeVisible({timeout:60_000});
-          if (await settings.getAttribute('aria-expanded') === 'false') await op.click(settings, 'show-head-review');
-          await expect(page.getByRole('button', { name: 'Compare with latest version', exact: true })).toBeVisible();
+          await compare.first().waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {});
+          if (!(await compare.first().isVisible()) && await settings.getAttribute('aria-expanded') === 'false') await op.click(settings, 'show-head-review');
+          await expect(compare).toBeVisible();
           const checkpoints = await pool.query('SELECT digest, payload FROM model_hub_hubskilldraftcheckpoint WHERE skill_id=$1 AND workspace_id=$2', [input.contextId, input.actor.workspaceId]);
           const draft = await api('GET', `${root}draft/`);
           requireValue(checkpoints.rows.length === 1 && draft.base_version === input.versions.recorded && draft.files.find((f) => f.path === 'AGENTS.md').content === input.recordedRoot, 'Preserved origin differs');

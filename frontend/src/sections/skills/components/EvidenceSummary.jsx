@@ -1,6 +1,6 @@
 import { Fragment, useLayoutEffect, useState } from 'react';
 import PropTypes from 'prop-types';
-import { Box, Button, Checkbox, Chip, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
+import { Box, Button, Checkbox, Chip, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography } from '@mui/material';
 import StatusBadge from 'src/components/status-badge';
 import { runStatusOf } from 'src/utils/runStatus';
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from 'src/theme/sizes';
@@ -67,7 +67,9 @@ export default function EvidenceSummary({ items = [], selectable = false, select
     const notLoaded = item.resultState === 'not_loaded';
     const result = notLoaded ? null : item.outcome || (item.status === 'completed' ? null : item.status);
     const checkbox = selectable && <Checkbox size="small" checked={checked} disabled={!onToggle || (!checked && item.visibility === 'private' && !privateSelectable)} onChange={() => onToggle(item)} inputProps={{ 'aria-label': `Attach ${title}` }} />;
-    const titleLine = <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap" sx={{ minWidth: 0 }}><Typography variant="s1">{title}</Typography>{item.origin === 'from_test' ? <Chip size="small" variant="outlined" label="From your test" /> : item.suggested && <Chip size="small" variant="outlined" label="Suggested" />}</Stack>;
+    // `identity`: the exact result ID on the title (hover or focus), so a reviewer can check it in the row.
+    const titleText = item.identity ? <Tooltip title={item.identity} describeChild><Typography variant="s1" tabIndex={0}>{title}</Typography></Tooltip> : <Typography variant="s1">{title}</Typography>;
+    const titleLine = <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap" sx={{ minWidth: 0 }}>{titleText}{item.origin === 'from_test' ? <Chip size="small" variant="outlined" label="From your test" /> : item.suggested && <Chip size="small" variant="outlined" label="Suggested" />}</Stack>;
     const notes = <>
       {notLoaded
         ? <Typography variant="s3" color="text.secondary">Rechecked when you renew.</Typography>
@@ -77,7 +79,8 @@ export default function EvidenceSummary({ items = [], selectable = false, select
     </>;
     const perCheck = !notLoaded && item.results?.length > 0;
     const badge = notLoaded ? <StatusBadge {...NOT_LOADED} /> : perCheck ? <Stack spacing={0.5}>{item.results.map((outcome) => <Stack key={outcome.label} direction="row" gap={0.5} alignItems="center"><Typography variant="s3">{outcome.label}</Typography><StatusBadge {...resultBadge(item.source, outcome.status)} /></Stack>)}</Stack> : <StatusBadge {...resultBadge(item.source, result)} />;
-    const coverage = evidenceCoverage(item.counts, item.cases);
+    // A caller that holds the exact grading counts states them as the coverage (the release review).
+    const coverage = item.coverage ?? evidenceCoverage(item.counts, item.cases);
     // A row action: a small text button (the design system's table-row style).
     const inspect = <Button size="small" variant="text" disabled={!onInspect} onClick={() => onInspect(item)} sx={{ flexShrink: 0 }}>Inspect</Button>;
     // UXF-12: with rowActions the row itself opens Inspect, which also leads the ⋯ menu.

@@ -138,10 +138,12 @@ it('keeps linked skills and settings in a closed summary row above the editor', 
   expect(row).not.toContainElement(grid);
   const toggle = screen.getByRole('button', { name: 'Linked skills and settings' });
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  expect(row).toHaveTextContent('0 linked skills · Purpose');
+  expect(row).toHaveTextContent('0 linked skills');
+  // The one-line purpose is edited in the summary row itself, never inside the closed panel.
+  expect(screen.getByLabelText('Context purpose', { selector: 'input' })).toBeVisible();
+  expect(document.getElementById('context-details-panel')).not.toContainElement(screen.getByLabelText('Context purpose', { selector: 'input' }));
   // Closed means hidden, not unmounted: the panels keep their state and the editor never moves into them.
   expect(screen.queryByRole('region', { name: 'Linked skills and settings' })).not.toBeInTheDocument();
-  expect(document.getElementById('context-details-panel')).toContainElement(screen.getByLabelText('Context purpose', { selector: 'input' }));
   expect(screen.getByLabelText('Context file source')).toBeVisible();
 });
 
@@ -166,13 +168,26 @@ it('opens the row on arrival when migration-proposed skills are waiting for revi
   expect(document.querySelector('[data-slot="context-details"]')).toHaveTextContent('Latest is v6');
 });
 
-it('keeps the typed purpose when the row is closed and reopened', () => {
+it('edits the purpose in the summary row without opening it, and keeps it across opening and closing', () => {
   mount();
   const toggle = screen.getByRole('button', { name: 'Linked skills and settings' });
-  fireEvent.click(toggle);
   fireEvent.change(screen.getByLabelText('Context purpose'), { target: { value: 'New purpose' } });
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
   fireEvent.click(toggle);
-  expect(document.querySelector('[data-slot="context-details"]')).toHaveTextContent('New purpose');
   fireEvent.click(toggle);
   expect(screen.getByLabelText('Context purpose')).toHaveValue('New purpose');
+});
+
+it('offers the head comparison in the behind-latest notice while the row is closed', async () => {
+  const previewHead = vi.fn(async () => null);
+  mount({}, { contextControls: { previewHead } });
+  const toggle = screen.getByRole('button', { name: 'Linked skills and settings' });
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  // One visible control: the notice's while closed, the head review's once open.
+  expect(screen.getAllByRole('button', { name: 'Compare with latest version' })).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Compare with latest version' }));
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getAllByRole('button', { name: 'Compare with latest version' })).toHaveLength(1);
+  // It starts the same comparison the panel offers; nothing is acknowledged by it.
+  await waitFor(() => expect(previewHead).toHaveBeenCalledTimes(1));
 });

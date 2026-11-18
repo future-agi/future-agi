@@ -758,8 +758,9 @@ describe('pin the application configuration', () => {
     h.targets = [{ bindingId: 'binding', name: 'support-app', revision: 2, qualified: false }];
     renderPanel();
     showRun();
-    fireEvent.click(screen.getByRole('button', { name: 'Show app configuration' }));
-    const dialog = screen.getByRole('dialog');
+    // An unpinned target shows its pin review in place: no button only opens it.
+    expect(screen.queryByRole('button', { name: 'Show app configuration' })).not.toBeInTheDocument();
+    const dialog = screen.getByRole('group', { name: 'Pin the application configuration' });
     const sentence = within(dialog).getByTestId('pin-sentence');
     expect(sentence).toHaveTextContent("We'll test your app exactly as it is running now (code version 8254acd, Python 3.11, model gpt-4o-mini). Tests refuse to run if the app changes.");
     // The sentence comes before anything technical, and nothing technical shows until asked.
@@ -779,7 +780,6 @@ describe('pin the application configuration', () => {
     h.targets = [{ bindingId: 'binding', name: 'support-app', revision: 2, qualified: false }];
     renderPanel();
     showRun();
-    fireEvent.click(screen.getByRole('button', { name: 'Show app configuration' }));
     fireEvent.click(screen.getByRole('button', { name: 'Pin this configuration' }));
     await waitFor(() => expect(h.qualify).toHaveBeenCalledOnce());
     expect(h.qualify).toHaveBeenCalledWith({ bindingId: 'binding', revision: 2, configuration: measured });
@@ -787,4 +787,13 @@ describe('pin the application configuration', () => {
   it('builds the sentence from camel-case fields too', () => {
     expect(pinSentence({ codeCommit: 'abcdef0123', runtimeVersion: 'node 22', model: { modelId: 'gpt-4o' } })).toBe("We'll test your app exactly as it is running now (code version abcdef0, node 22, model gpt-4o). Tests refuse to run if the app changes.");
   });
+});
+
+// A just-published repair is verified next: its hand-off opens Run a test, like a reproduction seed.
+it('opens Run a test for a published repair hand-off, and Results otherwise', () => {
+  const view = renderPanel({ runHandoff: true });
+  expect(screen.getByRole('tab', { name: 'Run a test' })).toHaveAttribute('aria-selected', 'true');
+  view.unmount();
+  renderPanel();
+  expect(screen.getByRole('tab', { name: 'Results' })).toHaveAttribute('aria-selected', 'true');
 });

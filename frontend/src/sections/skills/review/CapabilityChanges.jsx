@@ -7,7 +7,7 @@ import TechnicalDetails from '../components/TechnicalDetails';
 // Permissions detail. The headline ("No permission changes found" or a count) lives in the review
 // summary table, so this renders only what that sentence cannot say: each changed declaration, and
 // the compared fingerprints inside "What was compared", which bind what the reviewer saw to this pair.
-export default function CapabilityChanges({ changes, onOpenFile, summary = false }) {
+export default function CapabilityChanges({ changes, onOpenFile, summary = false, comparedOpen = false }) {
   if (!changes) return <CapabilityNotice title="Permission comparison unavailable" description="Review the file changes before deciding." />;
   return (
     <Stack spacing={1.5}>
@@ -30,12 +30,13 @@ export default function CapabilityChanges({ changes, onOpenFile, summary = false
           )}
         </Box>
       ))}
-      <TechnicalDetails title="What was compared">
+      {/* Open where a reviewer's tick covers "what this release will affect": the compared fingerprints bind it. */}
+      <TechnicalDetails title="What was compared" defaultOpen={comparedOpen}>
         <Stack spacing={1}>
           <Typography variant="s3">{changes.changes.length ? "Only recognized static declarations are compared. This is not a safety certification." : "No changes in recognized static declarations. This is not a safety certification."}</Typography>
           <Stack direction="row" flexWrap="wrap" gap={1}>
-            <IdentityChip inline label="Before" value={changes.beforeDigest} />
-            <IdentityChip inline label="Candidate" value={changes.afterDigest} />
+            <IdentityChip inline concealed={comparedOpen} label="Before" value={changes.beforeDigest} />
+            <IdentityChip inline concealed={comparedOpen} label="Candidate" value={changes.afterDigest} />
           </Stack>
         </Stack>
       </TechnicalDetails>
@@ -46,4 +47,5 @@ CapabilityChanges.propTypes = {
   changes: PropTypes.object,
   onOpenFile: PropTypes.func,
   summary: PropTypes.bool,
+  comparedOpen: PropTypes.bool,
 };

@@ -793,7 +793,12 @@ export default function J6RecoveryPanel({ contextId, contextName }) {
       if (document.visibilityState === "visible")
         latestRefresh.current({ cancelRefetch: false });
     }, RECOVERY_FACTS_REFRESH_MS);
-    return () => clearInterval(timer);
+    // Coming back to a tab whose timers were paused or throttled refreshes at once, so the facts on
+    // screen (and their "As of" time) are current without a manual "Check again".
+    const onVisible = () => { if (document.visibilityState === "visible") latestRefresh.current({ cancelRefetch: false }); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible); };
   }, []);
   const [picked, setChosen] = useState(null);
   const [submitted, setSubmitted] = useState(null);

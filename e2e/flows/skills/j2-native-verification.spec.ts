@@ -150,12 +150,11 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     // The reviewer chooses the required skill and business action in the same review; no identity or JSON is typed.
     await dialog.getByLabel('Required skill', { exact: true }).click();
     await page.getByRole('option', { name: /refund-policy$/ }).click();
-    await dialog.getByLabel('Required business action', { exact: true }).click();
-    await page.getByRole('option', { name: 'Issue a refund', exact: true }).click();
+    await dialog.getByRole('radiogroup', { name: 'Required business action' }).getByRole('radio', { name: 'Issue a refund', exact: true }).check();
     await dialog.getByText('Required application behavior').scrollIntoViewIfNeeded();
     await shot('J2-required-behavior');
-    await dialog.getByRole('checkbox', { name: /confirmed the expected behavior/ }).check();
-    await dialog.getByRole('checkbox', { name: /workspace/ }).check();
+    // One tick: the independent check of the expected behavior and the workspace sharing consent.
+    await dialog.getByRole('checkbox', { name: /confirmed the expected behavior.*with the workspace/ }).check();
     const accepted = page.waitForResponse(res => res.url().includes('/captures/') && res.url().endsWith('/accept/') && res.request().method() === 'POST');
     await dialog.getByRole('button', { name: 'Save test case', exact: true }).click();
     expect((await accepted).ok()).toBe(true);
@@ -166,8 +165,9 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await expect(page).toHaveURL(/reproduce=/);
     await expect(page).toHaveURL(/reference=4/);
     await page.getByRole('button', { name: 'Add application target' }).click();
-    await page.getByRole('button', { name: 'Show app configuration' }).click();
-    await expect(page.getByText('Pin the application configuration')).toBeVisible();
+    // An unpinned target shows its pin review in place.
+    await expect(page.getByRole('group', { name: 'Pin the application configuration' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Show app configuration' })).toHaveCount(0);
     await shot('J2-pin-configuration');
     await page.getByRole('button', { name: 'Pin this configuration' }).click();
     await expect(page.getByText('Configuration pinned')).toBeVisible();

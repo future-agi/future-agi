@@ -60,7 +60,7 @@ const emptyReview = () => ({ fingerprint: '', reviewedAllFiles: false, noKnownAn
 // refuses a saved case without either).
 const usableCase = (item) => Boolean(item.reviewed && item.checks?.length);
 
-function RegressionCases({ contextId, version, versions, canWrite, skills, productionVersion, seed, children, state, answerHistory, renderAnswer, answerRunId, historyPagination, latestAnswer, draftHandoff }) {
+function RegressionCases({ contextId, version, versions, canWrite, skills, productionVersion, seed, children, state, answerHistory, renderAnswer, answerRunId, historyPagination, latestAnswer, draftHandoff, runHandoff }) {
   const suite = useContextTestSuite(contextId);
   const save = useSaveContextTestSuite(contextId);
   const [editor, setEditor] = useState(null);
@@ -89,7 +89,7 @@ function RegressionCases({ contextId, version, versions, canWrite, skills, produ
         </TableContainer>}
       </Section>;
   return <Stack spacing={1.5}>
-    <ContextNativePanel contextId={contextId} versions={versions} viewed={version} cases={cases} casesState={suite.isLoading ? 'loading' : suite.isError ? 'error' : undefined} onRetryCases={suite.refetch} canWrite={canWrite} productionVersion={productionVersion} seed={seed} state={state} answerHistory={answerHistory} renderAnswer={renderAnswer} answerRunId={answerRunId} historyPagination={historyPagination} latestAnswer={latestAnswer} draftHandoff={draftHandoff} reviewedCases={casesSection}>{answerForm}</ContextNativePanel>
+    <ContextNativePanel contextId={contextId} versions={versions} viewed={version} cases={cases} casesState={suite.isLoading ? 'loading' : suite.isError ? 'error' : undefined} onRetryCases={suite.refetch} canWrite={canWrite} productionVersion={productionVersion} seed={seed} state={state} answerHistory={answerHistory} renderAnswer={renderAnswer} answerRunId={answerRunId} historyPagination={historyPagination} latestAnswer={latestAnswer} draftHandoff={draftHandoff} runHandoff={runHandoff} reviewedCases={casesSection}>{answerForm}</ContextNativePanel>
     {editor && <TestCaseEditor open subjectKind="agent_context" initialCase={editor.value} applicationBehavior={{ skills }} canSave={canWrite && !changed} isSaving={save.isPending}
       error={changed ? 'The test cases changed. Close and reopen this case after checking the latest ones; your edits were not submitted.' : error}
       onClose={() => { if (!save.isPending) setEditor(null); }}
@@ -102,7 +102,7 @@ function RegressionCases({ contextId, version, versions, canWrite, skills, produ
       }} />}
   </Stack>;
 }
-RegressionCases.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, versions: PropTypes.array.isRequired, skills: PropTypes.array.isRequired, canWrite: PropTypes.bool.isRequired, productionVersion: PropTypes.number, seed: PropTypes.object, children: PropTypes.oneOfType([PropTypes.node, PropTypes.func]), state: PropTypes.string, answerHistory: PropTypes.object, renderAnswer: PropTypes.func, answerRunId: PropTypes.string, historyPagination: PropTypes.node, latestAnswer: PropTypes.object, draftHandoff: PropTypes.bool };
+RegressionCases.propTypes = { contextId: PropTypes.string.isRequired, version: PropTypes.object, versions: PropTypes.array.isRequired, skills: PropTypes.array.isRequired, canWrite: PropTypes.bool.isRequired, productionVersion: PropTypes.number, seed: PropTypes.object, children: PropTypes.oneOfType([PropTypes.node, PropTypes.func]), state: PropTypes.string, answerHistory: PropTypes.object, renderAnswer: PropTypes.func, answerRunId: PropTypes.string, historyPagination: PropTypes.node, latestAnswer: PropTypes.object, draftHandoff: PropTypes.bool, runHandoff: PropTypes.bool };
 
 // Which exact candidate the answer check tests: the saved draft or the viewed release.
 // It changes only the answer-check candidate; the application test keeps the viewed release.
@@ -364,13 +364,13 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
 }
 WholeContextTests.propTypes = { savedCases: PropTypes.array, suiteRevision: PropTypes.number, onEngage: PropTypes.func, versions: PropTypes.array, productionVersion: PropTypes.number, contextName: PropTypes.string, primary: PropTypes.bool, onStarted: PropTypes.func.isRequired, contextId: PropTypes.string.isRequired, candidate: PropTypes.object, scopeKey: PropTypes.string.isRequired, identity: PropTypes.string.isRequired, state: PropTypes.string, source: PropTypes.object };
 
-function Tests({ contextName, contextId, version, versions, canWrite, skills, productionVersion, seed, candidate, scopeKey, identity, state, source, onOpenSavedDraft, openSavedDraftDisabled }) {
+function Tests({ contextName, contextId, version, versions, canWrite, skills, productionVersion, seed, runHandoff, candidate, scopeKey, identity, state, source, onOpenSavedDraft, openSavedDraftDisabled }) {
   const [answerRunId, setAnswerRunId] = useState(null);
   const [historyPage, setHistoryPage] = useState(1);
   const history = useContextTestRuns(contextId, historyPage);
   const latestAnswers = useContextTestRuns(contextId, 1);
   return <Stack spacing={3}>
-    <RegressionCases draftHandoff={Boolean(source?.testingDraft)} contextId={contextId} version={version} versions={versions} canWrite={canWrite} skills={skills} productionVersion={productionVersion} seed={seed} state={state} answerHistory={history} latestAnswer={latestAnswers.data?.results[0]} answerRunId={answerRunId} renderAnswer={(id, actions) => <Results key={id} contextId={contextId} runId={id} contextName={contextName} versions={versions} canWrite={canWrite} onRunApplication={actions?.onRunApplication} onReady={actions?.onReady} secondary={Boolean(actions?.secondary)} hasTarget={Boolean(actions?.hasTarget)} applicationAvailable={Boolean(actions?.applicationAvailable)} productionVersion={productionVersion} newerDraft={Boolean(source?.draftAvailable)} />} historyPagination={history.data?.total_pages > 1 ? <Pagination page={historyPage} count={history.data.total_pages} onChange={(_, value) => setHistoryPage(value)} /> : null}>
+    <RegressionCases draftHandoff={Boolean(source?.testingDraft)} runHandoff={runHandoff} contextId={contextId} version={version} versions={versions} canWrite={canWrite} skills={skills} productionVersion={productionVersion} seed={seed} state={state} answerHistory={history} latestAnswer={latestAnswers.data?.results[0]} answerRunId={answerRunId} renderAnswer={(id, actions) => <Results key={id} contextId={contextId} runId={id} contextName={contextName} versions={versions} canWrite={canWrite} onRunApplication={actions?.onRunApplication} onReady={actions?.onReady} secondary={Boolean(actions?.secondary)} hasTarget={Boolean(actions?.hasTarget)} applicationAvailable={Boolean(actions?.applicationAvailable)} productionVersion={productionVersion} newerDraft={Boolean(source?.draftAvailable)} />} historyPagination={history.data?.total_pages > 1 ? <Pagination page={historyPage} count={history.data.total_pages} onChange={(_, value) => setHistoryPage(value)} /> : null}>
     {(primary, onEngage, suiteInfo) => <Stack spacing={2}>
       <Section title={<Typography component="span" variant="m3">Check answers</Typography>} />
       {source && !onOpenSavedDraft && <CandidateSource source={source} />}
@@ -383,7 +383,7 @@ function Tests({ contextName, contextId, version, versions, canWrite, skills, pr
 Tests.propTypes = {
   contextName: PropTypes.string,
   contextId: PropTypes.string.isRequired, version: PropTypes.object, versions: PropTypes.array.isRequired, canWrite: PropTypes.bool.isRequired, skills: PropTypes.array.isRequired,
-  productionVersion: PropTypes.number, seed: PropTypes.object, candidate: PropTypes.object, scopeKey: PropTypes.string.isRequired, identity: PropTypes.string.isRequired,
+  productionVersion: PropTypes.number, seed: PropTypes.object, runHandoff: PropTypes.bool, candidate: PropTypes.object, scopeKey: PropTypes.string.isRequired, identity: PropTypes.string.isRequired,
   state: PropTypes.string, source: PropTypes.object, onOpenSavedDraft: PropTypes.func, openSavedDraftDisabled: PropTypes.bool,
 };
 
@@ -391,19 +391,19 @@ Tests.propTypes = {
 // draft: the saved draft to test instead, when source.testingDraft is set (or no source is given).
 // source: the saved-draft/viewed-release switch for the answer-check candidate.
 // onOpenSavedDraft: editor hand-off that saves the draft and opens these tests on the context page.
-export default function ContextTestsPanel({ contextName, contextId, version, versions = [], draft, source, canWrite = false, skills = [], productionVersion, seed, state, onOpenSavedDraft, openSavedDraftDisabled = false }) {
+export default function ContextTestsPanel({ contextName, contextId, version, versions = [], draft, source, canWrite = false, skills = [], productionVersion, seed, runHandoff = false, state, onOpenSavedDraft, openSavedDraftDisabled = false }) {
   const { identity } = useSkillV11Scope();
   const scopeKey = `${identity}:${contextId}`;
   const testingDraft = source ? source.testingDraft : Boolean(draft);
   let candidate = !testingDraft && version ? { kind: 'version', version: version.number, digest: version.digest } : null;
   if (testingDraft && draft) { try { candidate = contextTestCandidate(draft); } catch { candidate = null; } }
   return <Tests contextName={contextName} key={scopeKey} scopeKey={scopeKey} identity={identity} contextId={contextId} candidate={candidate} state={state} source={source}
-    version={version} versions={versions} canWrite={canWrite} skills={skills} productionVersion={productionVersion} seed={seed}
+    version={version} versions={versions} canWrite={canWrite} skills={skills} productionVersion={productionVersion} seed={seed} runHandoff={runHandoff}
     onOpenSavedDraft={onOpenSavedDraft} openSavedDraftDisabled={openSavedDraftDisabled} />;
 }
 ContextTestsPanel.propTypes = {
   contextName: PropTypes.string,
   contextId: PropTypes.string.isRequired, version: PropTypes.object, versions: PropTypes.array, draft: PropTypes.object, source: PropTypes.object,
-  canWrite: PropTypes.bool, skills: PropTypes.array, productionVersion: PropTypes.number, seed: PropTypes.object, state: PropTypes.string,
+  canWrite: PropTypes.bool, skills: PropTypes.array, productionVersion: PropTypes.number, seed: PropTypes.object, runHandoff: PropTypes.bool, state: PropTypes.string,
   onOpenSavedDraft: PropTypes.func, openSavedDraftDisabled: PropTypes.bool,
 };

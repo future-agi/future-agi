@@ -82,3 +82,13 @@ it('says what to do once before a config file is chosen, and keeps the reason on
   expect(screen.getByRole('group', { name: 'Config file (JSON)' })).toBeVisible();
   expect(screen.queryByText(/manifest/i)).toBeNull();
 });
+
+it('starts connecting by opening the config file chooser, and keeps the dialog for a cancelled choice', () => {
+  const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {});
+  render(<ContextTargetRegistration contextId="context" canRegister />);
+  fireEvent.click(screen.getByRole('button', { name: 'Connect an app' }));
+  expect(click).toHaveBeenCalledTimes(1);
+  expect(click.mock.contexts[0]).toBe(screen.getByLabelText('Config file'));
+  expect(screen.getByRole('button', { name: 'Choose config file' })).toBeVisible();
+  click.mockRestore();
+});

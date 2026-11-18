@@ -8,8 +8,8 @@ it('hides skill routing in context mode without deleting stored checks or trigge
   const save = vi.fn();
   render(<TestCaseEditor open subjectKind="agent_context" initialCase={example} applicationBehavior={{ skills: [{ id: 'refund', label: 'Refund policy' }] }} onClose={() => {}} onSave={save} />);
   expect(screen.queryByRole('combobox', { name: 'Use this skill?' })).not.toBeInTheDocument();
-  expect(screen.getByRole('combobox', { name: 'Required skill' })).toBeVisible();
-  expect(screen.getByRole('combobox', { name: 'Required business action' })).toBeVisible();
+  expect(screen.getByRole('radiogroup', { name: 'Required skill' })).toBeVisible();
+  expect(screen.getByRole('radiogroup', { name: 'Required business action' })).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Save example' }));
   expect(save).toHaveBeenCalledWith(expect.objectContaining({ expectedTrigger: true, checks: example.checks }));
 });

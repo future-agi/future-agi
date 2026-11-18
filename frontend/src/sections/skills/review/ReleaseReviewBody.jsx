@@ -126,6 +126,10 @@ export function evidenceProblems(ref, packet, now = Date.now()) {
   return reasons;
 }
 
+/** "1/1 attempts graded · 0 incomplete · 0 regressions": the exact grading counts of one attached result. */
+// eslint-disable-next-line react-refresh/only-export-components -- the grading line ships with the evidence it describes.
+export const gradingLine = (summary) => `${summary.graded ?? "Unknown"}/${summary.planned ?? "Unknown"} attempts graded · ${summary.incomplete ?? "Unknown"} incomplete · ${summary.regressions ?? "Unknown"} regressions`;
+
 export function IdentityValue({ label, value }) {
   if (typeof value === 'string' && (/^(?:sha256:)?[a-f0-9]{64}$/i.test(value) || /^[a-f0-9]{8}-[a-f0-9-]{27}$/i.test(value))) return <IdentityChip label={label} value={value} kind={value.includes('-') ? 'id' : 'digest'} />;
   return (
@@ -289,11 +293,7 @@ export function TypedEvidenceList({
               {summary ? (
                 <Stack spacing={0.5}>
                   <NativeOutcomes summary={summary} defaultOpen />
-                  <Typography variant="s1">
-                    {summary.graded ?? "Unknown"}/{summary.planned ?? "Unknown"}{" "}
-                    attempts graded · {summary.incomplete ?? "Unknown"}{" "}
-                    incomplete · {summary.regressions ?? "Unknown"} regressions
-                  </Typography>
+                  <Typography variant="s1">{gradingLine(summary)}</Typography>
                   {["answer", "selection", "delivery", "tools"].map((key) => (
                     <IdentityValue
                       key={key}
@@ -559,14 +559,19 @@ export default function ReleaseReviewBody({
           // The application target has no readable name in the packet; its binding, configuration digest and
           // revision are under Technical details below, so no row says only "App configuration".
         ]} />
+        {/* Where the release goes, checked without opening anything: the pinned configuration it is bound to
+            carries its exact digest on hover or focus (no hash as content); the full record stays in Technical details. */}
+        {packet.target && <Typography variant="s3" color="text.secondary">Bound to the target app&apos;s <Tooltip title={packet.target.configurationDigest} describeChild><Box component="span" tabIndex={0} sx={{ textDecoration: 'underline dotted', textUnderlineOffset: '3px' }}>pinned configuration</Box></Tooltip>; the move is refused if it changes.</Typography>}
       </Stack>
       {(evidence.length > 0 || selected.some((ref) => !evidence.some((item) => evidenceKey(item) === evidenceKey(ref)))) && <Section id="review-evidence" title="Test results">
         <EvidenceSummary items={evidence.map((ref) => {
           const summary = summaries?.find((item) => evidenceKey(item) === evidenceKey(ref));
-          return { id: ref.sourceId, source: ref.source, resultState: ref.resultState, title: evidenceTitle(ref, packet.transition.version, packet.transition.expectedVersion), outcome: (ref.source === 'simulation_native' && nativeBadge(summary)) || ref.outcome || (ref.source === 'skills_text' ? summary?.answer : undefined), status: ref.status, visibility: ref.visibility, expiresAt: ref.payloadExpiresAt, counts: ref.counts || (summary && { graded: summary.graded, planned: summary.planned, regressed: summary.regressions, disagreements: summary.disagreements }) };
+          // The reviewer's tick covers this evidence (§16: ticks are reduced by opening the evidence they refer
+          // to), so each row states its exact grading counts as its coverage and carries its result ID on the
+          // title (hover or focus), without opening it; Inspect still reads the result in full.
+          return { id: ref.sourceId, source: ref.source, resultState: ref.resultState, title: evidenceTitle(ref, packet.transition.version, packet.transition.expectedVersion), outcome: (ref.source === 'simulation_native' && nativeBadge(summary)) || ref.outcome || (ref.source === 'skills_text' ? summary?.answer : undefined), status: ref.status, visibility: ref.visibility, expiresAt: ref.payloadExpiresAt, counts: ref.counts || (summary && { graded: summary.graded, planned: summary.planned, regressed: summary.regressions, disagreements: summary.disagreements }),
+            coverage: summary ? gradingLine(summary) : undefined, identity: ref.sourceId };
         })} rowActions renderAction={(item) => {
-          // Each row states its outcome once (the Coverage cell carries the counts). The evidence ID and the
-          // exact grading counts are one Inspect away, where the reviewer reads this result in full.
           const summary = summaries?.find((row) => evidenceKey(row) === `${item.source}:${item.id}`);
           return <NativeOutcomes summary={summary} />;
         }} onInspect={(item) => { setInspecting(`${item.source}:${item.id}`); onInspect?.(evidence.find((ref) => evidenceKey(ref) === `${item.source}:${item.id}`)); }} />
@@ -624,7 +629,7 @@ export default function ReleaseReviewBody({
       {/* What the summary sentences cannot hold stays one click away: changed permission declarations and the
           compared fingerprints, the per-app counts with their caveat, and the version identities. */}
       <Stack spacing={1} sx={{ minWidth: 0 }}>
-        <CapabilityChanges changes={capabilities} onOpenFile={onOpenFile} />
+        <CapabilityChanges changes={capabilities} onOpenFile={onOpenFile} comparedOpen />
         {impact && <TechnicalDetails title="Apps affected">
           <Stack spacing={1}>
             <Typography variant="s3">

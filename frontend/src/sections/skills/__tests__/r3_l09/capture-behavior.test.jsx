@@ -8,17 +8,14 @@ afterEach(cleanup);
 const click = (name) => fireEvent.click(screen.getByRole("button", { name }));
 const props = { open: true, onClose: vi.fn(), scopeKey: "scope", state: "ready", preview: capture, suiteRevision: 3, canSave: true };
 const skills = [{ id: "skill-refund", label: "refund-policy" }, { id: "skill-ship", label: "shipping" }];
-const choose = (label, option) => {
-  fireEvent.mouseDown(screen.getByLabelText(label));
-  fireEvent.click(screen.getByRole("option", { name: option }));
-};
+// Short lists are radio groups: one click chooses.
+const choose = (label, option) => fireEvent.click(within(screen.getByRole("radiogroup", { name: label })).getByRole("radio", { name: option }));
 function review() {
   fireEvent.change(screen.getByRole("textbox", { name: "Case name" }), { target: { value: "Refund failure" } });
   fireEvent.change(screen.getByRole("textbox", { name: "Expected answer must contain" }), { target: { value: "receipt" } });
 }
 function acknowledge() {
   fireEvent.click(screen.getByRole("checkbox", { name: /confirmed the expected behavior independently/ }));
-  fireEvent.click(screen.getByRole("checkbox", { name: /Share this redacted request/ }));
 }
 describe("captured example with the required application behavior", () => {
   it("saves the skill and business action in the same reviewed case, with nothing typed", async () => {

@@ -126,8 +126,14 @@ export async function createDriver({ jobId, runId, registration }) {
         if (!(await ack(reviewer).isChecked())) await operator.click(ack(reviewer), name);
         await expect(ack(reviewer)).toBeChecked();
       };
-      // Opening a disclosure or inspecting an evidence row is a real operator click.
-      const reveal = async (scope, name, control) => {
+      // Opening a disclosure or inspecting an evidence row is a real operator click. It is made only
+      // when what the reviewer must read (`needed`) is not already on screen.
+      const shown = async (locators) => {
+        for (const locator of locators) if (!(await locator.first().isVisible().catch(() => false))) return false;
+        return true;
+      };
+      const reveal = async (scope, name, control, needed = []) => {
+        if (needed.length && await shown(needed)) return;
         const toggle = scope.getByRole('button', { name, exact: true }).last();
         if ((await toggle.getAttribute('aria-expanded')) !== 'true') await op.click(toggle, control);
       };
@@ -167,7 +173,9 @@ export async function createDriver({ jobId, runId, registration }) {
         await operator.review(`${name}-changed-preconditions`, [...items.map((_, i) => `change-${i}`), ...removed.map((_, i) => `removed-${i}`)], removed.map((_, i) => `removed-${i}`), async () => {
           for (const item of items) await expect(dialog.locator(`tr[data-field="${item}"]`)).toBeVisible();
           await expect(dialog.getByTestId('renewal-evidence')).toHaveText(kept.length ? `${kept.length} test result${kept.length === 1 ? " kept; it'll" : "s kept; they'll"} be rechecked when you renew.` : 'No test results kept.');
-          if (kept.length || removed.length) {
+          // Every kept and removed result must be identifiable; open the details only if the dialog doesn't show them.
+          const identities = [...kept.map((id) => dialog.getByTitle(id, { exact: true })), ...preview.removed_evidence.map((row) => dialog.getByText(new RegExp(`${row.source_id} is removed from the renewed request`)))];
+          if ((kept.length || removed.length) && !(await shown(identities))) {
             await reveal(dialog, 'Changed values', 'open-changed-values');
             await reveal(dialog, 'Technical details', 'open-renewal-technical-details');
           }
@@ -221,10 +229,10 @@ export async function createDriver({ jobId, runId, registration }) {
           requireValue((await roleResponse).ok(), 'Reviewer authority not granted');
           await openContext(admin, 'context-detail');
           await op.transition('consumers', () => op.click(admin.getByRole('tab', { name: 'Connected apps', exact: true }), 'open-consumers'));
+          // Connecting starts by choosing the build's config file: the entry button opens the file chooser.
+          const chooser = admin.waitForEvent('filechooser');
           await op.click(admin.getByRole('button', { name: 'Connect an app', exact: true }), 'open-target-registration');
           const dialog = admin.getByRole('dialog');
-          const chooser = admin.waitForEvent('filechooser');
-          await op.click(dialog.getByRole('button', { name: 'Choose config file', exact: true }), 'choose-runtime-manifest');
           await op.configurationEdit('select-runtime-manifest-file', async () => (await chooser).setFiles(input.manifestPath));
           await expect(dialog.getByText('refund_agent.app:invoke', { exact: true })).toBeVisible();
           // The visible name defaults from the build entrypoint; nothing typed.
@@ -286,24 +294,27 @@ export async function createDriver({ jobId, runId, registration }) {
           // Capture without scrolling or adding an operator action. Private
           // results must occupy the same evidence table, never an empty state.
           await author.screenshot({ path: resolve(output, 'composer-private-evidence.png'), fullPage: true });
-          // Each private row opens its own consent; verify the exact disclosed ID
-          // and visibility before confirming. No result is attached implicitly.
-          const confirmed = new Set();
-          for (let index = 0; index < input.evidenceIds.length; index++) {
-            await op.click(attach.nth(index), `select-private-result-${index + 1}`);
-            const consent = author.getByRole('dialog');
-            const record = consent.locator('[data-evidence-id]');
-            await expect(record).toHaveCount(1);
-            const id = await record.getAttribute('data-evidence-id');
-            requireValue(input.evidenceIds.includes(id) && !confirmed.has(id), 'The consent does not name the next expected private result');
+          // Publishing handed over the author's own results for exactly these bytes: they arrive ticked,
+          // private and not attached. Nothing is shared or attached until the author confirms it.
+          for (let index = 0; index < input.evidenceIds.length; index++) await expect(attach.nth(index)).toBeChecked();
+          await expect(author.getByText(`${input.evidenceIds.length} ticked results not attached until shared.`, { exact: false })).toBeVisible();
+          const before = await read(`release-requests/options/?resource_id=${input.contextId}&kind=agent_context&candidate_version_id=${published.id}`, signal, input.author);
+          requireValue(before.evidence.filter((row) => input.evidenceIds.includes(row.source_id)).every((row) => row.visibility === 'private'), 'A handed-over result was shared before consent');
+          // Continue asks to share the ticked private results in one consent that names each one; verify every
+          // disclosed ID and its visibility before confirming.
+          await op.click(author.getByRole('button', { name: 'Continue', exact: true }), 'continue-with-private-results');
+          const consent = author.getByRole('dialog');
+          const records = consent.locator('[data-evidence-id]');
+          await expect(records).toHaveCount(input.evidenceIds.length);
+          const disclosed = await records.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-evidence-id')));
+          requireValue(disclosed.length === input.evidenceIds.length && input.evidenceIds.every((id) => disclosed.includes(id)), 'The consent does not name exactly the handed-over private results');
+          for (const id of input.evidenceIds) {
+            const record = consent.locator(`[data-evidence-id="${id}"]`);
             await expect(record.getByTitle(id, { exact: true })).toBeVisible();
             await expect(record.getByText('Private', { exact: true })).toBeVisible();
-            await op.click(consent.getByRole('button', { name: 'Share and attach', exact: true }), `confirm-sharing-result-${index + 1}`);
-            await expect(consent).toHaveCount(0);
-            confirmed.add(id);
           }
           const prepared = responseFor(author, '/release-requests/preview/');
-          await op.click(author.getByRole('button', { name: 'Continue', exact: true }), 'prepare-shared-packet');
+          await op.click(consent.getByRole('button', { name: 'Share and attach', exact: true }), 'confirm-sharing-and-continue');
           const preview = (await (await prepared).json()).result;
           await expect(author.getByRole('dialog')).toHaveCount(0);
           requireValue(preview.packet.evidence.length === input.evidenceIds.length
@@ -351,7 +362,7 @@ export async function createDriver({ jobId, runId, registration }) {
             await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
           }, decision);
           await op.review('inspect-target-configuration', ['target-binding', 'target-configuration'], [], async () => {
-            await reveal(reviewer, 'Technical details', 'open-target-configuration-details');
+            await reveal(reviewer, 'Technical details', 'open-target-configuration-details', [reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true })]);
             await expect(reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
             requireValue(inspection.target_configuration?.entrypoint === 'refund_agent.app:invoke', 'Target configuration differs');
           }, decision);
@@ -369,7 +380,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const correct = outcomes.every((row) => row.graded === row.planned && row.planned > 0 && row.incomplete === 0 && row.regressions === 0 && row.disagreements === 0);
           requireValue(correct, 'Fixture evidence does not support approval; the correct decision would be request changes');
           await op.review('inspect-capabilities-and-impact', ['capabilities', 'impact'], [], async () => {
-            await reveal(reviewer, 'What was compared', 'open-compared-fingerprints');
+            await reveal(reviewer, 'What was compared', 'open-compared-fingerprints', [reviewer.getByTitle(inspection.capabilities.before_digest, { exact: true }), reviewer.getByTitle(inspection.capabilities.after_digest, { exact: true })]);
             await expect(reviewer.getByTitle(inspection.capabilities.before_digest, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByTitle(inspection.capabilities.after_digest, { exact: true }).first()).toBeVisible();
           }, decision);
@@ -456,7 +467,7 @@ export async function createDriver({ jobId, runId, registration }) {
             await inspectResult(reviewer, remaining.source_id);
             await expect(reviewer.getByTitle(remaining.source_id, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByText(`${outcome.graded}/${outcome.planned} attempts graded · ${outcome.incomplete} incomplete · ${outcome.regressions} regressions`, { exact: true }).first()).toBeVisible();
-            await reveal(reviewer, 'Technical details', 'open-target-configuration-details');
+            await reveal(reviewer, 'Technical details', 'open-target-configuration-details', [reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true })]);
             await expect(reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByText('Approved. Confirm the move to release it.', { exact: true })).toBeVisible();
           }, renewed.decision);

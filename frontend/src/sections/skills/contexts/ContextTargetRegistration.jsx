@@ -121,10 +121,22 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
             reset();
             setDone(null);
             setOpen(true);
+            // The dialog's first required step is the config file, so connecting starts by choosing it.
+            // Cancelling the chooser leaves the dialog open with its own "Choose config file".
+            if (file.current) { file.current.value = ""; file.current.click(); }
           }}
         >
           Connect an app
         </Button>
+        {/* Outside the dialog so the entry button can open the chooser in the same click. */}
+        <input
+          ref={file}
+          hidden
+          type="file"
+          accept="application/json,.json"
+          aria-label="Config file"
+          onChange={(event) => readManifest(event.target.files?.[0])}
+        />
         {!canRegister && <ActionReason id={`${reasonId}-access`} reason={actionReason} />}
         {done && (
           <Typography variant="s3">
@@ -170,20 +182,12 @@ export default function ContextTargetRegistration({ contextId, canRegister, vari
           <Stack spacing={0.5} role="group" aria-labelledby={`${reasonId}-manifest`}>
             <Typography id={`${reasonId}-manifest`} variant="s1" sx={{ fontWeight: 500, color: "text.primary" }}>Config file (JSON)</Typography>
             <Stack direction="row" spacing={1} alignItems="center">
-              <Button variant="outlined" onClick={() => file.current?.click()}>
+              <Button variant="outlined" onClick={() => { if (file.current) { file.current.value = ""; file.current.click(); } }}>
                 Choose config file
               </Button>
               <Typography variant="s3" sx={{ overflowWrap: "anywhere" }}>
                 {manifestName || "No file chosen"}
               </Typography>
-              <input
-                ref={file}
-                hidden
-                type="file"
-                accept="application/json,.json"
-                aria-label="Config file"
-                onChange={(event) => readManifest(event.target.files?.[0])}
-              />
             </Stack>
             <Typography variant="s3" color="text.secondary"><Link href="https://docs.futureagi.com/docs/skills/reviewed-releases" target="_blank" rel="noopener noreferrer">App setup guide</Link></Typography>
           </Stack>

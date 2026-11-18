@@ -43,10 +43,10 @@ describe("review packet evidence", () => {
     const headline = screen.getByText("Repair verified: v7 passed 1 of 1 case; the recorded failure reproduced on v4.");
     expect(headline).toBeVisible();
     expect(screen.getByText("Blender refund refunded shipping: v7 passed every check · v4 failed: Business tool")).toBeVisible();
-    // The row states the outcome once; exact grading counts and the evidence ID are read in Inspect.
-    expect(screen.queryByText(/attempts graded/)).not.toBeInTheDocument();
+    // The row states the outcome once and the exact grading counts as its coverage; the evidence ID is read in Inspect.
+    expect(within(headline.closest("tr")).getByText("2/2 attempts graded · 0 incomplete · 0 regressions")).toBeVisible();
     fireEvent.click(screen.getByText("Application test · v7 vs v4").closest("tr"));
-    expect(screen.getByText(/2\/2 attempts graded · 0 incomplete · 0 regressions/)).toBeVisible();
+    expect(screen.getAllByText(/2\/2 attempts graded · 0 incomplete · 0 regressions/)).toHaveLength(2);
     expect(screen.getByText("Evidence ID")).toBeVisible();
     // Only the text comparison (no summary supplied here) keeps the unknown-result notice.
     expect(within(headline.closest("tr")).queryByText(/Result not recorded/)).not.toBeInTheDocument();
@@ -57,8 +57,10 @@ describe("review packet evidence", () => {
   it("keeps an unavailable native result unknown", () => {
     render(<MemoryRouter><ReleaseReviewBody packet={packet} changes={changes} capabilities={capability} summaries={[{ ...repair, result: null, cases: [], graded: null, availability: "unavailable", answer: "Not observed", selection: "Not observed", delivery: "Not observed", tools: "Not observed" }]} /></MemoryRouter>);
     expect(screen.queryByText(/Repair verified/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("Application test · v7 vs v4").closest("tr"));
+    // Unknown counts stay unknown in the row and in Inspect; nothing is inferred.
     expect(screen.getByText(/Unknown\/2 attempts graded/)).toBeVisible();
+    fireEvent.click(screen.getByText("Application test · v7 vs v4").closest("tr"));
+    expect(screen.getAllByText(/Unknown\/2 attempts graded/)).toHaveLength(2);
   });
 });
 
