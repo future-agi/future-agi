@@ -122,7 +122,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     await ownerPage.getByRole('tab', { name: 'Connected apps', exact: true }).click();
     await ownerPage.getByRole('button', { name: 'Connect an app', exact: true }).click();
     const dialog = ownerPage.getByRole('dialog');
-    await dialog.getByLabel('Target name', { exact: true }).fill('Refund agent');
+    await dialog.getByLabel('App name', { exact: true }).fill('Refund agent');
     await dialog.getByLabel('Config file', { exact: true }).setInputFiles(manifestPath);
     await expect(dialog.getByText(manifest.entrypoint, { exact: true })).toBeVisible();
     await ownerPage.screenshot({ path: `${output}/shots/00-register-target.png` });
@@ -152,7 +152,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
   page.on('response', (res) => { if (res.url().includes('/model-hub/skills/release-requests/') || res.status() >= 400) diagnostics.push(`${Date.now() % 100000} ${res.status()} ${res.request().method()} ${new URL(res.url()).pathname.replace('/model-hub/skills/', '')}`); });
   const ack = page.getByRole('checkbox', { name: ACK, exact: true });
   const attempt = async (acknowledge = true) => {
-    await page.getByRole('button', { name: 'Release to production', exact: true }).click();
+    await page.getByRole('button', { name: /^Move production to v\d+$/ }).click();
     // A returning reviewer attests in the final move dialog if the exact packet was not checked in this session.
     if (acknowledge && await ack.isVisible()) await ack.check();
     const response = page.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/release-requests/${requestId}/execute/`) && res.request().method() === 'POST');
@@ -171,7 +171,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     // Wait for that server-backed refresh to settle before the environment
     // injects the next race, so the race lands after the approved state is
     // shown (as in the registered driver), not inside the refresh itself.
-    await expect(page.getByRole('button', { name: 'Release to production', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: /^Move production to v\d+$/ })).toBeEnabled();
     await expect(page.getByText('You checked this release when you approved it.', {exact:true})).toBeVisible();
   };
   const renewals: unknown[] = [];
@@ -279,7 +279,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     const remaining = await api(reviewer, 'GET', `release-requests/${requestId}/`);
     expect(remaining.packet.evidence.map((ref: { source_id: string }) => ref.source_id)).toEqual([runs[0]]);
     await approve();
-    await page.getByRole('button', { name: 'Release to production', exact: true }).click();
+    await page.getByRole('button', { name: /^Move production to v\d+$/ }).click();
     if (await ack.isVisible()) await ack.check();
     const executed = page.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/release-requests/${requestId}/execute/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Move production', exact: true }).click();

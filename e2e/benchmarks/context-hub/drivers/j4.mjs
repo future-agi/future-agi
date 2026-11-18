@@ -145,7 +145,7 @@ export async function createDriver({ jobId, runId, registration }) {
       };
       const attempt = async (reviewer, operator, name) => {
         await attestIfRequired(reviewer, operator, `${name}-acknowledge`);
-        await operator.click(reviewer.getByRole('button', { name: 'Release to production', exact: true }), `${name}-open-release`);
+        await operator.click(reviewer.getByRole('button', { name: /^Move production to v\d+$/ }), `${name}-open-release`);
         const response = responseFor(reviewer, `/release-requests/${submitted.id}/execute/`);
         await operator.click(reviewer.getByRole('button', { name: 'Move production', exact: true }), `${name}-move`);
         const result = await response;
@@ -190,7 +190,7 @@ export async function createDriver({ jobId, runId, registration }) {
         const response = responseFor(reviewer, `/release-requests/${submitted.id}/decisions/`);
         await operator.approve(`${name}-approve`, ['release-packet'], () => reviewer.getByRole('button', { name: 'Approve release', exact: true }).click(), decision);
         requireValue((await response).ok(), 'Reviewer decision rejected');
-        await expect(reviewer.getByRole('button', { name: 'Release to production', exact: true })).toBeEnabled({ timeout: 60_000 });
+        await expect(reviewer.getByRole('button', { name: /^Move production to v\d+$/ })).toBeEnabled({ timeout: 60_000 });
       };
       // Each race must be refused for its own reason, never a leftover one.
       const EXPECTED = { 'policy-aba': [409, 'release_conflict'], 'target-config-change': [409, 'impact_changed'],
@@ -227,7 +227,7 @@ export async function createDriver({ jobId, runId, registration }) {
           await (await chooser).setFiles(input.manifestPath);
           await expect(dialog.getByText('refund_agent.app:invoke', { exact: true })).toBeVisible();
           // The visible name defaults from the build entrypoint; nothing typed.
-          await expect(dialog.getByLabel('Target name', { exact: true })).toHaveValue('refund_agent');
+          await expect(dialog.getByLabel('App name', { exact: true })).toHaveValue('refund_agent');
           const created = responseFor(admin, `/contexts/${input.contextId}/bindings/`);
           await op.click(dialog.getByRole('button', { name: 'Connect app', exact: true }), 'register-target');
           const binding = (await (await created).json()).result;
@@ -455,7 +455,7 @@ export async function createDriver({ jobId, runId, registration }) {
         if (stage.id === 'authorized-release') {
           const decision = decisionFor(detail);
           await attestIfRequired(reviewer, op, 'acknowledge-final-release');
-          await op.click(reviewer.getByRole('button', { name: 'Release to production', exact: true }), 'prepare-authorized-release');
+          await op.click(reviewer.getByRole('button', { name: /^Move production to v\d+$/ }), 'prepare-authorized-release');
           const response = responseFor(reviewer, `/release-requests/${submitted.id}/execute/`);
           await op.approve('authorize-exact-transition', ['release-packet'], () => reviewer.getByRole('button', { name: 'Move production', exact: true }).click(), decision);
           const result = await response;

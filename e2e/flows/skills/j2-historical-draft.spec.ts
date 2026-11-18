@@ -113,7 +113,7 @@ test('SKILLS-E2E-020: preserve unrelated personal work before editing historical
       if (await details.getAttribute('aria-expanded') === 'false') await details.click();
     };
     await revealHeadReview();
-    await expect(page.getByRole('button', { name: 'Review against current latest', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Compare with latest version', exact: true })).toBeVisible();
     const rows = await scopeProbe.pg<Checkpoint>('SELECT id, owner_id, digest, payload FROM model_hub_hubskilldraftcheckpoint WHERE skill_id = $1 AND workspace_id = $2', [created.context_id, owner.workspaceId]);
     assertCheckpoint(rows, original, owner.userId);
     expect(() => assertCheckpoint([{ ...rows[0], payload: { ...rows[0].payload, files: [] } }], original, owner.userId)).toThrow();
@@ -124,12 +124,12 @@ test('SKILLS-E2E-020: preserve unrelated personal work before editing historical
     const detail = await read<{ context: { latest_version: number; labels: unknown[] } }>(root);
     assertHead(detail);
     expect(() => assertHead({ context: { ...detail.context, latest_version: 7 } })).toThrow();
-    await expect(page.getByRole('button', { name: 'Review against current latest', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Compare with latest version', exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('J2-v4-editor.png') });
     await page.evaluate(() => { const settings = JSON.parse(localStorage.getItem('settings') || '{}'); settings.themeMode = 'dark'; localStorage.setItem('settings', JSON.stringify(settings)); });
     await page.reload();
     await revealHeadReview();
-    await expect(page.getByRole('button', { name: 'Review against current latest', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Compare with latest version', exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('J2-v4-editor-dark.png') });
     await testInfo.attach('J2-independent-state', { body: JSON.stringify({ contextId: created.context_id, original, checkpoint: rows[0], historicalDraft: repaired, detail, fallibility: ['lost-personal-files-rejected', 'wrong-origin-rejected', 'unexpected-publication-rejected'], scope: 'synthetic step 4 only; not native reproduction or complete J2' }), contentType: 'application/json' });
   } finally { await context.close(); }

@@ -142,7 +142,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     // The same reviewer's attestation of this unchanged revision survives the
     // pending -> approved refresh; it is not re-requested before release.
     await expect(page.getByText('You checked this release when you approved it.', {exact:true})).toBeVisible();
-    await page.getByRole('button', { name: 'Release to production', exact: true }).click();
+    await page.getByRole('button', { name: /^Move production to v\d+$/ }).click();
     // Environmental race: policy A -> B -> A leaves visible protection unchanged
     // but must invalidate approval by monotonically advancing release revision.
     const protection = await api(reviewer, 'GET', `${id}/label-protection/`);
@@ -194,7 +194,7 @@ test('SKILLS-E2E-040: an assigned reviewer releases an exact packet and reopens 
     await page.getByRole('button', { name: 'Approve release', exact: true }).click();
     expect((await renewedDecision).ok()).toBe(true);
     await expect(page.getByText('You checked this release when you approved it.', {exact:true})).toBeVisible();
-    await page.getByRole('button', { name: 'Release to production', exact: true }).click();
+    await page.getByRole('button', { name: /^Move production to v\d+$/ }).click();
     evidence.policyRace = { restored, beforeRenewal, staleStatus: 409 };
     const executed = page.waitForResponse(res => res.url().endsWith(`/release-requests/${submitted.id}/execute/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Move production', exact: true }).click();

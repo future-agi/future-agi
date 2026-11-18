@@ -360,7 +360,7 @@ export async function createDriver({ jobId, runId, registration }) {
             // The acknowledgement is keyed to the exact packet revision and fingerprint and carries across
             // pending -> approved; only a cleared acknowledgement (a new revision) is a new review action.
             await expect(reviewerPage.getByText('You checked this release when you approved it.', {exact:true})).toBeVisible();
-            await reviewer.approve(`parent-${index}-authorize-execution`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Release to production', exact: true }).click(), decision);
+            await reviewer.approve(`parent-${index}-authorize-execution`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: /^Move production to v\d+$/ }).click(), decision);
             await reviewer.approve(`parent-${index}-move-production`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Move production', exact: true }).click(), decision);
             await expect(reviewerPage.getByText('Release receipt', { exact: true })).toBeVisible();
             observations.releases.push((await pool.query('SELECT to_version, actor_id::text FROM model_hub_hubskilllabelevent WHERE skill_id = $1', [parent.id])).rows);

@@ -155,14 +155,14 @@ test('SKILLS-E2E-002: review a policy repair and deliberately release its exact 
       await test.step(`Review ${label} inventory, model and spend`, async () => {
         await page.getByRole('tab', {name:'Run a test', exact:true}).click();
         await select(page, 'Task model', 'gpt-4o-mini');
-        await page.getByRole('textbox', { name: 'Estimated-cost stop (USD)', exact: true }).fill('1');
-        await page.getByRole('button', { name: 'Preview work and spend', exact: true }).click();
+        await page.getByRole('textbox', { name: 'Maximum estimated cost (USD)', exact: true }).fill('1');
+        await page.getByRole('button', { name: 'Preview answer check', exact: true }).click();
         await expect(page.getByText('3 test cases × 2 versions × 1 attempt per version = 6 attempts', { exact: true })).toBeVisible({ timeout: UI_READY });
         const consent = page.getByRole('checkbox', {name: /^Send (?:this file|these \d+ files) and 3 test cases to .+, up to \$[0-9.]+\. (?:It contains|They contain) no answer keys or grading material\.$/});
         await consent.check();
         await expect(consent).toBeChecked();
         const response = page.waitForResponse(res => res.url().endsWith(`${SKILLS}${id}/test-runs/`) && res.request().method() === 'POST', { timeout: UI_READY });
-        await page.getByRole('button', { name: 'Run quick check', exact: true }).click();
+        await page.getByRole('button', { name: 'Run answer check', exact: true }).click();
         const accepted = await response;
         expect(accepted.status(), await accepted.text()).toBe(202);
         expect(accepted.request().postDataJSON()).toMatchObject({ acknowledge_provider_processing: true,

@@ -139,7 +139,7 @@ test('SKILLS-E2E-062: review a lower-number rollback with a retained retired chi
     // The acknowledgement is keyed to the exact packet revision and fingerprint, so it carries
     // across pending -> approved for the unchanged revision; any renewal clears it (J4).
     await expect(acknowledged).toBeChecked();
-    await page.getByRole('button', { name: 'Release to production', exact: true }).click();
+    await page.getByRole('button', { name: /^Move production to v\d+$/ }).click();
     const executed = page.waitForResponse(res => res.url().endsWith(`/release-requests/${fresh.id}/execute/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Move production', exact: true }).click();
     expect((await executed).ok()).toBe(true);

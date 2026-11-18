@@ -569,8 +569,8 @@ test('skills walkthrough', async ({ browser, request }) => {
       await quick(async () => {
         await click(page.getByRole('button', { name: 'Approve release', exact: true }), 1200);
         if (!(await ack.isChecked())) await ack.check();
-        await glide(page.getByRole('button', { name: 'Release to production', exact: true }));
-        await page.getByRole('button', { name: 'Release to production', exact: true }).click();
+        await glide(page.getByRole('button', { name: /^Move production to v\d+$/ }));
+        await page.getByRole('button', { name: /^Move production to v\d+$/ }).click();
       });
       const confirmMove = page.getByRole('button', { name: 'Move production', exact: true });
       await glide(confirmMove);

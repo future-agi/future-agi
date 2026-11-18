@@ -225,7 +225,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const settings = page.getByRole('button', {name:'Linked skills and settings', exact:true});
           await expect(settings).toBeVisible({timeout:60_000});
           if (await settings.getAttribute('aria-expanded') === 'false') await op.click(settings, 'show-head-review');
-          await expect(page.getByRole('button', { name: 'Review against current latest', exact: true })).toBeVisible();
+          await expect(page.getByRole('button', { name: 'Compare with latest version', exact: true })).toBeVisible();
           const checkpoints = await pool.query('SELECT digest, payload FROM model_hub_hubskilldraftcheckpoint WHERE skill_id=$1 AND workspace_id=$2', [input.contextId, input.actor.workspaceId]);
           const draft = await api('GET', `${root}draft/`);
           requireValue(checkpoints.rows.length === 1 && draft.base_version === input.versions.recorded && draft.files.find((f) => f.path === 'AGENTS.md').content === input.recordedRoot, 'Preserved origin differs');

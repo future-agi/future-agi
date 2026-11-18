@@ -133,7 +133,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
       if (await details.getAttribute('aria-expanded') === 'false') await details.click();
       await page.getByRole('checkbox', { name: `Check for update: ${prefix}-leaf-0`, exact: true }).check();
       const before = await req(author, 'GET', `contexts/${parent.id}/draft/`);
-      await page.getByRole('button', { name: 'Preview dependency changes', exact: true }).click();
+      await page.getByRole('button', { name: 'Preview changes to linked skills', exact: true }).click();
       await page.getByRole('checkbox', { name: 'Accept these skill versions and update rules into 1 context draft.', exact: true }).check();
       await page.getByRole('button', { name: 'Apply selected updates to draft', exact: true }).click();
       await expect.poll(async () => (await req(author, 'GET', `contexts/${parent.id}/draft/`)).resolved_lock.links.find((l: any) => l.skill_id === childId).version, { timeout: UI_READY }).toBe(8);
@@ -328,7 +328,7 @@ test('SKILLS-E2E-030: retain accepted child versions while upstream advances dur
         // The acknowledgement is keyed to the exact packet revision and fingerprint, so it carries
         // across pending -> approved for the unchanged revision; any renewal clears it (J4).
         await expect(reviewed).toBeChecked();
-        await reviewerPage.getByRole('button', { name: 'Release to production', exact: true }).click();
+        await reviewerPage.getByRole('button', { name: /^Move production to v\d+$/ }).click();
         await reviewerPage.getByRole('button', { name: 'Move production', exact: true }).click();
         await expect(reviewerPage.getByText('Release receipt', { exact: true })).toBeVisible();
         const labels = await scopeProbe.pg('SELECT to_version, actor_id::text FROM model_hub_hubskilllabelevent WHERE skill_id = $1', [parent.id]);
