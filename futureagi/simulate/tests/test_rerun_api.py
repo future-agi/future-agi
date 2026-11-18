@@ -1676,9 +1676,7 @@ class TestTestExecutionRuntimeContracts:
         # The request wrote eval_started=True; with no other config pending
         # on the call, both flags go back to what the call held before it,
         # absent, False or True.
-        assert call_execution.call_metadata.get("eval_started") == (
-            eval_started_before
-        )
+        assert call_execution.call_metadata.get("eval_started") == (eval_started_before)
         assert ("eval_started" in call_execution.call_metadata) is (
             eval_started_before is not None
         )
