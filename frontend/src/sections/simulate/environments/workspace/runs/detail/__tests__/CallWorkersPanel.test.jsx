@@ -425,10 +425,14 @@ describe("CallWorkersPanel, the record's own words", () => {
         : one,
     );
     result = { data: unplaced, isLoading: false, isError: false };
-    renderSteps(<CallWorkersPanel callExecutionId="c1" />);
-    const [, handOff] = screen.getAllByTestId("raw-event");
-    expect(handOff).not.toHaveTextContent("Returns coordinator");
-    expect(handOff).toHaveTextContent(C.unknown);
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    // The unplaced hand-off comes from the "not tied to a worker" lane, never the coordinator's.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Follow Not tied to a worker" }),
+    );
+    expect(
+      screen.getByText(/^Following Not tied to a worker · 1 of/),
+    ).toBeInTheDocument();
   });
 });
 

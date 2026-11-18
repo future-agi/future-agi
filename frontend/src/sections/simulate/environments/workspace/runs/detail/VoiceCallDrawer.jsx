@@ -132,19 +132,19 @@ export default function VoiceCallDrawer({
     hasWorkers ||
     (hasWorkers === undefined && chosenTab === "workers") ||
     Boolean(attempt);
-  // Participants and World state are kept per attempt: each says which attempt it shows.
-  const attemptSelect = data?.earlier_attempts?.length ? (
-    <Box sx={{ px: 2, pt: 1 }}>
-      <AttemptSelect
-        attemptNumber={data?.attempt_number}
-        earlierAttempts={data?.earlier_attempts}
-        value={attempt}
-        onChange={setAttempt}
-      />
-    </Box>
-  ) : null;
-  const leftPanelTabs = useMemo(
-    () => [
+  const leftPanelTabs = useMemo(() => {
+    // Participants and World state are kept per attempt: each says which attempt it shows.
+    const attemptSelect = data?.earlier_attempts?.length ? (
+      <Box sx={{ px: 2, pt: 1 }}>
+        <AttemptSelect
+          attemptNumber={data?.attempt_number}
+          earlierAttempts={data?.earlier_attempts}
+          value={attempt}
+          onChange={setAttempt}
+        />
+      </Box>
+    ) : null;
+    return [
       {
         label: CALL_TRACES_COPY.tab,
         value: "traces",
@@ -210,24 +210,22 @@ export default function VoiceCallDrawer({
           </>
         ),
       },
-    ],
-    [
-      task.id,
-      task.status,
-      task.persona,
-      data?.started_at,
-      seekTo,
-      showWorkers,
-      data,
-      attempt,
-      callTraces.projectId,
-      callTraces.isError,
-      callTraces.traces,
-      executionId,
-      onTracePanelMountedChange,
-      openStep,
-    ],
-  );
+    ];
+  }, [
+    task.id,
+    task.status,
+    task.persona,
+    seekTo,
+    showWorkers,
+    data,
+    attempt,
+    callTraces.projectId,
+    callTraces.isError,
+    callTraces.traces,
+    executionId,
+    onTracePanelMountedChange,
+    openStep,
+  ]);
 
   if (isError) {
     return (
