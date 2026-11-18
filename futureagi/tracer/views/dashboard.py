@@ -662,6 +662,38 @@ class _BatchedFilterValueCursor:
     new_project_batch: bool
 
 
+def _batched_span_system_retained_window_start(
+    project_ids,
+    *,
+    window_end: datetime,
+    deadline,
+) -> datetime:
+    """Return the first-page floor for a batched workspace span_system walk.
+
+    The retained-part lookup only shortens the walk; it is never needed for a
+    correct page. Any failure of that lookup (connection, timeout, server
+    error, invalid metadata, exhausted budget) falls back to the Unix epoch,
+    the pre-retained-floor walk, so it can never fail the picker request.
+    """
+
+    try:
+        retained_start = AttributeReadSelector(
+            typed_only=True,
+            json_attribute_mode="arrays",
+            wall_timeout_ms=deadline.remaining_ms(
+                ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
+            ),
+        ).retained_window_start(project_ids, window_end=window_end)
+    except Exception as exc:
+        # Class name only: ClickHouse errors can echo query text and values.
+        logger.warning(
+            "dashboard_filter_value_retained_window_lookup_failed",
+            error_type=type(exc).__name__,
+        )
+        return _FILTER_VALUE_RETAINED_START
+    return retained_attribute_window_start(retained_start, window_end=window_end)
+
+
 def _batched_filter_value_cursor(
     request,
     scope: _FilterValueProjectScope,
@@ -3753,20 +3785,12 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                 # empty slice continuations all the way back
                                 # to 1970 (~60 sequential requests), each one
                                 # another chance for a transient failure.
-                                window_start = retained_attribute_window_start(
-                                    AttributeReadSelector(
-                                        typed_only=True,
-                                        json_attribute_mode="arrays",
-                                        wall_timeout_ms=(
-                                            filter_value_deadline.remaining_ms(
-                                                ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
-                                            )
-                                        ),
-                                    ).retained_window_start(
+                                window_start = (
+                                    _batched_span_system_retained_window_start(
                                         project_ids,
                                         window_end=window_end,
-                                    ),
-                                    window_end=window_end,
+                                        deadline=filter_value_deadline,
+                                    )
                                 )
                         if not project_ids:
                             return self._gm.success_response(

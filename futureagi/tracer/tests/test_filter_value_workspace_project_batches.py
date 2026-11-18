@@ -7,10 +7,22 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from clickhouse_connect.driver.exceptions import (
+    DatabaseError as ConnectDatabaseError,
+)
+from clickhouse_connect.driver.exceptions import (
+    OperationalError as ConnectOperationalError,
+)
+from clickhouse_driver.errors import ErrorCodes
+from clickhouse_driver.errors import NetworkError as DriverNetworkError
+from clickhouse_driver.errors import ServerException as DriverServerException
+from clickhouse_driver.errors import SocketTimeoutError as DriverSocketTimeoutError
+from structlog.testing import capture_logs
 
 from tracer.services.annotation_label_source import (
     AnnotationLabelScoresProjectPG,
 )
+from tracer.services.clickhouse import attribute_reads
 from tracer.services.clickhouse.attribute_cursor_state import AttributeCursorSeenState
 from tracer.services.clickhouse.attribute_reads import (
     ATTRIBUTE_READ_MAX_PROJECTS,
@@ -24,7 +36,12 @@ from tracer.services.clickhouse.filter_value_reads import (
     FilterValueRead,
     SessionFilterValueCursorPageRead,
 )
+from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 from tracer.views import dashboard as dashboard_view
+
+_REAL_RETAINED_WINDOW_START = attribute_reads.AttributeReadSelector.__dict__[
+    "retained_window_start"
+]
 
 
 def _uuid(index: int) -> str:
@@ -1217,3 +1234,166 @@ def test_workspace_span_system_walk_starts_at_retained_span_boundary(
     assert end - start == expected_age
     # The continuation resumes the frozen window from the signed cursor.
     assert all(window == windows[0] for window in windows)
+
+
+# Text a ClickHouse error may echo back; it must never reach the logs.
+_LEAKY_DETAIL = "SELECT min(min_time) FROM system.parts WHERE secret-value-42"
+
+
+def _executor_raising(exc):
+    class _Executor:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def execute(self, *_args, **_kwargs):
+            raise exc
+
+    return _Executor
+
+
+class _UnavailableClientExecutor:
+    def __init__(self, *_args, **_kwargs):
+        raise DriverNetworkError(f"connect refused: {_LEAKY_DETAIL}")
+
+
+class _EmptyResultExecutor:
+    """Returns an envelope the selector rejects as IncompleteLatestStateReplay."""
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def execute(self, *_args, **_kwargs):
+        return None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "executor",
+    [
+        pytest.param(
+            _executor_raising(DriverNetworkError(_LEAKY_DETAIL)),
+            id="driver-network-error",
+        ),
+        pytest.param(
+            _executor_raising(DriverSocketTimeoutError(_LEAKY_DETAIL)),
+            id="driver-socket-timeout",
+        ),
+        pytest.param(
+            _executor_raising(
+                DriverServerException(_LEAKY_DETAIL, code=ErrorCodes.UNKNOWN_TABLE)
+            ),
+            id="driver-server-exception",
+        ),
+        pytest.param(
+            _executor_raising(
+                DriverServerException(_LEAKY_DETAIL, code=ErrorCodes.TIMEOUT_EXCEEDED)
+            ),
+            id="driver-server-timeout",
+        ),
+        pytest.param(
+            _executor_raising(ConnectOperationalError(_LEAKY_DETAIL)),
+            id="connect-operational-error",
+        ),
+        pytest.param(
+            _executor_raising(ConnectDatabaseError(_LEAKY_DETAIL)),
+            id="connect-database-error",
+        ),
+        pytest.param(
+            _executor_raising(ReadDeadlineExceeded(_LEAKY_DETAIL)),
+            id="read-deadline-exceeded",
+        ),
+        pytest.param(
+            _executor_raising(TimeoutError(_LEAKY_DETAIL)),
+            id="builtin-timeout",
+        ),
+        pytest.param(
+            _executor_raising(ConnectionResetError(_LEAKY_DETAIL)),
+            id="connection-reset",
+        ),
+        pytest.param(
+            _executor_raising(RuntimeError(_LEAKY_DETAIL)),
+            id="unexpected-client-error",
+        ),
+        pytest.param(_EmptyResultExecutor, id="incomplete-latest-state-replay"),
+        pytest.param(_UnavailableClientExecutor, id="client-unavailable"),
+    ],
+)
+def test_workspace_span_system_retained_lookup_failure_falls_back_to_epoch(
+    monkeypatch, executor
+):
+    """A failed retained-part lookup must not fail the workspace picker.
+
+    It is only an optimisation of the first page's lower bound, so any error
+    from it falls back to the pre-floor walk from 1970 and logs one sanitized
+    warning.
+    """
+
+    project_ids = [_uuid(index) for index in range(1, 3)]
+    projects = _ProjectQuery(project_ids, [])
+    _install_scope_and_seen_state(monkeypatch, projects)
+    # Run the real selector lookup against a client that fails.
+    monkeypatch.setattr(
+        attribute_reads.AttributeReadSelector,
+        "retained_window_start",
+        _REAL_RETAINED_WINDOW_START,
+    )
+    monkeypatch.setattr(attribute_reads, "V2AttributeQueryExecutor", executor)
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", object)
+    windows = []
+
+    def read_page(_analytics, **kwargs):
+        windows.append((kwargs["window_start"], kwargs["window_end"]))
+        return FilterValueCursorPageRead(
+            (),
+            kwargs["window_start"],
+            kwargs["window_end"],
+            True,
+            kwargs["window_end"] - timedelta(minutes=5),
+            None,
+            None,
+            (),
+            "continuation",
+        )
+
+    monkeypatch.setattr(
+        dashboard_view,
+        "read_span_system_filter_value_cursor_page",
+        read_page,
+    )
+    monkeypatch.setattr(
+        dashboard_view,
+        "Project",
+        SimpleNamespace(
+            objects=SimpleNamespace(
+                filter=lambda **_kwargs: SimpleNamespace(values_list=lambda *_args: [])
+            )
+        ),
+    )
+    params = {
+        "metric_name": "project",
+        "metric_type": "system_metric",
+        "source": "traces",
+        "project_ids": [],
+        "search": "",
+        "page_size": 10,
+    }
+
+    with capture_logs() as logs:
+        first = _result(_invoke(params))
+
+    assert first["next_cursor"]
+    assert len(windows) == 1
+    assert windows[0][0] == datetime(1970, 1, 1, tzinfo=UTC)
+    # The continuation keeps the epoch window from the signed cursor.
+    _result(_invoke({**params, "cursor": first["next_cursor"]}))
+    assert windows[1] == windows[0]
+
+    # Exactly one warning: the selector's own read-budget warning, or the
+    # picker's fallback warning for every other failure class.
+    warnings = [entry for entry in logs if entry["log_level"] == "warning"]
+    assert [entry["event"] for entry in warnings] in (
+        ["attribute_retained_window_metadata_budget_exceeded"],
+        ["dashboard_filter_value_retained_window_lookup_failed"],
+    )
+    assert "secret-value-42" not in repr(logs)
+    assert "system.parts" not in repr(logs)
