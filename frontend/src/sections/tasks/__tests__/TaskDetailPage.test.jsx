@@ -402,6 +402,58 @@ describe("TaskDetailPage", () => {
     expect(axiosGetMock).toHaveBeenCalledTimes(2);
   });
 
+  it("offers Re-run, not Resume, when the first start was confirmed failed", async () => {
+    useGetTaskData.mockReturnValue({ data: loadedTask({ status: "failed" }) });
+    axiosGetMock.mockResolvedValue(failedStartLogs());
+    renderTaskDetail("task-1");
+    await waitFor(() =>
+      expect(axiosGetMock).toHaveBeenCalledWith(
+        "/tracer/eval-task/get_eval_task_logs/",
+        expect.objectContaining({ params: { eval_task_id: "task-1" } }),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /resume/i })).toBeNull(),
+    );
+    expect(screen.getByRole("button", { name: /re-run/i })).toBeEnabled();
+    fireEvent.click(screen.getByRole("tab", { name: /logs/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /choose re-run/i,
+    );
+  });
+
+  it.each(["failed", "paused"])(
+    "keeps Resume for an ordinary %s task",
+    async (status) => {
+      useGetTaskData.mockReturnValue({ data: loadedTask({ status }) });
+      axiosGetMock.mockResolvedValue(
+        taskLogs(status, status === "failed" ? "Row selection failed." : null),
+      );
+      renderTaskDetail("task-1");
+      await waitFor(() =>
+        expect(axiosGetMock.mock.calls.length).toBe(
+          status === "failed" ? 1 : 0,
+        ),
+      );
+      expect(screen.getByRole("button", { name: /resume/i })).toBeVisible();
+    },
+  );
+
+  it("shows the server's reason when Resume is refused", async () => {
+    useGetTaskData.mockReturnValue({ data: loadedTask({ status: "failed" }) });
+    const refusal = "No previous run could be confirmed for this task.";
+    axiosPostMock.mockRejectedValueOnce({
+      response: { status: 400, data: { status: false, message: refusal } },
+    });
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("button", { name: /resume/i }));
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(refusal, {
+        variant: "error",
+      }),
+    );
+  });
+
   it("offers no Resume for a completed task", () => {
     useGetTaskData.mockReturnValue({
       data: loadedTask({ status: "completed" }),

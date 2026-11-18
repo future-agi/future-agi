@@ -21,7 +21,11 @@ import TaskPanels from "./components/task_panels";
 import TaskLogsView from "src/sections/common/EvalsTasks/TaskLogsView";
 import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
 import { isResumableTaskStatus } from "src/sections/common/EvalsTasks/task_status";
-import { useResumeEvalTask } from "src/sections/common/EvalsTasks/useResumeEvalTask";
+import {
+  resumeErrorMessage,
+  useResumeEvalTask,
+} from "src/sections/common/EvalsTasks/useResumeEvalTask";
+import { useConfirmedStartFailure } from "src/sections/common/EvalsTasks/evalTaskLogsQuery";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
@@ -232,9 +236,9 @@ const TaskDetailPage = () => {
   const { mutate: resumeTask } = useResumeEvalTask({
     // pending (not running): resume re-queues, so the badge moves forward only.
     onMutate: () => optimisticStatus("pending"),
-    onError: (_e, _v, ctx) => {
+    onError: (error, _v, ctx) => {
       rollbackStatus(ctx);
-      enqueueSnackbar("Failed to resume task. It may have already finished.", {
+      enqueueSnackbar(resumeErrorMessage(error), {
         variant: "error",
       });
     },
@@ -321,10 +325,10 @@ const TaskDetailPage = () => {
     const isDateDirty = Boolean(dirtyFields?.startDate || dirtyFields?.endDate);
     const hasSavedDateRange = Boolean(
       taskDetails?.filters_applied?.date_range?.length ||
-        taskDetails?.filters_applied?.start_date ||
-        taskDetails?.filters_applied?.end_date ||
-        taskDetails?.start_date ||
-        taskDetails?.end_date,
+      taskDetails?.filters_applied?.start_date ||
+      taskDetails?.filters_applied?.end_date ||
+      taskDetails?.start_date ||
+      taskDetails?.end_date,
     );
     const includeDateRange = hasSavedDateRange || isDateDirty;
 
@@ -402,6 +406,13 @@ const TaskDetailPage = () => {
     [formValues, updateTask, confirmMode, taskDetails],
   );
 
+  // Hooks stay above the early returns. Resume is refused for a start that
+  // was confirmed failed after the automatic retry; Re-run is the way on.
+  const startFailureConfirmed = useConfirmedStartFailure(
+    taskId,
+    (taskDetails?.status || "").toLowerCase(),
+  );
+
   if (isLoading && !taskDetails) {
     return (
       <Box
@@ -473,7 +484,7 @@ const TaskDetailPage = () => {
 
   const status = (taskDetails.status || "").toLowerCase();
   const canPause = status === "running";
-  const canResume = isResumableTaskStatus(status);
+  const canResume = isResumableTaskStatus(status) && !startFailureConfirmed;
   const linkedTraceSource = getLinkedTraceSource(taskDetails);
 
   // A re-run mid-flight would race the live run.

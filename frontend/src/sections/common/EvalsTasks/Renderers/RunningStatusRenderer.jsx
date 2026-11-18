@@ -10,7 +10,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { isResumableTaskStatus } from "../task_status";
-import { useResumeEvalTask } from "../useResumeEvalTask";
+import { resumeErrorMessage, useResumeEvalTask } from "../useResumeEvalTask";
 
 const statusRole = {
   pending: "neutral",
@@ -46,9 +46,9 @@ const RunningStatusRenderer = ({ value, data, api }) => {
         update: [{ ...data, status: "running" }],
       });
     },
-    onError: () => {
+    onError: (error) => {
       api.refreshServerSide?.();
-      enqueueSnackbar("Failed to resume task. It may have already finished.", {
+      enqueueSnackbar(resumeErrorMessage(error), {
         variant: "error",
       });
     },

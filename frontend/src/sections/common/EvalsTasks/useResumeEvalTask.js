@@ -1,5 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+
+export const RESUME_FAILED_FALLBACK =
+  "Failed to resume task. It may have already finished.";
+
+// The server says why it refused (e.g. a start that failed after the automatic
+// retry). Show that; keep the generic text only when it sends no message.
+export const resumeErrorMessage = (error) =>
+  getSafeActionErrorMessage(error, RESUME_FAILED_FALLBACK);
 
 export function useResumeEvalTask({ onSuccess, ...callbacks }) {
   const queryClient = useQueryClient();

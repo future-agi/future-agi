@@ -18,7 +18,7 @@ import DeleteConfirmation from "./DeleteConfirmation";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 import { readEvalTaskListPage } from "./task_list_read";
 import { isResumableTaskStatus } from "./task_status";
-import { useResumeEvalTask } from "./useResumeEvalTask";
+import { resumeErrorMessage, useResumeEvalTask } from "./useResumeEvalTask";
 import { compactSamplingLabel } from "src/sections/tasks/components/simpleSamplingPolicy";
 
 const POLL_INTERVAL_MS = 5000;
@@ -208,7 +208,7 @@ const buildFilterChips = (filtersApplied) => {
         f.filterConfig?.filterOp || f.filter_config?.filter_op || "equals";
       const rawVal =
         f.filterConfig?.filterValue ?? f.filter_config?.filter_value;
-      const val = Array.isArray(rawVal) ? rawVal.join(", ") : rawVal ?? "";
+      const val = Array.isArray(rawVal) ? rawVal.join(", ") : (rawVal ?? "");
       const isValuelessOp = op === "is_null" || op === "is_not_null";
       chips.push(
         isValuelessOp
@@ -406,9 +406,9 @@ const TaskListView = ({
   const { mutate: resumeTask } = useResumeEvalTask({
     // pending (not running): resume re-queues, so the badge moves forward only.
     onMutate: (taskId) => optimisticRowStatus(taskId, "pending"),
-    onError: (_e, _v, ctx) => {
+    onError: (error, _v, ctx) => {
       rollbackRows(ctx);
-      enqueueSnackbar("Failed to resume task. It may have already finished.", {
+      enqueueSnackbar(resumeErrorMessage(error), {
         variant: "error",
       });
     },

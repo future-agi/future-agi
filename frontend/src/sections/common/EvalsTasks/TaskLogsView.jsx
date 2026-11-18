@@ -16,10 +16,13 @@ import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
 import { format, formatDistanceToNow, differenceInSeconds } from "date-fns";
 import { enrichErrorGroups } from "./classifyTaskError";
-import { readEvalTaskLogs } from "./task_log_read";
+import {
+  EVAL_TASK_LOGS_STALE_MS,
+  evalTaskLogsQueryFn,
+  evalTaskLogsQueryKey,
+} from "./evalTaskLogsQuery";
 import { warningMessage, warningTypeLabel } from "./warningTypes";
 import ContentSkeleton from "src/components/content-skeleton";
 
@@ -541,17 +544,9 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
   const theme = useTheme();
 
   const { data, isLoading, isFetching, isPaused, isError, refetch } = useQuery({
-    queryKey: ["eval-task-logs", evalTaskId],
-    queryFn: ({ signal }) =>
-      readEvalTaskLogs(
-        ({ signal: requestSignal, timeout }) =>
-          axios.get(endpoints.project.getEvalTaskLogs(), {
-            signal: requestSignal,
-            timeout,
-            params: { eval_task_id: evalTaskId },
-          }),
-        signal,
-      ),
+    queryKey: evalTaskLogsQueryKey(evalTaskId),
+    queryFn: evalTaskLogsQueryFn(evalTaskId),
+    staleTime: EVAL_TASK_LOGS_STALE_MS,
     enabled: !!evalTaskId,
     retry: false,
     // Poll off the response's own status (not the prop) so the same fetch that
