@@ -1316,12 +1316,14 @@ class CHSpanReader:
         media_patterns: tuple[str, str],
         field_chars: int = 1000,
         per_trace: int = 100,
+        error_chars: int = 300,
     ) -> list[dict[str, Any]]:
         """The non-root spans of the given traces a transcript shows: tool
         calls, failed steps, and steps whose input holds an image or audio
         part (``media_patterns``: an image and an audio regex, counted in each
         input as ``images`` and ``audio``). Input and output come back cut to
-        ``field_chars`` characters, with their full lengths. At most
+        ``field_chars`` characters, with their full lengths, and the status
+        message to ``error_chars``. At most
         ``per_trace`` spans of a trace come back, failed ones first;
         ``in_trace`` says how many tool calls and failed steps it holds.
         Ordered by trace, then start.
@@ -1342,7 +1344,7 @@ class CHSpanReader:
             f" images, audio, countIf({shown}) OVER (PARTITION BY trace_id)"
             " AS in_trace, created_at FROM ("
             " SELECT trace_id, id, name, observation_type, start_time, created_at, status,"
-            " substringUTF8(status_message, 1, 300) AS status_head,"
+            " substringUTF8(status_message, 1, %(err)s) AS status_head,"
             " substringUTF8(input, 1, %(chars)s) AS input_head,"
             " substringUTF8(output, 1, %(chars)s) AS output_head,"
             " lengthUTF8(input) AS input_chars,"
@@ -1364,6 +1366,7 @@ class CHSpanReader:
         params = {
             "pid": str(project_id),
             "chars": int(field_chars),
+            "err": int(error_chars),
             "image": image,
             "audio": audio,
             "per": int(per_trace),

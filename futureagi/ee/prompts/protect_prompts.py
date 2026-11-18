@@ -170,6 +170,7 @@ def render_prompt(metric_key: str, modality: str, *, text: Optional[str] = None)
     template = PROMPTS[metric_key][modality]
     return template.replace("{text}", text or "") if modality == "text" else template
 
+
 def build_mm_messages_for_protect(
     *,
     metric: str,

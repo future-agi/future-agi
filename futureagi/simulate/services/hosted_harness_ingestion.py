@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import tempfile
 from datetime import datetime, timedelta
 from typing import Any, BinaryIO
@@ -33,6 +34,11 @@ from simulate.services.hosted_harness import (
     canonical_json_bytes,
     update_execution_counts,
 )
+from simulate.services.hosted_harness_validation import (
+    receipt_call_times,
+    validate_jsonb_strings,
+)
+from simulate.utils.test_execution_utils import is_fix_check_run
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
 
@@ -113,6 +119,9 @@ def _normalized_artifact_content_type(
 def ingest_event_batch(
     attempt: HostedHarnessAttempt, events: list[dict[str, Any]]
 ) -> dict[str, Any]:
+    # Validate the entire raw batch before digest encoding or any event, watermark
+    # or heartbeat write, matching the conversation event channel.
+    validate_jsonb_strings(events, field="events")
     rejected: list[dict[str, Any]] = []
     with transaction.atomic():
         attempt = (
@@ -170,6 +179,10 @@ def ingest_result_receipt(
             "digest_mismatch", "result receipt digest did not match", status_code=422
         )
     _assert_body_binding(attempt, body)
+    # Offline spool replay bypasses DRF's datetime conversion. Reject malformed
+    # call timestamps before receipt writes, while retaining the original wire body.
+    if body.get("call") is not None:
+        receipt_call_times(body["call"])
     with transaction.atomic():
         attempt = (
             HostedHarnessAttempt.no_workspace_objects.select_for_update()
@@ -888,9 +901,8 @@ def _apply_receipt_to_call(
         resolved_modality = CallExecution.SimulationCallType.VOICE
     call.simulation_call_type = resolved_modality
     if call_data:
-        call.started_at = call_data["started_at"]
-        call.ended_at = call_data["ended_at"]
-        call.completed_at = call_data["ended_at"]
+        call.started_at, call.ended_at = receipt_call_times(call_data)
+        call.completed_at = call.ended_at
         call.duration_seconds = round(call_data["duration_ms"] / 1000)
     elif body["status"] == "skipped":
         call.completed_at = timezone.now()
@@ -1099,6 +1111,10 @@ def _apply_receipt_to_call(
                 known = isinstance(run_test_id, (str, UUID))
                 selected = runnable_eval_config_ids(run_test_id) if known else []
                 tool_on = _tool_evaluation_on(run_test_id) if known else False
+                # A fix's check run starts no grading here: its fix grades the base
+                # version's and the winner's runs once it has a winner.
+                if is_fix_check_run(call.test_execution_id):
+                    selected, tool_on = [], False
         except Exception:  # noqa: BLE001 - a receipt is never lost over scheduling
             logger.exception(
                 "harness_eval_selection_lookup_failed for call %s", call_id
@@ -1233,6 +1249,86 @@ def _receipt_evaluation_coverage(body: dict[str, Any]) -> dict[str, int | bool]:
     }
 
 
+def _decode_artifact_text(data: bytes, *, field: str) -> str:
+    """Decode an uploaded artifact, refusing bytes that are not UTF-8 without echoing them."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HostedHarnessError(
+            "invalid_jsonb_string",
+            f"{field} is not valid UTF-8 text",
+            status_code=400,
+        ) from None
+
+
+def _load_artifact_json(text: str, *, field: str) -> Any:
+    """Parse artifact JSON, refusing unsupported numbers before any timing math."""
+
+    def nonfinite(_token: str) -> float:
+        raise HostedHarnessError(
+            "invalid_jsonb_number",
+            f"{field} contains a non-finite number",
+            status_code=400,
+        )
+
+    def finite_float(token: str) -> float:
+        value = float(token)
+        if not math.isfinite(value):
+            nonfinite(token)
+        return value
+
+    def bounded_int(token: str) -> int:
+        try:
+            return int(token)
+        except ValueError:
+            # Python's integer digit limit raises ValueError, not JSONDecodeError.
+            # Refuse it rather than treating it as legacy text or a skippable line.
+            raise HostedHarnessError(
+                "invalid_jsonb_number",
+                f"{field} contains an integer exceeding the digit limit",
+                status_code=400,
+            ) from None
+
+    return json.loads(
+        text,
+        parse_constant=nonfinite,
+        parse_float=finite_float,
+        parse_int=bounded_int,
+    )
+
+
+# The latest epoch second a timing value may name (9999-12-31T23:59:59Z). Bounding
+# timing inputs keeps every derived offset within float and BigInteger range.
+_MAX_TIMING_SECONDS = 253402300799
+
+
+def _timing_number(value: Any, *, field: str, scale: float = 1.0) -> float | None:
+    """A timing number from an artifact, or None when it is not a number.
+
+    ``scale`` is 1000 for millisecond values. A number beyond any plausible
+    timestamp (or too large for a float) is refused instead of overflowing the
+    offset arithmetic or the stored offset column.
+    """
+    if not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        number = math.inf
+    if not math.isfinite(number) or abs(number) > _MAX_TIMING_SECONDS * scale:
+        raise HostedHarnessError(
+            "invalid_jsonb_number",
+            f"{field} contains a timing value out of range",
+            status_code=400,
+        )
+    return number
+
+
+def _jsonl_lines(text: str) -> list[str]:
+    """Split JSONL on newlines only; U+2028 and other separators belong to the data."""
+    return [line.removesuffix("\r") for line in text.split("\n")]
+
+
 def _read_hosted_tool_trace(
     artifact: HostedHarnessArtifact, base_time: float | None
 ) -> list[dict[str, Any]]:
@@ -1246,20 +1342,23 @@ def _read_hosted_tool_trace(
         response = get_storage_client().get_object(
             UPLOAD_BUCKET_NAME, artifact.object_key
         )
-        raw = response.read().decode("utf-8")
+        raw = _decode_artifact_text(response.read(), field="tool trace artifact")
         calls: list[dict[str, Any]] = []
-        for line in raw.splitlines():
+        for line in _jsonl_lines(raw):
             if not line.strip():
                 continue
             try:
-                value = json.loads(line)
+                value = _load_artifact_json(line, field="tool trace artifact")
             except json.JSONDecodeError:
                 continue
             if isinstance(value, dict):
-                at = value.get("at")
-                if base_time is not None and isinstance(at, (int, float)) and at > 0:
+                at = _timing_number(value.get("at"), field="tool trace artifact")
+                if base_time is not None and at is not None and at > 0:
                     value["start_time_ms"] = int(round((at - base_time) * 1000))
                 calls.append(value)
+        # These calls are stored in provider_call_data. Malformed lines are skipped
+        # above, but readable text Postgres cannot store fails the receipt instead.
+        validate_jsonb_strings(calls, field="tool trace artifact")
         return calls
     finally:
         if response is not None:
@@ -1321,9 +1420,9 @@ def _ingest_hosted_transcript(
         response = get_storage_client().get_object(
             UPLOAD_BUCKET_NAME, artifact.object_key
         )
-        raw = response.read().decode("utf-8")
+        raw = _decode_artifact_text(response.read(), field="transcript artifact")
         try:
-            payload = json.loads(raw)
+            payload = _load_artifact_json(raw, field="transcript artifact")
         except json.JSONDecodeError:
             payload = {"transcript": raw, "messages": []}
         messages = payload.get("messages") if isinstance(payload, dict) else []
@@ -1361,8 +1460,8 @@ def _ingest_hosted_transcript(
             # Turns carry the epoch second they were delivered (`at`), on the tool trace's
             # clock, so turns and tool calls are measured from one base into one timeline.
             def sent_at(message: dict) -> float | None:
-                value = message.get("at")
-                return value if isinstance(value, (int, float)) and value > 0 else None
+                value = _timing_number(message.get("at"), field="transcript artifact")
+                return value if value is not None and value > 0 else None
 
             messages = [
                 message
@@ -1389,6 +1488,9 @@ def _ingest_hosted_transcript(
                 if base_time is not None and at is not None:
                     segment["start_time_ms"] = int(round((at - base_time) * 1000))
                 segments.append(segment)
+            # Reject before replacing the stored chat, so the receipt rolls back to
+            # a stable 400 rather than a database error the runner would retry.
+            validate_jsonb_strings(segments, field="transcript artifact")
             ChatMessageModel.objects.filter(call_execution=call).delete()
             CallTranscript.objects.filter(call_execution=call).delete()
             if segments:
@@ -1410,21 +1512,26 @@ def _ingest_hosted_transcript(
             # (the recorder attaches after the call starts, so this lands
             # late), and a call start after the first word (clock skew) falls
             # back to that word.
+            def spoken_at(message: dict, key: str) -> float | None:
+                return _timing_number(message.get(key), field="transcript artifact")
+
             speech_starts = [
-                message["started_speaking_at"]
+                start
                 for message in messages
                 if isinstance(message, dict)
-                and isinstance(message.get("started_speaking_at"), (int, float))
+                and (start := spoken_at(message, "started_speaking_at")) is not None
             ]
             first_speech = min(speech_starts) if speech_starts else None
-            recording_offset = (
+            recording_offset = _timing_number(
                 payload.get("recording_offset_ms")
                 if isinstance(payload, dict)
-                else None
+                else None,
+                field="transcript artifact",
+                scale=1000,
             )
             call_start = _epoch_seconds(call.started_at)
-            if first_speech is not None and isinstance(recording_offset, (int, float)):
-                base_time = first_speech - max(0.0, float(recording_offset)) / 1000
+            if first_speech is not None and recording_offset is not None:
+                base_time = first_speech - max(0.0, recording_offset) / 1000
             elif (
                 first_speech is not None
                 and call_start is not None
@@ -1444,13 +1551,13 @@ def _ingest_hosted_transcript(
                 if content is None:
                     continue
                 role = str(message.get("role") or "unknown")
-                started = message.get("started_speaking_at")
-                stopped = message.get("stopped_speaking_at")
-                if base_time is not None and isinstance(started, (int, float)):
+                started = spoken_at(message, "started_speaking_at")
+                stopped = spoken_at(message, "stopped_speaking_at")
+                if base_time is not None and started is not None:
                     start_ms = int(round((started - base_time) * 1000))
                     end_ms = (
                         int(round((stopped - base_time) * 1000))
-                        if isinstance(stopped, (int, float))
+                        if stopped is not None
                         else start_ms
                     )
                     previous_end_ms = end_ms
@@ -1481,6 +1588,10 @@ def _ingest_hosted_transcript(
                     content=str(payload["transcript"]),
                 )
             )
+        # Transcript text columns reject U+0000 and lone surrogates as JSONB does.
+        validate_jsonb_strings(
+            [row.content for row in rows], field="transcript artifact"
+        )
         CallTranscript.objects.filter(call_execution=call).delete()
         if rows:
             CallTranscript.objects.bulk_create(rows)

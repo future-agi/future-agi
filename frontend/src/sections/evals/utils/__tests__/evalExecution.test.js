@@ -403,3 +403,25 @@ describe("executeEvalForRow — composite", () => {
     expect(result.output).toBeNull();
   });
 });
+
+describe("executeEvalForRow — rate limit", () => {
+  it("returns the server's 429 message for a row preview", async () => {
+    const limit =
+      "Evaluation rate limit reached. Wait for the usage window to reset before retrying.";
+    POST.mockRejectedValueOnce({
+      status: false,
+      code: "rate_limited",
+      message: limit,
+      result: limit,
+      statusCode: 429,
+    });
+    const result = await executeEvalForRow({
+      evalItem: { template_id: "tpl-1" },
+      rowType: "Span",
+      currentRow: { ...VERIFIED_SPAN, span_id: "s1" },
+      spanDetail: { ...VERIFIED_SPAN },
+      mapping: {},
+    });
+    expect(result).toMatchObject({ ok: false, errorMessage: limit });
+  });
+});

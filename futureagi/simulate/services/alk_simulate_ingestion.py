@@ -57,7 +57,10 @@ from simulate.utils.processing_outcomes import (
     is_silent_agent_skip,
     set_processing_skip_metadata,
 )
-from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
+from simulate.utils.test_execution_utils import (
+    generate_simulator_agent_prompt,
+    is_fix_check_run,
+)
 from simulate.utils.websocket_notifications import notify_simulation_update
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
@@ -66,6 +69,8 @@ from tracer.models.observability_provider import ProviderChoices
 logger = structlog.get_logger(__name__)
 
 DEFAULT_BATCH_SIZE = 9
+# The origin of a run test's one scenario that holds every persona as a dataset row.
+GROUPED_SCENARIOS_ORIGIN = "alk_sdk_ingestion_grouped"
 _ALK_BATCH_CLAIMED_KEY = "alk_batch_claimed"
 # Bookkeeping keys the backend owns inside ``call_metadata``. A result PATCH
 # merges caller-supplied ``call_metadata`` caller-wins, so the caller must not be
@@ -451,8 +456,7 @@ def append_alk_sim_scenarios(run_test, personas):
         existing = list(run_test.scenarios.filter(deleted=False).order_by("created_at"))
         if (
             len(existing) == 1
-            and (existing[0].metadata or {}).get("origin")
-            == "alk_sdk_ingestion_grouped"
+            and (existing[0].metadata or {}).get("origin") == GROUPED_SCENARIOS_ORIGIN
             and existing[0].dataset_id
         ):
             scenario = existing[0]
@@ -512,7 +516,7 @@ def _create_persona_scenarios(
         dataset=dataset,
         status=StatusType.COMPLETED.value,
         metadata={
-            "origin": "alk_sdk_ingestion_grouped",
+            "origin": GROUPED_SCENARIOS_ORIGIN,
             "persona_count": len(personas),
             **({"persona": only_persona} if only_persona is not None else {}),
         },
@@ -958,7 +962,9 @@ def ingest_alk_sim_result(
         # a switched-on run test must still take the dispatch arm below even
         # with no catalogue eval selected.
         run_test_id = getattr(call_execution.test_execution, "run_test_id", None)
-        if (
+        # A fix's check run starts no grading here: its fix grades the base version's and
+        # the winner's runs once it has a winner, and a fix with none pays for no evals.
+        if is_fix_check_run(call_execution.test_execution_id) or (
             "harness_evaluations" in call_metadata
             and not selected_eval_config_ids
             and not _tool_evaluation_on(run_test_id)
@@ -1970,6 +1976,9 @@ def _apply_harness_evaluation_outputs(
 
     outputs = dict(call_execution.eval_outputs or {})
     run_test = call_execution.test_execution.run_test
+    # Nobody reads the localizer on a fix's check run, so it is not paid for there.
+    # Asked once, and only when a localizer would run.
+    check_run: bool | None = None
     for evaluation in evaluations:
         if not isinstance(evaluation, dict):
             continue
@@ -2016,7 +2025,13 @@ def _apply_harness_evaluation_outputs(
         # SimulateEvalConfig.error_localizer does not dispatch one. The task's
         # deterministic (call, config) source ID keeps result retries idempotent.
         if localize_errors and config is not None and config.error_localizer:
-            transcript = _render_harness_transcript(transcript_segments or [])
+            if check_run is None:
+                check_run = is_fix_check_run(call_execution.test_execution_id)
+            transcript = (
+                ""
+                if check_run
+                else _render_harness_transcript(transcript_segments or [])
+            )
             if transcript:
                 from model_hub.tasks.user_evaluation import (
                     trigger_error_localization_for_simulate,

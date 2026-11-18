@@ -1285,6 +1285,81 @@ class TestResultIngest:
         assert call.call_metadata["eval_started"] is True
         assert "eval_completed" not in call.call_metadata
 
+    def test_a_fix_check_run_starts_no_grading_whatever_its_run_test_selects(
+        self, auth_client, run_test
+    ):
+        """A fix grades its check runs only once it has a winner, so a check run's receipt
+        takes the short circuit even with the tool-call judge switched on."""
+        run_test.enable_tool_evaluation = True
+        run_test.save(update_fields=["enable_tool_evaluation"])
+        _, call_ids = _start_and_batch(auth_client, run_test)
+
+        with (
+            patch(
+                "simulate.services.alk_simulate_ingestion.is_fix_check_run",
+                return_value=True,
+            ),
+            patch(
+                "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+            ) as dispatch,
+        ):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "ride_booked", "passed": False}
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        dispatch.assert_not_called()
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.call_metadata["eval_completed"] is True
+
+    @patch("model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate")
+    def test_a_fix_check_run_localizes_no_harness_judgement(
+        self, trigger_localizer, auth_client, run_test
+    ):
+        EvalTemplate.objects.create(
+            name="alk-platform-check",
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+            owner="user",
+            eval_type="llm",
+            output_type_normalized="pass_fail",
+        )
+        _, call_ids = _start_and_batch(auth_client, run_test)
+
+        with patch(
+            "simulate.services.alk_simulate_ingestion.is_fix_check_run",
+            return_value=True,
+        ):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {
+                                "name": "response_wording",
+                                "kind": "eval",
+                                "passed": True,
+                                "platform_template": "alk-platform-check",
+                            }
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        trigger_localizer.assert_not_called()
+
     @patch("model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate")
     def test_platform_judgement_is_linked_to_run_eval_config_and_output(
         self, trigger_localizer, auth_client, run_test

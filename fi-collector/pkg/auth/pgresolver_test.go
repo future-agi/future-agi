@@ -65,7 +65,8 @@ CREATE TABLE accounts_orgapikey (
 	updated_at timestamptz NOT NULL,
 	deleted boolean NOT NULL,
 	deleted_at timestamptz NULL,
-	simulation_agent_id uuid NULL
+	simulation_agent_id uuid NULL,
+	expires_at timestamptz NULL
 );
 
 CREATE TABLE tracer_project (
@@ -168,7 +169,7 @@ func (f routingFixture) agent(org string, workspace *string, deleted bool) strin
 
 func (f routingFixture) key(keyType, org string, workspace, agent *string) (apiKey, secretKey string) {
 	apiKey, secretKey = uuid.NewString(), uuid.NewString()
-	f.exec(`INSERT INTO accounts_orgapikey VALUES ($1, 'k', $2, $3, $4, $5, true, NULL, $6, now(), now(), false, NULL, $7)`,
+	f.exec(`INSERT INTO accounts_orgapikey VALUES ($1, 'k', $2, $3, $4, $5, true, NULL, $6, now(), now(), false, NULL, $7, NULL)`,
 		uuid.NewString(), apiKey, secretKey, org, keyType, workspace, agent)
 	return apiKey, secretKey
 }

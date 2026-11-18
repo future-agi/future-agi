@@ -120,7 +120,7 @@ class HarnessSandboxClient:
         if sends_token:
             # Checked before the call: the HTTP stack's own errors for a bad header value
             # quote the header, and a token with a trailing newline gets past requests' check.
-            if not _valid_header_token(self.token):
+            if not _valid_header_token(self.token or ""):
                 raise HarnessSandboxUnavailable(
                     "ALK sandbox token is not a valid HTTP header value"
                 ) from None

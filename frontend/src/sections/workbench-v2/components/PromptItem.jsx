@@ -218,7 +218,7 @@ export default function PromptItem({
           </Box>
           <Stack sx={{ minWidth: 0 }}>
             <Typography
-              fontSize={13}
+              fontSize={12}
               lineHeight="20px"
               color="text.primary"
               fontWeight="fontWeightMedium"

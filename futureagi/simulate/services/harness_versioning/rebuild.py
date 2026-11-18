@@ -524,6 +524,46 @@ def _start_runtime(conversation_id: str) -> None:
     schedule_conversation_runtime(conversation_id, _public_base_url(None))
 
 
+def hand_back_chat(
+    environment_id: str, fence: tuple[Any, str] | None = None
+) -> tuple[str, str, bool] | None:
+    """End the turn the environment's chat is running for a platform message that was
+    withdrawn: its sandbox lease expires, so the sandbox can post nothing more, and the
+    reply it was streaming is closed. The conversation's id, the sandbox's provider ref
+    (blank without one) and whether other messages wait for a new sandbox; None without a
+    conversation. The caller stops the sandbox and starts one for the waiting messages.
+    With ``fence``, a lease claimed anew since the close saw it is left alone."""
+    from simulate.services.hosted_harness_conversation import (
+        _ACTIVE_CONVERSATION_STATES,
+        _unacked_commands,
+        settle_interrupted_turn,
+    )
+
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.select_for_update()
+            .filter(job_id=environment_id)
+            .first()
+        )
+        if conversation is None:
+            return None
+        ref = _expire_chat_lease(conversation, fence)
+        waiting = _unacked_commands(conversation).exists()
+        if conversation.state in _ACTIVE_CONVERSATION_STATES:
+            # The withdrawn message's turn (or its sandbox's start) is over.
+            settle_interrupted_turn(conversation)
+            conversation.state = (
+                HostedHarnessConversation.State.STARTING
+                if waiting
+                else HostedHarnessConversation.State.COLD
+            )
+            conversation.active_invocation_id = None
+            conversation.save(
+                update_fields=["state", "active_invocation_id", "updated_at"]
+            )
+    return str(conversation.id), ref, waiting
+
+
 def _after_close(
     environment_id: str,
     *,
@@ -531,48 +571,31 @@ def _after_close(
     fence: tuple[Any, str] | None = None,
 ) -> None:
     """Hand the chat back: its sandbox stops, and it restarts for waiting messages."""
-    from simulate.services.hosted_harness_conversation import (
-        _ACTIVE_CONVERSATION_STATES,
-        _unacked_commands,
-        settle_interrupted_turn,
-    )
     from simulate.tasks import harness_nudges as tasks
 
     try:
         if dispatched:
-            with transaction.atomic():
-                conversation = (
-                    HostedHarnessConversation.no_workspace_objects.select_for_update()
-                    .filter(job_id=environment_id)
-                    .first()
-                )
-                if conversation is None:
-                    return
-                ref = _expire_chat_lease(conversation, fence)
-                waiting = _unacked_commands(conversation).exists()
-                if conversation.state in _ACTIVE_CONVERSATION_STATES:
-                    # The rebuild's turn (or its sandbox's start) is over.
-                    settle_interrupted_turn(conversation)
-                    conversation.state = (
-                        HostedHarnessConversation.State.STARTING
-                        if waiting
-                        else HostedHarnessConversation.State.COLD
-                    )
-                    conversation.active_invocation_id = None
-                    conversation.save(
-                        update_fields=["state", "active_invocation_id", "updated_at"]
-                    )
+            handed = hand_back_chat(environment_id, fence)
+            if handed is None:
+                return
+            conversation_id, ref, waiting = handed
             if ref:
-                tasks.schedule_sandbox_stop(str(conversation.id), ref)
+                try:
+                    tasks.schedule_sandbox_stop(conversation_id, ref)
+                except Exception:  # noqa: BLE001 - the sandbox still dies at its idle limit
+                    logger.exception(
+                        "harness_nudge_sandbox_stop_failed conversation=%s",
+                        conversation_id,
+                    )
             if nudges._head(environment_id) is None:
                 return
             if waiting:
                 try:
-                    _start_runtime(str(conversation.id))
+                    _start_runtime(conversation_id)
                 except Exception:  # noqa: BLE001 - the recovery sweep starts it
                     logger.exception(
                         "harness_nudge_runtime_schedule_failed conversation=%s",
-                        conversation.id,
+                        conversation_id,
                     )
         if nudges._head(environment_id) is not None:
             tasks.schedule_nudge_check_task(environment_id)
@@ -1499,7 +1522,9 @@ def _report(
         secret_texts,
         [
             len(text) >= cap + CREDENTIAL_VALUE_MAX_CHARS
-            for text, (_part, _at, _text, cap) in zip(secret_texts, secret_parts)
+            for text, (_part, _at, _text, cap) in zip(
+                secret_texts, secret_parts, strict=False
+            )
         ],
     )
     report: dict[str, Any] = {
@@ -2060,8 +2085,16 @@ def tick_nudges(*, limit: int = 200) -> dict[str, int]:
     HarnessNudge.no_workspace_objects.filter(
         job_id__in=environments, state__in=OPEN
     ).update(updated_at=now)
-    for environment_id in environments:
-        tasks.schedule_nudge_check_task(environment_id)
+    for position, environment_id in enumerate(environments):
+        try:
+            tasks.schedule_nudge_check_task(environment_id)
+        except Exception:  # noqa: BLE001 - the next tick checks the rest
+            logger.exception(
+                "harness_nudge_tick_schedule_failed environment=%s skipped=%d",
+                environment_id,
+                len(environments) - position - 1,
+            )
+            break
     # A retry that finds the environment still busy re-records it: it waits a while.
     versions = _fair(
         HarnessAgentVersionRuntime.no_workspace_objects.filter(
