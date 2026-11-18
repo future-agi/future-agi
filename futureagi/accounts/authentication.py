@@ -41,10 +41,12 @@ from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import is_oss
 from tfc.utils.api_errors import (
+    ApiErrorCode,
     build_error_envelope,
     error_details,
     exception_code,
 )
+from tfc.utils.error_codes import get_error_message
 
 logger = structlog.get_logger(__name__)
 security_logger = structlog.get_logger("saml2_auth.security")
@@ -176,6 +178,25 @@ class APIKeyAuthentication(BaseAuthentication):
                 organization_id=str(user.organization.id)
             )
 
+    def _reject_if_expired(self, org_api_key):
+        """Raise and disable ``org_api_key`` if its expiry has passed.
+
+        ``expires_at=None`` means the key never expires (backward compatible
+        default for existing keys). Disabling on expiry gives admins
+        visibility in the keys list without needing a separate status field.
+        The key is only written while it is still enabled, so retries against
+        an expired key do not each cost an UPDATE. The ``api_key_expired``
+        code lets clients tell this apart from a wrong or disabled key.
+        """
+        if org_api_key.is_expired:
+            if org_api_key.enabled:
+                org_api_key.enabled = False
+                org_api_key.save(update_fields=["enabled"])
+            raise AuthenticationFailed(
+                get_error_message("API_KEY_EXPIRED"),
+                code=ApiErrorCode.API_KEY_EXPIRED,
+            )
+
     def authenticate(self, request):
         # Check for JWT token first
         auth_token = (
@@ -226,9 +247,10 @@ class APIKeyAuthentication(BaseAuthentication):
             ).get(
                 api_key=api_key,
                 secret_key=secret_key,
-                enabled=True,
                 deleted=False,
             )
+
+            self._reject_if_expired(org_api_key)
 
             # An ingest key lives inside a customer's untrusted process and may
             # only write spans to the collector; refused before a user is chosen
@@ -725,14 +747,18 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
             ).get(
                 api_key=public_key,
                 secret_key=secret_key,
-                enabled=True,
                 deleted=False,
             )
         except OrgApiKey.DoesNotExist as e:
             raise AuthenticationFailed("Invalid API key or secret key") from e
 
+        self._reject_if_expired(org_api_key)
+
         if not org_api_key.organization:
             raise AuthenticationFailed("API key has no organization")
+
+        if not org_api_key.enabled:
+            raise AuthenticationFailed("API key is disabled")
 
         # Same refusal as the parent class: an ingest key may only write spans
         # to the collector, even if a user was attached to it.
@@ -1020,7 +1046,76 @@ def _touch_non_saml_access_token(token_id, user_id, now):
     )
 
 
+def _cache_transport_category(exc):
+    """Only known transport errors qualify; Redis auth/config errors do not.
+
+    django-redis wraps transport AND command errors in ConnectionInterrupted.
+    Do not infer availability from the wrapper or an exception's message.
+    """
+    for _ in range(4):
+        if type(exc) is RedisTimeoutError:
+            return "timeout"
+        if type(exc) is RedisConnectionError:
+            return "connection"
+        if type(exc) is not ConnectionInterrupted:
+            return None
+        exc = exc.__cause__
+    return None
+
+
+def _cache_unavailable_metadata(exc):
+    # Same bounded source attribution as database errors; never log values,
+    # exception text, frame locals, cache keys or connection URLs.
+    metadata = _database_unavailable_metadata(exc)
+    metadata.pop("sqlstate")
+    metadata["transport_category"] = _cache_transport_category(exc) or "unknown"
+    metadata["transport_phase"] = "unknown"
+    options = settings.CACHES.get("default", {}).get("OPTIONS", {})
+    for key in ("SOCKET_TIMEOUT", "SOCKET_CONNECT_TIMEOUT"):
+        value = options.get(key)
+        metadata[key.lower()] = (
+            value if type(value) in (int, float) and 0 <= value <= 10 else None
+        )
+    pool = options.get("CONNECTION_POOL_KWARGS", {})
+    retry = pool.get("retry_on_timeout")
+    metadata["retry_on_timeout"] = retry if type(retry) is bool else None
+    # RequestMiddleware already binds the correlation ID to structlog context;
+    # do not read raw headers here or serialize a retry object/connection config.
+    return metadata
+
+
+class _AccessTokenCache:
+    """One failed optional cache operation per decode, never a retry loop."""
+
+    def __init__(self):
+        self.unavailable = False
+
+    def call(self, operation, *args, **kwargs):
+        if self.unavailable:
+            return None
+        started = time.monotonic()
+        try:
+            return getattr(cache, operation)(*args, **kwargs)
+        except _CACHE_UNAVAILABLE_ERRORS as exc:
+            if _cache_transport_category(exc) is None:
+                raise
+            self.unavailable = True
+            logger.warning(
+                "access_token_cache_unavailable",
+                component="access_token_cache",
+                operation=operation,
+                elapsed_ms=round((time.monotonic() - started) * 1000, 3),
+                fallback="database_validated"
+                if operation == "set"
+                else "validate_database",
+                **_cache_unavailable_metadata(exc),
+            )
+            return None
+
+
 def decode_token(token: str, *, transport: str = "http"):
+    token_cache = _AccessTokenCache()
+    outcome = "credential_rejected"
     try:
         if not token:
             raise AuthenticationFailed("empty token")
@@ -1033,7 +1128,7 @@ def decode_token(token: str, *, transport: str = "http"):
 
         now = timezone.now()
         cache_key = f"access_token_{token_id}"
-        cache_data = cache.get(cache_key)
+        cache_data = token_cache.call("get", cache_key)
         # Older pods may cache SAML as ordinary. Only this code writes the
         # versioned marker, after authoritative classification and validation.
         # Keep the existing cache key so all revocation paths still evict it.
@@ -1048,16 +1143,18 @@ def decode_token(token: str, *, transport: str = "http"):
             ):
                 if "organization" not in user._state.fields_cache:
                     user = User.objects.select_related("organization").get(pk=user.pk)
-                cache.set(
+                token_cache.call(
+                    "set",
                     cache_key,
                     {"token": token, "user": user, "non_saml_v1": True},
                     timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
                 )
+                outcome = "authenticated"
                 return user, token, None
 
         # Legacy and failed cache hits must be reclassified, not promoted.
         if cache_data:
-            cache.delete(cache_key)
+            token_cache.call("delete", cache_key)
         token_row = (
             AuthToken.objects.filter(id=token_id)
             .values(
@@ -1087,6 +1184,7 @@ def decode_token(token: str, *, transport: str = "http"):
                 != 1
             ):
                 raise SamlCredentialInvalid("token_inactive")
+            outcome = "authenticated"
             return user, token, credential
         if (
             str(token_row["user_id"]) != str(user_id)
@@ -1117,18 +1215,31 @@ def decode_token(token: str, *, transport: str = "http"):
         if not _touch_non_saml_access_token(token_id, user_id, now):
             raise AuthenticationFailed("Invalid auth token")
 
-        cache.set(
+        token_cache.call(
+            "set",
             cache_key,
             {"token": token, "user": user, "non_saml_v1": True},
             timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
         )
 
+        outcome = "authenticated"
         return user, token, None
 
+    except (DatabaseError, InterfaceError):
+        outcome = "database_unavailable"
+        raise
     except (*INFRASTRUCTURE_ERRORS, SamlCredentialInvalid):
         raise
     except Exception as e:
         raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
+
+    finally:
+        if token_cache.unavailable:
+            logger.info(
+                "access_token_cache_fallback_result",
+                component="access_token_cache",
+                outcome=outcome,
+            )
 
 
 def _pydantic_error_response(exc):
@@ -1220,7 +1331,19 @@ def custom_exception_handler(exc, context):
         # Keep raw database details private and use DRF's normal rollback path.
         exc = DatabaseUnavailable()
     elif isinstance(exc, _CACHE_UNAVAILABLE_ERRORS):
-        logger.warning("api_cache_unavailable", error_class=type(exc).__name__)
+        request = context.get("request")
+        method = getattr(request, "method", None)
+        route = getattr(getattr(request, "resolver_match", None), "route", None)
+        logger.warning(
+            "api_cache_unavailable",
+            method=method
+            if method in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
+            else None,
+            route_template=route
+            if isinstance(route, str) and len(route) <= 256
+            else None,
+            **_cache_unavailable_metadata(exc),
+        )
         exc = CacheUnavailable()
     response = exception_handler(exc, context)
 

@@ -8,13 +8,20 @@ import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from django.test import override_settings
 from rest_framework import status
 
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
+from tracer.models.eval_task import (
+    EvalTask,
+    EvalTaskLogger,
+    EvalTaskStatus,
+    RowType,
+    RunType,
+)
 from tracer.models.instant_eval import InstantEvalRow, InstantEvalRun
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, EvalTargetType
 from tracer.selectors.eval_tasks.row_resolver import resolve_desired_rows
@@ -211,7 +218,9 @@ def _answer(
         status=(
             EvalEntryStatus.PENDING
             if pending
-            else EvalEntryStatus.ERRORED if error else EvalEntryStatus.COMPLETED
+            else EvalEntryStatus.ERRORED
+            if error
+            else EvalEntryStatus.COMPLETED
         ),
         output_metadata={"jev": {"confidence": confidence}},
         eval_explanation=f"because {label}",
@@ -244,6 +253,67 @@ def _read_everything(task):
 
 
 # ─── Sample, limits, concurrency ─────────────────────────────────────────────
+@pytest.mark.django_db
+@pytest.mark.parametrize("start_only", [True, None, False])
+def test_pending_instant_eval_is_not_eligible_for_saved_task_start(
+    auth_client,
+    observe_project,
+    yes_no,
+    fake_view,
+    monkeypatch,
+    django_capture_on_commit_callbacks,
+    start_only,
+):
+    describe = Mock(return_value="absent")
+    start = Mock(return_value="synthetic-workflow")
+    monkeypatch.setattr(
+        "tracer.views.eval_task.describe_eval_task_workflow_sync", describe
+    )
+    monkeypatch.setattr("tracer.views.eval_task.start_eval_task_workflow_sync", start)
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync", start
+    )
+    # Keep the real instant-eval dispatch waiting, before it can write markers.
+    with django_capture_on_commit_callbacks(execute=False) as callbacks:
+        created = _start(auth_client, observe_project, [yes_no], sample_size=10)
+    assert created.status_code == 200, created.content
+    assert len(callbacks) == 1
+    task = EvalTask.objects.using("default").get(pk=created.json()["result"]["task_id"])
+    assert InstantEvalRun.objects.using("default").filter(eval_task=task).exists()
+    assert task.status == EvalTaskStatus.PENDING
+    assert task.last_run is not None
+    assert task.start_time is None
+    assert task.end_time is None
+    assert task.continuous_cursor is None
+    assert not EvalTaskLogger.all_objects.filter(eval_task=task).exists()
+    assert not EvalLogger.all_objects.filter(eval_task_id=str(task.pk)).exists()
+    before = EvalTask.all_objects.using("default").filter(pk=task.pk).values().get()
+
+    details = auth_client.get(f"/tracer/eval-task/get_eval_details/?eval_id={task.pk}")
+    response = auth_client.post(
+        f"/tracer/eval-task/unpause_eval_task/?eval_task_id={task.pk}",
+        {} if start_only is None else {"start": start_only},
+        format="json",
+    )
+
+    assert details.status_code == 200, details.content
+    assert details.json()["result"]["can_start"] is False
+    assert response.status_code == (409 if start_only else 400), response.content
+    assert response.json()["status"] is False
+    if start_only:
+        assert response.json()["code"] == "eval_task_already_started"
+    else:
+        assert response.json()["result"] == (
+            "Only pending tasks that have never started can be started."
+        )
+    describe.assert_not_called()
+    start.assert_not_called()
+    assert (
+        EvalTask.all_objects.using("default").filter(pk=task.pk).values().get()
+        == before
+    )
+
+
 @pytest.mark.django_db
 def test_estimate_offers_a_sample_and_the_whole_view(
     auth_client, observe_project, monkeypatch
@@ -709,8 +779,7 @@ def test_rows_select_a_time_pattern_over_401_matching_days(
     resolve_desired_rows(task)
     _read_everything(task)
     groups = [
-        f"hour3:{(start + timedelta(days=d)).date().isoformat()}|06"
-        for d in range(401)
+        f"hour3:{(start + timedelta(days=d)).date().isoformat()}|06" for d in range(401)
     ]
     base = {
         "project_id": str(observe_project.id),
@@ -977,7 +1046,13 @@ def test_an_exported_excerpt_that_starts_like_a_formula_is_quoted(
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "method, endpoint",
-    [("get", SUMMARY), ("get", ROWS), ("get", EXPORT), ("post", ROWS), ("post", EXPORT)],
+    [
+        ("get", SUMMARY),
+        ("get", ROWS),
+        ("get", EXPORT),
+        ("post", ROWS),
+        ("post", EXPORT),
+    ],
 )
 def test_read_of_another_organizations_run_is_not_found(
     auth_client, answered_run, method, endpoint

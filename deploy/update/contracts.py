@@ -574,6 +574,10 @@ class BootstrapEnvelopeMeasurement:
     intersection of each migration's independent full scope probe, in plan order.
     The producer must validate that raw probe against the fixed registry before
     reduction; signed type validation alone cannot prove the probe occurred.
+    Several migrations may touch the same table: tables contains one measured
+    pre-bootstrap reference per (engine, table) in their exact scope union, not
+    independent per-migration bounds to sum or maximize. Duration and growth
+    cover the whole ordered bootstrap, including those repeated touches.
     """
 
     measurement_basis: Literal["normal-bootstrap-envelope-v1"]

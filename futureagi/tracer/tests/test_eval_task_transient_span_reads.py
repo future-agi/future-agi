@@ -270,10 +270,11 @@ def test_run_target_reuses_single_task_scoped_span_for_composite(monkeypatch):
         eval_template=template,
         mapping={},
     )
+    # The eval core reads the config on the primary.
     monkeypatch.setattr(
         eval_module.CustomEvalConfig.objects,
-        "get",
-        lambda **_kwargs: config,
+        "using",
+        lambda _alias: SimpleNamespace(get=lambda **_kwargs: config),
     )
     entry = SimpleNamespace(
         id="entry-1",
@@ -312,6 +313,20 @@ def test_successful_reads_with_absent_rows_remain_does_not_exist(monkeypatch):
             get_trace_session("session-1", project=SimpleNamespace(id="project-1"))
 
 
+def _entry_manager(filtered):
+    """EvalLogger.objects stand-in; run_entry reads the entry on the primary."""
+    manager = SimpleNamespace(filter=lambda **_kwargs: filtered)
+    manager.using = lambda _alias: manager
+    return manager
+
+
+def _config_manager(query):
+    """CustomEvalConfig.objects stand-in; run_entry reads the config on the primary."""
+    manager = SimpleNamespace(select_related=lambda *_args: query)
+    manager.using = lambda _alias: manager
+    return manager
+
+
 def test_run_entry_does_not_terminalize_transient_span_read(monkeypatch):
     run_entry_module = importlib.import_module("tracer.services.eval_tasks.run_entry")
 
@@ -329,13 +344,13 @@ def test_run_entry_does_not_terminalize_transient_span_read(monkeypatch):
     monkeypatch.setattr(
         run_entry_module,
         "EvalLogger",
-        SimpleNamespace(objects=SimpleNamespace(filter=lambda **_kwargs: filtered)),
+        SimpleNamespace(objects=_entry_manager(filtered)),
     )
     configs = SimpleNamespace(get=lambda **_kwargs: config)
     monkeypatch.setattr(
         run_entry_module,
         "CustomEvalConfig",
-        SimpleNamespace(objects=SimpleNamespace(select_related=lambda *_args: configs)),
+        SimpleNamespace(objects=_config_manager(configs)),
     )
     monkeypatch.setattr(run_entry_module, "resolved_config_hash", lambda _cfg: "hash")
     task_query = SimpleNamespace(
@@ -384,15 +399,13 @@ def test_run_entry_does_not_terminalize_transient_task_project_lookup(monkeypatc
     monkeypatch.setattr(
         run_entry_module,
         "EvalLogger",
-        SimpleNamespace(objects=SimpleNamespace(filter=lambda **_kwargs: filtered)),
+        SimpleNamespace(objects=_entry_manager(filtered)),
     )
     config_query = SimpleNamespace(get=lambda **_kwargs: SimpleNamespace(id="config-1"))
     monkeypatch.setattr(
         run_entry_module,
         "CustomEvalConfig",
-        SimpleNamespace(
-            objects=SimpleNamespace(select_related=lambda *_args: config_query)
-        ),
+        SimpleNamespace(objects=_config_manager(config_query)),
     )
     task_query = SimpleNamespace(
         get=lambda **_kwargs: (_ for _ in ()).throw(OperationalError("PG timeout"))

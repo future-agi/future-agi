@@ -42,6 +42,10 @@ type ModelInfo struct {
 type ModelDB struct {
 	models     map[string]*ModelInfo
 	byProvider map[string][]*ModelInfo
+	// priceOverridden holds the ids whose price comes from a config override,
+	// so a lookup across several names can rank an operator's price above a
+	// bundled one (DecisionPricingAny).
+	priceOverridden map[string]bool
 }
 
 // New creates a ModelDB from bundled data merged with config overrides.
@@ -60,6 +64,7 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 	}
 
 	// Apply overrides.
+	priceOverridden := make(map[string]bool)
 	for id, ov := range overrides {
 		existing, ok := models[id]
 		if !ok {
@@ -68,6 +73,9 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 			models[id] = existing
 		}
 		mergeOverride(existing, ov)
+		if ov.Pricing != nil {
+			priceOverridden[id] = true
+		}
 	}
 
 	// Build provider index.
@@ -79,7 +87,7 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 		sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
 	}
 
-	return &ModelDB{models: models, byProvider: byProvider}
+	return &ModelDB{models: models, byProvider: byProvider, priceOverridden: priceOverridden}
 }
 
 // Get returns model info by ID. Tries exact match, then strips "provider/"
@@ -103,6 +111,52 @@ func (db *ModelDB) Get(id string) (*ModelInfo, bool) {
 		}
 	}
 	return nil, false
+}
+
+// PriceKey is the key the price table lists a model under.
+//
+// The table keys many models by provider, as "mistral/mistral-ocr-latest" or
+// "perplexity/sonar", while a request names the bare model, and a lookup
+// strips a provider prefix but never adds one.
+//
+// A provider that resells other vendors' models names them with the vendor's
+// prefix, as Perplexity's "google/gemini-3.6-flash". The lookup would strip
+// that to the vendor's own price, so the provider's entry
+// ("perplexity/google/gemini-3.6-flash") is tried first.
+//
+// table is the name the provider states for itself, which its ID need not
+// match: the table lists new Gemini models only under "gemini/" and
+// "vertex_ai/", and a Gemini provider may be named "vertex_ai_global".
+func (db *ModelDB) PriceKey(model, provider, table string) string {
+	if provider == "" || model == "" {
+		return model
+	}
+	if _, ok := db.Get(model); ok && !strings.Contains(model, "/") {
+		return model
+	}
+	for _, name := range []string{provider, table, tableProviderNames[provider]} {
+		if name == "" {
+			continue
+		}
+		if prefixed := name + "/" + model; db.listsExactly(prefixed) {
+			return prefixed
+		}
+	}
+	return model
+}
+
+// tableProviderNames spells a provider the way the price table keys it, where
+// that differs from the gateway's name: "fireworks_ai/accounts/fireworks/models/glm-5p3".
+var tableProviderNames = map[string]string{
+	"fireworks": "fireworks_ai",
+	"together":  "together_ai",
+}
+
+// listsExactly says whether the table has an entry under id itself, not
+// under id with its prefix stripped.
+func (db *ModelDB) listsExactly(id string) bool {
+	m, ok := db.Get(id)
+	return ok && m.ID == id
 }
 
 // GetPricing returns pricing info for a model.

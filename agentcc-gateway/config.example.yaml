@@ -10,12 +10,29 @@ server:
   idle_timeout: 120s
   shutdown_timeout: 30s
   max_request_body_size: 10485760 # 10MB
+  max_header_bytes: 1048576 # request header cap; 0 or unset = 1MB
   default_request_timeout: 60s
   # The one ceiling on a request, over any x-agentcc-timeout header or
   # per-model timeout. It may be longer than write_timeout, which then applies
   # only to a response this ceiling does not govern. Unset, it becomes
   # write_timeout. Read at startup, like the rest of this block.
   max_request_timeout: 300s
+  # Native HTTPS, with no proxy in front. Both listeners can run at once on
+  # their own ports; turn http_enabled off once every caller uses HTTPS.
+  # cert_file is PEM, the leaf then any intermediates (all served); both
+  # files are re-read every reload_interval and a changed pair is served
+  # from the next connection on, with no restart. A pair that does not load
+  # is logged and the previous certificate kept. Env: AGENTCC_HTTP_ENABLED,
+  # AGENTCC_TLS_ENABLED, AGENTCC_TLS_PORT, AGENTCC_TLS_CERT_FILE,
+  # AGENTCC_TLS_KEY_FILE, AGENTCC_TLS_MIN_VERSION, AGENTCC_TLS_RELOAD_INTERVAL.
+  # http_enabled: true
+  # tls:
+  #   enabled: true
+  #   port: 8443
+  #   cert_file: /var/run/secrets/futureagi/tls/tls.crt
+  #   key_file: /var/run/secrets/futureagi/tls/tls.key
+  #   min_version: "1.2"     # or "1.3"
+  #   reload_interval: 30s   # above 0, at most 1m
 
 providers:
   openai:
@@ -228,6 +245,55 @@ providers:
   #   models:
   #     - meta-llama/Meta-Llama-3.1-70B-Instruct
 
+  # OpenRouter, Perplexity and xAI state in each response what the request
+  # cost. For these three the gateway records that stated cost as the
+  # request's cost (budgets, credits, x-agentcc-cost, Request Logs, OTel)
+  # instead of the catalogue estimate:
+  #   openrouter  usage.cost (credits = USD). On a BYOK call (is_byok: true)
+  #               usage.cost is only OpenRouter's fee, so
+  #               usage.cost_details.upstream_inference_cost is used, or the
+  #               catalogue when that is missing. Known limit: OpenRouter's
+  #               own BYOK fee (charged from credits once past the free
+  #               allowance) is not added to that.
+  #   perplexity  usage.cost.total_cost in USD (includes search, tool and
+  #               request fees).
+  #   xai         usage.cost_in_usd_ticks / 1e10.
+  # The stated cost is trusted only when BOTH hold for the provider that
+  # served the request:
+  #   1. its type is the vendor (an entry with no type, or a dashboard
+  #      provider, counts by its provider ID/name: "openrouter",
+  #      "perplexity" or "xai"), and it speaks the OpenAI format. Dashboard
+  #      providers have no type, so one is trusted only when named exactly
+  #      "openrouter", "perplexity" or "xai"; "OpenRouter-prod" uses the
+  #      catalogue;
+  #   2. its base_url hostname is the vendor's official host: openrouter.ai,
+  #      api.perplexity.ai or api.x.ai (scheme and port are not compared).
+  # Anything else (type "openai" at openrouter.ai, a vendor type behind a
+  # proxy, a custom-named provider) is priced from the catalogue. Org custom
+  # pricing (cost_tracking.custom_pricing on the org) always wins. A stated
+  # cost that is missing, null, non-numeric or negative falls back to the
+  # catalogue; a stated 0 is recorded as 0. A non-zero stated cost that six
+  # decimal places would print as 0.000000 (up to $0.0000005) is recorded
+  # unrounded (e.g. 0.0000004). The Request Logs cost column keeps six places.
+  # Credits, budgets and the Prometheus counter count whole micro-dollars per
+  # request: a non-zero cost moves them by at least 1 micro-dollar, a stated 0
+  # by nothing. A stated cost above $1,000 for one request is ignored (the
+  # catalogue prices it) and logged once per provider and model.
+  #
+  # A cache hit never takes a stated cost: no vendor served it, even though
+  # the cached response still carries the original call's usage. An exact
+  # hit is not priced; a semantic hit is priced from the catalogue on the
+  # cached usage, as before.
+  #
+  # ignore_provider_cost: true prices a provider from the catalogue (and
+  # model_database.overrides) even when it would be trusted. Org instances of
+  # this provider ID inherit it.
+  #
+  # openrouter:
+  #   api_key: "${OPENROUTER_API_KEY}"
+  #   type: "openrouter"             # base_url https://openrouter.ai/api
+  #   # ignore_provider_cost: true
+
   # api_path_prefix overrides the version segment placed between base_url and
   # each endpoint. Unset means "/v1", which is what almost every
   # OpenAI-compatible provider uses.
@@ -274,6 +340,12 @@ providers:
   #   models:
   #     - openai/gpt-4o
   #     - anthropic/claude-3.5-sonnet
+
+  # telnyx:
+  #   api_key: "${TELNYX_API_KEY}"
+  #   type: "telnyx"
+  #   models:
+  #     - MiniMaxAI/MiniMax-M3-MXFP8
 
 # Explicit model-to-provider mapping (overrides provider-level models).
 # model_map:
@@ -331,6 +403,7 @@ providers:
 #     claude-3-opus-20240229: 120s
 #   mirror:                                 # Traffic mirroring for shadow testing
 #     enabled: true
+#     max_concurrent: 64                    # In-flight mirrors; beyond this, mirrors are dropped (default 64)
 #     rules:
 #       - source_model: "gpt-4o"            # Mirror gpt-4o requests
 #         target_provider: "anthropic"       # Send copy to Anthropic
@@ -386,6 +459,16 @@ providers:
 #     my-custom-model:
 #       input_per_mtok: 1.00
 #       output_per_mtok: 5.00
+#
+# Every priced request records where its cost came from in its metadata,
+# cost_source: org_custom (the org's own pricing), provider_reported (the
+# cost OpenRouter, Perplexity or xAI stated; see ignore_provider_cost under
+# providers), catalogue (the model database), or unpriced (no price known).
+# A provider_reported row also carries cost_reported_unit
+# (openrouter_credits | usd | usd_ticks), cost_catalogue (what the catalogue
+# would have charged), cost_is_byok ("true" on an OpenRouter BYOK call) and
+# cost_reported_zero ("true" when the vendor stated 0 for tokens the
+# catalogue prices above 0). Callers cannot set any of these keys.
 
 logging:
   level: info
@@ -429,12 +512,17 @@ logging:
 #   allowed_headers: ["Authorization", "Content-Type"]
 #   exposed_headers: []
 #   max_age: 86400
-#   allow_credentials: false
+#   allow_credentials: false              # cannot be true while allowed_origins is ["*"] or empty (rejected at startup)
 
 # Restrict inbound traffic by IP / CIDR.
 # ip_acl:
 #   enabled: true
-#   trusted_proxies: 1                    # hops of X-Forwarded-For to trust
+#   # Proxy hops in front of the gateway that append to X-Forwarded-For. The
+#   # client address (ip_acl, per-key allowed_ips, audit) is the entry this many
+#   # hops from the right; X-Forwarded-For is ignored when 0 (the default) and
+#   # X-Real-IP is never trusted.
+#   # Google Cloud external Application Load Balancer: 2. One nginx hop: 1.
+#   trusted_proxies: 1
 #   allow: ["10.0.0.0/8", "192.168.1.0/24"]
 #   deny:  ["203.0.113.7"]                # deny takes precedence over allow
 
@@ -457,6 +545,11 @@ logging:
 #         alice@example.com: {}
 
 # Spend caps per org / team / user / key / tag. Requires cost_tracking enabled.
+# Spend is counted in whole micro-dollars ($0.000001); a non-zero cost below
+# half a micro-dollar counts as one. At startup the counters are seeded from
+# Request Logs, whose cost column keeps 6 decimals, so such sub-micro costs are
+# seeded as 0: after a restart the seeded spend can be lower than what was
+# counted, by up to one micro-dollar per such request.
 # budgets:
 #   enabled: true
 #   default_period: "monthly"       # daily | weekly | monthly | total
@@ -635,8 +728,16 @@ logging:
 #         Authorization: "Bearer ${ALERT_TOKEN}"
 
 # Override model metadata (pricing, token limits, capabilities, deprecation).
+# Layers, lowest first: bundled catalogue -> fetched catalogue (adds models and
+# wins on matching keys; never removes a bundled model) -> overrides.
 # model_database:
 #   validation_enabled: true                 # reject requests for unknown models
+#   # Newer pricing catalogue, fetched at startup and every sync interval. A
+#   # bad, small or failed fetch keeps the last good one. "" turns the sync off
+#   # (air-gapped). Read at startup; a reload does not change it.
+#   # GET /-/model-catalogue/source shows which catalogue is loaded.
+#   catalogue_url: "https://raw.githubusercontent.com/future-agi/future-agi/main/agentcc-gateway/internal/modeldb/litellm.json"
+#   catalogue_sync_interval: 24h             # minimum 1h
 #   overrides:
 #     gpt-4o:
 #       provider: "openai"
@@ -799,3 +900,86 @@ logging:
 #         - id: "web-search"
 #           name: "Web Search"
 #           description: "Search the open web"
+
+# Durable video generation is opt-in. Redis requires AOF appendfsync everysec
+# or RDB snapshots, and maxmemory-policy noeviction. No automatic memory fallback.
+# Explicit development-only memory storage requires allow_non_durable_store: true.
+# Credentials use ${ENV}, vault://, aws-sm://, gcp-sm:// or azure-kv://.
+# Credential rotation requires a restart; disabled routes return 501 not_configured.
+# Runtime kill switch: <video namespace>killswitch via admin /-/admin/video/.
+# The default Redis prefix (agentcc: or empty) retains video:v1:. Custom Redis
+# prefixes use <redis.prefix>video:v1: for every video queue, limit and sweeper.
+# Before upgrading an existing custom-prefix installation, drain its legacy
+# video:v1: jobs with the previous gateway release and the same configuration.
+# Legacy shared jobs cannot be safely attributed/migrated between installations.
+# Kill switch config is startup-only; use the admin endpoint at runtime.
+# Canonical requests are stored plain in Redis under the metadata retention.
+# video:
+#   enabled: false
+#   kill_switch: false
+#   store: redis
+#   allow_non_durable_store: false
+#   correlation_secret: "${VIDEO_CORRELATION_SECRET}" # Required for org_key_hmac.
+#   submit:
+#     sync_wait: 5s
+#     deadline: 30s
+#     unknown_reconcile_deadline: 15m
+#     lease_ttl: 60s
+#   poll:
+#     max_concurrent_total: 32
+#     per_provider_max_concurrent: 8
+#     max_interval: 60s
+#     max_consecutive_failures: 20
+#     max_unknown_status: 3
+#     timeout_reconcile_window: 2h
+#   copy: { deadline: 10m, max_concurrent: 8 }
+#   reconcile: { allow_absent_resubmit: false }
+#   media:
+#     max_inline_bytes: 20971520
+#     fetch_timeout: 20s
+#     total_ingress_timeout: 60s
+#     max_decoded_pixels: 36000000
+#   artifacts:
+#     backend: disk
+#     ttl: 24h
+#     max_bytes: 2147483648
+#     disk: { root: /var/lib/agentcc/video }
+#     s3: { bucket: "", prefix: "video/", region: "", access_key: "${AWS_ACCESS_KEY_ID}", secret_key: "${AWS_SECRET_ACCESS_KEY}", sse: "AES256" }
+#     presign: { enabled: false, ttl: 15m } # Phase 1 content is streamed by the gateway.
+#   retention: { job_metadata: 720h, idempotency: 720h }
+#   limits: { org_max_active_jobs: 10, org_submit_rpm: 60 }
+#   providers:
+#     byteplus:
+#       enabled: false
+#       api_key: "${ARK_API_KEY}"  # Also vault://, aws-sm://, gcp-sm://, azure-kv://.
+#       # credential_ref: provider:byteplus  # Optional existing provider key; api_key takes precedence.
+#       base_url: https://ark.ap-southeast.bytepluses.com/api/v3
+#       region: ap-southeast-1
+#       account_ref: byteplus-main
+#       models: [dreamina-seedance-2-5-260628, dreamina-seedance-2-0-260128]
+#       limits: { submit_rpm: 10, poll_qps: 10, max_active_tasks: 5 }
+#       deadlines: { connect: 10s, read: 30s, submit: 30s, run: 2h, reconcile: 15m }
+#       poll: { base_interval: 5s }
+#       allow_unpriced_models: false
+#       tariff_revision: byteplus-2026-10-02
+#       safety_identifier_mode: org_key_hmac
+#       execution_expires_after: 7200
+#       acknowledge_public_output: false  # Enablement blocked until explicitly acknowledged.
+#       min_tokens_with_video_input: 0    # Operator-asserted minimum; zero rejects video-input estimates.
+#     openrouter:  # Aggregator route: proves the OpenRouter path, not the model vendor's native API.
+#       enabled: false
+#       api_key: "${OPENROUTER_API_KEY}"
+#       base_url: https://openrouter.ai/api/v1
+#       region: global
+#       account_ref: openrouter-main
+#       # Request as "openrouter/<vendor>/<model>". Pinned to the 2026-11-06 public catalog.
+#       models: [bytedance/seedance-1-5-pro, google/veo-3.1-lite, kwaivgi/kling-v3.0-std, alibaba/wan-3.0, minimax/hailuo-3-max, runway/gen-4.5, x-ai/grok-imagine-video-1.5-lite]
+#       limits: { submit_rpm: 10, poll_qps: 2, max_active_tasks: 4 }
+#       deadlines: { connect: 10s, read: 30s, submit: 60s, run: 30m, reconcile: 5m }
+#       poll: { base_interval: 10s }
+#       allow_unpriced_models: false
+#       tariff_revision: openrouter-2026-11-06  # Upper-bound reservation; settles OpenRouter usage.cost in USD.
+#       safety_identifier_mode: none            # org_key_hmac sends a keyed HMAC as `user`.
+#       # No execution_expires_after, acknowledge_public_output or min_tokens_with_video_input:
+#       # those are BytePlus-only. Outputs are copied through OpenRouter's authenticated
+#       # content endpoint; there is no upstream cancel, idempotency key or job lookup.
