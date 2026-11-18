@@ -178,6 +178,31 @@ class _Safe(dict):
         return ""
 
 
+def why_items(entry: Mapping[str, Any] | None) -> list[str]:
+    """The listed items of a proof's reason: the harness writes its first line, then one `- item` per line."""
+    lines = str((entry or {}).get("why") or "").strip().splitlines()
+    return [
+        line.strip().removeprefix("- ")
+        for line in lines[1:]
+        if line.strip().startswith("- ")
+    ]
+
+
+def _agent_label(agent_version_id: Any) -> str:
+    """An agent version as people name it, `v4`; "this one" when its number is not known."""
+    from simulate.models import AgentVersion
+    from simulate.services.harness_versioning.read import _label
+
+    number = (
+        AgentVersion.no_workspace_objects.filter(id=agent_version_id)
+        .values_list("version_number", flat=True)
+        .first()
+        if agent_version_id
+        else None
+    )
+    return _label(number) or "this one"
+
+
 def reason_text(
     code: str | None, entry: Mapping[str, Any] | None = None, **extra: Any
 ) -> str | None:
@@ -185,11 +210,7 @@ def reason_text(
         return None
     entry = entry or {}
     why = str(entry.get("why") or "").strip().splitlines()
-    items = [
-        line.strip().removeprefix("- ")
-        for line in why[1:]
-        if line.strip().startswith("- ")
-    ]
+    items = why_items(entry)
     values = _Safe(why=items[0] if items else why[0] if why else "", **extra)
     if code == "negative_control_passed":
         passed = next(
@@ -568,6 +589,19 @@ def scenario_lifecycle(
             elif entry.get("kept_as_written") is True:
                 # ALK decides kept-as-written and writes it on the entry; its code only picks the words.
                 view = _view("kept_as_written", entry=entry, warning=blocked)
+            elif blocked == "tool_not_on_agent":
+                # The harness refused it: the tools are its reason's list, the version the one it proved with.
+                view = _view(
+                    "draft",
+                    reason="tool_not_on_agent",
+                    entry=entry,
+                    reason_extra={
+                        "tool": ", ".join(why_items(entry)),
+                        "agent": _agent_label(
+                            entry.get("agent_version_id") or proved_with or agent
+                        ),
+                    },
+                )
             else:
                 view = _view(
                     "draft", reason=str(blocked or "not_solvable"), entry=entry
@@ -754,7 +788,6 @@ def _agent_tool_names(
     from simulate.models import AgentVersion, HarnessAgentVersionRuntime
     from simulate.services.agent_setup import stored_agent
     from simulate.services.harness_versioning.backfill import effective_runtime
-    from simulate.services.harness_versioning.read import _label
     from simulate.services.harness_versioning.validation import needs_reading
 
     if agent_version_id is None or str(agent_version_id) == str(
@@ -764,7 +797,7 @@ def _agent_tool_names(
     agent = AgentVersion.no_workspace_objects.filter(id=agent_version_id).first()
     if agent is None:
         return None
-    label = _label(agent.version_number) or "this one"
+    label = _agent_label(agent_version_id)
     document = stored_agent(agent_version_id)
     if document is None:
         runtime = effective_runtime(

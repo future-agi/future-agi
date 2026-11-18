@@ -932,3 +932,95 @@ def test_legacy_cases_a_validate_would_hold_for_no_negative_control_are_counted(
 
     assert counts["legacy_without_control"] == 1
     assert counts["kept_as_written"] == 3
+
+
+def _refused(code, *items, **fields):
+    """A proof the harness refused for ``code``, its reason written as it writes one: a line, then `- item` lines."""
+    why = "the case cannot be proved:" + "".join(f"\n  - {one}" for one in items)
+    return {
+        **PROVED,
+        "proved": False,
+        "holds": False,
+        "refused": True,
+        "blocked_reason": code,
+        "why": why,
+        **fields,
+    }
+
+
+GAP = __import__("re").compile(r"\s{2,}|\s[,.;:]|\{\w*\}|\(\s*\)|''|\"\"|\bv\b(?!\w)")
+
+
+def test_every_reason_a_proof_gives_renders_with_nothing_left_blank(
+    user, workspace, storage
+):
+    """Each reason the harness can give a case, read through the lifecycle and a real run's selection: no blank
+    name, no doubled space, no placeholder left in the words a person reads."""
+    from simulate.services.harness_readiness import selection
+    from simulate.services.harness_readiness.report import resolve_pairing
+    from simulate.tests.test_harness_affected_scenarios import _doc
+
+    environment = _environment(user, workspace, storage, "reason-gaps")
+    entries = {
+        "not_ready": _refused("not_ready", "the world was not ready"),
+        "not_solvable": _refused("not_solvable", "lookup_order: not done"),
+        "broken_check": _refused("broken_check", "refunded: raised KeyError"),
+        "weak_check": _refused("weak_check", "refunded passes without a refund"),
+        "credits_failed_attempt": _refused(
+            "credits_failed_attempt", "a failed refund is credited"
+        ),
+        "too_strict": _refused("too_strict", "a second lookup is refused"),
+        "unchecked": _refused("unchecked", "the refund amount"),
+        "policy_conflict": _refused(
+            "policy_conflict", "refunds over 30 days are not allowed"
+        ),
+        "no_negative_control": _refused("no_negative_control"),
+        "vacuous": _refused("vacuous"),
+        "tool_not_on_agent": _refused("tool_not_on_agent", "issue_refund"),
+        "negative_control_passed": _refused(
+            "negative_control_passed",
+            controls=[
+                {
+                    "name": "refunds_twice",
+                    "why": "refunds twice",
+                    "held": ["refunded"],
+                    "failed": False,
+                    "ran": True,
+                }
+            ],
+        ),
+        "answer_leaked": _refused(
+            "answer_leaked",
+            leaks=[
+                {
+                    "who": "caller",
+                    "field": "persona",
+                    "excerpt": "40",
+                    "grader_field": "tests",
+                }
+            ],
+        ),
+    }
+    _suite(environment, [_doc(code, solution=("lookup_order",)) for code in entries])
+    _proofs(environment, entries)
+
+    views = _views(environment)
+    plan = selection.select_for_run(
+        resolve_pairing(environment), keys=list(entries), trials=1
+    )
+
+    for code in entries:
+        assert views[code]["reason"] == code, (code, views[code]["reason"])
+        text = views[code]["reason_text"] or ""
+        assert text and not GAP.search(text), (code, text)
+    for row, text in plan.view["reasons"].items():
+        assert not GAP.search(text), (row, text)
+    assert views["tool_not_on_agent"]["reason_text"] == (
+        f"Needs issue_refund, which agent version {_label(environment)} doesn't have."
+    )
+
+
+def _label(environment):
+    from simulate.services.harness_versioning.read import _label as label
+
+    return label(environment.agent_version.version_number) or "this one"
