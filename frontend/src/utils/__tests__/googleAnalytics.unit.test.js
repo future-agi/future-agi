@@ -47,6 +47,25 @@ afterEach(() => {
   delete window[`ga-disable-${MEASUREMENT_ID}`];
 });
 
+describe("analyticsPageLocation unit", () => {
+  it.each([
+    ["https://app.test/dashboard", "https://app.test/dashboard"],
+    ["https://app.test/a?tab=x&q=secret#h", "https://app.test/a"],
+    ["https://app.test/a?utm_source=x&utm_campaign=y", "https://app.test/a?utm_source=x&utm_campaign=y"],
+    ["https://app.test/p/3F2C1E4B-9A7D-4C1E-8F00-1234567890AB", "https://app.test/p/:id"],
+    ["https://app.test/p/0123456789abcdef0123", "https://app.test/p/:id"],
+    ["https://app.test/p/12345", "https://app.test/p/:id"],
+    ["https://app.test/p/123", "https://app.test/p/123"],
+    ["https://app.test/p/eyJhbGciOiJIUzI1NiJ9abcdef", "https://app.test/p/:id"],
+    ["https://app.test/u/someone%40example.com", "https://app.test/u/:id"],
+    ["https://app.test/u/%E0%A4%A", "https://app.test/u/:id"],
+    ["https://app.test/settings/billing", "https://app.test/settings/billing"],
+  ])("maps %s to %s", async (input, expected) => {
+    const { analyticsPageLocation } = await import("../googleAnalytics");
+    expect(analyticsPageLocation(input)).toBe(expected);
+  });
+});
+
 describe("initGoogleAnalytics unit", () => {
   it("loads gtag.js and configures GA4 when the build sets an ID", async () => {
     installPolicy();
@@ -98,6 +117,44 @@ describe("initGoogleAnalytics unit", () => {
     window.history.replaceState(null, "", "/dashboard/develop");
     window.dispatchEvent(new PopStateEvent("popstate"));
     expect(window[flag]).toBe(false);
+  });
+
+  it("configures a redacted page location and a fixed title", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/dashboard/develop/3f2c1e4b-9a7d-4c1e-8f00-1234567890ab/runs/123456?search=secret&utm_source=newsletter&gclid=abc#frag",
+    );
+    installPolicy();
+    await loadAndInit();
+    const configCall = window.dataLayer.find((args) => args[0] === "config");
+    expect(configCall[2].page_title).toBe("Future AGI");
+    expect(configCall[2].page_location).toBe(
+      `${window.location.origin}/dashboard/develop/:id/runs/:id?utm_source=newsletter&gclid=abc`,
+    );
+  });
+
+  it("refreshes the page fields after in-app navigation", async () => {
+    installPolicy();
+    await loadAndInit();
+    window.history.pushState(null, "", "/auth/jwt/register?email=a%40b.com");
+    const updates = window.dataLayer.filter(
+      (args) => args[0] === "config" && args[2]?.update === true,
+    );
+    expect(updates.at(-1)[2]).toEqual({
+      page_location: `${window.location.origin}/auth/jwt/register`,
+      page_title: "Future AGI",
+      send_page_view: false,
+      update: true,
+    });
+  });
+
+  it("sends no page field update for a blocked address", async () => {
+    installPolicy();
+    await loadAndInit();
+    const before = window.dataLayer.length;
+    window.history.pushState(null, "", "/shared/token-1");
+    expect(window.dataLayer.length).toBe(before);
   });
 
   it("initializes once", async () => {
