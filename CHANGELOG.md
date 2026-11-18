@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- **annotations:** Open returned disagreed items from the Agreement tab in the appropriate workspace mode, show when the returned list is capped, and offer persistent recovery for unavailable items.
+
 ## [1.56.1](https://github.com/future-agi/future-agi/compare/v1.56.0...v1.56.1) (2026-10-28)
 
 
