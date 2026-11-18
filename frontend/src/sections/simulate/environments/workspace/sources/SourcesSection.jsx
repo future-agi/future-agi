@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
@@ -64,7 +64,25 @@ export default function SourcesSection({
   const prepare = usePrepareUploadSource(envId);
   const [anchor, setAnchor] = useState(null);
   const [removing, setRemoving] = useState(null);
-  const [, setParams] = useSearchParams();
+  const [params, setParams] = useSearchParams();
+  const addRef = useRef(null);
+  // `?addSource=1`, from a file's Supply the records, opens the Add source menu.
+  const supplying = params.get("addSource") === "1";
+  useEffect(() => {
+    if (!supplying) return;
+    if (addRef.current) {
+      addRef.current.scrollIntoView?.({ block: "center" });
+      setAnchor(addRef.current);
+    }
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.delete("addSource");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [supplying, setParams]);
 
   const all = summary?.sources || [];
   const sources = all.filter((source) => !source.ui?.removed);
@@ -133,6 +151,7 @@ export default function SourcesSection({
           <UiOnlyFlag feature="environmentSources" />
           {!readOnly && (
             <Button
+              ref={addRef}
               size="small"
               variant="outlined"
               onClick={(event) => setAnchor(event.currentTarget)}
