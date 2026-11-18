@@ -63,17 +63,15 @@ troubleshooting.
 ### 3. Install git hooks
 
 ```bash
-# From repo root — installs husky hooks and lint-staged tooling.
+# From the repository root:
 yarn install
-
-# For the Python pre-commit hooks (ruff check --fix, ruff format, mypy, file checks):
-cd futureagi && make pre-commit-install
 ```
 
-On every commit, `lint-staged` auto-formats and lints the staged files:
+This installs Husky and `lint-staged` and sets Git’s `core.hooksPath`. No separate
+Python hook installation is needed. Husky runs `lint-staged` on commit:
 
 - `frontend/src/**` → ESLint + Prettier
-- `futureagi/**/*.py` → `ruff check --fix`, then `ruff format` (`scripts/lint-staged-python.sh`)
+- `futureagi/**/*.py` (except migrations) → `ruff check --fix`, then `ruff format`. The [staged Python runner](scripts/lint-staged-python.sh) uses `uv` or `uvx` for the CI-pinned Ruff version. If it falls back to Ruff on `PATH`, it warns that CI may differ.
 
 Branch names are validated on `git push`.
 

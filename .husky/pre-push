@@ -15,7 +15,7 @@ esac
 # Types match Conventional Commits prefixes used in CONTRIBUTING.md.
 branch_regex='^(feat|fix|chore|docs|refactor|test|perf)/[a-zA-Z0-9]+([a-zA-Z0-9-]*[a-zA-Z0-9])?$'
 
-if ! printf '%s' "$branch_name" | grep -Eq "$branch_regex"; then
+if ! printf '%s\n' "$branch_name" | grep -Eq "$branch_regex"; then
     echo "❌ Invalid branch name: '$branch_name'"
     echo ""
     echo "Branch name must follow the pattern: <type>/<ticket-id>-<description>"
