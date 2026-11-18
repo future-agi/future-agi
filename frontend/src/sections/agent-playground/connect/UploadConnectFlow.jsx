@@ -37,10 +37,7 @@ const defaultName = (picked, folder) => folder?.name || picked?.name || "";
  * give it a name and its values, connect. The agent page then shows it being
  * read. A reload comes back to the same step; the upload is never sent twice.
  */
-export default function UploadConnectFlow({
-  onComplete,
-  completeLabel = "Connect agent",
-}) {
+export default function UploadConnectFlow({ onComplete }) {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
   const { role } = useAuthContext();
@@ -109,21 +106,22 @@ export default function UploadConnectFlow({
   const credentials = credentialsOf(held, selection);
 
   const toDetails = () => {
+    if (onComplete) {
+      onComplete({
+        source,
+        folderName: folder?.name || "",
+        entry: chosenEntry,
+        envNames,
+        name: defaultName(manual ? null : picked, folder),
+      });
+      return;
+    }
     if (named !== selection) {
       setName(defaultName(manual ? null : picked, folder));
       setNamed(selection);
     }
     setStage("details");
   };
-
-  const complete = () =>
-    onComplete({
-      source,
-      folderName: folder?.name || "",
-      entry: chosenEntry,
-      name: name.trim(),
-      envValues: shownEnvValues(credentials, envNames),
-    });
 
   const connectAgent = () =>
     connect.mutate(
@@ -276,20 +274,18 @@ export default function UploadConnectFlow({
       </>
     );
     hint = name.trim()
-      ? onComplete
-        ? "Next: scenarios and parallel worlds"
-        : "We read the agent once it's connected"
+      ? "We read the agent once it's connected"
       : "Name the agent";
     action = (
       <Button
         variant="contained"
         color="primary"
         disabled={!name.trim() || !canConnect || connect.isPending}
-        onClick={onComplete ? complete : connectAgent}
+        onClick={connectAgent}
         endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
         sx={{ flexShrink: 0 }}
       >
-        {completeLabel}
+        Connect agent
       </Button>
     );
   }
@@ -337,5 +333,4 @@ export default function UploadConnectFlow({
 
 UploadConnectFlow.propTypes = {
   onComplete: PropTypes.func,
-  completeLabel: PropTypes.string,
 };

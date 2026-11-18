@@ -39,6 +39,7 @@ export default function DrawerEnvValues({
   onEgress,
   secretFiles = [],
   onSecretFiles,
+  bare = false,
 }) {
   const fileRef = useRef(null);
   const envFileRef = useRef(null);
@@ -66,51 +67,58 @@ export default function DrawerEnvValues({
 
   return (
     <Box>
-      <Stack direction="row" alignItems="center" spacing={0.5}>
-        <Typography sx={{ ...T12, fontWeight: 600, flex: 1 }}>
-          Environment values
-        </Typography>
-        <Button
-          size="small"
-          onClick={() => envFileRef.current?.click()}
-          startIcon={<Iconify icon="solar:upload-linear" width={12} />}
-          sx={shortcutSx}
-        >
-          Upload .env
-        </Button>
-        <input
-          ref={envFileRef}
-          type="file"
-          hidden
-          accept=".env,text/plain"
-          onChange={(e) => {
-            onEnvFile(e.target.files?.[0]);
-            e.target.value = "";
-          }}
-        />
-      </Stack>
-      <Typography
-        component="div"
-        sx={{ ...T12, color: "text.secondary", mb: 1 }}
-      >
-        <HintLine
-          text="Test credentials and settings our sandbox runs your code with. Never a production key."
-          hint="Values are sent only for preflight and runs, and never written to jobs, logs or artifacts."
-        />
-      </Typography>
-      <TextField
-        fullWidth
-        multiline
-        minRows={3}
-        value={envText}
-        onChange={(e) => onEnvText(e.target.value)}
-        placeholder={"OPENAI_API_KEY=…\nLOG_LEVEL=info"}
-        inputProps={{ "aria-label": "Environment values", spellCheck: false }}
-        sx={{
-          ...INPUT_SX,
-          "& .MuiInputBase-inputMultiline": { fontFamily: MONO, ...T12 },
-        }}
-      />
+      {!bare && (
+        <>
+          <Stack direction="row" alignItems="center" spacing={0.5}>
+            <Typography sx={{ ...T12, fontWeight: 600, flex: 1 }}>
+              Environment values
+            </Typography>
+            <Button
+              size="small"
+              onClick={() => envFileRef.current?.click()}
+              startIcon={<Iconify icon="solar:upload-linear" width={12} />}
+              sx={shortcutSx}
+            >
+              Upload .env
+            </Button>
+            <input
+              ref={envFileRef}
+              type="file"
+              hidden
+              accept=".env,text/plain"
+              onChange={(e) => {
+                onEnvFile(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
+          </Stack>
+          <Typography
+            component="div"
+            sx={{ ...T12, color: "text.secondary", mb: 1 }}
+          >
+            <HintLine
+              text="Test credentials and settings our sandbox runs your code with. Never a production key."
+              hint="Values are sent only for preflight and runs, and never written to jobs, logs or artifacts."
+            />
+          </Typography>
+          <TextField
+            fullWidth
+            multiline
+            minRows={3}
+            value={envText}
+            onChange={(e) => onEnvText(e.target.value)}
+            placeholder={"OPENAI_API_KEY=…\nLOG_LEVEL=info"}
+            inputProps={{
+              "aria-label": "Environment values",
+              spellCheck: false,
+            }}
+            sx={{
+              ...INPUT_SX,
+              "& .MuiInputBase-inputMultiline": { fontFamily: MONO, ...T12 },
+            }}
+          />
+        </>
+      )}
 
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 1 }}>
         <Typography
@@ -197,6 +205,7 @@ export default function DrawerEnvValues({
 }
 DrawerEnvValues.propTypes = {
   envText: PropTypes.string,
+  bare: PropTypes.bool,
   onEnvText: PropTypes.func.isRequired,
   egress: PropTypes.string,
   onEgress: PropTypes.func.isRequired,

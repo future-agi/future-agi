@@ -329,11 +329,7 @@ const defaultName = (picked, source) =>
  * find the agents in it, pick one, give it a name and its values, connect. The
  * agent page then shows it being read.
  */
-export default function GitHubConnectFlow({
-  outcome,
-  onComplete,
-  completeLabel = "Connect agent",
-}) {
+export default function GitHubConnectFlow({ outcome, onComplete }) {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
   const github = useGitHubConnection({ refetchOnWindowFocus: true });
@@ -457,6 +453,19 @@ export default function GitHubConnectFlow({
   const credentials = credentialsOf(held, selection);
 
   const toDetails = () => {
+    if (onComplete) {
+      onComplete({
+        source: {
+          ...scanSource,
+          ...(chosenFolder ? { subfolder: chosenFolder } : {}),
+          ...(scan.data?.commitSha ? { commitSha: scan.data.commitSha } : {}),
+        },
+        entry: chosenEntry,
+        envNames,
+        name: defaultName(manual ? null : picked, scanSource),
+      });
+      return;
+    }
     if (named !== selection) {
       const chosen = manual
         ? { name: "", subfolder: chosenFolder, envNames: [] }
@@ -466,18 +475,6 @@ export default function GitHubConnectFlow({
     }
     setStage("details");
   };
-
-  const complete = () =>
-    onComplete({
-      source: {
-        ...scanSource,
-        ...(chosenFolder ? { subfolder: chosenFolder } : {}),
-        ...(scan.data?.commitSha ? { commitSha: scan.data.commitSha } : {}),
-      },
-      entry: chosenEntry,
-      name: name.trim(),
-      envValues: shownEnvValues(credentials, envNames),
-    });
 
   const connectAgent = () =>
     connect.mutate(
@@ -704,20 +701,18 @@ export default function GitHubConnectFlow({
       </>
     );
     hint = name.trim()
-      ? onComplete
-        ? "Next: scenarios and parallel worlds"
-        : "We read the agent once it's connected"
+      ? "We read the agent once it's connected"
       : "Name the agent";
     action = (
       <Button
         variant="contained"
         color="primary"
         disabled={!name.trim() || !canConnect || connect.isPending}
-        onClick={onComplete ? complete : connectAgent}
+        onClick={connectAgent}
         endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
         sx={{ flexShrink: 0 }}
       >
-        {completeLabel}
+        Connect agent
       </Button>
     );
   }
@@ -768,5 +763,4 @@ export default function GitHubConnectFlow({
 GitHubConnectFlow.propTypes = {
   outcome: PropTypes.string,
   onComplete: PropTypes.func,
-  completeLabel: PropTypes.string,
 };

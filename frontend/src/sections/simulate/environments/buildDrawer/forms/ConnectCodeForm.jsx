@@ -3,18 +3,25 @@ import { useState } from "react";
 import { Box, Typography } from "@mui/material";
 import GitHubConnectFlow from "src/sections/agent-playground/connect/GitHubConnectFlow";
 import UploadConnectFlow from "src/sections/agent-playground/connect/UploadConnectFlow";
+import { shownEnvValues } from "src/sections/agent-playground/connect/connectDraft";
 import usePanelBuild from "../../hooks/usePanelBuild";
 import { DEFAULT_SCENARIOS } from "../../panels/scenarioCountRules";
 import { T12 } from "../drawerStyles";
-import { FormCard, MONO, ToggleRow } from "./formBits";
+import CodeEnvValues from "./CodeEnvValues";
+import { Field, FormCard, MONO, ToggleRow } from "./formBits";
 import TextLink from "./shared/TextLink";
 
-const draftFor = (kind, picked, scenarioCount, observabilityEnabled) => {
+const draftFor = (kind, picked, form) => {
   const shared = {
-    displayName: picked.name,
-    envValues: picked.envValues,
-    scenarioCount: Number(scenarioCount) || undefined,
-    observabilityEnabled,
+    displayName: form.name.trim(),
+    envValues: shownEnvValues(
+      { values: form.values, extra: form.extra },
+      picked.envNames || [],
+    ),
+    egress: form.egress.trim() || null,
+    secretFiles: form.secretFiles,
+    scenarioCount: Number(form.scenarioCount) || undefined,
+    observabilityEnabled: form.observabilityEnabled,
   };
   if (kind === "upload") {
     return {
@@ -47,27 +54,39 @@ const whereOf = (kind, picked) => {
   return `${source.repository}${source.ref ? ` at ${source.ref}` : ""}${folder}`;
 };
 
+const formFor = (picked) => ({
+  name: picked.name || "",
+  values: {},
+  extra: [],
+  egress: "",
+  secretFiles: [],
+  scenarioCount: DEFAULT_SCENARIOS,
+  observabilityEnabled: false,
+});
+
 export default function ConnectCodeForm({ kind, onBusyChange }) {
   const [picked, setPicked] = useState(null);
-  const [scenarioCount, setScenarioCount] = useState(DEFAULT_SCENARIOS);
-  const [observabilityEnabled, setObservabilityEnabled] = useState(false);
+  const [form, setForm] = useState(null);
   const build = usePanelBuild();
 
   if (!picked) {
     const Flow = kind === "upload" ? UploadConnectFlow : GitHubConnectFlow;
     return (
       <Flow
-        completeLabel="Next"
         onComplete={(next) => {
           build.resetPreflight();
           setPicked(next);
+          setForm(formFor(next));
         }}
       />
     );
   }
 
-  const change = (setter) => (value) => {
-    setter(value);
+  const set = (field) => (value) => {
+    setForm((f) => ({
+      ...f,
+      [field]: typeof value === "function" ? value(f[field]) : value,
+    }));
     build.resetPreflight();
   };
 
@@ -75,36 +94,55 @@ export default function ConnectCodeForm({ kind, onBusyChange }) {
     <FormCard
       intro="We build the environment from this agent in our sandbox. Its agent is made with it, so there's nothing to wait for."
       build={build}
-      scenarioCount={scenarioCount}
-      onScenarioCount={change(setScenarioCount)}
-      canRun
-      onRun={() =>
-        build.runPreflight(
-          draftFor(kind, picked, scenarioCount, observabilityEnabled),
-        )
-      }
+      scenarioCount={form.scenarioCount}
+      onScenarioCount={set("scenarioCount")}
+      canRun={!!form.name.trim()}
+      blockedReason="Name the agent, then preflight checks it and its values."
+      onRun={() => build.runPreflight(draftFor(kind, picked, form))}
       onBusyChange={onBusyChange}
     >
-      <Box>
-        <Typography sx={{ ...T12, fontWeight: 600 }}>{picked.name}</Typography>
-        <Typography component="div" sx={{ ...T12, color: "text.secondary" }}>
-          <Box component="span" sx={{ fontFamily: MONO }}>
-            {whereOf(kind, picked)}
-          </Box>
-          {" · "}
-          <TextLink onClick={() => setPicked(null)}>Change</TextLink>
-        </Typography>
-      </Box>
+      <Typography component="div" sx={{ ...T12, color: "text.secondary" }}>
+        <Box component="span" sx={{ fontFamily: MONO, color: "text.primary" }}>
+          {whereOf(kind, picked)}
+        </Box>
+        {" · "}
+        <TextLink
+          onClick={() => {
+            setPicked(null);
+            setForm(null);
+          }}
+        >
+          Change
+        </TextLink>
+      </Typography>
+      <Field
+        label="Name"
+        required
+        value={form.name}
+        onChange={set("name")}
+        placeholder="Support agent"
+      />
+      <CodeEnvValues
+        names={picked.envNames || []}
+        values={form.values}
+        onValues={set("values")}
+        extra={form.extra}
+        onExtra={set("extra")}
+        egress={form.egress}
+        onEgress={set("egress")}
+        secretFiles={form.secretFiles}
+        onSecretFiles={set("secretFiles")}
+      />
       <ToggleRow
         title="Enable observability"
         body={
-          observabilityEnabled
+          form.observabilityEnabled
             ? "Its traces come into Observe once the code sends them."
             : "Off. Its traces stay out of Observe."
         }
         hint="We can observe the agent only if its code already sends telemetry (OpenTelemetry or traceAI). Without it the environment still builds."
-        checked={observabilityEnabled}
-        onChange={change(setObservabilityEnabled)}
+        checked={form.observabilityEnabled}
+        onChange={set("observabilityEnabled")}
       />
     </FormCard>
   );
