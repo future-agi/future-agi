@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -217,26 +218,48 @@ def _compose_suite_index(
 
 
 # The em dash the harness puts between an amendment's action and its subject.
-_AMENDMENT_DASH = "\u2014"
 
 
-def _amendment_owner(entry: str, changes: list[ReviewChange]) -> str | None:
-    """The change an amendment line records, read from the line's subject. The harness writes `rule added`, `rule
-    removed`, `tool removed` and `tool corrected` lines as the action, a dash, the rule or tool, then `: <why>`, and a
-    contract field change as `<field> <was> -> <now>: <why>`."""
+# The one reader of ALK's amendment lines. ALK writes them as free text (agent-learning-kit
+# ``fi/alk/harness/amend.py`` and ``builder.py``); each pattern below mirrors one of its formats, pinned by
+# ``tests/test_harness_amendment_lines_contract.py``. A line no pattern reads is owned by every contract change.
+_AMENDMENT_SUBJECTS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^rule (?:added|removed) \u2014 (?P<key>.+): "), "rule"),
+    (re.compile(r"^tool (?:removed|corrected) \u2014 (?P<key>[^:]+): "), "tool"),
+    (re.compile(r"^(?P<key>[^\s.:]+)\.[^\s:]+ widened by "), "tool"),
+    (re.compile(r"^(?P<key>[^\s:]+) added from [^:]+: "), "tool"),
+    (re.compile(r"^(?P<key>modality) \S+ -> \S+: "), "contract_field"),
+)
+
+
+def amendment_subject(line: str) -> tuple[str, str] | None:
+    """The item an amendment line records, as ``(kind, key)``; a rule is named by its text. ``None`` for a line
+    whose subject is not an item a review lists (a participant's tools), or that no known format reads."""
+    for pattern, kind in _AMENDMENT_SUBJECTS:
+        found = pattern.match(line)
+        if found:
+            return kind, found.group("key")
+    return None
+
+
+def _amendment_owner(line: str, changes: list[ReviewChange]) -> str | None:
+    subject = amendment_subject(line)
+    if subject is None:
+        return None
+    kind, key = subject
     for change in changes:
-        if change["kind"] in ("rule", "tool"):
-            subject = (
-                change["patch"][0]["value"]
-                if change["kind"] == "rule" and change["patch"]
-                else change["key"]
-            )
-            if f"{_AMENDMENT_DASH} {subject}: " in entry:
-                return str(change["id"])
-        elif change["kind"] == "contract_field" and entry.startswith(
-            f"{change['key']} "
-        ):
-            return str(change["id"])
+        if change["kind"] != kind:
+            continue
+        named = (
+            change["patch"][0].get("value")
+            if kind == "rule" and change["patch"]
+            else change["key"]
+        )
+        # A rule's text may hold ": " itself, so it is matched whole against the line.
+        if (
+            kind == "rule" and line.split(" \u2014 ", 1)[-1].startswith(f"{named}: ")
+        ) or (kind != "rule" and named == key):
+            return change["id"]
     return None
 
 
@@ -247,9 +270,9 @@ def _carry_amendments(
     changes: list[ReviewChange],
     decisions: Mapping[str, str],
 ) -> None:
-    """The contract's amendment log keeps the lines the draft added for accepted changes, and drops the lines of
-    rejected ones. A line that names no change under review is kept only while every contract change was accepted,
-    since it may record a rejected one in words the log does not parse."""
+    """The contract's amendment log keeps the lines the draft added for accepted changes and drops the lines of
+    rejected ones. A line no format reads, or that names no change under review, is kept only while every contract
+    change was accepted."""
     if "contract.json" not in files:
         return
     contract = read_json(files["contract.json"])
