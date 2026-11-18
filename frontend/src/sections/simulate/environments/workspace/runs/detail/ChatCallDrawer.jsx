@@ -94,6 +94,7 @@ export default function ChatCallDrawer({
   onTracePanelMountedChange,
   trials = null,
   onPickTrial,
+  onOpenTrial,
   wide = false,
 }) {
   const [shareOpen, setShareOpen] = useState(false);
@@ -309,6 +310,9 @@ export default function ChatCallDrawer({
                 <CallWorkersPanel
                   key={`${task.id}:${attempt ?? "latest"}`}
                   callExecutionId={task.id}
+                  testExecutionId={executionId}
+                  scenarioKey={task.sourceScenarioKey ?? null}
+                  onOpenTrial={onOpenTrial}
                   callStatus={task.status}
                   onOpenTrace={openTrace}
                   attempt={attempt}
@@ -560,11 +564,13 @@ ChatCallDrawer.propTypes = {
   // Trials of this call's scenario, for the picker in the header.
   trials: PropTypes.arrayOf(PropTypes.object),
   onPickTrial: PropTypes.func,
+  onOpenTrial: PropTypes.func,
   // A multi-agent call: more of the drawer goes to the artifact.
   wide: PropTypes.bool,
   task: PropTypes.shape({
     id: PropTypes.string,
     scenario: PropTypes.string,
+    sourceScenarioKey: PropTypes.string,
     persona: PropTypes.string,
     status: PropTypes.string,
     turns: PropTypes.number,

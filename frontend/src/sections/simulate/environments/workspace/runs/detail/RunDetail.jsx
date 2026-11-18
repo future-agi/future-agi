@@ -103,7 +103,7 @@ export default function RunDetail({
   // The open call, where it was opened from ("table", "analytics" or "link")
   // and, after a prev/next step, the table page it sits on so the table can
   // follow. Mirrored in `?rowId=`.
-  const { openCall, showCall } = useOpenCallParam({
+  const { openCall, showCall, openById } = useOpenCallParam({
     executionId,
     tableQuery,
     tableShown: tab === "tasks",
@@ -617,6 +617,7 @@ export default function RunDetail({
               page: openCall?.page ?? null,
             });
         }}
+        onOpenTrial={openById}
         executionId={backed ? executionId : null}
         agentType={stats.agentType}
         onClose={() => showCall(null)}

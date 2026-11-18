@@ -85,6 +85,7 @@ export default function VoiceCallDrawer({
   onTracePanelMountedChange,
   trials = null,
   onPickTrial,
+  onOpenTrial,
   wide = false,
 }) {
   const { data, isPending, isError } = useCallExecutionV3Detail(
@@ -174,6 +175,9 @@ export default function VoiceCallDrawer({
                     key={`${task.id}:${attempt ?? "latest"}`}
                     attempt={attempt}
                     callExecutionId={task.id}
+                    testExecutionId={executionId}
+                    scenarioKey={task.sourceScenarioKey ?? null}
+                    onOpenTrial={onOpenTrial}
                     callStatus={task.status}
                     callerName={task.persona}
                     callStartedAt={data?.started_at ?? null}
@@ -215,6 +219,8 @@ export default function VoiceCallDrawer({
     task.id,
     task.status,
     task.persona,
+    task.sourceScenarioKey,
+    onOpenTrial,
     seekTo,
     showWorkers,
     data,
@@ -300,6 +306,7 @@ VoiceCallDrawer.propTypes = {
   // Trials of this call's scenario, for the picker in the header.
   trials: PropTypes.arrayOf(PropTypes.object),
   onPickTrial: PropTypes.func,
+  onOpenTrial: PropTypes.func,
   // A multi-agent call opens wider, with more room on the left.
   wide: PropTypes.bool,
   task: PropTypes.shape({
@@ -307,6 +314,7 @@ VoiceCallDrawer.propTypes = {
     status: PropTypes.string,
     outcomeReason: PropTypes.string,
     persona: PropTypes.string,
+    sourceScenarioKey: PropTypes.string,
   }).isRequired,
   executionId: PropTypes.string,
   onClose: PropTypes.func,

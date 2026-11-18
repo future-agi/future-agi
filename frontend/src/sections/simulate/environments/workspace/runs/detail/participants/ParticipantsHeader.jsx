@@ -60,7 +60,12 @@ Line.propTypes = {
 };
 
 // The call in one line; what the record is and what it covers sit behind the icon.
-export default function ParticipantsHeader({ summary, notes = [], seq, onPick }) {
+export default function ParticipantsHeader({
+  summary,
+  notes = [],
+  seq,
+  onPick,
+}) {
   const problems = seq?.problems || [];
   const refusals = seq?.refusals || [];
   if (!summary && !notes.length && !problems.length && !refusals.length)

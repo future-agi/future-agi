@@ -13,6 +13,7 @@ import {
   recordingSeconds,
 } from "./participants/participantsFromRecord";
 import { sequenceOf } from "./participants/sequenceOf";
+import TrialRoutes from "./participants/TrialRoutes";
 import { STEP_PARAM, linkedStepKey } from "./participants/stepLink";
 
 export default function CallWorkersPanel({
@@ -23,6 +24,9 @@ export default function CallWorkersPanel({
   onOpenTrace,
   onShowInTranscript,
   attempt = null,
+  testExecutionId = null,
+  scenarioKey = null,
+  onOpenTrial,
 }) {
   const { data, isError } = useCallWorkers(
     callExecutionId,
@@ -133,6 +137,19 @@ export default function CallWorkersPanel({
         seq={seq}
         onPick={setSelected}
       />
+      {/* The scenario's trials as they ran last: an earlier attempt has no place among them. */}
+      {!attempt && testExecutionId && scenarioKey ? (
+        <TrialRoutes
+          testExecutionId={testExecutionId}
+          scenarioKey={scenarioKey}
+          currentId={callExecutionId}
+          onOpen={(id, stepKey) => {
+            if (id !== callExecutionId) return onOpenTrial?.(id, stepKey);
+            const step = seq?.steps.find((one) => one.key === stepKey);
+            if (step) setSelected(step.n);
+          }}
+        />
+      ) : null}
       {data.stopped_by_user &&
       data.collection !== "no_evidence" &&
       data.events.length > 0 ? (
@@ -240,4 +257,9 @@ CallWorkersPanel.propTypes = {
   onShowInTranscript: PropTypes.func,
   // An earlier attempt's id: its record, as the rerun kept it.
   attempt: PropTypes.string,
+  // The run and the call's scenario, to line up the scenario's trials.
+  testExecutionId: PropTypes.string,
+  scenarioKey: PropTypes.string,
+  // (callExecutionId, stepKey | null) → opens another trial of the scenario, on that step.
+  onOpenTrial: PropTypes.func,
 };

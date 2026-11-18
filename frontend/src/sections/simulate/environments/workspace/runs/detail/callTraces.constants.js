@@ -123,3 +123,45 @@ export const TRIAL_PICKER_COPY = {
   label: "Trial",
   tooltip: (n, verdict) => `Trial ${n}, ${verdict}`,
 };
+
+// A run status's colour, by the role STATUS_META gives it.
+export const STATUS_ROLE_COLOR = {
+  success: "success.main",
+  danger: "error.main",
+  warning: "warning.main",
+  info: "info.main",
+  neutral: "text.disabled",
+};
+
+// A scenario's trials lined up by route, as the trial-routes API serves them.
+export const TRIAL_ROUTES_COPY = {
+  trials: (count) => `${count} trials`,
+  splitAt: "Split at ",
+  sameRoute: "Every trial took the same route",
+  show: "Show trials",
+  hide: "Hide trials",
+  showTools: "Show tool calls",
+  trial: "Trial",
+  result: "Result",
+  trialN: (n) => `Trial ${n}`,
+  unknown: "Unknown",
+  // What a trial did at a step: asked a worker (or called a tool), and how it went.
+  cell: (state, kind, count) =>
+    ({
+      step: kind === "tool_call" ? "Called" : "Asked",
+      failed: "Failed",
+      no_answer: "No answer",
+      cut_off: "Cut off",
+      repeated: `×${count}`,
+      absent: "Not asked",
+    })[state] ?? state,
+  splitGroup: (word, trials) => `${word} in ${trials.join(", ")}`,
+  openStep: (n) => `Open trial ${n} at this step`,
+  // A trial the server lists but doesn't compare, and why.
+  notCompared: {
+    partial: "Not compared: its record was read only in part",
+    pending: "Not compared: its record isn't read yet",
+    not_finished: "Not compared: the trial didn't finish",
+    unreadable: "Not compared: its record couldn't be read",
+  },
+};

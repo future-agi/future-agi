@@ -27,6 +27,7 @@ export default function CallDrawer({
   hasNext = false,
   trials = null,
   onPickTrial,
+  onOpenTrial,
 }) {
   const open = !!task;
   const voice = isVoiceCall(task, agentType);
@@ -77,6 +78,7 @@ export default function CallDrawer({
             onTracePanelMountedChange={onTracePanelMountedChange}
             trials={trials}
             onPickTrial={onPickTrial}
+            onOpenTrial={onOpenTrial}
             wide={wide}
           />
         ) : (
@@ -92,6 +94,7 @@ export default function CallDrawer({
             onTracePanelMountedChange={onTracePanelMountedChange}
             trials={trials}
             onPickTrial={onPickTrial}
+            onOpenTrial={onOpenTrial}
             wide={wide}
           />
         ))}
@@ -114,4 +117,6 @@ CallDrawer.propTypes = {
   // Trials of this call's scenario, for the picker in the drawer header.
   trials: PropTypes.arrayOf(PropTypes.object),
   onPickTrial: PropTypes.func,
+  // (callExecutionId, stepKey | null) → another trial of the scenario, from the trials table.
+  onOpenTrial: PropTypes.func,
 };

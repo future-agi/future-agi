@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { cleanup, fireEvent, render, screen } from "src/utils/test-utils";
 
 let result;
+let routes;
 const asked = [];
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -9,6 +10,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => ({
     asked.push(args);
     return result;
   },
+  useTrialRoutes: () => ({ data: routes }),
 }));
 
 const { default: CallWorkersPanel } = await import("../CallWorkersPanel");
@@ -450,5 +452,72 @@ describe("CallWorkersPanel, an earlier attempt", () => {
     expect(asked.at(-1)).toEqual(["c1", "completed", "a1"]);
     render(<CallWorkersPanel callExecutionId="c1" callStatus="completed" />);
     expect(asked.at(-1)).toEqual(["c1", "completed", null]);
+  });
+});
+
+describe("CallWorkersPanel, the scenario's trials", () => {
+  // Both trials asked the order-lookup worker; the API keys that hand-off as step 1 in each.
+  const asked1 = { state: "step", step: 1, steps: [1], count: 1 };
+  const twoTrials = {
+    scenario_key: "refund",
+    tool_calls: false,
+    columns: [
+      {
+        key: "handoff:coordinator:>worker:order_lookup",
+        kind: "handoff",
+        from_kind: "coordinator",
+        from_id: null,
+        from_name: "Returns coordinator",
+        to_kind: "worker",
+        to_id: "order_lookup",
+        to_name: "Order-lookup worker",
+        tool: null,
+      },
+    ],
+    trials: [
+      {
+        number: 1,
+        call_execution_id: "c1",
+        result: "passed",
+        route: "recorded",
+        cells: [asked1],
+      },
+      {
+        number: 2,
+        call_execution_id: "c2",
+        result: "failed",
+        route: "recorded",
+        cells: [asked1],
+      },
+    ],
+    split: null,
+    same_route: true,
+  };
+
+  it("a cell picks the step on this call, and opens another trial at its step", () => {
+    result = { data: timeline(), isLoading: false, isError: false };
+    routes = twoTrials;
+    const onOpenTrial = vi.fn();
+    render(
+      <CallWorkersPanel
+        callExecutionId="c1"
+        testExecutionId="ex1"
+        scenarioKey="refund"
+        onOpenTrial={onOpenTrial}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show trials" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open trial 1 at this step" }),
+    );
+    expect(screen.getByTestId("step-detail")).toHaveTextContent(
+      "inspect order 1042",
+    );
+    expect(onOpenTrial).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open trial 2 at this step" }),
+    );
+    expect(onOpenTrial).toHaveBeenCalledWith("c2", 1);
+    routes = undefined;
   });
 });

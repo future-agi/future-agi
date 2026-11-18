@@ -296,7 +296,15 @@ RunAnalyticsStub.propTypes = {
 };
 vi.mock("../RunAnalytics", () => ({ default: RunAnalyticsStub }));
 
-function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
+function CallDrawerStub({
+  task,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
+  onClose,
+  onOpenTrial,
+}) {
   if (!task) return null;
   return (
     <div>
@@ -313,6 +321,9 @@ function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
       <button type="button" onClick={onNext} disabled={!hasNext}>
         next call
       </button>
+      <button type="button" onClick={() => onOpenTrial("x1", 3)}>
+        open trial x1 at step 3
+      </button>
     </div>
   );
 }
@@ -323,6 +334,7 @@ CallDrawerStub.propTypes = {
   onPrev: PropTypes.func,
   onNext: PropTypes.func,
   onClose: PropTypes.func,
+  onOpenTrial: PropTypes.func,
 };
 vi.mock("../CallDrawer", () => ({ default: CallDrawerStub }));
 
@@ -1870,6 +1882,19 @@ describe("RunDetail ?rowId=", () => {
       }),
     );
     expect(locationText()).toBe("?rowId=c51|REPLACE");
+  });
+
+  it("opens another trial from the trials table at its step, even off the table page", async () => {
+    const user = userEvent.setup();
+    detailFor("x1", { data: CHAT_DETAIL, error: null });
+    renderDetail({ initialEntries: ["/?foo=1"] });
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    await user.click(
+      screen.getByRole("button", { name: "open trial x1 at step 3" }),
+    );
+    expect(await screen.findByText("drawer:x1")).toBeInTheDocument();
+    expect(locationText()).toContain("rowId=x1");
+    expect(locationText()).toContain("participantsStep=3");
   });
 
   it("writes a row opened from Analytics to the URL", async () => {

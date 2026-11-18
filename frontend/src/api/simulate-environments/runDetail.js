@@ -1,7 +1,10 @@
 import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import { simulateV3CallExecutionWorkers } from "src/generated/api-contracts/api";
+import {
+  simulateV3CallExecutionWorkers,
+  simulateV3TestExecutionTrialRoutes,
+} from "src/generated/api-contracts/api";
 import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import {
@@ -706,6 +709,32 @@ const traceRow = (raw) => ({
   status: raw.status ?? null,
   latencyMs: raw.latency_ms ?? null,
 });
+
+/** A scenario's trials in one run, lined up step by step by who asked whom (or who called which tool). */
+export function useTrialRoutes(
+  testExecutionId,
+  scenarioKey,
+  toolCalls = false,
+) {
+  return useQuery({
+    queryKey: [
+      "simulation-trial-routes-v3",
+      testExecutionId,
+      scenarioKey,
+      toolCalls,
+    ],
+    queryFn: async () => {
+      const response = await simulateV3TestExecutionTrialRoutes(
+        testExecutionId,
+        { scenario_key: scenarioKey, tool_calls: toolCalls },
+      );
+      return response.data;
+    },
+    enabled: !!testExecutionId && !!scenarioKey,
+    // The strip says nothing when it can't read them; a call drawer must not toast about it.
+    meta: { errorHandled: true },
+  });
+}
 
 /** Which of a multi-agent app's workers did what in one call; null when it has no record yet (202) or none (204). */
 export function useCallWorkers(

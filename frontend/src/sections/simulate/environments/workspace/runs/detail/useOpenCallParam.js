@@ -33,7 +33,8 @@ const detailOptions = {
  *   reads; `tableShown` says the table is (or is about to be) mounted, so its
  *   page is worth waiting for.
  * @returns {{ openCall: ?{ task: Object, source: string, page: ?number },
- *   showCall: (next: ?{ task: Object, source: string, page: ?number }) => void }}
+ *   showCall: (next: ?{ task: Object, source: string, page: ?number }) => void,
+ *   openById: (id: string, stepKey?: ?number) => void }}
  */
 export default function useOpenCallParam({
   executionId,
@@ -72,6 +73,22 @@ export default function useOpenCallParam({
       writeRowId(next?.task?.id ?? null);
     },
     [writeRowId],
+  );
+
+  // Opens a call by id the way a link does (the table's page, else its detail), on a step of its record if given.
+  const openById = useCallback(
+    (id, stepKey = null) =>
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set(ROW_PARAM, id);
+          if (stepKey != null) next.set(STEP_PARAM, String(stepKey));
+          else next.delete(STEP_PARAM);
+          return next;
+        },
+        { replace: true },
+      ),
+    [setSearchParams],
   );
 
   const pending = rowId && rowId !== written.current ? rowId : null;
@@ -133,5 +150,5 @@ export default function useOpenCallParam({
     }
   }, [rowId]);
 
-  return { openCall, showCall };
+  return { openCall, showCall, openById };
 }

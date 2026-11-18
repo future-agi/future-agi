@@ -1,15 +1,10 @@
 import PropTypes from "prop-types";
 import { Box, ButtonBase, Stack, Tooltip, Typography } from "@mui/material";
 import { STATUS_META } from "../runs.constants";
-import { TRIAL_PICKER_COPY as C } from "./callTraces.constants";
-
-const ROLE_COLOR = {
-  success: "success.main",
-  danger: "error.main",
-  warning: "warning.main",
-  info: "info.main",
-  neutral: "text.disabled",
-};
+import {
+  STATUS_ROLE_COLOR as ROLE_COLOR,
+  TRIAL_PICKER_COPY as C,
+} from "./callTraces.constants";
 
 export default function TrialPicker({ trials, currentId, onPick }) {
   if (!trials || trials.length < 2) return null;
