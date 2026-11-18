@@ -199,15 +199,21 @@ def _scrub(value: Any, depth: int = 0) -> Any:
 
 # ``<sensitive name>=<value>`` or ``<sensitive name>: <value>`` inside free
 # text, with an optional quote around the name and an optional auth scheme. A
-# quoted value runs to its matching closing quote, spaces included. An
-# unquoted value runs to the next whitespace or delimiter: there is no way to
-# tell where an unquoted value with spaces ends, so callers that log one as a
-# %s argument are covered by matching that argument by position instead.
+# quoted value runs to its matching closing quote, spaces and newlines
+# included; a quote after a backslash does not close it (``repr`` and JSON
+# double the backslash of an escaped quote, so any run of backslashes counts as
+# escaping the next character). A quoted value with no
+# matching closing quote (cut off, or closed by the other kind of quote) runs to
+# the end of the text: over-redacting is better than leaking. An unquoted value
+# runs to the next whitespace or delimiter: there is no way to tell where an
+# unquoted value with spaces ends, so callers that log one as a %s argument are
+# covered by matching that argument by position instead.
 _SENSITIVE_PAIR_IN_TEXT = re.compile(
     r"""(?P<key>[\w.\-]*(?:"""
     + "|".join(re.escape(key) for key in SENSITIVE_KEY_SUBSTRINGS)
     + r""")[\w.\-]*)(?P<sep>["']?\s*[:=]\s*)"""
-    r"""(?:(?P<quote>["'])(?P<quoted>.*?)(?P=quote)"""
+    r"""(?:(?P<quote>["'])(?P<quoted>(?:\\+[\s\S]?|(?!(?P=quote))[^\\])*)"""
+    r"""(?:(?P<close>(?P=quote))|\Z)"""
     r"""|(?P<value>(?:(?:Bearer|Basic|Token)\s+)?[^\s"',;&}\]]+))""",
     re.IGNORECASE,
 )
@@ -243,8 +249,10 @@ def _scrub_text(value: Any) -> Any:
             _REDACTED, match.start(_value_group(match))
         ):
             return match[0]
-        quote = match["quote"] or ""
-        return f"{match['key']}{match['sep']}{quote}{_REDACTED}{quote}"
+        return (
+            f"{match['key']}{match['sep']}{match['quote'] or ''}"
+            f"{_REDACTED}{match['close'] or ''}"
+        )
 
     return _SENSITIVE_PAIR_IN_TEXT.sub(redact, value)
 

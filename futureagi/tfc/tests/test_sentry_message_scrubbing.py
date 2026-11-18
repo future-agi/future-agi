@@ -20,6 +20,13 @@ LOGGER = "tfc.tests.synthetic_scrubbing"
 # source lines in the envelope don't quote them.
 SPACED_SECRET = "Sntlcorrect Sntlhorse Sntlbattery"
 SPACED_ARGUMENT = "Sntlcorrect Sntlhorse"
+# Quoted credentials whose closing quote is missing, on another line, of the
+# other kind or escaped.
+CUT_OFF_SECRET = "Sntlcutoff"
+UNCLOSED_SECRET = "Sntlunclosed Sntlsecond Sntlthird"
+MULTILINE_SECRET = "Sntlfirstline\nSntlsecondline"
+MISMATCHED_SECRET = "Sntlopened Sntlwrongclose"
+ESCAPED_SECRET = 'Sntlbefore\\" Sntlafterescape'
 SENTINELS = (
     "SENTINEL-pw-7f3a",
     "SENTINEL-bearer-91c2",
@@ -137,3 +144,74 @@ def test_only_the_arguments_that_form_the_credential_are_redacted(transport):
 
     assert transport.events[0]["logentry"]["params"] == ["abc", 1, "[Filtered]"]
     assert "api_key=x1" not in _sent(transport)
+
+
+def _raise_and_capture(message: str) -> None:
+    try:
+        raise PermissionError(message)
+    except PermissionError as error:
+        sentry_sdk.capture_exception(error)
+
+
+def _words(secret: str) -> list[str]:
+    return secret.replace('\\"', " ").split()
+
+
+@pytest.mark.parametrize("quote", ["'", '"'])
+def test_a_cut_off_quoted_credential_is_not_sent(transport, quote):
+    _raise_and_capture(f"conn failed password={quote}{CUT_OFF_SECRET}")
+
+    assert CUT_OFF_SECRET not in _sent(transport)
+    value = transport.events[0]["exception"]["values"][-1]["value"]
+    assert value == f"conn failed password={quote}[Filtered]"
+
+
+def test_an_unclosed_quoted_spaced_credential_is_not_sent(transport):
+    _raise_and_capture(f"login failed token='{UNCLOSED_SECRET}")
+
+    sent = _sent(transport)
+    for word in _words(UNCLOSED_SECRET):
+        assert word not in sent
+    value = transport.events[0]["exception"]["values"][-1]["value"]
+    assert value == "login failed token='[Filtered]"
+
+
+def test_a_quoted_credential_spanning_lines_is_not_sent(transport):
+    _raise_and_capture(f"login failed password='{MULTILINE_SECRET}' end")
+
+    sent = _sent(transport)
+    for word in _words(MULTILINE_SECRET):
+        assert word not in sent
+    value = transport.events[0]["exception"]["values"][-1]["value"]
+    assert value == "login failed password='[Filtered]' end"
+
+
+def test_a_credential_closed_by_the_other_quote_is_not_sent(transport):
+    _raise_and_capture(f"login failed password=\"{MISMATCHED_SECRET}' tail")
+
+    sent = _sent(transport)
+    for word in _words(MISMATCHED_SECRET):
+        assert word not in sent
+    value = transport.events[0]["exception"]["values"][-1]["value"]
+    assert value == 'login failed password="[Filtered]'
+
+
+def test_an_escaped_quote_does_not_end_a_json_credential(transport):
+    _raise_and_capture(f'bad body {{"password": "{ESCAPED_SECRET}", "user": "bob"}}')
+
+    sent = _sent(transport)
+    for word in _words(ESCAPED_SECRET):
+        assert word not in sent
+    value = transport.events[0]["exception"]["values"][-1]["value"]
+    assert value == 'bad body {"password": "[Filtered]", "user": "bob"}'
+
+
+def test_an_unclosed_quoted_log_argument_is_not_sent(transport):
+    logging.getLogger(LOGGER).error("db login with password='%s", UNCLOSED_SECRET)
+
+    sent = _sent(transport)
+    for word in _words(UNCLOSED_SECRET):
+        assert word not in sent
+    logentry = transport.events[0]["logentry"]
+    assert logentry["params"] == ["[Filtered]"]
+    assert logentry["formatted"] == "db login with password='[Filtered]"
