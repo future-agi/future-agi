@@ -101,6 +101,12 @@ key_file=${FRONTEND_TLS_KEY_FILE:-}
 # busybox base64, od and awk only as far as Validity.notAfter (UTCTime or
 # GeneralizedTime). An expired leaf would fail every verifying client: the
 # gateway refuses one too, at startup and on reload.
+# Kept on purpose: nothing in nginx:alpine-slim reads certificate dates
+# (nginx -t loads an expired certificate), and the openssl package would add
+# a binary to the served image for this one field. It only reads the date;
+# nginx parses and checks the rest. frontend/tests/image runs it in the real
+# image against openssl-issued leaves and chains, both time encodings and
+# rotations.
 tls_cert_problem() {
   not_after=$(
     awk '/^-----BEGIN [A-Z0-9 ]*CERTIFICATE-----/ { pem = 1; next }

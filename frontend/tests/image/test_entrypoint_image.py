@@ -394,3 +394,94 @@ class PrivateKeyMode(ImageTestCase):
         )
         self.assertEqual(code, 1, logs)
         self.assertIn("[entrypoint] TLS file missing, empty or unreadable", logs)
+
+
+class CertificateExpiry(ImageTestCase):
+    """The entrypoint's notAfter reader, at startup and on rotation."""
+
+    def test_valid_leaves_and_chains_are_served(self):
+        intermediate = self.ca.issue(
+            "intermediate", "20601231235959Z", extension="intermediate"
+        )
+        inter_paths = (self.ca.dir / "intermediate.key", self.ca.dir / "intermediate.crt")
+        chained_leaf, chained_key = self.ca.issue(
+            "chained", "20551231235959Z", issuer=inter_paths
+        )
+        expired_ca, _ = self.ca.issue("old-ca", "200101000000Z", extension="intermediate")
+        leaf, leaf_key = self.ca.issue("leaf", "491231235959Z")
+        cases = {
+            "UTCTime leaf": self.ca.issue("utc", "491231235959Z"),
+            "GeneralizedTime leaf": self.ca.issue("generalized", "20500101000000Z"),
+            "leaf then intermediate": (chained_leaf + intermediate[0], chained_key),
+            "leaf then an expired CA": (leaf + expired_ca, leaf_key),
+        }
+        for case, (cert, key) in cases.items():
+            with self.subTest(case=case):
+                container = self.start(self.tls_env(), tls_dir=self.secret_dir(cert, key))
+                served = self.wait_for(
+                    lambda: self.served_fingerprint(container), what="HTTPS"
+                )
+                self.assertEqual(served, self.fingerprint(cert))
+                docker("rm", "-f", container)
+
+    def test_expired_and_malformed_leaves_fail_startup(self):
+        valid, key = self.ca.issue("valid", "491231235959Z")
+        expired, _ = self.ca.issue("expired", "200101000000Z")
+        cases = {
+            "expired UTCTime leaf": (expired, "expired at 2020-01-01T00:00:00Z"),
+            "expired GeneralizedTime leaf": (
+                unsigned_certificate(b"20200101000000Z", 0x18),
+                "expired at 2020-01-01T00:00:00Z",
+            ),
+            "expired leaf then a valid CA": (
+                expired + self.ca.issuer_cert.read_text(),
+                "expired at 2020-01-01T00:00:00Z",
+            ),
+            "not base64": ("-----BEGIN CERTIFICATE-----\n!!!\n-----END CERTIFICATE-----\n",
+                           "cannot read"),
+            "truncated": (valid[:80] + "\n-----END CERTIFICATE-----\n", "cannot read"),
+            "UTCTime without seconds": (
+                unsigned_certificate(b"4912312359Z", 0x17), "cannot read"
+            ),
+            "fractional seconds": (
+                unsigned_certificate(b"20991231235959.5Z", 0x18), "cannot read"
+            ),
+        }
+        for case, (cert, message) in cases.items():
+            with self.subTest(case=case):
+                code, logs = self.run_to_exit(
+                    self.tls_env(), tls_dir=self.secret_dir(cert, key)
+                )
+                self.assertEqual(code, 1, logs)
+                self.assertIn("[entrypoint] ", logs)
+                self.assertIn(message, logs)
+                self.assertIn("/run/futureagi-tls/tls.crt", logs)
+
+    def test_failed_rotations_keep_the_old_certificate_until_a_valid_one(self):
+        first, first_key = self.ca.issue("first", "491231235959Z")
+        container = self.start(self.tls_env(), tls_dir=self.secret_dir(first, first_key))
+        self.wait_for(
+            lambda: self.served_fingerprint(container) == self.fingerprint(first),
+            what="the first certificate",
+        )
+        started = docker("inspect", "-f", "{{.State.StartedAt}}", container).stdout
+        expired, expired_key = self.ca.issue("expired", "200101000000Z")
+        for cert, key, message in (
+            (expired, expired_key, "expired at 2020-01-01T00:00:00Z; keeping current"),
+            ("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+             first_key, "cannot read the certificate in /run/futureagi-tls/tls.crt"),
+        ):
+            self.rotate(cert, key)
+            self.wait_for(lambda: message in self.logs(container), what=message)
+            time.sleep(2.5)
+            self.assertEqual(self.served_fingerprint(container), self.fingerprint(first))
+        second, second_key = self.ca.issue("second", "20500101000000Z")
+        self.rotate(second, second_key)
+        self.wait_for(
+            lambda: self.served_fingerprint(container) == self.fingerprint(second),
+            what="the second certificate",
+        )
+        self.assert_running(container)
+        self.assertEqual(
+            docker("inspect", "-f", "{{.State.StartedAt}}", container).stdout, started
+        )
