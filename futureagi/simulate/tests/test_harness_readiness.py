@@ -463,7 +463,7 @@ class TestRows:
             "category": "tool_routing",
             "target": "issue_refund",
             "action": "Point issue_refund at the test world",
-            "would": "issue_refund lands in the test world and its probe passes",
+            "would": "issue_refund lands in the test world and its check passes",
             "recheck": None,
         }
 
@@ -804,7 +804,7 @@ class TestPairs:
         )
         assert start["stale_because"] is None
         assert start["reason"] == (
-            "Agent preflight failed: Credentials (missing OPENAI_API_KEY)"
+            "Agent start-up check failed: Credentials (missing OPENAI_API_KEY)"
         )
         assert start["fix"]["recheck"] == {
             "scope": "agent",
@@ -1387,7 +1387,7 @@ class TestDoneWhen:
             "category": "tool_routing",
             "target": "issue_refund",
             "action": "Point issue_refund at the test world",
-            "would": "issue_refund lands in the test world and its probe passes",
+            "would": "issue_refund lands in the test world and its check passes",
             # Certified already: the fix is a new version, checked on its own.
             "recheck": None,
         }
@@ -2014,7 +2014,7 @@ class TestConsequence:
             "Cases that use issue_refund cannot run until it is routed to the test world"
         )
         assert rows["reset"]["consequence"] == (
-            "Every trial starts from the same seed, agent included"
+            "Every trial starts from the same starting point, agent included"
         )
         assert rows["audio"]["consequence"] == (
             "Audio checks do not apply to a chat connection"
@@ -2103,7 +2103,7 @@ class TestConsequence:
         reset = _rows(_report(environment, a2))["reset"]
         assert reset["status"] == "unavailable"
         assert reset["consequence"] == (
-            "No seeded world of ours to reset for this connection"
+            "No starting records of ours to reset for this connection"
         )
 
 
@@ -2354,7 +2354,7 @@ class TestAgentGap:
                 "target": "send_email",
                 "action": "Add send_email to this environment in the builder, or test"
                 " this agent version in an environment that has it",
-                "would": "send_email is simulated in the test world and its probe passes",
+                "would": "send_email is simulated in the test world and its check passes",
                 "recheck": None,
             }
             assert discovery["consequence"].startswith(
@@ -2584,7 +2584,7 @@ class TestAgentGap:
             {"kind": "tool", "name": "lookup_order", "result": "failed"},
             {"kind": "action", "name": "issue_refund", "result": "failed"},
         ]
-        assert routing["reason"].endswith("failed its probe: issue_refund")
+        assert routing["reason"].endswith("failed its check: issue_refund")
 
     def test_a_measured_failure_naming_no_tool_keeps_the_gap_holding_every_case(self):
         from simulate.services.harness_readiness.catalogue import Reading, targets
@@ -2596,7 +2596,7 @@ class TestAgentGap:
             "Takes other arguments in this environment: issue_refund",
             targets("tool", ["issue_refund"], "failed"),
         )
-        measured = Reading("failed", "action_failed", "1 of 2 tool probes passed")
+        measured = Reading("failed", "action_failed", "1 of 2 tool checks passed")
 
         merged = _with_measured(gap, measured)
 
@@ -2605,7 +2605,7 @@ class TestAgentGap:
             "tool_signature_changed",
             [],
         )
-        assert merged.reason.endswith("; 1 of 2 tool probes passed")
+        assert merged.reason.endswith("; 1 of 2 tool checks passed")
 
 
 def _copy_version(version, **fields):
@@ -2675,8 +2675,8 @@ class TestStaleVersions:
         )
         assert start["was"] == "supported"
         assert start["reason"] == (
-            f"Checked with environment version v{parent.version_number}; this pairing"
-            f" uses v{edited.version_number}"
+            f"Checked with environment version v{parent.version_number}; these versions"
+            f" use v{edited.version_number}"
         )
         assert start["fix"]["type"] == "recheck"
         assert report["answer"]["kind"] == "stale"
@@ -2799,7 +2799,7 @@ class TestStale:
             "harness_version",
         )
         assert start["was"] == "supported"
-        assert start["reason"] == "Checked with harness 0.3.0; runs now use 0.3.1"
+        assert start["reason"] == "Checked with test release 0.3.0; runs now use 0.3.1"
         # Checking the pairing again certifies it on the harness runs use now.
         assert start["fix"]["type"] == "recheck"
         assert start["fix"]["recheck"]["scope"] == "pair"

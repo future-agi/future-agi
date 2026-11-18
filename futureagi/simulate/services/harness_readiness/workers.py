@@ -29,11 +29,11 @@ BYPASS_CALLS_READ = 500
 
 # Why ALK's run holds a case back (`worker-limits.json` `scenarios.<key>.cause`), as the reason a person reads.
 _CAUSE_REASONS = {
-    "in_process": "the world's door inside the agent cannot tell the workers' calls apart",
+    "in_process": "the test's tool gateway inside the agent cannot tell the workers' calls apart",
     "shared_worker": "a worker wired as shared cannot be told apart by the world",
-    "tool_service_not_fronted": "the agent's tool service does not run behind the world's door",
-    "sealed_before_worker_limits": "the environment was sealed before worker limits; rebuild it to hold them",
-    "no_tool_proxy": "the agent's tools are not reached through the world's tool proxy",
+    "tool_service_not_fronted": "the agent's tool service does not run behind the test's tool gateway",
+    "sealed_before_worker_limits": "the environment was built before worker limits; rebuild it to hold them",
+    "no_tool_proxy": "the agent's tools are not reached through the test's tool gateway",
 }
 _UNKNOWN_CAUSE = "the world cannot hold the limits this case relies on"
 
@@ -47,8 +47,8 @@ _STATUS_LABELS: dict[Status, str] = {
     "stale": "Stale",
 }
 _CODE_LABELS = {
-    "held_at_world_cooperative": "Held at the world (cooperative)",
-    "in_process_door": "Deadlines held, tools not enforced",
+    "held_at_world_cooperative": "Checked through the world's tools",
+    "in_process_door": "Time limits kept, tool limits not checked",
 }
 
 
@@ -207,16 +207,16 @@ def _no_door(reason: str) -> tuple[str, str]:
     if reason == "tool_service_not_fronted":
         return (
             reason,
-            "This agent's tool service does not run behind the world's door, so no worker's limits are held.",
+            "This agent's tool service does not run behind the test's tool gateway, so no worker's limits are held.",
         )
     if reason == "in_process_unbound":
         return (
             reason,
-            "This agent's tools run inside it where no door can stand, so no worker's limits are held.",
+            "This agent's tools run inside it, where the test cannot check its calls, so no worker's limits are held.",
         )
     return (
         "no_tool_service",
-        "This agent has no tool service for the world's door to front, so no worker's limits are held.",
+        "This agent has no tool service for the test's tool gateway to stand in front of, so no worker's limits are held.",
     )
 
 
@@ -252,7 +252,7 @@ def worker_boundaries(
         fix: Fix | None = None
         if evidence.unreadable or evidence.door_unreadable:
             status, code = "untested", "evidence_unreadable"
-            reason = "This pairing's sealed files could not be read, so this worker's limits are not known."
+            reason = "The files built for these versions could not be read, so this worker's limits are not known."
         elif worker_id in bypasses:
             status, code, held = "blocked", BYPASS_CODE, isinstance(sealed, Mapping)
             reason = (
@@ -273,12 +273,12 @@ def worker_boundaries(
         elif outcome is None and evidence.worker_limits is not None:
             # Worker limits sealed without the door decision (an older compose build): a rebuild would not add it.
             status, code = "untested", "door_decision_not_sealed"
-            reason = "This environment's build did not seal whether its world holds worker limits, so none are held."
+            reason = "This environment's build did not record whether its world holds worker limits, so none are held."
         elif outcome is None:
             # Sealed before ALK wrote its door decision: whether a case relies on the worker is not known.
             status, code = "untested", "sealed_before_worker_limits"
             reason = (
-                "This environment was sealed before worker limits, so none are held."
+                "This environment was built before worker limits, so none are held."
                 " Rebuild the environment to hold them."
             )
             fix = _rebuild(
@@ -293,11 +293,11 @@ def worker_boundaries(
         }:
             # The door inside the agent holds only the workers it lists; ALK holds this one's budgeted cases.
             status, code = _unheld_status(limited), "in_process_not_held"
-            reason = "The world's door inside the agent does not hold this worker's deadline or its permitted tools."
+            reason = "The test's tool gateway inside the agent does not hold this worker's deadline or its permitted tools."
         elif outcome.get("surface") == "in_process":
             status, code = "partial", "in_process_door"
             reason = (
-                "The world's door inside the agent holds this worker's deadline when it runs as a task of its own; "
+                "The test's tool gateway inside the agent holds this worker's deadline when it runs as a task of its own; "
                 "its permitted tools are not enforced, since its calls are not told apart."
             )
         elif binding == "shared":
@@ -310,12 +310,12 @@ def worker_boundaries(
         elif isinstance(sealed, Mapping):
             status, code, held = "partial", "held_at_world_cooperative", True
             reason = (
-                "Held at the world on its own channel. Workers share the app's one process, so a call made through "
+                "Held at the world on its own channel. Workers share one running copy of the app, so a call made through "
                 "another address is not held; each such call is flagged."
             )
         else:
             status, code = _unheld_status(limited), "worker_not_sealed"
-            reason = f"{name} is separate in the contract but has no sealed allow-list. Rebuild the environment."
+            reason = f"{name} is separate in the contract but has no list of permitted tools. Rebuild the environment."
             fix = _rebuild(
                 name, "Rebuild the environment so its world holds worker limits"
             )

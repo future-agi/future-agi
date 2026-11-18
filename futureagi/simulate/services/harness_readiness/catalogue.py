@@ -70,23 +70,21 @@ CATALOGUE: tuple[Capability, ...] = (
     Capability("message", "Takes a test message", "start_and_message", True, "start"),
     Capability("continuity", "Keeps context across turns", "start_and_message", False),
     Capability("streaming", "Streams its replies", "start_and_message", False),
-    Capability("tool_discovery", "Tools discovered", "tool_binding", True, "start"),
+    Capability("tool_discovery", "Agent's tools found", "tool_binding", True, "start"),
     Capability(
         "tool_routing",
-        "Controlled tool routing",
+        "Tool calls stay in the test",
         "tool_binding",
         True,
         "tool_discovery",
     ),
-    Capability("state", "Seeded world state", "evidence", True, "start"),
-    Capability("audio", "Audio evidence", "evidence", False),
-    Capability("files", "File evidence", "evidence", False),
-    Capability("browser", "Browser evidence", "evidence", False),
-    Capability("children", "Sub-agent evidence", "evidence", False),
-    Capability(
-        "hidden_material", "Grading material kept from the agent", "evidence", False
-    ),
-    Capability("reset", "World resets between cases", "reset", True, "state"),
+    Capability("state", "Starting records", "evidence", True, "start"),
+    Capability("audio", "Call recordings", "evidence", False),
+    Capability("files", "Files the agent writes", "evidence", False),
+    Capability("browser", "Pages the agent opens", "evidence", False),
+    Capability("children", "Sub-agents", "evidence", False),
+    Capability("hidden_material", "Answers hidden from the agent", "evidence", False),
+    Capability("reset", "Starts fresh for each case", "reset", True, "state"),
     Capability("resume", "Resumes an interrupted case", "reset", False),
     Capability("cancel", "Stops cleanly when cancelled", "cancellation", True),
     Capability("cost", "Run cost", None, False),
@@ -175,7 +173,7 @@ class WorkerBoundaryView(TypedDict):
     name: str
     binding: Literal["separate", "shared"]
     status: Status
-    # The status word the row shows, e.g. "Held at the world (cooperative)".
+    # The status word the row shows, e.g. "Checked through the world's tools".
     status_label: str
     reason_code: str
     reason: str

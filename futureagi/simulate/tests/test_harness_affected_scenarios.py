@@ -401,7 +401,7 @@ class TestBuckets:
             {
                 "key": LOOKUP_KEYS[0],
                 "code": "scenario_dropped",
-                "reason": "dropped when the pair was certified",
+                "reason": "dropped when these versions were checked",
             }
         ]
         assert (chosen["requested"], chosen["eligible"]) == (1, 1)
@@ -427,7 +427,7 @@ class TestBuckets:
         assert (plan.view["requested"], plan.view["running"]) == (2, 1)
         assert plan.view["held_back"]["by"] == {"scenario_dropped": 1}
         assert plan.view["reasons"] == {
-            "scenario_dropped": "dropped when the pair was certified"
+            "scenario_dropped": "dropped when these versions were checked"
         }
 
     def test_reset_needed_by_every_case_of_a_seeded_world_run(
@@ -663,7 +663,7 @@ class TestRunRefusals:
 
         chosen = _select(environment)["selection"]
 
-        reason = "grades no sub-goal of this environment version"
+        reason = "has no check this environment version grades"
         assert chosen["dropped"] == [
             {"key": LOOKUP_KEYS[0], "code": "scenario_ungradable", "reason": reason},
             {"key": LOOKUP_KEYS[1], "code": "scenario_ungradable", "reason": reason},

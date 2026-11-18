@@ -74,7 +74,7 @@ Bucket = Literal["eligible", "blocked", "stale", "untested"]
 BUCKETS: tuple[Bucket, ...] = ("eligible", "blocked", "stale", "untested")
 LIST_LIMIT = 200
 PAGE_SIZE = 50
-DROPPED_REASON = "dropped when the pair was certified"
+DROPPED_REASON = "dropped when these versions were checked"
 # Held-back key for a selected case certifying the pair dropped.
 DROPPED_ROW = "scenario_dropped"
 # Held-back keys for a case not validated on the run's pair, and an archived case.
@@ -115,7 +115,7 @@ NO_DOOR_REASON = (
     "Actors cannot act and faults cannot be set here: this agent's tools run inside it. Serve the tools from a "
     "tools service to test this."
 )
-UNGRADABLE_REASON = "grades no sub-goal of this environment version"
+UNGRADABLE_REASON = "has no check this environment version grades"
 # Untested key for a case whose reliance on worker limits ALK sealed no answer for.
 WORKER_LIMITS_UNKNOWN = "worker_limits_not_known"
 # Held-back key for a case ALK holds on worker limits without naming a worker.
@@ -562,7 +562,7 @@ def select_for_run(
     if evidence.unreadable:
         raise HostedHarnessError(
             "readiness_unavailable",
-            "Couldn't read this pairing's readiness, so no run was created."
+            "Couldn't read whether these versions are ready, so no run was created."
             " Try again in a moment.",
             status_code=503,
             retryable=True,
