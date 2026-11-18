@@ -201,6 +201,43 @@ def test_a_trial_that_asks_the_same_worker_again_reads_times_n_and_splits_there(
     assert [cell[1] for cell in second[1:]] == [5, 6]
 
 
+def test_repeated_hand_offs_that_ended_differently_split_on_their_ordered_outcomes():
+    def twice(first, second):
+        call = _Call()
+        call.back(call.ask("refunds", status=first))
+        call.back(call.ask("refunds", status=second))
+        return call
+
+    trials = [
+        _trial(1, twice("ok", "ok")),
+        _trial(2, twice("error", "error")),
+        _trial(3, twice("ok", "error")),
+        _trial(4, twice("ok", "ok")),
+    ]
+    routes = trial_routes("s", trials)
+
+    assert [
+        cell["states"] for cell in (one["cells"][0] for one in routes["trials"])
+    ] == [
+        ["step", "step"],
+        ["failed", "failed"],
+        ["step", "failed"],
+        ["step", "step"],
+    ]
+    assert routes["same_route"] is False and routes["split"]["column"] == 0
+    assert [
+        (one["state"], one["states"], one["trials"])
+        for one in routes["split"]["groups"]
+    ] == [
+        ("repeated", ["step", "step"], [1, 4]),
+        ("repeated", ["failed", "failed"], [2]),
+        ("repeated", ["step", "failed"], [3]),
+    ]
+    served = TrialRoutesResponseSerializer(routes).data
+    assert served["split"]["groups"][1]["states"] == ["failed", "failed"]
+    assert served["trials"][2]["cells"][0]["states"] == ["step", "failed"]
+
+
 def test_a_hand_off_only_one_trial_made_is_its_own_column_in_its_place():
     extra = _usual()
     extra.back(extra.ask("shipping"))
