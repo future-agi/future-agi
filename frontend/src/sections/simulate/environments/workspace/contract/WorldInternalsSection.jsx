@@ -15,7 +15,7 @@ import {
 const MONO = "ui-monospace, Menlo, monospace";
 
 /**
- * "World" internals on the Contract tab: the tables the world holds and the
+ * "World" internals on the World & tools tab: the tables the world holds and the
  * tools the agent has, as the environment's detail states them. Nothing is derived here.
  */
 export default function WorldInternalsSection({ env }) {

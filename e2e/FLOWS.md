@@ -3370,7 +3370,7 @@
 
 1. seed a built, versioned Environment whose contract records each tool's fields and one tool that reaches production (e2e/lib/harness_environment_seed.py)
 2. read the environment (GET harness-environments/<id>/)
-3. open the Contract tab
+3. open the World & tools tab
 4. expand lookup_order
 5. read issue_refund's Unsupported label
 

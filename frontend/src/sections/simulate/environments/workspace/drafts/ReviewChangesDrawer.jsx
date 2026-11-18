@@ -208,7 +208,7 @@ export default function ReviewChangesDrawer({
                   key={one.id}
                   failed={one}
                   canEdit={canEdit}
-                  onFix={() => goTab("contract")}
+                  onFix={() => goTab("world")}
                   onDismiss={() => {
                     beforeRemoval(COPY.dismissed(one.detail));
                     dismiss(one.id);

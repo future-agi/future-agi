@@ -10,6 +10,7 @@ describe("workspace tab constants", () => {
   it("declares the tabs in rail order with Overview first and Settings last", () => {
     expect(WORKSPACE_TABS.map((t) => t.id)).toEqual([
       "overview",
+      "world",
       "contract",
       "actors",
       "scenarios",
@@ -32,7 +33,12 @@ describe("workspace tab constants", () => {
 
   it("badges the counted tabs with their state key", () => {
     const badged = WORKSPACE_TABS.filter((t) => t.badge);
-    expect(badged.map((t) => t.badge)).toEqual(["scenarios", "evals", "runs", "improvements"]);
+    expect(badged.map((t) => t.badge)).toEqual([
+      "scenarios",
+      "evals",
+      "runs",
+      "improvements",
+    ]);
   });
 });
 
@@ -51,10 +57,12 @@ describe("setup-gap to tab mapping", () => {
 
 describe("workspace copy", () => {
   it("exposes the header, menu and empty-state strings", () => {
-    ["back", "live", "run", "moreActions", "fork", "forkHint"].forEach((key) => {
-      expect(typeof WORKSPACE_COPY[key]).toBe("string");
-      expect(WORKSPACE_COPY[key].length).toBeGreaterThan(0);
-    });
+    ["back", "live", "run", "moreActions", "fork", "forkHint"].forEach(
+      (key) => {
+        expect(typeof WORKSPACE_COPY[key]).toBe("string");
+        expect(WORKSPACE_COPY[key].length).toBeGreaterThan(0);
+      },
+    );
     ["title", "body", "action"].forEach((key) => {
       expect(typeof WORKSPACE_COPY.notFound[key]).toBe("string");
     });

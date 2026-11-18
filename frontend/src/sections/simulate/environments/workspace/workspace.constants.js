@@ -3,13 +3,14 @@
 // inline so the shell, the build-page in-place swap and the tests share them.
 
 // The workspace tabs, in rail order (matching the designer). Overview is first
-// and is the default landing tab. Overview and Contract are views of the
-// environment itself, so they carry no count badge; Scenarios, Evaluations and
+// and is the default landing tab. Overview, World & tools and Contract are views
+// of the environment itself, so they carry no count badge; Scenarios, Evaluations and
 // Runs badge the length of their matching env-state slice. Settings is last.
 // The Overview tab id is "overview" (URL reads ?tab=overview), and its panel
 // component/folder keep the OverviewPanel name.
 export const WORKSPACE_TABS = [
   { id: "overview", label: "Overview", icon: "solar:widget-5-linear" },
+  { id: "world", label: "World & tools", icon: "solar:globe-linear" },
   {
     id: "contract",
     label: "Contract",
