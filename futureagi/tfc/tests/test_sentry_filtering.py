@@ -969,6 +969,36 @@ def test_the_hooks_still_drop_the_event_when_the_report_cannot_be_written(
         assert hook() is None
 
 
+class _ClosedStream:
+    def write(self, text):
+        raise ValueError("I/O operation on closed file")
+
+    def flush(self):
+        raise ValueError("I/O operation on closed file")
+
+
+def test_a_closed_stderr_still_drops_the_event_quietly(monkeypatch):
+    monkeypatch.setattr(sys, "__stderr__", _ClosedStream())
+    for hook in _failing_hooks(monkeypatch):
+        assert hook() is None
+
+
+class _BrokenStream:
+    def write(self, text):
+        raise RuntimeError("a bug in the report itself")
+
+    def flush(self):
+        pass
+
+
+def test_a_bug_in_the_failure_report_is_not_swallowed(monkeypatch):
+    # Only the ways a write can fail (a closed pipe or file, no stream at all) are
+    # quiet; anything else is a bug in the report and must surface.
+    monkeypatch.setattr(sys, "__stderr__", _BrokenStream())
+    with pytest.raises(RuntimeError, match="a bug in the report itself"):
+        sentry_module._report_scrub_failure(TypeError("scrub failed"))
+
+
 def _init_sentry_kwargs(monkeypatch):
     seen = {}
     ignored = []

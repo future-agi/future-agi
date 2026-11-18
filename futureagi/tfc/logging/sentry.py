@@ -823,8 +823,12 @@ def _report_scrub_failure(exc: Exception) -> None:
     the logging module: Python 3.13.4+ drops a record logged while another record
     on the same thread is being handled, and a hook runs inside the handler of
     the record that made the event. It goes to the process's own stderr: in a
-    Celery worker `sys.stderr` is a proxy that logs what it is given."""
-    with contextlib.suppress(Exception):
+    Celery worker `sys.stderr` is a proxy that logs what it is given.
+
+    Only the ways the write can fail are quiet: a closed pipe (OSError), a closed
+    file (ValueError), or no stream at all (AttributeError on None). Anything else
+    is a bug here and surfaces."""
+    with contextlib.suppress(OSError, ValueError, AttributeError):
         stream = sys.__stderr__ if sys.__stderr__ is not None else sys.stderr
         stream.write(f"sentry_scrub_failed: {type(exc).__name__}\n")
         stream.flush()
