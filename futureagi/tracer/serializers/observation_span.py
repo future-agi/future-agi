@@ -13,6 +13,7 @@ from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
+from tracer.serializers.attribute_key import ExactAttributeKeyField
 from tracer.serializers.cursor_pagination import (
     CURSOR_HELP_TEXT,
     validate_cursor_exclusivity,
@@ -23,7 +24,7 @@ from tracer.serializers.filters import (
     bounded_filter_list_query_param_field,
     filter_list_query_param_field,
 )
-from tracer.services.clickhouse.attribute_reads import validate_attribute_key
+from tracer.serializers.trace import RUN_SCOPE_KEYS, RunScopeQueryMixin
 
 
 class ProjectScopeQueryParamField(serializers.CharField):
@@ -62,17 +63,7 @@ class ObservationAttributeListQuerySerializer(serializers.Serializer):
         required=False,
         default="spans",
     )
-    q = serializers.CharField(
-        required=False,
-        allow_blank=False,
-        max_length=512,
-    )
-
-    def validate_q(self, value):
-        try:
-            return validate_attribute_key(value)
-        except ValueError as exc:
-            raise serializers.ValidationError(str(exc)) from exc
+    q = ExactAttributeKeyField(required=False)
 
 
 class ObservationAttributeListResponseSerializer(serializers.Serializer):
@@ -138,8 +129,10 @@ class _SpanReferenceVersionField(serializers.CharField):
         return data
 
 
-class SpanReferenceQuerySerializer(StrictInputSerializer):
-    """An empty selector preserves bare GET; any selector requires every field."""
+class SpanReferenceQuerySerializer(RunScopeQueryMixin, StrictInputSerializer):
+    """An empty selector preserves bare GET; ``project_id`` alone pins the bare
+    span id to one project; any other selector requires every field. The run
+    parameters are never part of the selector."""
 
     project_id = serializers.UUIDField(required=False)
     trace_id = serializers.CharField(
@@ -166,9 +159,11 @@ class SpanReferenceQuerySerializer(StrictInputSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        if not attrs:
+        self.reject_both(attrs)
+        selector = attrs.keys() - RUN_SCOPE_KEYS
+        if not selector or selector == {"project_id"}:
             return attrs
-        missing = self.fields.keys() - attrs.keys()
+        missing = (self.fields.keys() - RUN_SCOPE_KEYS) - attrs.keys()
         if missing:
             raise serializers.ValidationError(
                 dict.fromkeys(
@@ -209,7 +204,9 @@ class ObservationSpanSerializer(serializers.ModelSerializer):
     project = serializers.PrimaryKeyRelatedField(
         queryset=Project.objects.all(), many=False
     )
-    trace = serializers.PrimaryKeyRelatedField(queryset=Trace.objects.all(), many=False)
+    trace = serializers.PrimaryKeyRelatedField(
+        queryset=Trace.objects.using("default").all(), many=False
+    )
     project_version = serializers.PrimaryKeyRelatedField(
         queryset=ProjectVersion.objects.all(), many=False, required=False
     )
@@ -304,7 +301,7 @@ class ObservationSpanSerializer(serializers.ModelSerializer):
         self.fields["project"].queryset = project_manager.filter(
             project_scope, deleted=False
         )
-        self.fields["trace"].queryset = trace_manager.filter(
+        self.fields["trace"].queryset = trace_manager.using("default").filter(
             related_project_scope, deleted=False
         )
         self.fields["project_version"].queryset = version_manager.filter(
@@ -315,7 +312,16 @@ class ObservationSpanSerializer(serializers.ModelSerializer):
         attrs = super().validate(attrs)
         instance = getattr(self, "instance", None)
         project = attrs.get("project") or getattr(instance, "project", None)
-        trace = attrs.get("trace") or getattr(instance, "trace", None)
+        trace = attrs.get("trace")
+        if trace is None and instance is not None and instance.trace_id:
+            # The relation may have changed since the replica's last applied
+            # write. The base manager, like ``instance.trace``, also finds a
+            # soft-deleted parent, so that span still validates as before.
+            trace = (
+                Trace._base_manager.using("default")
+                .filter(pk=instance.trace_id)
+                .first()
+            )
         project_version = attrs.get("project_version") or getattr(
             instance, "project_version", None
         )
@@ -439,6 +445,11 @@ class SpanListMetadataSerializer(serializers.Serializer):
         r"^[0-9a-f]{64}$", required=False
     )
     query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
+    # Exactness is published on every successful list page, next to the
+    # completeness it qualifies; see tracer.services.clickhouse.
+    # list_page_contract.
+    query_exact = serializers.BooleanField(required=False)
+    ordering_exact = serializers.BooleanField(required=False)
 
 
 class SpanListColumnConfigSerializer(serializers.Serializer):
@@ -459,6 +470,9 @@ class SpanListColumnConfigSerializer(serializers.Serializer):
     settings = JsonValueField(required=False, allow_null=True)
     choices_map = JsonValueField(required=False, allow_null=True)
     eval_template_id = serializers.CharField(required=False, allow_null=True)
+    target_type = serializers.ChoiceField(
+        choices=("span", "trace"), required=False, allow_null=True
+    )
     annotators = JsonValueField(required=False, allow_null=True)
     source_field = serializers.CharField(required=False, allow_null=True)
     parent_eval_id = serializers.CharField(required=False, allow_null=True)

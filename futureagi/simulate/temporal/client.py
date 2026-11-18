@@ -291,26 +291,30 @@ async def _cancel_workflow_async(
 async def _cancel_with_retries(client, workflow_id: str, max_retries: int = 3) -> bool:
     """Cancel a workflow with retries on transient errors.
 
-    Transient errors (h2 protocol, timeout, connection reset) should be retried
-    because failing to cancel means workflows keep running and overwrite the
-    CANCELLED status in DB.
+    Transient RPC failures (UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED,
+    ABORTED) are retried, because failing to cancel means workflows keep
+    running and overwrite the CANCELLED status in DB. Retry decisions use the
+    Temporal RPC status, never the exception message; any other error returns
+    False at once.
     """
-    last_error = None
+    from temporalio.service import RPCError, RPCStatusCode
+
+    retryable_statuses = {
+        RPCStatusCode.UNAVAILABLE,
+        RPCStatusCode.DEADLINE_EXCEEDED,
+        RPCStatusCode.RESOURCE_EXHAUSTED,
+        RPCStatusCode.ABORTED,
+    }
+    last_error: Exception | None = None
     for attempt in range(max_retries):
         try:
             handle = client.get_workflow_handle(workflow_id)
             await handle.cancel()
             logger.info(f"Cancelled workflow: {workflow_id}")
             return True
-        except Exception as e:
+        except RPCError as e:
             last_error = e
-            error_msg = str(e).lower()
-            # Transient errors worth retrying
-            # TODO: Adding raw strings for now. Need to find better and reliable mechanisms
-            is_transient = any(
-                s in error_msg
-                for s in ["timeout", "h2 protocol", "connection reset", "unavailable"]
-            )
+            is_transient = e.status in retryable_statuses
             if is_transient and attempt < max_retries - 1:
                 wait = (attempt + 1) * 2  # 2s, 4s
                 logger.warning(
@@ -321,6 +325,12 @@ async def _cancel_with_retries(client, workflow_id: str, max_retries: int = 3) -
                 continue
             # Non-transient or final attempt
             logger.warning(f"Could not cancel workflow {workflow_id}: {e}")
+            return False
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                "workflow_cancel_failed", workflow_id=workflow_id, error=str(e)
+            )
             return False
 
     logger.warning(
@@ -590,3 +600,145 @@ def rerun_evaluations_only(
         workspace_id=workspace_id,
         eval_only=True,
     )
+
+
+def start_hosted_harness_gateway_workflow(
+    job_id: str,
+    endpoint_base_url: str,
+    max_infrastructure_attempts: int,
+    initial_backoff_seconds: float,
+    max_backoff_seconds: float,
+) -> str:
+    return async_to_sync(_start_hosted_harness_gateway_workflow_async)(
+        job_id,
+        endpoint_base_url,
+        max_infrastructure_attempts,
+        initial_backoff_seconds,
+        max_backoff_seconds,
+    )
+
+
+async def _start_hosted_harness_gateway_workflow_async(
+    job_id: str,
+    endpoint_base_url: str,
+    max_infrastructure_attempts: int,
+    initial_backoff_seconds: float,
+    max_backoff_seconds: float,
+) -> str:
+    from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+
+    from simulate.temporal.types.hosted_harness_gateway import (
+        HostedHarnessGatewayInput,
+    )
+    from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
+        HostedHarnessGatewayWorkflow,
+    )
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    workflow_id = f"hosted-harness-{job_id}"
+    await client.start_workflow(
+        HostedHarnessGatewayWorkflow.run,
+        HostedHarnessGatewayInput(
+            job_id=job_id,
+            endpoint_base_url=endpoint_base_url,
+            max_infrastructure_attempts=max_infrastructure_attempts,
+            initial_backoff_seconds=initial_backoff_seconds,
+            max_backoff_seconds=max_backoff_seconds,
+        ),
+        id=workflow_id,
+        task_queue=QUEUE_RUNNER,
+        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+    return workflow_id
+
+
+def cancel_hosted_harness_gateway_workflow(job_id: str) -> None:
+    async_to_sync(_cancel_hosted_harness_gateway_workflow_async)(job_id)
+
+
+async def _cancel_hosted_harness_gateway_workflow_async(job_id: str) -> None:
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    handle = client.get_workflow_handle(f"hosted-harness-{job_id}")
+    await handle.signal("cancel")
+
+
+def start_agent_fix_workflow(fix_run_id: str) -> str:
+    return async_to_sync(_start_agent_fix_workflow_async)(fix_run_id)
+
+
+async def _start_agent_fix_workflow_async(fix_run_id: str) -> str:
+    from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+
+    from simulate.temporal.types.agent_fix import AgentFixInput
+    from simulate.temporal.workflows.agent_fix_workflow import AgentFixWorkflow
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    workflow_id = f"agent-fix-{fix_run_id}"
+    await client.start_workflow(
+        AgentFixWorkflow.run,
+        AgentFixInput(fix_run_id=fix_run_id),
+        id=workflow_id,
+        task_queue=QUEUE_RUNNER,
+        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+    return workflow_id
+
+
+def cancel_agent_fix_workflow(fix_run_id: str) -> None:
+    async_to_sync(_cancel_agent_fix_workflow_async)(fix_run_id)
+
+
+async def _cancel_agent_fix_workflow_async(fix_run_id: str) -> None:
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    handle = client.get_workflow_handle(f"agent-fix-{fix_run_id}")
+    await handle.signal("cancel")
+
+
+def agent_fix_workflow_running(fix_run_id: str) -> bool:
+    return async_to_sync(_agent_fix_workflow_running_async)(fix_run_id)
+
+
+async def _agent_fix_workflow_running_async(fix_run_id: str) -> bool:
+    from temporalio.client import WorkflowExecutionStatus
+    from temporalio.service import RPCError, RPCStatusCode
+
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    handle = client.get_workflow_handle(f"agent-fix-{fix_run_id}")
+    try:
+        description = await handle.describe()
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            return False
+        raise
+    return description.status == WorkflowExecutionStatus.RUNNING
+
+
+def hosted_harness_gateway_workflow_running(job_id: str) -> bool:
+    return async_to_sync(_hosted_harness_gateway_workflow_running_async)(job_id)
+
+
+async def _hosted_harness_gateway_workflow_running_async(job_id: str) -> bool:
+    from temporalio.client import WorkflowExecutionStatus
+    from temporalio.service import RPCError, RPCStatusCode
+
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    handle = client.get_workflow_handle(f"hosted-harness-{job_id}")
+    try:
+        description = await handle.describe()
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            return False
+        raise
+    return description.status == WorkflowExecutionStatus.RUNNING

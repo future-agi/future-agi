@@ -3,6 +3,7 @@ import re
 from rest_framework import serializers
 
 from model_hub.models.choices import EvalTemplateType, OwnerChoices
+from tfc.utils.serializer_fields import JsonValueField
 
 
 class EvalTemplateSerializer(serializers.Serializer):
@@ -364,7 +365,7 @@ class TestEvalTemplateSerializer(serializers.Serializer):
     optional_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
-    variable_keys = serializers.JSONField(required=False, default=list)
+    variable_keys = JsonValueField(required=False, default=list)
     run_prompt_column = serializers.BooleanField(required=False, default=False)
     template_name = serializers.CharField(
         required=False, allow_blank=True, allow_null=True

@@ -9,6 +9,7 @@ import {
   Tab,
   Skeleton,
 } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useInfiniteQuery } from "@tanstack/react-query";
@@ -26,7 +27,9 @@ import { useParams } from "react-router";
 import { useTraceDrawerStore } from "./useTraceDrawerStore";
 import { formatMs } from "src/utils/utils";
 import InlineAnnotator from "src/components/InlineAnnotator";
+import { CaptureCoverageNotice } from "src/components/traceDetail/TraceDetailPanel";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
+import { formatCost } from "../LLMTracing/formatters";
 
 function a11yProps(index) {
   return {
@@ -76,6 +79,7 @@ const TracesDrawer = ({
   } = useInfiniteQuery({
     queryKey: [
       "traceSession",
+      "capture-coverage-v1",
       activeSessionId,
       userIdForUserMode,
       currentWorkspaceId,
@@ -130,6 +134,8 @@ const TracesDrawer = ({
 
   const sessionMetadata =
     _traceDetail?.pages[0]?.data?.result?.session_metadata;
+  const captureCoverage =
+    _traceDetail?.pages[0]?.data?.result?.capture_coverage;
   const traceDetail =
     _traceDetail?.pages?.reduce((acc, page) => {
       logger.debug({ page });
@@ -164,6 +170,8 @@ const TracesDrawer = ({
   const isNextLoading = isNavigationLoading && navigationDirection === "next";
   const isPrevLoading = isNavigationLoading && navigationDirection === "prev";
 
+  const covered = useDrawerCovered(open);
+
   React.useEffect(() => {
     if (!isFetching && navigationDirection) {
       setNavigationDirection(null);
@@ -177,6 +185,7 @@ const TracesDrawer = ({
       onClose={handleClose}
       BackdropProps={{ invisible: true }}
       sx={{
+        ...coveredDrawerSx(covered),
         width: "97.5vw",
         flexShrink: 0,
         "& .MuiDrawer-paper": {
@@ -259,20 +268,14 @@ const TracesDrawer = ({
                         : "N/A"}
                     </Typography>
                   }
-                  icon={<Iconify icon="radix-icons:clock" width={14} />}
+                  icon={<Iconify icon="solar:clock-circle-linear" width={14} />}
                   sx={{
                     border: "1px solid",
                     borderColor: "divider",
                     backgroundColor: "background.default",
                     color: "text.secondary",
-                    height: "25px",
-                    paddingX: 0.5,
-                    borderRadius: "8px",
                     "& .MuiChip-icon": {
-                      color:
-                        theme.palette.mode === "light"
-                          ? "text.primary"
-                          : "text.secondary",
+                      color: "text.secondary",
                     },
                     "&:hover": {
                       backgroundColor: "background.paper",
@@ -287,10 +290,10 @@ const TracesDrawer = ({
                       sx={{ color: "text.primary" }}
                       fontWeight={"fontWeightRegular"}
                     >
-                      Total Cost:{" "}
-                      {sessionMetadata?.total_cost
-                        ? `${sessionMetadata.total_cost}`
-                        : "N/A"}
+                      {captureCoverage ? "Observed Cost: " : "Total Cost: "}
+                      {sessionMetadata?.total_cost == null
+                        ? "N/A"
+                        : formatCost(sessionMetadata.total_cost)}
                     </Typography>
                   }
                   icon={
@@ -308,9 +311,6 @@ const TracesDrawer = ({
                     borderColor: "divider",
                     backgroundColor: "background.default",
                     color: "text.secondary",
-                    height: "25px",
-                    paddingX: 0.5,
-                    borderRadius: "8px",
                     "& .MuiChip-icon": {
                       filter:
                         theme.palette.mode === "light"
@@ -341,9 +341,6 @@ const TracesDrawer = ({
                     borderColor: "divider",
                     backgroundColor: "background.default",
                     color: "text.secondary",
-                    height: "25px",
-                    paddingX: 0.5,
-                    borderRadius: "8px",
                     "&:hover": {
                       backgroundColor: "background.paper",
                       borderColor: "divider",
@@ -371,9 +368,6 @@ const TracesDrawer = ({
                     borderColor: "divider",
                     backgroundColor: "background.default",
                     color: "text.secondary",
-                    height: "25px",
-                    paddingX: 0.5,
-                    borderRadius: "8px",
                     "&:hover": {
                       backgroundColor: "background.paper",
                       borderColor: "divider",
@@ -391,20 +385,14 @@ const TracesDrawer = ({
                         User ID: {sessionMetadata.user_id}
                       </Typography>
                     }
-                    icon={<Iconify icon="mdi:account-outline" width={14} />}
+                    icon={<Iconify icon="solar:user-linear" width={14} />}
                     sx={{
                       border: "1px solid",
                       borderColor: "divider",
                       backgroundColor: "background.default",
                       color: "text.secondary",
-                      height: "25px",
-                      paddingX: 0.5,
-                      borderRadius: "8px",
                       "& .MuiChip-icon": {
-                        color:
-                          theme.palette.mode === "light"
-                            ? "text.primary"
-                            : "text.secondary",
+                        color: "text.secondary",
                       },
                       "&:hover": {
                         backgroundColor: "background.paper",
@@ -416,6 +404,7 @@ const TracesDrawer = ({
               </>
             )}
           </Box>
+          <CaptureCoverageNotice coverage={captureCoverage} />
           <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
             <Tabs
               value={activeTab}
@@ -423,15 +412,7 @@ const TracesDrawer = ({
               aria-label="session drawer tabs"
               textColor="primary"
               indicatorColor="primary"
-              sx={{
-                typography: "s2",
-                "& .Mui-selected": {
-                  color: "primary.main",
-                  fontWeight: "fontWeightSemiBold",
-                },
-                "& .MuiTabs-indicator": {
-                  backgroundColor: "primary.main",
-                },
+              sx={{ boxShadow: "none",
                 "& .MuiTab-root": {
                   paddingX: 1.75,
                 },
@@ -440,11 +421,7 @@ const TracesDrawer = ({
               <Tab
                 icon={
                   <SvgColor
-                    sx={{
-                      bgcolor: "primary.main",
-                      height: "16px",
-                      width: "16px",
-                    }}
+                    sx={{ width: "16px" }}
                     src={"/assets/icons/ic_message.svg"}
                   />
                 }
@@ -453,13 +430,7 @@ const TracesDrawer = ({
                 {...a11yProps(0)}
               />
               <Tab
-                icon={
-                  <Iconify
-                    icon="solar:chart-square-bold"
-                    width={16}
-                    sx={{ color: "primary.main" }}
-                  />
-                }
+                icon={<Iconify icon="solar:chart-square-bold" width={16} />}
                 iconPosition="start"
                 label="Evals"
                 {...a11yProps(1)}

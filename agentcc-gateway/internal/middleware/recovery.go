@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"bufio"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime"
 
@@ -34,6 +36,13 @@ func (w *writerSentinel) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack delegates to the underlying ResponseWriter so WebSocket handlers can take over the
+// connection; gorilla/websocket asserts http.Hijacker directly rather than unwrapping.
+func (w *writerSentinel) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.headersSent = true
+	return http.NewResponseController(w.ResponseWriter).Hijack()
 }
 
 // Recovery wraps a handler with panic recovery.

@@ -5,9 +5,9 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from clickhouse_driver import Client
 from django.test import override_settings
 
+from conftest import _ch_test_native_client, _ch_test_native_port
 from tracer.services.clickhouse import eval_logger_table as eval_logger_table_config
 from tracer.services.clickhouse import query_service as query_service_config
 from tracer.services.clickhouse.client import ClickHouseClient
@@ -18,17 +18,8 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture(scope="module")
 def ch_client():
-    host = os.environ.get("CH25_HOST", "127.0.0.1")
-    port = int(os.environ.get("CH25_NATIVE_PORT", "19000"))
-    client = Client(host=host, port=port, connect_timeout=3)
-    try:
-        client.execute("SELECT 1")
-    except Exception as exc:
-        pytest.skip(f"CH25 unavailable on {host}:{port}: {exc!r}")
-    try:
+    with _ch_test_native_client() as client:
         yield client
-    finally:
-        client.disconnect_connection()
 
 
 @pytest.fixture()
@@ -97,7 +88,7 @@ def _service() -> AnalyticsQueryService:
     service = AnalyticsQueryService()
     service._ch_client = ClickHouseClient(
         host=os.environ.get("CH25_HOST", "127.0.0.1"),
-        port=int(os.environ.get("CH25_NATIVE_PORT", "19000")),
+        port=_ch_test_native_port().port,
         database="default",
     )
     return service

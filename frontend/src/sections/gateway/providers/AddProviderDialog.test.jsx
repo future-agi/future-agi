@@ -1,17 +1,43 @@
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
-import { parseTimeoutSeconds } from "./utils";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  userEvent,
+  waitFor,
+} from "src/utils/test-utils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  DEFAULT_API_PATH_PREFIX,
+  apiFormatLabel,
+  getApiPathPrefix,
+  isSystemOneFormat,
+  normalizeApiFormat,
+  parseTimeoutSeconds,
+  withApiPathPrefix,
+} from "./utils";
+import {
+  DECISIONS_ONLY_TAG,
+  RESPONSES_ONLY_TAG,
+  SYSTEM_ONE_MODELS_HELP,
+} from "./modelCompatibility";
 import AddProviderDialog from "./AddProviderDialog";
 
-const { updateMutate, fetchMutate, fetchState } = vi.hoisted(() => ({
-  updateMutate: vi.fn(),
-  fetchMutate: vi.fn(),
-  // Mutable so a test can render the dialog mid-fetch.
-  fetchState: { isPending: false },
-}));
+const { updateMutate, fetchMutate, fetchState, refreshState, snackbars } =
+  vi.hoisted(() => ({
+    updateMutate: vi.fn(),
+    fetchMutate: vi.fn(),
+    // Mutable so a test can render the dialog mid-fetch.
+    fetchState: { isPending: false },
+    // Whether the post-save config re-read failed.
+    refreshState: { failed: false },
+    snackbars: [],
+  }));
 
 vi.mock("./hooks/useGatewayConfig", () => ({
+  gatewayConfigRefreshFailed: () => refreshState.failed,
   useUpdateProvider: () => ({
     mutate: updateMutate,
     isPending: false,
@@ -24,6 +50,10 @@ vi.mock("./hooks/useGatewayConfig", () => ({
   }),
 }));
 
+vi.mock("notistack", () => ({
+  enqueueSnackbar: (message, options) => snackbars.push({ message, options }),
+}));
+
 // Responses land on a later task, as a real request does; a synchronous mock
 // closes the window the dialog's ordering bugs live in.
 const deferred =
@@ -31,17 +61,27 @@ const deferred =
   (...args) =>
     setTimeout(() => impl(...args), 0);
 
+// The dialog reads the query cache to tell a clean save from one whose
+// follow-up re-read failed, so it needs a client in scope.
+const withClient = (ui) => (
+  <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>
+);
+
 const renderCreateDialog = () =>
-  render(<AddProviderDialog open onClose={vi.fn()} gatewayId="gw-1" />);
+  render(
+    withClient(<AddProviderDialog open onClose={vi.fn()} gatewayId="gw-1" />),
+  );
 
 const renderEditDialogFor = (name, config) =>
   render(
-    <AddProviderDialog
-      open
-      onClose={vi.fn()}
-      gatewayId="gw-1"
-      provider={{ name, config }}
-    />,
+    withClient(
+      <AddProviderDialog
+        open
+        onClose={vi.fn()}
+        gatewayId="gw-1"
+        provider={{ name, config }}
+      />,
+    ),
   );
 
 const renderEditDialog = (config) => renderEditDialogFor("openai", config);
@@ -62,6 +102,8 @@ describe("AddProviderDialog validation", () => {
   beforeEach(() => {
     updateMutate.mockReset();
     fetchState.isPending = false;
+    refreshState.failed = false;
+    snackbars.length = 0;
     // The dialog fetches the provider's models when it opens in edit mode.
     fetchMutate.mockReset();
     fetchMutate.mockImplementation(
@@ -69,6 +111,45 @@ describe("AddProviderDialog validation", () => {
         opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] }),
       ),
     );
+  });
+
+  it("offers Vertex with pasted service-account JSON, without an API key or model fetch", async () => {
+    renderCreateDialog();
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(
+      screen.getByRole("option", { name: "Google Vertex AI" }),
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Google Cloud project ID/), {
+      target: { value: "demo-project" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Service-account JSON/), {
+      target: {
+        value: JSON.stringify({
+          type: "service_account",
+          project_id: "demo-project",
+          client_email: "demo@example.iam.gserviceaccount.com",
+          private_key: "test-key",
+          token_uri: "https://oauth2.googleapis.com/token",
+        }),
+      },
+    });
+    const modelInput = screen.getByPlaceholderText(/model IDs/i);
+    await userEvent.type(modelInput, "vertex_ai/gemini-3.7-flash{enter}");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect(fetchMutate).not.toHaveBeenCalled();
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    const payload = updateMutate.mock.calls[0][0];
+    expect(payload.name).toBe("vertex");
+    expect(payload.config.api_format).toBe("gemini");
+    expect(payload.config.gcp_project).toBe("demo-project");
+    expect(payload.config.gcp_location).toBe("us-central1");
+    expect(payload.config.models).toContain("vertex_ai/gemini-3.7-flash");
+    expect(payload.config.service_account_json).toContain(
+      '"type":"service_account"',
+    );
+    expect(payload.config).not.toHaveProperty("api_key");
   });
 
   it("saves an edited provider whose stored timeout came back as a number", async () => {
@@ -79,6 +160,51 @@ describe("AddProviderDialog validation", () => {
 
     expect(updateMutate).toHaveBeenCalledTimes(1);
     expect(updateMutate.mock.calls[0][0].config.default_timeout).toBe(30);
+  });
+
+  const saveEditedProvider = async () => {
+    renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    const [, callbacks] = updateMutate.mock.calls[0];
+    await act(async () => callbacks.onSuccess?.({}));
+  };
+
+  it("reports a clean save as a success", async () => {
+    refreshState.failed = false;
+
+    await saveEditedProvider();
+
+    expect(snackbars).toEqual([
+      { message: 'Provider "openai" updated', options: { variant: "success" } },
+    ]);
+  });
+
+  it("names the half that failed when only the config re-read failed", async () => {
+    // The POST landed; the follow-up read did not. Reporting this as a failed
+    // save is what made users distrust the screen.
+    refreshState.failed = true;
+
+    await saveEditedProvider();
+
+    expect(snackbars).toHaveLength(1);
+    expect(snackbars[0].options.variant).toBe("warning");
+    expect(snackbars[0].message).toBe(
+      'Provider "openai" updated, but the provider list could not be reloaded — refresh the page to see it.',
+    );
+  });
+
+  it("shows the server's reason when the save itself fails", async () => {
+    renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    const [, callbacks] = updateMutate.mock.calls[0];
+
+    await act(async () =>
+      callbacks.onError?.({ statusCode: 400, result: "Unknown provider name" }),
+    );
+
+    expect(snackbars).toEqual([
+      { message: "Unknown provider name", options: { variant: "error" } },
+    ]);
   });
 
   it("blocks Save, and says why, when no model is selected", async () => {
@@ -226,6 +352,7 @@ describe("AddProviderDialog validation", () => {
       baseUrl: "https://api.openai.com/v1",
       apiKey: "sk-good",
       apiFormat: "openai",
+      apiPathPrefix: "/v1",
     });
 
     // Only once it lists models does Save open up.
@@ -486,5 +613,801 @@ describe("AddProviderDialog validation", () => {
 
     const save = await screen.findByRole("button", { name: "Save Changes" });
     expect(save.disabled).toBe(false);
+  });
+});
+
+describe("getApiPathPrefix", () => {
+  it("preserves an explicitly empty prefix", () => {
+    expect(getApiPathPrefix({ api_path_prefix: "" })).toBe("");
+  });
+
+  it("uses the default for providers saved before the field existed", () => {
+    expect(getApiPathPrefix({})).toBe(DEFAULT_API_PATH_PREFIX);
+  });
+
+  it("includes an explicit empty prefix in the saved OpenAI config", () => {
+    expect(
+      withApiPathPrefix(
+        { base_url: "https://api.perplexity.ai" },
+        "openai",
+        "",
+      ),
+    ).toEqual({
+      base_url: "https://api.perplexity.ai",
+      api_path_prefix: "",
+    });
+  });
+
+  it("does not add a path prefix for non-OpenAI formats", () => {
+    // A non-empty prefix, so the branch has a real value to drop rather than a
+    // blank that would look absent either way.
+    const config = { base_url: "https://api.anthropic.com" };
+    expect(withApiPathPrefix(config, "anthropic", "/v1")).toEqual(config);
+    expect(withApiPathPrefix(config, "anthropic", "/v1")).not.toHaveProperty(
+      "api_path_prefix",
+    );
+  });
+});
+
+describe("AddProviderDialog model discovery", () => {
+  beforeEach(() => {
+    updateMutate.mockReset();
+    fetchState.isPending = false;
+    fetchMutate.mockReset();
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["sonar"] })),
+    );
+  });
+
+  it("lists models against the stored provider's own path prefix", async () => {
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/openai/v1",
+      models: ["sonar"],
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    expect(fetchMutate.mock.calls[0][0]).toMatchObject({
+      providerName: "perplexity",
+      apiFormat: "openai",
+      apiPathPrefix: "/openai/v1",
+    });
+  });
+
+  it("lists again when the prefix is edited, with the stored key untouched", async () => {
+    // The debounced key effect returns early on a blank key in edit mode, so
+    // without its own effect this change would never reach the provider.
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/v1",
+      models: ["sonar"],
+    });
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(1));
+
+    const prefix = screen.getByLabelText("API Path Prefix");
+    await userEvent.clear(prefix);
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(2), {
+      timeout: 3000,
+    });
+    expect(fetchMutate.mock.calls[1][0]).toMatchObject({
+      providerName: "perplexity",
+      apiPathPrefix: "",
+    });
+    // A blank key still means "keep the stored one", so none is sent.
+    expect(fetchMutate.mock.calls[1][0].apiKey).toBeUndefined();
+  });
+
+  it("does not list again when the dialog merely hydrates the prefix", async () => {
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/openai/v1",
+      models: ["sonar"],
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 900));
+    expect(fetchMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("carries the prefix on a typed-key fetch", async () => {
+    renderCreateDialog();
+
+    const prefix = screen.getByLabelText("API Path Prefix");
+    await userEvent.clear(prefix);
+    await userEvent.type(prefix, "/openai/v1");
+    fireEvent.change(screen.getByLabelText(/^API Key/), {
+      target: { value: "sk-test" },
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled(), {
+      timeout: 3000,
+    });
+    const last = fetchMutate.mock.calls[fetchMutate.mock.calls.length - 1][0];
+    expect(last).toMatchObject({
+      apiKey: "sk-test",
+      apiFormat: "openai",
+      apiPathPrefix: "/openai/v1",
+    });
+  });
+
+  it("tags a catalogue model but never a hand-typed one the catalogue didn't list", async () => {
+    // Perplexity's catalogue never lists `sonar`/`sonar-pro` — those are
+    // typed by hand for chat completions — but it does list aggregator IDs
+    // like `openai/gpt-4o`, which must still get tagged.
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({ models: ["openai/gpt-4o"] }),
+      ),
+    );
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/v1",
+      models: ["sonar", "openai/gpt-4o"],
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getAllByText(RESPONSES_ONLY_TAG).length).toBe(1),
+    );
+
+    const sonarChip = screen
+      .getByText("sonar")
+      .closest("li, [class*='MuiChip']");
+    expect(sonarChip?.textContent).not.toContain(RESPONSES_ONLY_TAG);
+
+    const catalogueChip = screen
+      .getByText("openai/gpt-4o")
+      .closest("li, [class*='MuiChip']");
+    expect(catalogueChip?.textContent).toContain(RESPONSES_ONLY_TAG);
+  });
+});
+
+describe("API format labels", () => {
+  it("names System One, and its typesafe alias, for what it is", () => {
+    expect(apiFormatLabel("systemone")).toBe("System One (decision models)");
+    expect(apiFormatLabel("typesafe")).toBe("System One (decision models)");
+  });
+
+  it("leaves the chat formats as their IDs", () => {
+    expect(apiFormatLabel("openai")).toBe("openai");
+    expect(apiFormatLabel("anthropic")).toBe("anthropic");
+  });
+
+  it("passes an empty format through so the caller's placeholder shows", () => {
+    expect(apiFormatLabel(undefined)).toBeUndefined();
+    expect(apiFormatLabel("")).toBe("");
+  });
+
+  it("maps only the typesafe alias onto System One", () => {
+    expect(normalizeApiFormat("typesafe")).toBe("systemone");
+    expect(normalizeApiFormat("openai")).toBe("openai");
+    expect(isSystemOneFormat("typesafe")).toBe(true);
+    expect(isSystemOneFormat("systemone")).toBe(true);
+    expect(isSystemOneFormat("openai")).toBe(false);
+    expect(isSystemOneFormat(undefined)).toBe(false);
+  });
+
+  it("never adds a path prefix to a System One config", () => {
+    // The dialect row owns the leaf path; the prefix stays the default.
+    const config = { base_url: "https://api.typesafe.ai" };
+    expect(withApiPathPrefix(config, "systemone", "/v1")).toEqual(config);
+  });
+});
+
+describe("AddProviderDialog System One presets", () => {
+  beforeEach(() => {
+    updateMutate.mockReset();
+    fetchState.isPending = false;
+    refreshState.failed = false;
+    snackbars.length = 0;
+    fetchMutate.mockReset();
+    // Would list chat models if anything asked; nothing should.
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["gpt-4o"] })),
+    );
+  });
+
+  // Longer than the dialog's 600ms model-fetch debounce.
+  const pastDebounce = () =>
+    act(() => new Promise((resolve) => setTimeout(resolve, 900)));
+
+  const pickPreset = async (label) => {
+    await userEvent.click(screen.getByRole("combobox", { name: /^Provider/ }));
+    await userEvent.click(screen.getByRole("option", { name: label }));
+  };
+
+  const apiFormatField = () =>
+    screen.getByRole("combobox", { name: /^API Format/ });
+
+  const chipLabels = () =>
+    Array.from(document.querySelectorAll(".MuiChip-label")).map(
+      (el) => el.textContent,
+    );
+
+  it.each([
+    {
+      label: "TypeSafe",
+      name: "typesafe",
+      baseUrl: "https://api.typesafe.ai",
+      models: ["jev-1.13.0", "jev-latest"],
+    },
+    {
+      label: "Perplexity Decider",
+      name: "perplexity-decider",
+      baseUrl: "https://api.perplexity.ai",
+      models: ["pplx-decider-v1.1-27b", "pplx-decider-v1-27b"],
+    },
+  ])(
+    "$label saves System One with its endpoint and built-in models, never probing",
+    async ({ label, name, baseUrl, models }) => {
+      renderCreateDialog();
+      await pickPreset(label);
+
+      expect(screen.getByLabelText(/^Base URL/).value).toBe(baseUrl);
+      expect(apiFormatField().textContent).toBe("System One (decision models)");
+      expect(apiFormatField().getAttribute("aria-disabled")).toBe("true");
+      // System One has no path prefix to set.
+      expect(screen.queryByLabelText("API Path Prefix")).toBeNull();
+      // Offered and already selected: there is no listing to wait for.
+      expect(chipLabels()).toEqual(models);
+      expect(screen.getByText(SYSTEM_ONE_MODELS_HELP)).toBeTruthy();
+
+      await userEvent.type(screen.getByLabelText(/^API Key/), "key-123");
+      await pastDebounce();
+      expect(fetchMutate).not.toHaveBeenCalled();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Add Provider" }),
+      );
+      expect(fetchMutate).not.toHaveBeenCalled();
+      expect(updateMutate).toHaveBeenCalledTimes(1);
+      expect(updateMutate.mock.calls[0][0]).toEqual({
+        gatewayId: "gw-1",
+        name,
+        config: {
+          base_url: baseUrl,
+          api_format: "systemone",
+          api_key: "key-123",
+          models,
+        },
+      });
+    },
+  );
+
+  it("does not read the Perplexity Decider as Perplexity's Responses catalogue", async () => {
+    // Same host as the chat API, whose catalogue is tagged Responses-only.
+    renderCreateDialog();
+    await pickPreset("Perplexity Decider");
+
+    expect(screen.queryByText(RESPONSES_ONLY_TAG)).toBeNull();
+    // So Select All still covers its models.
+    expect(screen.getByRole("button", { name: "Deselect All" })).toBeTruthy();
+  });
+
+  it("requires a base URL for a custom System One endpoint", async () => {
+    renderCreateDialog();
+    await pickPreset("Custom System One endpoint");
+
+    const baseUrl = screen.getByLabelText(/^Base URL/);
+    expect(baseUrl.value).toBe("");
+    expect(baseUrl.required).toBe(true);
+    expect(apiFormatField().textContent).toBe("System One (decision models)");
+    expect(
+      screen.getByText(/the gateway posts to this URL plus \/v1\/systemone/),
+    ).toBeTruthy();
+    // No built-in list for an endpoint we know nothing about.
+    expect(chipLabels()).toEqual([]);
+
+    await userEvent.type(screen.getByLabelText(/^API Key/), "key-123");
+    await userEvent.type(
+      screen.getByPlaceholderText(/comma-separated model IDs/i),
+      "strands-decider{enter}",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect(updateMutate).not.toHaveBeenCalled();
+    expect(
+      screen.getAllByText(/This provider has no preset endpoint/).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("rejects a custom System One base URL that is not http(s)", async () => {
+    renderCreateDialog();
+    await pickPreset("Custom System One endpoint");
+
+    await userEvent.type(
+      screen.getByLabelText(/^Base URL/),
+      "ftp://decider.example.com",
+    );
+    await userEvent.type(screen.getByLabelText(/^API Key/), "key-123");
+    await userEvent.type(
+      screen.getByPlaceholderText(/comma-separated model IDs/i),
+      "strands-decider{enter}",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect(updateMutate).not.toHaveBeenCalled();
+    expect(
+      screen.getAllByText(/Base URL must start with http:\/\/ or https:\/\//)
+        .length,
+    ).toBeGreaterThan(0);
+  });
+
+  it.each(["", "   "])(
+    "saves a keyless custom System One endpoint with clear optional-key help (key %j)",
+    async (apiKey) => {
+      renderCreateDialog();
+      await pickPreset("Custom System One endpoint");
+      fireEvent.change(screen.getByLabelText(/^Base URL/), {
+        target: { value: "https://decider.example.com" },
+      });
+      fireEvent.change(screen.getByLabelText(/^API Key/), {
+        target: { value: apiKey },
+      });
+      expect(screen.getByLabelText(/^API Key/).required).toBe(false);
+      expect(
+        screen.getByText(/Optional for a self-hosted System One endpoint/),
+      ).toBeTruthy();
+      await userEvent.type(
+        screen.getByPlaceholderText(/comma-separated model IDs/i),
+        "strands-decider{enter}",
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Add Provider" }),
+      );
+
+      expect(updateMutate).toHaveBeenCalledTimes(1);
+      expect(updateMutate.mock.calls[0][0]).toEqual({
+        gatewayId: "gw-1",
+        name: "custom-systemone",
+        config: {
+          base_url: "https://decider.example.com",
+          api_format: "systemone",
+          models: ["strands-decider"],
+        },
+      });
+      expect(fetchMutate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "",
+    "https://",
+    "https://bad host.invalid",
+    "https://decider.example.com:invalid",
+  ])("refuses a keyless endpoint with invalid Base URL %j", async (baseUrl) => {
+    renderCreateDialog();
+    await pickPreset("Custom System One endpoint");
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: baseUrl },
+    });
+    expect(screen.getByLabelText(/^API Key/).required).toBe(true);
+    await userEvent.type(
+      screen.getByPlaceholderText(/comma-separated model IDs/i),
+      "strands-decider{enter}",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    expect(updateMutate).not.toHaveBeenCalled();
+    expect(
+      screen.getByLabelText(/^Base URL/).getAttribute("aria-invalid"),
+    ).toBe("true");
+  });
+
+  it.each(["TypeSafe", "Perplexity Decider", "OpenAI"])(
+    "still requires an API key for %s",
+    async (label) => {
+      renderCreateDialog();
+      await pickPreset(label);
+      expect(screen.getByLabelText(/^API Key/).required).toBe(true);
+      if (label === "OpenAI") {
+        await userEvent.type(
+          screen.getByPlaceholderText(/type manually/i),
+          "gpt-4o{enter}",
+        );
+      }
+      await userEvent.click(
+        screen.getByRole("button", { name: "Add Provider" }),
+      );
+      expect(updateMutate).not.toHaveBeenCalled();
+      expect(screen.getAllByText("API key is required").length).toBeGreaterThan(
+        0,
+      );
+    },
+  );
+
+  it.each([
+    "https://API.TypeSafe.AI./v1",
+    "https://api.perplexity.ai",
+    "https://api.openai.com/v1",
+  ])(
+    "requires a key when a custom System One endpoint uses vendor URL %s",
+    async (baseUrl) => {
+      renderCreateDialog();
+      await pickPreset("Custom System One endpoint");
+      fireEvent.change(screen.getByLabelText(/^Base URL/), {
+        target: { value: baseUrl },
+      });
+      expect(screen.getByLabelText(/^API Key/).required).toBe(true);
+      expect(screen.queryByText(/Optional for a self-hosted/)).toBeNull();
+      await userEvent.type(
+        screen.getByPlaceholderText(/comma-separated model IDs/i),
+        "strands-decider{enter}",
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Add Provider" }),
+      );
+      expect(updateMutate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("resaves a keyless custom System One provider without adding a key", async () => {
+    renderEditDialogFor("custom-systemone", {
+      base_url: "https://decider.example.com",
+      api_format: "systemone",
+      models: ["strands-decider"],
+    });
+    expect(screen.getByText(/Optional for a self-hosted/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config).not.toHaveProperty("api_key");
+    expect(fetchMutate).not.toHaveBeenCalled();
+  });
+
+  it("saves a custom System One endpoint with the URL and typed model", async () => {
+    renderCreateDialog();
+    await pickPreset("Custom System One endpoint");
+
+    await userEvent.type(
+      screen.getByLabelText(/^Base URL/),
+      "https://decider.example.com",
+    );
+    await userEvent.type(screen.getByLabelText(/^API Key/), "key-123");
+    await pastDebounce();
+    await userEvent.type(
+      screen.getByPlaceholderText(/comma-separated model IDs/i),
+      "strands-decider{enter}",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect(fetchMutate).not.toHaveBeenCalled();
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    expect(updateMutate.mock.calls[0][0]).toMatchObject({
+      name: "custom-systemone",
+      config: {
+        base_url: "https://decider.example.com",
+        api_format: "systemone",
+        api_key: "key-123",
+        models: ["strands-decider"],
+      },
+    });
+    expect(updateMutate.mock.calls[0][0].config).not.toHaveProperty(
+      "api_path_prefix",
+    );
+  });
+
+  it("goes back to a chat format and an empty list when a chat preset is picked", async () => {
+    renderCreateDialog();
+    await pickPreset("TypeSafe");
+    await pickPreset("OpenAI");
+
+    expect(apiFormatField().textContent).toBe("openai");
+    expect(chipLabels()).toEqual([]);
+    expect(screen.getByLabelText(/^Base URL/).value).toBe(
+      "https://api.openai.com/v1",
+    );
+  });
+
+  it("does not offer System One for a chat preset", async () => {
+    renderCreateDialog();
+    await userEvent.click(apiFormatField());
+
+    const formats = screen.getAllByRole("option").map((o) => o.textContent);
+    expect(formats).toEqual(["openai", "anthropic"]);
+  });
+
+  it("opens a saved TypeSafe provider without listing models", async () => {
+    renderEditDialogFor("typesafe", {
+      base_url: "https://api.typesafe.ai",
+      api_format: "systemone",
+      models: ["jev-1.13.0"],
+    });
+    await pastDebounce();
+
+    expect(fetchMutate).not.toHaveBeenCalled();
+    expect(apiFormatField().textContent).toBe("System One (decision models)");
+    // The other built-in model is still on offer.
+    await userEvent.click(screen.getByRole("button", { name: "Select All" }));
+    expect(chipLabels()).toEqual(["jev-1.13.0", "jev-latest"]);
+
+    const save = screen.getByRole("button", { name: "Save Changes" });
+    expect(save.disabled).toBe(false);
+    await userEvent.click(save);
+    expect(updateMutate.mock.calls[0][0].config).toEqual({
+      base_url: "https://api.typesafe.ai",
+      api_format: "systemone",
+      models: ["jev-1.13.0", "jev-latest"],
+    });
+  });
+
+  it("saves the typesafe alias as System One", async () => {
+    renderEditDialogFor("typesafe", {
+      base_url: "https://api.typesafe.ai",
+      api_format: "typesafe",
+      models: ["jev-latest"],
+    });
+
+    expect(apiFormatField().textContent).toBe("System One (decision models)");
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config.api_format).toBe("systemone");
+    expect(fetchMutate).not.toHaveBeenCalled();
+  });
+
+  it("repairs a decision preset that was saved with a chat format", async () => {
+    // The admin API defaults api_format to openai, which would make TypeSafe a
+    // chat provider; the dialog must not show it as one, or probe it.
+    renderEditDialogFor("perplexity-decider", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      models: ["pplx-decider-v1.1-27b"],
+    });
+
+    expect(apiFormatField().textContent).toBe("System One (decision models)");
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config.api_format).toBe("systemone");
+    expect(fetchMutate).not.toHaveBeenCalled();
+  });
+
+  it("never probes a saved custom System One endpoint, even with a new key", async () => {
+    renderEditDialogFor("custom-systemone", {
+      base_url: "https://decider.example.com",
+      api_format: "systemone",
+      models: ["strands-decider"],
+    });
+
+    await userEvent.type(screen.getByLabelText(/^API Key/), "key-rotated");
+    await pastDebounce();
+
+    expect(fetchMutate).not.toHaveBeenCalled();
+    const save = screen.getByRole("button", { name: "Save Changes" });
+    expect(save.disabled).toBe(false);
+    await userEvent.click(save);
+    expect(updateMutate.mock.calls[0][0].config).toMatchObject({
+      api_format: "systemone",
+      api_key: "key-rotated",
+      models: ["strands-decider"],
+    });
+  });
+});
+
+describe("AddProviderDialog OpenAI decision models", () => {
+  beforeEach(() => {
+    updateMutate.mockReset();
+    fetchState.isPending = false;
+    fetchMutate.mockReset();
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] }),
+      ),
+    );
+  });
+
+  it("offers gpt-6-luna beside OpenAI's listing, tagged and out of Select All", async () => {
+    renderCreateDialog();
+
+    await userEvent.type(screen.getByLabelText(/^API Key/), "sk-good");
+    const input = await screen.findByPlaceholderText(/Select models/i);
+    // The count stays the listing's own.
+    expect(screen.getByText("(2 available)")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "Select All" }));
+    expect(
+      Array.from(document.querySelectorAll(".MuiChip-label")).map(
+        (el) => el.textContent,
+      ),
+    ).toEqual(["gpt-4o", "gpt-4o-mini"]);
+
+    await userEvent.click(input);
+    const luna = await screen.findByRole("option", { name: /gpt-6-luna/ });
+    expect(luna.textContent).toContain(DECISIONS_ONLY_TAG);
+    expect(
+      screen.getByRole("option", { name: /gpt-4o-mini/ }).textContent,
+    ).not.toContain(DECISIONS_ONLY_TAG);
+
+    await userEvent.click(luna);
+    // Closed first: with autoSelect, blurring an open list toggles the
+    // highlighted option again.
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    expect(updateMutate.mock.calls[0][0].config.models).toEqual([
+      "gpt-4o",
+      "gpt-4o-mini",
+      "gpt-6-luna",
+    ]);
+  });
+
+  it("does not let gpt-6-luna stand in for a listing that came back empty", async () => {
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({
+          models: [],
+          error: "Failed to fetch models from provider",
+        }),
+      ),
+    );
+    renderCreateDialog();
+
+    await userEvent.type(screen.getByLabelText(/^API Key/), "sk-bad");
+    await screen.findByText(/check that it is valid for this provider/i);
+
+    await userEvent.click(screen.getByPlaceholderText(/type manually/i));
+    expect(screen.queryByRole("option", { name: /gpt-6-luna/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Add Provider" }).disabled).toBe(
+      true,
+    );
+  });
+
+  it("keeps the gate for a rejected key after gpt-6-luna was picked", async () => {
+    // Picked from the list, so it is not a hand-typed override.
+    let reject = false;
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.(
+          reject
+            ? { models: [], error: "Failed to fetch models from provider" }
+            : { models: ["gpt-4o"] },
+        ),
+      ),
+    );
+    renderCreateDialog();
+
+    await userEvent.type(screen.getByLabelText(/^API Key/), "sk-good");
+    const input = await screen.findByPlaceholderText(/Select models/i);
+    await userEvent.click(input);
+    await userEvent.click(
+      await screen.findByRole("option", { name: /gpt-6-luna/ }),
+    );
+    await userEvent.keyboard("{Escape}");
+    // Selected, with the tag carried into its chip.
+    expect(
+      Array.from(document.querySelectorAll(".MuiChip-label")).map(
+        (el) => el.textContent,
+      ),
+    ).toEqual([`gpt-6-luna${DECISIONS_ONLY_TAG}`]);
+
+    reject = true;
+    await userEvent.clear(screen.getByLabelText(/^API Key/));
+    await userEvent.type(screen.getByLabelText(/^API Key/), "sk-rejected");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add Provider" }).disabled,
+      ).toBe(true),
+    );
+    expect(updateMutate).not.toHaveBeenCalled();
+  });
+});
+
+describe("AddProviderDialog provider names", () => {
+  beforeEach(() => {
+    updateMutate.mockReset();
+    fetchState.isPending = false;
+    refreshState.failed = false;
+    snackbars.length = 0;
+    fetchMutate.mockReset();
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["m-1"] })),
+    );
+  });
+
+  const renderWithNames = (existingNames) =>
+    render(
+      withClient(
+        <AddProviderDialog
+          open
+          onClose={vi.fn()}
+          gatewayId="gw-1"
+          existingNames={existingNames}
+        />,
+      ),
+    );
+
+  const addModel = async (model) => {
+    await userEvent.type(
+      await screen.findByPlaceholderText(/Select models|type manually/i),
+      `${model}{enter}`,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add Provider" }).disabled,
+      ).toBe(false),
+    );
+  };
+
+  const fillCustom = async (customName) => {
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(
+      screen.getByRole("option", { name: "Custom / Self-hosted" }),
+    );
+    const nameField = screen.getByLabelText(/^Name/);
+    await userEvent.clear(nameField);
+    if (customName) await userEvent.type(nameField, customName);
+    await userEvent.type(
+      screen.getByLabelText(/Base URL/),
+      "https://api.perplexity.ai",
+    );
+    await userEvent.type(screen.getByLabelText(/API Key/i), "pplx-test");
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    await addModel("sonar");
+  };
+
+  it("saves a custom provider under the name typed, next to an existing one", async () => {
+    // The second Perplexity API needs its own provider; it used to replace
+    // the first, because every custom provider was saved as "custom".
+    renderWithNames(["custom", "openai"]);
+    await fillCustom("perplexity-sonar");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    expect(updateMutate.mock.calls[0][0].name).toBe("perplexity-sonar");
+    expect(updateMutate.mock.calls[0][0].config.base_url).toBe(
+      "https://api.perplexity.ai",
+    );
+  });
+
+  it("treats an object method name as an ordinary name", async () => {
+    renderWithNames([]);
+    await fillCustom("constructor");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    expect(updateMutate.mock.calls[0][0].name).toBe("constructor");
+  });
+
+  it("keeps the old name for a first custom provider", async () => {
+    renderWithNames(["openai"]);
+    await fillCustom("custom");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    expect(updateMutate.mock.calls[0][0].name).toBe("custom");
+  });
+
+  it.each([
+    ["custom", /A provider named "custom" already exists/],
+    ["openai", /"openai" is a built-in provider/],
+    ["Perplexity Sonar", /Use lowercase letters, digits, - and _/],
+    ["", /Name is required/],
+  ])("refuses the name %j", async (customName, message) => {
+    renderWithNames(["custom"]);
+    await fillCustom(customName);
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect((await screen.findAllByText(message)).length).toBeGreaterThan(0);
+    expect(updateMutate).not.toHaveBeenCalled();
+  });
+
+  it("offers Perplexity on its Agent API endpoint", async () => {
+    renderWithNames([]);
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(screen.getByRole("option", { name: "Perplexity" }));
+
+    expect(screen.queryByLabelText(/^Name/)).toBeNull();
+    expect(screen.getByLabelText(/Base URL/).value).toBe(
+      "https://api.perplexity.ai/v1",
+    );
+    await userEvent.type(screen.getByLabelText(/API Key/i), "pplx-test");
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    await addModel("perplexity/sonar");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    await waitFor(() => expect(updateMutate).toHaveBeenCalledTimes(1));
+    const payload = updateMutate.mock.calls[0][0];
+    expect(payload.name).toBe("perplexity");
+    expect(payload.config.base_url).toBe("https://api.perplexity.ai/v1");
+    expect(payload.config.api_path_prefix).toBe("/v1");
   });
 });

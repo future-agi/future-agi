@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from clickhouse_driver import Client
 
+from conftest import _ch_test_native_client
 from tracer.services.clickhouse.v2.query_builders.filters import rewrite_v1_sql_to_v2
 from tracer.services.clickhouse.v2.query_builders.session_list import (
     SessionListQueryBuilderV2,
@@ -19,11 +18,6 @@ from tracer.services.clickhouse.v2.query_builders.span_list import (
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
 )
-
-CH_HOST = os.environ.get("CH25_HOST", "127.0.0.1")
-CH_NATIVE_PORT = int(os.environ.get("CH25_NATIVE_PORT", "19000"))
-CH_USER = os.environ.get("CH25_USER", "default")
-CH_PASSWORD = os.environ.get("CH25_PASSWORD", "")
 
 PROJECT_ID = "00000000-0000-4000-8000-000000000601"
 TRACE_ID = "00000000-0000-4000-8000-000000000602"
@@ -128,18 +122,8 @@ def test_v2_rewrite_preserves_only_proven_score_alias_cdc_columns() -> None:
 
 @pytest.fixture(scope="module")
 def ch_client():
-    client = Client(
-        host=CH_HOST,
-        port=CH_NATIVE_PORT,
-        user=CH_USER,
-        password=CH_PASSWORD,
-        connect_timeout=3,
-    )
-    try:
-        client.execute("SELECT version()")
-    except Exception as exc:
-        pytest.skip(f"CH25 not reachable on {CH_HOST}:{CH_NATIVE_PORT} ({exc!r})")
-    return client
+    with _ch_test_native_client() as client:
+        yield client
 
 
 @pytest.fixture()
@@ -184,6 +168,7 @@ def score_filter_tables(ch_client):
         CREATE TABLE {scores_table} (
             id UUID,
             trace_id Nullable(UUID),
+            trace_session_id Nullable(UUID),
             observation_span_id Nullable(String),
             tracer_project_id UUID,
             label_id UUID,
@@ -334,8 +319,12 @@ def _surface_query(
         params.update(relational_params)
         assert len(predicates) == 1
         sql = f"""
-        WITH resolved_root_sessions AS (
-            SELECT trace_id, trace_session_id AS session_id
+        WITH ts_survivor_map AS (
+            SELECT toUUID('00000000-0000-0000-0000-000000000000') AS any_id,
+                   any_id AS survivor_id
+            WHERE 0
+        ), resolved_root_sessions AS (
+            SELECT project_id, trace_id, trace_session_id AS session_id
             FROM {spans_table}
             WHERE project_id = %(project_id)s
               AND trace_session_id = toUUID('{SESSION_ID}')

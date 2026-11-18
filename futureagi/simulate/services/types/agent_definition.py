@@ -7,7 +7,7 @@ views/serializers and the service functions in
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ProviderCredentialsInput(BaseModel):
@@ -26,11 +26,11 @@ class ProviderCredentialsInput(BaseModel):
     """
 
     provider: str
-    api_key: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
     assistant_id: str | None = None
     livekit_url: str | None = None
-    livekit_api_key: str | None = None
-    livekit_api_secret: str | None = None
+    livekit_api_key: str | None = Field(default=None, repr=False)
+    livekit_api_secret: str | None = Field(default=None, repr=False)
     livekit_agent_name: str | None = None
     livekit_config_json: dict[str, Any] | None = None
     livekit_max_concurrency: int | None = None

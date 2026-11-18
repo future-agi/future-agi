@@ -5,6 +5,7 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import {
   AlertConfigValidationSchema,
   getDefaultAlertConfigValues,
+  getThresholdValueDefaults,
 } from "./validation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import CardWrapper from "./CardWrapper";
@@ -17,11 +18,12 @@ import {
   timeOptions,
   alertDefinitionOptions,
   convertFiltersToPayload,
+  evalUsesChoiceThreshold,
   isSpanAttrFilterValid,
 } from "../common";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import AlertFilterBar from "./AlertFilterBar";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import RadioField from "src/components/RadioField/RadioField";
 import { ShowComponent } from "src/components/show";
@@ -29,7 +31,10 @@ import ChipsInput from "../../../../components/ChipsInput/ChipsInput";
 import { enqueueSnackbar } from "notistack";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { LoadingButton } from "@mui/lab";
-import { useCreateAlertMutation } from "../useCreateAlertMutation";
+import {
+  alertEventFields,
+  useCreateAlertMutation,
+} from "../useCreateAlertMutation";
 import PropTypes from "prop-types";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useAlertStore } from "../store/useAlertStore";
@@ -61,6 +66,7 @@ export default function AlertSettingsForm({
 
   const { alertRuleDetails, refreshGrid: refreshIssues } = useAlertSheetView();
   const { currentOrganizationId } = useOrganization();
+  const queryClient = useQueryClient();
   const observeId = selectedProject || alertRuleDetails?.project || null;
 
   const buildFormValues = useCallback(
@@ -154,11 +160,36 @@ export default function AlertSettingsForm({
     enabled: Boolean(observeId && metricType === "evaluation_metrics"),
   });
 
+  const selectedEval = useMemo(
+    () => expandedEvaluations?.find((evaluation) => evaluation?.id === metric),
+    [expandedEvaluations, metric],
+  );
+  const selectedEvalOutputType = selectedEval?.output_type ?? null;
+  // The eval the preview payload actually names. The payload carries the
+  // debounced metric, so for 300ms after a switch it still points at the old
+  // eval; gating on the live one in that window previews a choice eval with no
+  // label, and the backend rejects it.
+  const debouncedSelectedEval = useMemo(
+    () =>
+      expandedEvaluations?.find(
+        (evaluation) => evaluation?.id === debouncedMetric,
+      ),
+    [expandedEvaluations, debouncedMetric],
+  );
+  // Choice and Pass/Fail evals aggregate to a rate between 0 and 1; score
+  // evals are avg(output_float) with no upper bound, so only the bounded
+  // kinds get the fraction label. percentage_change divides this same field
+  // by 100 for every metric type (backend: 0-100 scale), so that mode is
+  // labelled as a percent instead.
+  const isEvalFractionScale =
+    metricType === "evaluation_metrics" &&
+    thresholdType === "static" &&
+    ["choices", "Pass/Fail"].includes(selectedEvalOutputType);
+  const isPercentScale = thresholdType === "percentage_change";
+
   const selectedMetricOptions = useMemo(() => {
     if (expandedEvaluations?.length > 0 && metric) {
-      const selectedEval = expandedEvaluations.find(
-        (evaluation) => evaluation?.id === metric,
-      );
+      if (!evalUsesChoiceThreshold(selectedEval)) return [];
       return (
         selectedEval?.choices?.map((choice) => ({
           label: choice,
@@ -167,7 +198,7 @@ export default function AlertSettingsForm({
       );
     }
     return [];
-  }, [expandedEvaluations, metric]);
+  }, [expandedEvaluations, metric, selectedEval]);
 
   const queryPayload = useMemo(() => {
     const { observation_type, span_attributes_filters } =
@@ -191,7 +222,10 @@ export default function AlertSettingsForm({
 
     if (debouncedMetricType === "evaluation_metrics") {
       payload.metric = debouncedMetric;
-      if (debouncedThresHoldMetricValue && selectedMetricOptions?.length > 0) {
+      if (
+        debouncedThresHoldMetricValue &&
+        evalUsesChoiceThreshold(debouncedSelectedEval)
+      ) {
         payload.threshold_metric_value = debouncedThresHoldMetricValue;
       }
     }
@@ -208,6 +242,7 @@ export default function AlertSettingsForm({
     debouncedFrequency,
     debouncedMetric,
     debouncedThresHoldMetricValue,
+    debouncedSelectedEval,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     JSON.stringify(debounceWatchedFilters),
   ]);
@@ -229,11 +264,25 @@ export default function AlertSettingsForm({
       debouncedMetricType &&
       debouncedOperator &&
       debouncedType &&
-      debouncedCritical &&
-      debouncedWarning &&
+      // Presence, not truthiness — 0 is a valid threshold and would
+      // otherwise disable the preview graph for the whole form.
+      debouncedCritical !== undefined &&
+      debouncedWarning !== undefined &&
       debouncedFrequency &&
       !hasErrors &&
-      (debouncedMetricType === "evaluation_metrics" ? debouncedMetric : true);
+      (debouncedMetricType === "evaluation_metrics"
+        ? debouncedMetric &&
+          // Wait for the debounced metric to catch up with the picker, so the
+          // preview never runs for the eval the user just left.
+          debouncedMetric === metric &&
+          // Until the eval list resolves, a Pass/Fail eval looks like a score
+          // one and would be previewed without the label it needs.
+          debouncedSelectedEval &&
+          // A choice-thresholded eval's graph requires the chosen label; firing
+          // the preview before it is set 400s. Score evals need no choice.
+          (!evalUsesChoiceThreshold(debouncedSelectedEval) ||
+            debouncedThresHoldMetricValue)
+        : true);
 
     const isThresholdValid = (() => {
       if (debouncedOperator === "less_than") {
@@ -257,14 +306,26 @@ export default function AlertSettingsForm({
     debouncedWarning,
     debouncedFrequency,
     debouncedMetric,
+    metric,
+    debouncedThresHoldMetricValue,
+    debouncedSelectedEval,
     errors,
     openSheetView,
     isDirty,
   ]);
 
+  // A choice-thresholded eval with no label yet has nothing to preview; the
+  // chart says so rather than keep drawing the eval the user just left.
+  const previewAwaitingLabel = Boolean(
+    debouncedMetricType === "evaluation_metrics" &&
+      debouncedMetric === metric &&
+      evalUsesChoiceThreshold(debouncedSelectedEval) &&
+      !debouncedThresHoldMetricValue,
+  );
+
   useEffect(() => {
-    onPayloadChange(queryPayload, isQueryEnabled);
-  }, [queryPayload, isQueryEnabled, onPayloadChange]);
+    onPayloadChange(queryPayload, isQueryEnabled, previewAwaitingLabel);
+  }, [queryPayload, isQueryEnabled, previewAwaitingLabel, onPayloadChange]);
 
   useEffect(() => {
     if (queryPayload) {
@@ -304,15 +365,15 @@ export default function AlertSettingsForm({
         variant: "success",
       });
       trackEvent(Events.createAlertConfirmed, {
-        [PropertyName.formFields]: {
-          ...variables,
-          metricType,
-          thresholdType: variables?.threshold_type,
-        },
+        [PropertyName.formFields]: alertEventFields(variables, metricType),
       });
       handleCloseCreateAlert();
       refreshGrid();
       refreshIssues();
+      // The details-page graph is keyed only on the alert id + date window, so
+      // a threshold_type or config change leaves its cache stale until the 10s
+      // poll happens to refetch. Invalidate it so the saved graph updates now.
+      queryClient.invalidateQueries({ queryKey: ["alert-graph"] });
     },
   });
 
@@ -321,12 +382,15 @@ export default function AlertSettingsForm({
       convertFiltersToPayload(data?.filters);
 
     const isSlack = data?.notification?.method === "slack";
+    const isWebhook = data?.notification?.method === "webhook";
     const notificationPayload = {
-      notification_emails: isSlack ? [] : data?.notification?.emails ?? [],
+      notification_emails:
+        !isSlack && !isWebhook ? data?.notification?.emails ?? [] : [],
       slack_webhook_url: isSlack
         ? data?.notification?.slack?.webhookUrl ?? ""
         : "",
       slack_notes: isSlack ? data?.notification?.slack?.notes ?? "" : "",
+      webhook_url: isWebhook ? data?.notification?.webhook?.url ?? "" : "",
     };
     if (
       selectedMetricOptions?.length > 0 &&
@@ -338,6 +402,16 @@ export default function AlertSettingsForm({
       });
       return;
     }
+
+    const isUpdate = Boolean(openSheetView && !duplicateAlertName);
+    // Send the choice only for an eval known to take one. While the eval list
+    // is unresolved an update leaves it out: the server keeps the stored choice
+    // for a Pass/Fail eval and drops it for a score eval, where resending it
+    // would 400 with no visible field to clear. A new alert has no stored
+    // choice to fall back on, so it keeps sending what the form holds.
+    const sendChoice = selectedEval
+      ? evalUsesChoiceThreshold(selectedEval)
+      : !isUpdate;
 
     const payload = {
       name: data?.name,
@@ -357,9 +431,10 @@ export default function AlertSettingsForm({
       }),
       ...(data?.metric_type === "evaluation_metrics" && {
         metric: data?.metric,
-        ...(data?.threshold_metric_value && {
-          threshold_metric_value: data?.threshold_metric_value,
-        }),
+        ...(data?.threshold_metric_value &&
+          sendChoice && {
+            threshold_metric_value: data?.threshold_metric_value,
+          }),
       }),
       ...notificationPayload,
       ...(data?.threshold_type === "percentage_change" && {
@@ -459,6 +534,40 @@ export default function AlertSettingsForm({
                 inputProps={{ "data-alert-field": "metric-type" }}
                 onChange={(e) => {
                   handleChangeAlertType(e?.target?.value);
+                  // FormSearchSelectFieldControl calls this onChange BEFORE
+                  // react-hook-form's own field.onChange, so metric_type in
+                  // form state is still the old value at this point. Set it
+                  // here so the zod re-validation below (and the scale
+                  // lookup) both see the metric the user just picked, not
+                  // the one they're leaving.
+                  setValue("metric_type", e?.target?.value);
+                  // Reset the thresholds only when the switch actually moves
+                  // them onto a different scale. Overwriting unconditionally
+                  // would destroy a saved value (e.g. a stored 250) on a
+                  // switch between two metrics that read the field the same
+                  // way.
+                  const previous = getThresholdValueDefaults(
+                    metricType,
+                    thresholdType,
+                  );
+                  const next = getThresholdValueDefaults(
+                    e?.target?.value,
+                    thresholdType,
+                  );
+                  if (previous.critical !== next.critical) {
+                    // Set both before validating — the cross-field
+                    // (critical > warning) check in the zod schema needs both
+                    // new values in place together, or validating right after
+                    // the first setValue checks it against the other field's
+                    // stale value and raises a spurious error.
+                    setValue("critical_threshold_value", next.critical);
+                    setValue("warning_threshold_value", next.warning);
+                  }
+                  trigger([
+                    "metric",
+                    "critical_threshold_value",
+                    "warning_threshold_value",
+                  ]);
                 }}
                 options={alertTypes.flatMap((group, groupIndex) => [
                   {
@@ -485,6 +594,7 @@ export default function AlertSettingsForm({
                   control={control}
                   fieldName={"metric"}
                   label="Metric"
+                  required
                   size="small"
                   options={expandedEvaluations?.map((evaluation) => ({
                     label: evaluation?.name,
@@ -548,6 +658,25 @@ export default function AlertSettingsForm({
                   optionColor="text.primary"
                   onChange={(e) => {
                     onThresholdTypeChange(e?.target?.value);
+                    // Same scale-guarded re-derivation as the metric-type
+                    // switch above — static and percentage_change read this
+                    // field on different scales (fraction vs percent) for
+                    // eval metrics, but a switch that keeps the same scale
+                    // must leave a saved value alone.
+                    const previous = getThresholdValueDefaults(
+                      metricType,
+                      thresholdType,
+                    );
+                    const next = getThresholdValueDefaults(
+                      metricType,
+                      e?.target?.value,
+                    );
+                    if (previous.critical !== next.critical) {
+                      // Set both before validating — see the same note on the
+                      // metric_type handler above.
+                      setValue("critical_threshold_value", next.critical);
+                      setValue("warning_threshold_value", next.warning);
+                    }
                     if (
                       debouncedWarning !== undefined ||
                       debouncedCritical !== undefined ||
@@ -598,8 +727,8 @@ export default function AlertSettingsForm({
                   <CardWrapper
                     icon={"/assets/icons/ic_critical.svg"}
                     title="Critical"
-                    iconColor={"red.500"}
-                    bgColor="red.o5"
+                    iconColor={"status.danger.fg"}
+                    bgColor="status.danger.bg"
                   >
                     <Box
                       sx={{
@@ -634,13 +763,6 @@ export default function AlertSettingsForm({
                               maxWidth: "400px",
                             }}
                           />
-                          <Typography
-                            variant="s1"
-                            color={"text.primary"}
-                            fontWeight={"fontWeightRegular"}
-                          >
-                            %
-                          </Typography>
                           <Typography
                             variant="s1"
                             color={"text.primary"}
@@ -694,7 +816,18 @@ export default function AlertSettingsForm({
                             ]);
                           }
                         }}
-                        label="Value"
+                        label={
+                          isEvalFractionScale
+                            ? "Value (0-1)"
+                            : isPercentScale
+                              ? "Percentage"
+                              : "Value"
+                        }
+                        helperText={
+                          isEvalFractionScale
+                            ? "Fraction between 0 and 1, e.g. 0.095 for 9.5%"
+                            : undefined
+                        }
                         size="small"
                         fullWidth
                         fieldType="number"
@@ -710,8 +843,8 @@ export default function AlertSettingsForm({
                   <CardWrapper
                     icon={"/assets/icons/ic_warning.svg"}
                     title="Warning"
-                    iconColor="orange.400"
-                    bgColor="orange.o5"
+                    iconColor="status.warning.fg"
+                    bgColor="status.warning.bg"
                   >
                     <Box
                       sx={{
@@ -746,13 +879,6 @@ export default function AlertSettingsForm({
                               maxWidth: "400px",
                             }}
                           />
-                          <Typography
-                            variant="s1"
-                            color={"text.primary"}
-                            fontWeight={"fontWeightRegular"}
-                          >
-                            %
-                          </Typography>
                           <Typography
                             variant="s1"
                             color={"text.primary"}
@@ -807,7 +933,18 @@ export default function AlertSettingsForm({
                             ]);
                           }
                         }}
-                        label="Value"
+                        label={
+                          isEvalFractionScale
+                            ? "Value (0-1)"
+                            : isPercentScale
+                              ? "Percentage"
+                              : "Value"
+                        }
+                        helperText={
+                          isEvalFractionScale
+                            ? "Fraction between 0 and 1, e.g. 0.095 for 9.5%"
+                            : undefined
+                        }
                         size="small"
                         fullWidth
                         fieldType="number"
@@ -917,13 +1054,6 @@ export default function AlertSettingsForm({
                               color={"text.primary"}
                               fontWeight={"fontWeightRegular"}
                             >
-                              %
-                            </Typography>
-                            <Typography
-                              variant="s1"
-                              color={"text.primary"}
-                              fontWeight={"fontWeightRegular"}
-                            >
                               of
                             </Typography>
                           </Stack>
@@ -1025,6 +1155,26 @@ export default function AlertSettingsForm({
                     fullWidth
                     multiline
                     rows={4}
+                  />
+                </Stack>
+              </ShowComponent>
+              <ShowComponent
+                condition={selectedNotificationMethod === "webhook"}
+              >
+                <Stack
+                  sx={{
+                    padding: 3,
+                    gap: 3,
+                  }}
+                >
+                  <FormTextFieldV2
+                    control={control}
+                    required
+                    placeholder="Enter webhook URL (e.g. https://example.com/webhook)"
+                    fieldName="notification.webhook.url"
+                    label="Webhook URL"
+                    size="small"
+                    fullWidth
                   />
                 </Stack>
               </ShowComponent>

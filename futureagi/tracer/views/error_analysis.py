@@ -80,7 +80,9 @@ class TraceErrorAnalysisResultSerializer(serializers.Serializer):
     memory_enhanced = serializers.BooleanField(required=False)
     summary = serializers.JSONField(required=False)
     errors = serializers.ListField(child=serializers.JSONField(), required=False)
-    grouped_errors = serializers.ListField(child=serializers.JSONField(), required=False)
+    grouped_errors = serializers.ListField(
+        child=serializers.JSONField(), required=False
+    )
     scores = serializers.JSONField(required=False)
     memory_context = serializers.JSONField(required=False)
 
@@ -565,7 +567,6 @@ class TraceErrorTaskView(APIView):
         GET /api/trace-error-task/<project_id>/
         """
         try:
-
             try:
                 project = Project.objects.get(
                     id=project_id,

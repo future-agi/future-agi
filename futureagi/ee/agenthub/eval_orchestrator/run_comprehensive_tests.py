@@ -15,7 +15,7 @@ Prerequisites:
 Run:
     docker exec backend bash -c \\
         "cd /app/backend && \\
-         AGENTCC_GATEWAY_URL=http://agentcc-gateway:8090 \\
+         AGENTCC_GATEWAY_URL=http://agentcc-gateway:8080 \\
          AGENTCC_ADMIN_TOKEN=agentcc-admin-secret \\
          PYTHONPATH=/app/backend \\
          python agentic_eval/agenthub/eval_orchestrator/run_comprehensive_tests.py"
@@ -34,6 +34,7 @@ from typing import Optional
 # ── Django bootstrap ─────────────────────────────────────────────────────────
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
 import django
+
 django.setup()
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -70,8 +71,15 @@ log.handlers = []
 log.addHandler(_fh)
 log.addHandler(_ch)
 
-for _noisy in ("structlog", "clickhouse_driver", "urllib3", "httpcore", "httpx",
-               "django", "asyncio"):
+for _noisy in (
+    "structlog",
+    "clickhouse_driver",
+    "urllib3",
+    "httpcore",
+    "httpx",
+    "django",
+    "asyncio",
+):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
@@ -99,20 +107,20 @@ def _wrap(text, prefix="│  ", width=70):
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-ORG_ID  = "8f22b8a3-f2c3-418e-880d-d6a72bf2b334"
+ORG_ID = "8f22b8a3-f2c3-418e-880d-d6a72bf2b334"
 
 # Spans
-SPAN_BILLING_APOLOGY   = "52f9f7958b644085"  # "I apologize for the duplicate charge…"
-SPAN_ESCALATION        = "fc26fb48b68a4f07"  # "I completely understand… let me escalate…"
-SPAN_CLASSIFIER        = "e575b0a2a3004d5b"  # gpt-3.5: "Category: account, Priority: medium"
-SPAN_CHAIN_RETRIEVER   = "63a00480667449ec"  # chain: retriever + LLM combo
+SPAN_BILLING_APOLOGY = "52f9f7958b644085"  # "I apologize for the duplicate charge…"
+SPAN_ESCALATION = "fc26fb48b68a4f07"  # "I completely understand… let me escalate…"
+SPAN_CLASSIFIER = "e575b0a2a3004d5b"  # gpt-3.5: "Category: account, Priority: medium"
+SPAN_CHAIN_RETRIEVER = "63a00480667449ec"  # chain: retriever + LLM combo
 
 # Traces
-TRACE_APP_CRASH        = "012cd701-eee7-4f48-afb5-8f4013aa844f"
-TRACE_BILLING          = "acfd4b13-f169-4864-aff1-125fea18e594"
+TRACE_APP_CRASH = "012cd701-eee7-4f48-afb5-8f4013aa844f"
+TRACE_BILLING = "acfd4b13-f169-4864-aff1-125fea18e594"
 
 # Session
-SESSION_PHOTO_UPLOAD   = "e6f1003f-b750-4174-bb93-149e88f21b75"
+SESSION_PHOTO_UPLOAD = "e6f1003f-b750-4174-bb93-149e88f21b75"
 
 # KB — "kn" has customer service policy docs
 KB_POLICY = "38284dd6-4d22-4728-abdd-590be1d3b7e8"
@@ -124,6 +132,7 @@ EVAL_TEMPLATE_COMPREHENSIVE = "11111111-1111-1111-1111-111111111111"
 # ─────────────────────────────────────────────────────────────────────────────
 # Result tracking
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class ComprehensiveResult:
@@ -159,6 +168,7 @@ _results: list[ComprehensiveResult] = []
 # ─────────────────────────────────────────────────────────────────────────────
 # Core runner
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def run_case(
     name: str,
@@ -205,9 +215,15 @@ def run_case(
             available_tools.append("feedback")
 
         log.info(_section("AVAILABLE RESOURCES"))
-        log.info(f"│  KB:       {len(available_resources.get('knowledge_bases', []))} knowledge base(s)")
-        log.info(f"│  MCP:      {len(available_resources.get('mcp_tools', []))} tool(s)")
-        log.info(f"│  Feedback: {available_resources.get('feedback_count', 0)} example(s)")
+        log.info(
+            f"│  KB:       {len(available_resources.get('knowledge_bases', []))} knowledge base(s)"
+        )
+        log.info(
+            f"│  MCP:      {len(available_resources.get('mcp_tools', []))} tool(s)"
+        )
+        log.info(
+            f"│  Feedback: {available_resources.get('feedback_count', 0)} example(s)"
+        )
         log.info(f"│  → Available: {available_tools}")
         log.info(f"│  → Expected:  {expected_tools}")
         log.info("└" + "─" * 70 + "┘")
@@ -321,7 +337,9 @@ def run_case(
     except Exception as e:
         elapsed = time.time() - t0
         log.info(f"\n│  ✗ ERROR: {e}")
-        import traceback; traceback.print_exc(file=sys.stdout)
+        import traceback
+
+        traceback.print_exc(file=sys.stdout)
         result = ComprehensiveResult(
             name=name,
             scope=input_scope,
@@ -343,6 +361,7 @@ def run_case(
 # Test cases
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def define_cases():
     return [
         # ── Case 1: Should use NOTHING extra ──────────────────────────────
@@ -360,7 +379,6 @@ def define_cases():
             ),
             expected_tools=[],
         ),
-
         # ── Case 2: Should use ONLY KB ────────────────────────────────────
         # Policy compliance check — needs KB to know the actual policy.
         # MCP grammar tools and feedback are irrelevant.
@@ -377,7 +395,6 @@ def define_cases():
             ),
             expected_tools=["kb"],
         ),
-
         # ── Case 3: Should use ONLY MCP ──────────────────────────────────
         # Grammar quality — needs MCP grammar_checker tool.
         # KB and feedback are irrelevant.
@@ -393,7 +410,6 @@ def define_cases():
             ),
             expected_tools=["mcp"],
         ),
-
         # ── Case 4: Should use ONLY feedback ─────────────────────────────
         # Subjective quality — needs feedback to calibrate scoring.
         # KB and MCP tools are irrelevant for tone calibration.
@@ -410,7 +426,6 @@ def define_cases():
             ),
             expected_tools=["feedback"],
         ),
-
         # ── Case 5: Should use KB + MCP ──────────────────────────────────
         # Policy compliance AND readability — needs KB for policy, MCP for readability.
         dict(
@@ -427,7 +442,6 @@ def define_cases():
             ),
             expected_tools=["kb", "mcp"],
         ),
-
         # ── Case 6: Should use feedback + MCP ────────────────────────────
         # Grammar + calibration — MCP for objective grammar score, feedback for subjective calibration.
         dict(
@@ -444,7 +458,6 @@ def define_cases():
             ),
             expected_tools=["feedback", "mcp"],
         ),
-
         # ── Case 7: Should use ALL three ─────────────────────────────────
         # The kitchen sink — policy + grammar + calibration.
         dict(
@@ -462,7 +475,6 @@ def define_cases():
             ),
             expected_tools=["kb", "mcp", "feedback"],
         ),
-
         # ── Case 8: Nothing needed — complex but self-contained ──────────
         # Session analysis — complex task but all info is in the data.
         # Agent should NOT use external tools despite their availability.
@@ -479,7 +491,6 @@ def define_cases():
             ),
             expected_tools=[],
         ),
-
         # ── Case 9: Scorer mode + MCP ────────────────────────────────────
         # Numeric scoring with MCP tool for objective measurement.
         dict(
@@ -495,7 +506,6 @@ def define_cases():
             ),
             expected_tools=["mcp"],
         ),
-
         # ── Case 10: KB + feedback, MCP irrelevant ───────────────────────
         # Needs policy context and human calibration, but grammar tools are useless.
         dict(
@@ -519,6 +529,7 @@ def define_cases():
 # Qualitative report
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def print_qualitative_report(results: list[ComprehensiveResult]):
     W = 72
     log.info("\n\n" + "━" * W)
@@ -541,7 +552,7 @@ def print_qualitative_report(results: list[ComprehensiveResult]):
 
     # ── Per-case summary ─────────────────────────────────────────────────
     log.info(f"\n  {'Case':<50} {'Result':<8} {'Sel':>5} {'Turns':>5} {'Time':>6}")
-    log.info(f"  {'─'*50} {'─'*8} {'─'*5} {'─'*5} {'─'*6}")
+    log.info(f"  {'─' * 50} {'─' * 8} {'─' * 5} {'─' * 5} {'─' * 6}")
     for r in results:
         res = str(r.result)[:8] if r.result else ("ERR" if r.error else "—")
         sel = "✓" if r.tool_selection_correct else ("ERR" if r.error else "✗")
@@ -550,12 +561,14 @@ def print_qualitative_report(results: list[ComprehensiveResult]):
         )
 
     # ── Tool selection detail ────────────────────────────────────────────
-    log.info(f"\n\n  {'─'*70}")
+    log.info(f"\n\n  {'─' * 70}")
     log.info(f"  TOOL SELECTION ANALYSIS")
-    log.info(f"  {'─'*70}")
+    log.info(f"  {'─' * 70}")
 
-    log.info(f"\n  {'Case':<35} {'Available':<20} {'Expected':<20} {'Used':<20} {'Match'}")
-    log.info(f"  {'─'*35} {'─'*20} {'─'*20} {'─'*20} {'─'*5}")
+    log.info(
+        f"\n  {'Case':<35} {'Available':<20} {'Expected':<20} {'Used':<20} {'Match'}"
+    )
+    log.info(f"  {'─' * 35} {'─' * 20} {'─' * 20} {'─' * 20} {'─' * 5}")
     for r in completed:
         avail = ",".join(r.available_tools) or "none"
         exp = ",".join(r.expected_tools) or "none"
@@ -565,9 +578,9 @@ def print_qualitative_report(results: list[ComprehensiveResult]):
 
     # ── Incorrect selections detail ──────────────────────────────────────
     if incorrect_selection:
-        log.info(f"\n\n  {'─'*70}")
+        log.info(f"\n\n  {'─' * 70}")
         log.info(f"  INCORRECT SELECTIONS — DETAILS")
-        log.info(f"  {'─'*70}")
+        log.info(f"  {'─' * 70}")
         for r in incorrect_selection:
             log.info(f"\n  [{r.name}]")
             log.info(f"    Expected : {r.expected_tools}")
@@ -576,9 +589,9 @@ def print_qualitative_report(results: list[ComprehensiveResult]):
             log.info(f"    Criteria : {r.criteria[:150]}...")
 
     # ── Tool usage stats ─────────────────────────────────────────────────
-    log.info(f"\n\n  {'─'*70}")
+    log.info(f"\n\n  {'─' * 70}")
     log.info(f"  TOOL USAGE STATISTICS")
-    log.info(f"  {'─'*70}")
+    log.info(f"  {'─' * 70}")
 
     tool_names = ["kb", "mcp", "feedback"]
     for tool in tool_names:
@@ -586,19 +599,21 @@ def print_qualitative_report(results: list[ComprehensiveResult]):
         times_expected = sum(1 for r in completed if tool in r.expected_tools)
         times_used = sum(1 for r in completed if tool in r.tools_used)
         times_correctly_used = sum(
-            1 for r in completed
-            if tool in r.tools_used and tool in r.expected_tools
+            1 for r in completed if tool in r.tools_used and tool in r.expected_tools
         )
         times_correctly_skipped = sum(
-            1 for r in completed
+            1
+            for r in completed
             if tool not in r.tools_used and tool not in r.expected_tools
         )
         times_over_used = sum(
-            1 for r in completed
+            1
+            for r in completed
             if tool in r.tools_used and tool not in r.expected_tools
         )
         times_under_used = sum(
-            1 for r in completed
+            1
+            for r in completed
             if tool not in r.tools_used and tool in r.expected_tools
         )
 
@@ -607,25 +622,29 @@ def print_qualitative_report(results: list[ComprehensiveResult]):
         log.info(f"    Expected in   : {times_expected}/{len(completed)} cases")
         log.info(f"    Actually used : {times_used}/{len(completed)} cases")
         log.info(f"    Correct use   : {times_correctly_used} (used when needed)")
-        log.info(f"    Correct skip  : {times_correctly_skipped} (skipped when not needed)")
+        log.info(
+            f"    Correct skip  : {times_correctly_skipped} (skipped when not needed)"
+        )
         log.info(f"    Over-used     : {times_over_used} (used when NOT needed)")
         log.info(f"    Under-used    : {times_under_used} (skipped when needed)")
 
     # ── Qualitative verdicts ─────────────────────────────────────────────
-    log.info(f"\n\n  {'─'*70}")
+    log.info(f"\n\n  {'─' * 70}")
     log.info(f"  QUALITATIVE VERDICTS")
-    log.info(f"  {'─'*70}")
+    log.info(f"  {'─' * 70}")
 
     for r in completed:
         log.info(f"\n  [{r.name}]")
         log.info(f"    Result     : {r.result} (confidence: {r.confidence})")
-        log.info(f"    Selection  : {'✓ CORRECT' if r.tool_selection_correct else '✗ INCORRECT'}")
+        log.info(
+            f"    Selection  : {'✓ CORRECT' if r.tool_selection_correct else '✗ INCORRECT'}"
+        )
         if not r.tool_selection_correct:
             log.info(f"    Issue      : {r.tool_selection_notes}")
         log.info(f"    Explanation: {r.explanation[:200]}...")
 
     # ── Final grade ──────────────────────────────────────────────────────
-    log.info(f"\n\n  {'═'*70}")
+    log.info(f"\n\n  {'═' * 70}")
     if accuracy >= 90:
         grade = "A — Excellent tool selection"
     elif accuracy >= 70:
@@ -636,8 +655,10 @@ def print_qualitative_report(results: list[ComprehensiveResult]):
         grade = "D — Poor, significant selection issues"
 
     log.info(f"  OVERALL GRADE: {grade}")
-    log.info(f"  Selection accuracy: {accuracy:.0f}% ({len(correct_selection)}/{len(completed)})")
-    log.info(f"  {'═'*70}")
+    log.info(
+        f"  Selection accuracy: {accuracy:.0f}% ({len(correct_selection)}/{len(completed)})"
+    )
+    log.info(f"  {'═' * 70}")
 
     if errored:
         log.info("\n  ERRORS:")
@@ -652,10 +673,14 @@ def print_qualitative_report(results: list[ComprehensiveResult]):
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def main():
     import argparse
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--filter", default="", help="Only run cases matching this substring")
+    parser.add_argument(
+        "--filter", default="", help="Only run cases matching this substring"
+    )
     args = parser.parse_args()
 
     start_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -673,7 +698,9 @@ def main():
     cases = define_cases()
     if args.filter:
         cases = [c for c in cases if args.filter.lower() in c.get("name", "").lower()]
-        log.info(f"\n  Running {len(cases)} filtered cases (filter: '{args.filter}') …\n")
+        log.info(
+            f"\n  Running {len(cases)} filtered cases (filter: '{args.filter}') …\n"
+        )
     else:
         log.info(f"\n  Running {len(cases)} test cases …\n")
 

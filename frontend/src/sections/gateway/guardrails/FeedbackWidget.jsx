@@ -53,8 +53,8 @@ const FeedbackWidget = ({ requestLogId, checkName, existingFeedback }) => {
     return (
       <Stack direction="row" spacing={1} alignItems="center">
         <Iconify
-          icon="mdi:check-circle"
-          width={18}
+          icon="solar:check-circle-bold"
+          width={20}
           sx={{ color: "success.main" }}
         />
         <Typography variant="caption" color="success.main">
