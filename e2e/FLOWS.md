@@ -1720,6 +1720,26 @@
 - an unreachable Content Moderation count retains the draft without writing; correcting it to 3 preserves the existing policy, key and metadata in API, PostgreSQL, pushed config and reopened JSON
 - an active alias collision including a disabled duplicate returns 400 without a row; inactive API save and UI activation refusal preserve both raw checks, and inactive UI save retains their exact options in API and PostgreSQL
 
+### GW-E2E-020 — named providers save their native API format
+
+**Goal:** A user changes named providers without saving a connection under the previous provider’s protocol
+
+**Spec:** `flows/gateway/provider-format.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Add Provider and switch from OpenAI to Anthropic, Google and Azure in turn
+2. see the selected native API format, with no incompatible choices
+3. save each provider with a synthetic endpoint, key and unique manually entered model
+4. reopen each saved provider and see the same API format
+5. switch from Anthropic back to OpenAI, then to Custom and choose a format explicitly
+
+**Backend state verified:**
+
+- the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
+
 ## knowledge-base
 
 ### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file
