@@ -381,7 +381,7 @@ def boot_summary() -> list[str]:
         (
             "Traces",
             public_url("FI_COLLECTOR_PUBLIC_URL", "FI_COLLECTOR_OTLP_HTTP_PORT", 4318)
-            + " (OTLP/HTTP; the SDK's FI_TRACES_URL)",
+            + " (OTLP/HTTP; the SDK's FI_BASE_URL)",
         ),
         (
             "LLM keys",
