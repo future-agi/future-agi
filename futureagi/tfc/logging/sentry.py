@@ -17,7 +17,9 @@ Usage:
     init_sentry(component="temporal", tags={"queue": "tasks_l"})
 """
 
+import json
 import os
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -44,12 +46,29 @@ SENTRY_DSN = os.getenv("SENTRY_DSN")
 #
 # NOTE: Sentry's LoggingIntegration patches logging.Logger.callHandlers, so a
 # logger's `propagate=False`/`level` in Django's LOGGING dict does NOT stop it
-# from becoming an event. ignore_logger() (below) and the before_send prefix
-# check are the only reliable levers.
+# from becoming an event. ignore_logger() (below) and the before_send logger
+# checks are the only reliable levers. ignore_logger() also discards the
+# record's breadcrumb, so loggers whose records are still useful context
+# (EXPECTED_OUTCOME_LOGGERS) are dropped in before_send only.
 NOISY_LOGGER_PREFIXES = (
     "opentelemetry",  # OTLP exporter/instrumentation export failures
     "saml2",
     "xmlschema",
+)
+
+# Exact names of third-party loggers that report an outcome our code handles at
+# ERROR. before_send drops every event built from a record of one of these
+# loggers, whatever its message; child and similarly named loggers, and
+# exceptions captured directly, are kept. The record stays a breadcrumb, so it
+# is still context on any genuine event captured later in the same scope.
+EXPECTED_OUTCOME_LOGGERS = frozenset(
+    {
+        # Django answers a request with an invalid Host header with 400 and logs
+        # it here at ERROR. That is scanner/bot traffic, not a fault. The other
+        # django.security.* loggers (SuspiciousOperation, SuspiciousFileOperation,
+        # RequestDataTooBig, csrf, ...) stay captured.
+        "django.security.DisallowedHost",
+    }
 )
 
 # Exact logger names handed to sentry_sdk.integrations.logging.ignore_logger.
@@ -68,26 +87,17 @@ IGNORED_LOGGERS = (
     "xmlschema.*",
 )
 
-# Exception class names that are expected/handled and not actionable as issues.
-IGNORED_EXCEPTIONS = frozenset(
+# Suppress only log-only outcomes explicitly classified by their owning code.
+# Exception events (including downstream 4xx and disconnects) are never classified
+# from a generic exception name, status code, or message substring.
+EXPECTED_LOG_OUTCOMES = frozenset(
     {
-        "DisallowedHost",  # Django - invalid host header (scanner/bot traffic)
-        "SuspiciousOperation",  # Django - security-related, handled
-        "ConnectionResetError",  # Client/peer disconnected mid-request
-        "BrokenPipeError",  # Client disconnected mid-response
+        (
+            "ee.agenthub.explanation_agent.exp_agent",
+            "explanation_summary_skipped",
+            "insufficient_samples",
+        ),
     }
-)
-
-# Substrings of structlog/event messages that represent expected, non-actionable
-# conditions. Kept deliberately specific so real bugs are never hidden.
-IGNORED_MESSAGE_SUBSTRINGS = (
-    "trace_payload_not_found_in_redis",  # expected ingestion race (payload TTL)
-    "Failed to export traces",  # OTel exporter (backstop for logger check)
-    "Exception while exporting metrics",  # OTel exporter (backstop)
-    # litellm's internal 'LiteLLM' logger emits this at ERROR when a user
-    # supplies an invalid/partial Vertex AI service-account key during model
-    # validation. Expected user-input error, not actionable. CORE-BACKEND-119Y.
-    "Failed to load vertex credentials",
 )
 
 # Keys whose values must be redacted before leaving the process. Matched
@@ -120,6 +130,24 @@ SENSITIVE_KEY_SUBSTRINGS = (
     "environment_values",
     "credential_values",
 )
+# LiteLLM caches by the full credential document, not by a digest. These
+# aliases can hold a string or a tuple, neither of which has fields to scrub.
+_CREDENTIAL_ALIASES = {
+    "cache_credentials",
+    "credential_cache_key",
+    "resolved_cache_key",
+}
+_CREDENTIAL_FIELDS = {"private_key", "client_secret", "refresh_token"}
+# The SDK may already have rendered or truncated a JSON string or a dict repr.
+_CREDENTIAL_FIELD_IN_TEXT = re.compile(
+    r"""["'](?:private_key|client_secret|refresh_token)["']\s*:"""
+)
+_VERTEX_MODULE = "litellm.llms.vertex_ai.vertex_llm_base"
+_VERTEX_LOAD_MESSAGE = (
+    "Failed to load vertex credentials. Check to see if credentials "
+    "containing partial/invalid information. Error: "
+)
+_VERTEX_SAFE_MESSAGE = "Vertex credential loading failed"
 _REDACTED = "[Filtered]"
 
 # Sample rates - configurable via env, lower in production to reduce costs
@@ -139,7 +167,9 @@ def _is_sensitive_key(key: Any) -> bool:
     if not isinstance(key, str):
         return False
     lowered = key.lower()
-    return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
+    return lowered in _CREDENTIAL_ALIASES or any(
+        s in lowered for s in SENSITIVE_KEY_SUBSTRINGS
+    )
 
 
 _SAML_VALUE_MARKERS = ("<saml:", "<samlp:", "SAMLResponse=", "fai_saml_b_")
@@ -149,11 +179,15 @@ def _scrub(value: Any, depth: int = 0) -> Any:
     """Recursively redact values under sensitive keys (defensive, bounded)."""
     if depth > 6:
         return value
-    if isinstance(value, str) and any(
-        marker in value for marker in _SAML_VALUE_MARKERS
+    if isinstance(value, str) and (
+        any(marker in value for marker in _SAML_VALUE_MARKERS)
+        or _CREDENTIAL_FIELD_IN_TEXT.search(value)
     ):
         return _REDACTED
     if isinstance(value, dict):
+        if not _CREDENTIAL_FIELDS.isdisjoint(value):
+            # Sections such as extra or headers must remain mappings in Sentry.
+            return dict.fromkeys(value, _REDACTED)
         return {
             k: (_REDACTED if _is_sensitive_key(k) else _scrub(v, depth + 1))
             for k, v in value.items()
@@ -163,7 +197,51 @@ def _scrub(value: Any, depth: int = 0) -> Any:
     return value
 
 
-def _scrub_event(event: dict) -> None:
+def _vertex_log_message(logger: object, message: object) -> bool:
+    return (
+        logger == "LiteLLM"
+        and isinstance(message, str)
+        and message.startswith(
+            (_VERTEX_LOAD_MESSAGE, "Failed to load vertex credentials: ")
+        )
+    )
+
+
+def _vertex_auth_frame(module: object, function: object) -> bool:
+    return module == _VERTEX_MODULE and function in (
+        "load_auth",
+        "get_access_token",
+        "get_access_token_async",
+        "refresh_auth",
+    )
+
+
+def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
+    # A dropped log event still creates a breadcrumb on the *next* event.
+    # Strip the rendered message and its arguments before storing it in scope.
+    record = hint.get("log_record")
+    sensitive = _vertex_log_message(crumb.get("category"), crumb.get("message"))
+    if record is not None and record.exc_info:
+        tb = record.exc_info[2]
+        while tb is not None and not sensitive:
+            frame = tb.tb_frame
+            sensitive = _vertex_auth_frame(
+                frame.f_globals.get("__name__"), frame.f_code.co_name
+            )
+            tb = tb.tb_next
+    if sensitive:
+        crumb["message"] = _VERTEX_SAFE_MESSAGE
+        crumb.pop("data", None)
+    else:
+        # Other breadcrumbs can carry a serialized credential without coming
+        # from the provider logger (for example, an HTTP breadcrumb's data).
+        for key in ("message", "data"):
+            if key in crumb:
+                crumb[key] = _scrub(crumb[key])
+    return crumb
+
+
+def _scrub_event(event: dict, *, vertex_log: bool = False) -> None:
     """
     Redact obvious secrets/PII in-place before the event leaves the process.
 
@@ -190,21 +268,38 @@ def _scrub_event(event: dict) -> None:
     if isinstance(contexts, dict):
         event["contexts"] = _scrub(contexts)
 
-    # Sentry captures local variables (include_local_variables=True). An
-    # uncaught error in the ACS candidate-store path leaves the raw assertion
-    # in the view's stack frame; redact those vars the same way as request data
-    # so the assertion body never leaves the process (review finding 1, B7).
-    exception = event.get("exception")
-    if isinstance(exception, dict):
-        for value in exception.get("values") or []:
-            if not isinstance(value, dict):
-                continue
-            stacktrace = value.get("stacktrace")
-            if not isinstance(stacktrace, dict):
-                continue
-            for frame in stacktrace.get("frames") or []:
-                if isinstance(frame, dict) and isinstance(frame.get("vars"), dict):
-                    frame["vars"] = _scrub(frame["vars"])
+    def entries(container: object, key: str) -> list[dict]:
+        items = container.get(key) if isinstance(container, dict) else None
+        if not isinstance(items, (list, tuple)):
+            return []
+        return [item for item in items if isinstance(item, dict)]
+
+    values = entries(event.get("exception"), "values")
+    threads = entries(event.get("threads"), "values")
+    frames = [
+        frame
+        for item in (*values, *threads)
+        for frame in entries(item.get("stacktrace"), "frames")
+    ]
+    if vertex_log or any(
+        _vertex_auth_frame(frame.get("module"), frame.get("function"))
+        for frame in frames
+    ):
+        # Both the provider and its callers can hold raw credential fields under
+        # unrelated names. Keep the stack and exception types, not locals or
+        # free-form diagnostics (which can quote the rejected input verbatim).
+        for frame in frames:
+            frame.pop("vars", None)
+        for value in values:
+            value["value"] = _VERTEX_SAFE_MESSAGE
+        if "logentry" in event:
+            event["logentry"] = {"message": _VERTEX_SAFE_MESSAGE}
+        if "message" in event:
+            event["message"] = _VERTEX_SAFE_MESSAGE
+    else:
+        for frame in frames:
+            if isinstance(frame.get("vars"), dict):
+                frame["vars"] = _scrub(frame["vars"])
 
 
 def _event_scrubber() -> Any:
@@ -216,21 +311,61 @@ def _event_scrubber() -> Any:
     """
     from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 
-    denylist = list(DEFAULT_DENYLIST) + [
-        k for k in SENSITIVE_KEY_SUBSTRINGS if k not in DEFAULT_DENYLIST
-    ]
+    denylist = (
+        list(DEFAULT_DENYLIST)
+        + sorted(_CREDENTIAL_ALIASES)
+        + [k for k in SENSITIVE_KEY_SUBSTRINGS if k not in DEFAULT_DENYLIST]
+    )
     return EventScrubber(denylist=denylist, recursive=True)
 
 
-def _event_message(event: dict) -> str:
-    """Best-effort extraction of an event's human-readable message."""
-    msg = event.get("message")
-    if isinstance(msg, dict):
-        msg = msg.get("formatted") or msg.get("message") or ""
+def _expected_feature_denial(hint: dict) -> bool:
+    """Keep entitlement lookup faults even though they use a denial type."""
+    exc_info = hint.get("exc_info")
+    if not isinstance(exc_info, (tuple, list)) or len(exc_info) != 3:
+        return False
+    # Keep Sentry initialization independent of Django/DRF module loading.
+    try:
+        from tfc.ee_gating import FeatureUnavailable, entitlements_unavailable
+    except ImportError:
+        return False
+    error = exc_info[1]
+    return isinstance(error, FeatureUnavailable) and not entitlements_unavailable(error)
+
+
+def _expected_log_outcome(event: dict, hint: dict) -> bool:
+    """Normalize structlog dicts and Temporal JSON without interpreting text.
+
+    Malformed/unknown payloads and any exception capture fail open. Source-level
+    INFO/WARNING logging is the primary control; this is a log-only backstop.
+    """
+    if hint.get("exc_info") or event.get("exception"):
+        return False
+    record = hint.get("log_record")
     logentry = event.get("logentry")
-    logentry_msg = logentry.get("message", "") if isinstance(logentry, dict) else ""
-    parts = [str(msg or ""), str(logentry_msg or "")]
-    return " ".join(p for p in parts if p)
+    candidates = [
+        getattr(record, "msg", None),
+        event.get("message"),
+    ]
+    if isinstance(logentry, dict):
+        candidates.extend([logentry.get("formatted"), logentry.get("message")])
+    for payload in candidates:
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (ValueError, RecursionError):
+                continue
+        if not isinstance(payload, dict):
+            continue
+        identity = (event.get("logger"), payload.get("event"), payload.get("reason"))
+        if not (
+            all(isinstance(value, str) for value in identity)
+            and payload.get("outcome") == "handled"
+        ):
+            continue
+        if identity in EXPECTED_LOG_OUTCOMES:
+            return True
+    return False
 
 
 def _is_telemetry_url(url: object) -> bool:
@@ -280,7 +415,7 @@ def _scrub_deployment_telemetry_event(event: dict) -> dict:
             breadcrumb["data"] = data
 
     request = event.get("request") or {}
-    if not _is_telemetry_url(request.get("url")):
+    if not isinstance(request, dict) or not _is_telemetry_url(request.get("url")):
         return event
 
     request.pop("data", None)
@@ -290,15 +425,55 @@ def _scrub_deployment_telemetry_event(event: dict) -> dict:
     return event
 
 
+def _expected_vertex_credential_error(error: object) -> bool:
+    # Import only for the matching LiteLLM record; Sentry startup does not
+    # require the optional provider SDK.
+    try:
+        from google.auth.exceptions import MalformedError, RefreshError
+    except ImportError:
+        return False
+
+    if isinstance(error, RefreshError):
+        # google.oauth2._client attaches the token endpoint's decoded response
+        # as the second argument. Never infer a refusal from its free-form text.
+        response = error.args[1] if len(error.args) > 1 else None
+        return (
+            not error.retryable
+            and isinstance(response, dict)
+            and response.get("error") in ("invalid_grant", "invalid_client")
+        )
+
+    if isinstance(error, MalformedError):
+        message = str(error)
+        return (
+            message.startswith(
+                "Service account info was not in the expected format, missing fields "
+            )
+            or message
+            == "The private_key field was not found in the service account info."
+        )
+
+    # The key loader, credential-shape validation and token-response parser all
+    # raise plain ValueError. Match only known credential validation diagnostics.
+    return type(error) is ValueError and str(error).startswith(
+        (
+            "Unable to load PEM file.",
+            "Could not deserialize key data.",
+            "Authorized user info was not in the expected format, missing fields ",
+            "Invalid credentials type: <class '",
+        )
+    )
+
+
 def _get_before_send() -> Callable:
     """
     Create the before_send hook that runs on every error event.
 
     Responsibilities, in order:
-    1. Drop pure-infrastructure logger noise (OTel exporter, etc.).
-    2. Drop expected/handled exceptions and expected 4xx responses.
-    3. Drop known expected log conditions matched by message substring.
-    4. Scrub secrets/PII from whatever remains.
+    1. Drop pure-infrastructure logger noise (OTel exporter, etc.) and records
+       of the third-party loggers in EXPECTED_OUTCOME_LOGGERS.
+    2. Drop typed feature refusals and explicitly classified log-only outcomes.
+    3. Scrub secrets/PII from whatever remains.
     """
 
     def before_send(event: dict, hint: dict) -> dict | None:
@@ -312,32 +487,43 @@ def _get_before_send() -> Callable:
             for p in NOISY_LOGGER_PREFIXES
         ):
             return None
-
-        # 2. Expected/handled exceptions and expected client (4xx) errors.
-        if "exc_info" in hint:
-            exc_type, exc_value, _tb = hint["exc_info"]
-            exc_name = exc_type.__name__ if exc_type else ""
-            if exc_name in IGNORED_EXCEPTIONS:
-                return None
-
-            status_code = getattr(exc_value, "status_code", None)
+        # A third-party logger's record of an outcome our code handles, matched
+        # by the record's exact logger name. Dedupe has already remembered the
+        # record's exception; the SDK forgets it again when before_send drops
+        # an exception event, so our own report of that same exception object
+        # (LiteLLM raises it to our code) is still sent.
+        record = hint.get("log_record")
+        record_name = getattr(record, "name", None)
+        if record_name in EXPECTED_OUTCOME_LOGGERS:
+            return None
+        # VertexBase.get_access_token logs and re-raises *all* load_auth
+        # failures. Only malformed credentials and known refusals are expected.
+        if record_name == "LiteLLM":
+            msg = getattr(record, "msg", None)
+            exc_info = getattr(record, "exc_info", None)
             if (
-                isinstance(status_code, int)
-                and 400 <= status_code < 500
-                and status_code not in (401, 403)
+                isinstance(msg, str)
+                and msg.startswith(_VERTEX_LOAD_MESSAGE)
+                and isinstance(exc_info, tuple)
+                and len(exc_info) == 3
+                and _expected_vertex_credential_error(exc_info[1])
             ):
-                # Drop 400/404/405/429/etc. (client behaviour); keep 401/403
-                # for security monitoring.
                 return None
 
-        # 3. Known expected conditions identified by message text.
-        message = _event_message(event)
-        if message and any(s in message for s in IGNORED_MESSAGE_SUBSTRINGS):
+        # 2. A handled exception is not necessarily harmless. Only typed feature
+        # refusals qualify; generic HTTP errors, lookup outages, disconnects and
+        # text that merely resembles a skip remain actionable.
+        if _expected_feature_denial(hint) or _expected_log_outcome(event, hint):
             return None
 
-        # 4. Scrub secrets/PII from the surviving event.
+        # 3. Scrub secrets/PII from the surviving event.
         try:
-            _scrub_event(event)
+            _scrub_event(
+                event,
+                vertex_log=_vertex_log_message(
+                    record_name, getattr(record, "msg", None)
+                ),
+            )
         except Exception:
             # Never let scrubbing failures drop a real error.
             pass
@@ -516,6 +702,7 @@ def init_sentry(
             in_app_exclude=["celery", "kombu", "temporalio", "django"],
             # Hooks
             before_send=_get_before_send(),
+            before_breadcrumb=_before_breadcrumb,
             before_send_transaction=lambda event, hint: (
                 _scrub_deployment_telemetry_event(event)
             ),
