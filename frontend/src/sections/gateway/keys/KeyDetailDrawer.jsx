@@ -29,6 +29,12 @@ import { useAnalyticsUsage } from "../analytics/hooks/useAnalyticsUsage";
 import { val } from "../utils/analyticsHelpers";
 import { formatCost, formatDateTime as formatDate } from "../utils/formatters";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import { paths } from "src/routes/paths";
+import { policiesForKey } from "../guardrails/hooks/useGuardrailPolicies";
+import {
+  DORMANT_POLICY_LABEL,
+  isDormantPolicy,
+} from "../guardrails/policyStatus";
 
 const InfoRow = ({ label, children }) => (
   <Stack
@@ -49,7 +55,13 @@ InfoRow.propTypes = {
   children: PropTypes.node.isRequired,
 };
 
-const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
+const KeyDetailDrawer = ({
+  keyId,
+  open,
+  onClose,
+  gatewayId,
+  policies = [],
+}) => {
   const theme = useTheme();
   const navigate = useNavigate();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -227,6 +239,57 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
                   {formatDate(keyData.expires_at)}
                 </Typography>
               </InfoRow>
+            </Box>
+
+            <Divider />
+
+            <Box>
+              <Typography variant="m3" sx={{ mb: 1 }}>
+                Guardrail policies
+              </Typography>
+              <Stack spacing={1}>
+                {policiesForKey(policies, keyData.id).map((policy) => (
+                  <Stack
+                    key={policy.id}
+                    direction="row"
+                    alignItems="center"
+                    gap={1}
+                  >
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        onClose();
+                        navigate(
+                          `${paths.dashboard.gateway.guardrails.policies}?policy=${policy.id}`,
+                        );
+                      }}
+                    >
+                      {policy.name}
+                    </Button>
+                    <StatusBadge
+                      status={policy.mode}
+                      label={policy.mode === "monitor" ? "Monitor" : "Enforce"}
+                      role={policy.mode === "monitor" ? "info" : "warning"}
+                    />
+                    {isDormantPolicy(policy) && (
+                      <StatusBadge
+                        status="not_running"
+                        label={DORMANT_POLICY_LABEL}
+                        role="neutral"
+                        data-testid={`key-policy-dormant-${policy.id}`}
+                      />
+                    )}
+                  </Stack>
+                ))}
+                {policiesForKey(policies, keyData.id).length === 0 && (
+                  <Typography variant="s1" color="text.secondary">
+                    No key-specific policies.
+                  </Typography>
+                )}
+                <Typography variant="s3" color="text.secondary">
+                  Org-wide guardrails also apply to this key.
+                </Typography>
+              </Stack>
             </Box>
 
             <Divider />
@@ -443,6 +506,7 @@ KeyDetailDrawer.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   gatewayId: PropTypes.string,
+  policies: PropTypes.array,
 };
 
 export default KeyDetailDrawer;
