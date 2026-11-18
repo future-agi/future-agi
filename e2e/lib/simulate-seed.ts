@@ -498,7 +498,11 @@ def main():
         status=CallExecution.CallStatus.CANCELLED,
         simulation_call_type=CallExecution.SimulationCallType.TEXT,
         completed_at=timezone.now(),
-        call_metadata={"harness_workers": stopped},
+        # The guest sealed it as the user's stop, as a Stop during the call does.
+        call_metadata={
+            "harness_workers": stopped,
+            "hosted_harness_receipt": {"status": "errored", "failure": {"code": "user_canceled"}},
+        },
     )
     # The refund worker runs as its own process: past its deadline the harness ended it (sealed as stopped_workers).
     past_deadline = {
