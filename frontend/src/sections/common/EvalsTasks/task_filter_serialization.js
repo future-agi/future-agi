@@ -10,12 +10,16 @@ export const taskFilterColumnId = (row) =>
     : row?.propertyId || row?.property;
 
 export const taskFilterColumnType = (row, columnId) => {
-  if (ANNOTATION_COLUMN_IDS.has(columnId)) return "ANNOTATION";
+  // Explicit source identity wins over legacy name-based annotation routing.
   return (
     row?.apiColType ||
     row?.filterConfig?.colType ||
     FIELD_CATEGORY_TO_COL_TYPE[row?.fieldCategory] ||
-    (row?.property === "attributes" ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC")
+    (row?.property === "attributes"
+      ? "SPAN_ATTRIBUTE"
+      : ANNOTATION_COLUMN_IDS.has(columnId)
+        ? "ANNOTATION"
+        : "SYSTEM_METRIC")
   );
 };
 

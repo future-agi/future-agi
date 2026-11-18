@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from unittest import mock
 
@@ -238,4 +239,6 @@ def test_v2_navigation_target_crosses_one_statement_rewrite_boundary(
         if str(call.args[0]).lstrip().upper().startswith(("SELECT", "WITH"))
     ]
     assert len(statement_calls) == 1
-    assert sql.upper().count("\nSETTINGS ") == 1
+    # Explicit span safety settings are emitted indented and merged at the
+    # same rewrite boundary. Whitespace is not another statement or clause.
+    assert len(re.findall(r"(?im)^\s*SETTINGS\b", sql)) == 1

@@ -81,10 +81,11 @@ const EditCustomModelDialog = ({
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="sm"
+      maxWidth={false}
       PaperProps={{
         sx: {
-          minWidth: "600px",
+          maxWidth: 720,
+          minWidth: "720px",
           borderRadius: theme.spacing(1),
           padding: theme.spacing(2),
           display: "flex",
@@ -111,7 +112,7 @@ const EditCustomModelDialog = ({
           color: "text.primary",
         }}
       >
-        <Iconify icon="akar-icons:cross" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <DialogContent sx={{ padding: 0 }}>
         <Box py={1} display={"flex"} flexDirection={"column"} gap={1}>
@@ -124,16 +125,12 @@ const EditCustomModelDialog = ({
             <Chip
               label={"JSON"}
               sx={{
-                height: "30px",
                 marginBottom: 1,
                 width: "max-content",
                 backgroundColor: "action.hover",
-                borderRadius: 0,
                 borderBottomLeftRadius: theme.spacing(0.5),
                 color: "primary.main",
-                paddingX: theme.spacing(1),
                 typography: "s2",
-                fontWeight: 600,
                 "& .MuiChip-label": {
                   padding: 0,
                 },
@@ -160,7 +157,6 @@ const EditCustomModelDialog = ({
                 disabled={!isDirty}
                 sx={{
                   minWidth: "200px",
-                  minHeight: "38px",
                 }}
               >
                 Save

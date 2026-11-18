@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Typography, Stack } from "@mui/material";
+import { Box, ButtonBase, Typography, Stack } from "@mui/material";
 
 import ConversationCard from "./ConversationCard";
 import SvgColor from "src/components/svg-color";
@@ -142,7 +142,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
               sx={{
                 height: "16px",
                 width: "16px",
-                bgcolor: "blue.500",
+                bgcolor: "text.secondary",
               }}
             />
           </Box>
@@ -202,7 +202,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
               sx={{
                 height: "16px",
                 width: "16px",
-                bgcolor: "pink.500",
+                bgcolor: "action.hover",
               }}
             />
           </Box>
@@ -235,22 +235,19 @@ const Conversation = ({ human, ai, activeSessionId }) => {
         </Box>
 
         {showButton && (
-          <Stack
-            direction={"row"}
-            alignItems={"center"}
-            component={"button"}
+          <ButtonBase
             onClick={() =>
               scrollToElement(showButton === "human" ? humanRef : aiRef)
             }
             sx={{
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
               position: "absolute",
               top: showButton === "human" ? "unset" : 20,
               bottom: showButton === "ai" ? "unset" : 20,
-              border: "none",
               right: 10,
               gap: 1.5,
-              bgcolor: "transparent",
-              cursor: "pointer",
             }}
           >
             <Box
@@ -284,7 +281,7 @@ const Conversation = ({ human, ai, activeSessionId }) => {
             >
               {showButton === "human" ? <>View Input</> : <>View Output</>}
             </Typography>
-          </Stack>
+          </ButtonBase>
         )}
       </Box>
     </Box>

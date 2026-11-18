@@ -75,6 +75,24 @@ type PostParallel interface {
 	IsPostParallel() bool
 }
 
+// PostPriority is an optional interface for a plugin whose response-side work
+// must run at another point than its request-side check. Budgets check spend
+// early, before guardrails, but record it only after the cost plugin has
+// priced the request; the cache stores a response only after the output
+// guardrails have passed it. Sequential post-plugins run in PostPriority
+// order, and a plugin without it keeps its Priority.
+type PostPriority interface {
+	PostPriority() int
+}
+
+// AccessGate is an optional interface for a plugin whose request-side check
+// decides whether the caller may use the gateway at all, such as the address
+// lists and the key's own restrictions. Engine.CheckAccess runs these checks
+// alone, for handlers that call a provider without the whole pipeline.
+type AccessGate interface {
+	IsAccessGate() bool
+}
+
 // SkipOnCacheHit is an optional interface plugins can implement to indicate
 // their ProcessResponse should be skipped when the request was served from cache.
 // Cost calculation and credits deduction are meaningless on cache hits.

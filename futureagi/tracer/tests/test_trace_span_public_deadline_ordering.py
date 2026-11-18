@@ -85,7 +85,8 @@ def test_outer_deadline_preserves_action_swagger_and_unwrapped_metadata(
     assert action_method.__name__ == original.__name__
     assert action_method.__doc__ == original.__doc__
     assert action_method.detail is False
-    assert set(action_method.mapping) == {http_method}
+    expected_methods = {"get", "post"} if http_method == "get" else {"post"}
+    assert set(action_method.mapping) == expected_methods
     assert action_method.url_path == action_method.__name__
     assert action_method.url_name == action_method.__name__.replace("_", "-")
     assert action_method.kwargs["description"] == action_method.__doc__
@@ -161,7 +162,8 @@ def test_list_wall_starts_before_invalid_validation_without_database_access(
         "postgres_wrapper_exited",
     ]
     assert deadline.remaining_ms.call_args_list == [
-        mock.call(floor_ms=1),
+        # Check admission, but preserve completed validation responses instead
+        # of replacing them with a timeout after the request has finished.
         mock.call(floor_ms=1),
     ]
     atomic.assert_not_called()

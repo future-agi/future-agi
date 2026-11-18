@@ -1,11 +1,7 @@
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, Tab, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo } from "react";
-import {
-  CustomTab,
-  CustomTabs,
-  TabWrapper,
-} from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { tabOptions } from "./constant";
 import { ShowComponent } from "../show";
 import SvgColor from "../svg-color";
@@ -20,8 +16,6 @@ const FieldHeader = ({
   required,
   errorMessage,
 }) => {
-  const theme = useTheme();
-
   const filterOption = useMemo(() => {
     const filtered = tabOptions.filter((item) =>
       item.value == "audio" && hideAudio ? false : true,
@@ -77,42 +71,19 @@ const FieldHeader = ({
         {required && <span style={{ color: "red" }}>*</span>}
       </Typography>
       <ShowComponent condition={showTabs}>
-        <TabWrapper
-          sx={{ backgroundColor: "action.hover", marginBottom: "0px" }}
+        <SegmentedTabs
+          value={currentTab}
+          onChange={(e, value) => setCurrentTab(value)}
         >
-          <CustomTabs
-            value={currentTab}
-            onChange={(e, value) => setCurrentTab(value)}
-            sx={{
-              "& .Mui-selected": {
-                backgroundColor: `${theme.palette.background.paper}`,
-                borderRadius: 0.75,
-                color: (theme) => `${theme.palette.text.primary} !important`,
-              },
-            }}
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: `${theme.palette.background.paper}`,
-                opacity: 0.08,
-                height: "100%",
-                borderRadius: 1,
-              },
-            }}
-          >
-            {filterOption.map((tab) => (
-              <CustomTab
-                key={tab.value}
-                label={tab.label}
-                value={tab.value}
-                disabled={tab.disabled}
-                sx={{
-                  fontWeight: theme.typography.fontWeightMedium,
-                  color: (theme) => `${theme.palette.text.disabled} !important`,
-                }}
-              />
-            ))}
-          </CustomTabs>
-        </TabWrapper>
+          {filterOption.map((tab) => (
+            <Tab
+              key={tab.value}
+              label={tab.label}
+              value={tab.value}
+              disabled={tab.disabled}
+            />
+          ))}
+        </SegmentedTabs>
       </ShowComponent>
     </Box>
   );

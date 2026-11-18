@@ -15,10 +15,21 @@ For a good review, please make sure:
 
 ## Linked issues
 
-<!-- "Closes #123" links and auto-closes on merge. Also link the Linear issue. -->
+<!-- "Closes #123" links and auto-closes on merge. Also link the Linear issue.
+     Anything bigger than a small fix needs an issue a maintainer has labelled `accepted`. -->
 
 Closes #
 Linear:
+
+## AI use
+
+<!-- Required. Which tool, and how much of this change it produced. Examples:
+       AI use: none
+       AI use: Claude Code wrote the first draft of the test; I wrote the fix and reviewed both
+       AI use: Cursor autocomplete only
+     Undisclosed AI that a reviewer spots gets the PR closed. See CONTRIBUTION_POLICY.md. -->
+
+AI use:
 
 ## Type of change
 
@@ -89,7 +100,11 @@ E2E:
 
 - `test_case_name` — [what it covers]
 
-> Run result: **X passed** across these suites. Lint (ruff) + format (black) clean.
+<!-- Paste the real output of the run below (the summary line at minimum). A count with no output is treated as "not run". -->
+
+```
+<paste `bin/test ...` / `yarn test:run` output here>
+```
 
 ---
 

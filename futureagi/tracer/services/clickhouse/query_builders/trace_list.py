@@ -19,9 +19,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from tracer.services.clickhouse.eval_logger_table import (
+    count_mode_choice_array,
     eval_logger_live_state_columns,
     eval_logger_source,
     eval_logger_version_column,
+    latest_completed_eval_rows,
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.eval_status import (
@@ -241,6 +243,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         bounded_global_span_witnesses: bool = False,
         bounded_sampling_salt: str | None = None,
         bounded_sampling_rate: float | None = None,
+        eval_count_mode: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
@@ -266,6 +269,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             else None
         )
         self.eval_filter_metadata = eval_filter_metadata
+        self.eval_count_mode = eval_count_mode
         self._bounded_internal_scan = bool(bounded_internal_scan)
         self._bounded_identity_only = bool(bounded_identity_only)
         # Graph sampling may narrow root seeding/order to one temporal
@@ -438,8 +442,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         return [
             item
             for item in filters
-            if (item.get("column_id") or item.get("columnId"))
-            not in {"created_at", "start_time"}
+            if not BaseQueryBuilder.is_datetime_filter(item)
             or BaseQueryBuilder.is_datetime_complement_filter(item)
         ]
 
@@ -447,9 +450,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         return [
             item
             for item in self.filters
-            if isinstance(item, dict)
-            and (item.get("column_id") or item.get("columnId"))
-            not in {"created_at", "start_time"}
+            if isinstance(item, dict) and not BaseQueryBuilder.is_datetime_filter(item)
         ]
 
     def _uses_full_window_time_only_bulk_identity_scan(self) -> bool:
@@ -501,19 +502,51 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         )
 
     def _positive_exact_end_user_seed_filter(self) -> dict[str, Any] | None:
-        """Return the sole exact user alias filter eligible for root seeding.
+        """Return a necessary exact user alias filter for root seeding.
 
         User-detail trace pages add one structural ``user``/``user_id`` or
         ``end_user_id`` equality while retaining a separate time predicate.
         An explicitly raw ``SPAN_ATTRIBUTE`` with the same key must keep its
-        ordinary attribute semantics. Other relational shapes stay on the
-        candidate classifier path: negation, substring matching, and
-        combinations can be common enough that they are not safe selective
-        seeds.
+        ordinary attribute semantics. Public user-detail pages can also have
+        attribute siblings: the user remains necessary, while the unchanged
+        classifier applies every sibling. Negation, substring matching, and
+        multiple native-user leaves keep their existing classifier path.
         """
 
         active_filters = self._active_non_time_filters()
-        if self.search or len(active_filters) != 1:
+        if self.search:
+            return None
+        if len(active_filters) > 1:
+            if (
+                self._bounded_identity_only
+                or self._bounded_internal_scan
+                or self._bounded_bulk_scan
+                or self._bounded_population_proof
+                or self._bounded_membership_filters is not None
+                or self._bounded_sampling_rate is not None
+            ):
+                return None
+            # Never reinterpret raw SPAN_ATTRIBUTE user-shaped keys as the
+            # curated user relation. Composite project/trace identity is kept
+            # by the existing org candidate CTE and latest classifier.
+            user_filters = []
+            for item in active_filters:
+                key = item.get("column_id") or item.get("columnId")
+                config = item.get("filter_config") or item.get("filterConfig") or {}
+                if not isinstance(config, dict):
+                    continue
+                col_type = str(
+                    config.get("col_type") or config.get("colType") or ""
+                ).upper()
+                if key in {"end_user_id", "user", "user_id"} and col_type in {
+                    "",
+                    "NORMAL",
+                    "SYSTEM_METRIC",
+                    "TRACE_END_USER",
+                }:
+                    user_filters.append(item)
+            active_filters = user_filters
+        if len(active_filters) != 1:
             return None
         item = active_filters[0]
         key = item.get("column_id") or item.get("columnId")
@@ -607,6 +640,10 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             col_type = str(
                 config.get("col_type") or config.get("colType") or ""
             ).upper()
+            if col_type == "SPAN_ATTRIBUTE":
+                # A same-named raw boolean is not evidence of an eval/Score
+                # relation. Its typed-Map witness has its own optional path.
+                continue
             filter_type = str(
                 config.get("filter_type") or config.get("filterType") or ""
             ).lower()
@@ -653,6 +690,35 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                     candidates.append((1, index, item))
                 continue
 
+            if col_type == "ANNOTATION" and key not in {
+                "annotator",
+                "has_annotation",
+                "has_eval",
+                "my_annotations",
+            }:
+                # Per-label comparisons (including negative value comparisons)
+                # require a matching live Score row. They can use the same
+                # project-scoped relation seed as global annotator filters.
+                # is_null is absence, so it must keep ordered-root discovery.
+                # The final classifier still repeats every predicate against
+                # latest state; this never publishes the seed as a result.
+                if (
+                    isinstance(key, str)
+                    and operation in positive_eval_operations
+                    and filter_type
+                    in {
+                        "number",
+                        "text",
+                        "boolean",
+                        "thumbs",
+                        "categorical",
+                        "array",
+                        "annotator",
+                    }
+                ):
+                    candidates.append((1, index, item))
+                continue
+
             if key not in {"has_eval", "has_annotation"}:
                 continue
             if key == "has_eval" and not self._eval_config_ids_known:
@@ -694,6 +760,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if filter_item is None:
             return "", {}
         filter_builder = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
             annotation_label_ids=self.annotation_label_ids,
@@ -728,9 +795,13 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         ``user``/``user_id`` values are external identifiers, so resolve them
         through the existing curated end-user/remap expansion before probing
         the indexed span UUID. ``end_user_id`` is already a physical structural
-        UUID and can use the normal direct-column compiler. The returned
-        predicate is a necessary candidate condition only; the existing finite
-        latest-state classifier remains authoritative for publication.
+        UUID and uses the normal direct-column compiler. Whatever comparison
+        that compiler chooses, the predicate carries the membership envelope
+        here, because the CTE it seeds spans the whole table.
+
+        The returned predicate is a necessary candidate condition only; the
+        existing finite latest-state classifier remains authoritative for
+        publication.
         """
 
         filter_item = self._positive_exact_end_user_seed_filter()
@@ -745,6 +816,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         )
         value = config.get("filter_value", config.get("filterValue"))
         filter_builder = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             project_id=self.project_id,
@@ -775,10 +847,19 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 operation,
                 value,
             )
-        return predicate or "", dict(filter_builder._params)
+        if not predicate:
+            return "", {}
+        # This predicate seeds a trace-membership CTE over the whole span
+        # table, so it needs the same event-time envelope every membership
+        # subquery ``translate`` compiles already carries. Without it the CTE
+        # is the one read in the statement that does not shrink with the
+        # request window: it rescans the project's entire span history for a
+        # one-day page exactly as it does for a year.
+        predicate += filter_builder._span_membership_date_filter()
+        return predicate, dict(filter_builder._params)
 
     def supports_filter_candidate_seed_page(self) -> bool:
-        """Use an exact relational candidate before public or bulk roots."""
+        """Use necessary scalar or relational membership before ordered roots."""
 
         public_list_or_bulk_identity = (
             not self._bounded_identity_only and not self._bounded_bulk_scan
@@ -791,6 +872,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             and (
                 self._positive_exact_end_user_seed_filter() is not None
                 or self._positive_relational_seed_filter() is not None
+                or self._public_scalar_candidate_seed_plan() is not None
             )
         )
 
@@ -807,6 +889,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if filter_item is None:
             return "", {}
         filter_builder = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
             project_id=self.project_id,
@@ -843,8 +926,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         for item in self._bounded_match_filters():
             if not isinstance(item, dict):
                 continue
-            key = item.get("column_id") or item.get("columnId")
-            if key in {"created_at", "start_time"}:
+            if BaseQueryBuilder.is_datetime_filter(item):
                 continue
             config = item.get("filter_config") or item.get("filterConfig") or {}
             if not isinstance(config, dict):
@@ -860,21 +942,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     def _custom_span_attribute_filter_count(self) -> int:
         """Count filters that replay custom typed-Map/JSON span state."""
 
-        filter_builder_cls = self._FILTER_BUILDER_CLS
-        promoted_system_keys = set(getattr(filter_builder_cls, "SYSTEM_METRIC_MAP", {}))
-        for mapping_name in (
-            "VOICE_SYSTEM_METRIC_EXPRS",
-            "VOICE_SYSTEM_METRIC_STR_MAP",
-            "VOICE_SYSTEM_METRIC_STR_EXPRS",
-        ):
-            promoted_system_keys.update(getattr(filter_builder_cls, mapping_name, {}))
-
         count = 0
         for item in self._bounded_match_filters():
             if not isinstance(item, dict):
                 continue
             key = item.get("column_id") or item.get("columnId")
-            if not key or key in {"created_at", "start_time"}:
+            if not key or BaseQueryBuilder.is_datetime_filter(item):
                 continue
             config = item.get("filter_config") or item.get("filterConfig") or {}
             if not isinstance(config, dict):
@@ -882,7 +955,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             col_type = str(
                 config.get("col_type") or config.get("colType") or ""
             ).upper()
-            if col_type == "SPAN_ATTRIBUTE" and key not in promoted_system_keys:
+            # Source family is authoritative even for native metric aliases.
+            # Those raw leaves still read Map/JSON and need the same small cap.
+            if col_type == "SPAN_ATTRIBUTE":
                 count += 1
         return count
 
@@ -1522,6 +1597,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         request_width = request_end - request_start
         if self._uses_full_window_time_only_bulk_identity_scan():
             return request_width
+        if self._public_scalar_candidate_seed_plan() is not None:
+            return request_width
         if (
             not self._bounded_identity_only
             and not self._bounded_internal_scan
@@ -1582,6 +1659,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         request_start, request_end = self._bounded_request_window
         request_width = request_end - request_start
         if self._uses_full_window_time_only_bulk_identity_scan():
+            return request_width
+        if self._public_scalar_candidate_seed_plan() is not None:
             return request_width
         if self._uses_default_newest_first_partition_walk():
             return request_width
@@ -1775,7 +1854,13 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # remap-bounded membership seed.  A speculative any-span anchor adds a
         # shorter statement timeout in front of that authoritative path and can
         # make a healthy large-remap request fail before the seed is attempted.
-        if self._positive_exact_end_user_seed_filter() is not None:
+        if (
+            self._positive_exact_end_user_seed_filter() is not None
+            or self._public_scalar_candidate_seed_plan() is not None
+        ):
+            # A numeric membership seed already discovers ordered roots.
+            # Advertising the ordinary child anchor would make the selector
+            # replace that seed with an unfiltered ordered-root traversal.
             return False
         return bool(self._filter_anchor_plans())
 
@@ -1919,17 +2004,13 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         project_version_fragment = ""
         if self.project_version_id:
             params["project_version_id"] = self.project_version_id
-            project_version_fragment = (
-                "AND project_version_id = %(project_version_id)s"
-            )
+            project_version_fragment = "AND project_version_id = %(project_version_id)s"
         keyset_fragment = ""
         if after_trace_id is not None:
             if not str(after_trace_id):
                 raise ValueError("exact candidate cursor must be non-empty")
             params["exact_graph_candidate_after_trace_id"] = str(after_trace_id)
-            keyset_fragment = (
-                "AND trace_id > %(exact_graph_candidate_after_trace_id)s"
-            )
+            keyset_fragment = "AND trace_id > %(exact_graph_candidate_after_trace_id)s"
         query = f"""
         SELECT trace_id
         FROM {self.TABLE}
@@ -2228,6 +2309,26 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """Whether the optional graph candidate probe scans retained history."""
 
         return self._positive_typed_map_candidate_plan() is not None
+
+    def exact_graph_candidate_witness_has_numeric_value_proof(self) -> bool:
+        """Reuse the compiler's necessary, missing-default-safe numeric witness.
+
+        This is a semantic proof, not a claim that range predicates have a
+        deployed value index. Key-only and default-ambiguous leaves do not
+        qualify; the complete latest-state classifier remains authoritative.
+        """
+        plan = self._positive_typed_map_candidate_plan()
+        if plan is None or plan.scope != "any" or plan.exclude_group_matches:
+            return False
+        predicate = str(plan.raw_graph_value_witness_predicate or "")
+        return bool(
+            predicate
+            and predicate != plan.raw_key_witness_predicate
+            and "span_attr_num[" in predicate
+            and "span_attr_str" not in predicate
+            and "span_attr_bool" not in predicate
+            and "JSONExtract" not in predicate
+        )
 
     def exact_graph_candidate_witness_has_deployed_value_index(self) -> bool:
         """Whether the all-history witness has a proven deployed value index.
@@ -2670,6 +2771,100 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
+    def _public_scalar_candidate_witness_predicate(
+        self, plan: LatestFilterPredicate | None
+    ) -> str:
+        """Return a compiler-proven raw superset for a finite public root batch.
+
+        This is deliberately separate from latest-state replay: stale physical
+        values and tombstones may survive the witness, but only the unchanged
+        classifier can publish them. The graph compiler already preserves OR
+        branches and missing-Map defaults when constructing this predicate.
+        Key-only/default-ambiguous plans retain the existing exact fallback.
+        """
+
+        request_start, request_end = self._bounded_request_window
+        if (
+            plan is None
+            or plan.scope != "any"
+            or plan.exclude_group_matches
+            or self._bounded_identity_only
+            or self._bounded_internal_scan
+            or self._bounded_bulk_scan
+            or self._bounded_population_proof
+            or self._bounded_membership_filters is not None
+            or self._bounded_sampling_rate is not None
+            or self.project_id is None
+            or self.project_ids is not None
+            or self.search
+            or self.sort_params
+            or request_end - request_start <= timedelta(hours=1)
+        ):
+            return ""
+        key_witness = str(plan.raw_key_witness_predicate or "")
+        predicate = str(plan.raw_graph_value_witness_predicate or "")
+        if (
+            not predicate
+            or predicate == key_witness
+            or "JSONExtract" in predicate
+            or not re.search(r"\bhas\(span_attr_(?:str|num|bool)\.keys,", key_witness)
+        ):
+            return ""
+        return predicate
+
+    def _public_scalar_candidate_seed_plan(self) -> LatestFilterPredicate | None:
+        """Choose a numeric necessary leaf before root pagination.
+
+        Text/boolean and mixed-type values can have dense all-history trace
+        sets even for a short root window. Keep those on finite ordered-root
+        witnesses; the sparse-history jump is only enabled for a compiler-safe
+        numeric value predicate, not a key-only/default-ambiguous witness.
+        """
+
+        return next(
+            (
+                plan
+                for plan in self._candidate_witness_plans()
+                if self._public_scalar_candidate_witness_predicate(plan)
+                and "span_attr_num[" in plan.raw_graph_value_witness_predicate
+                and "span_attr_str" not in plan.raw_graph_value_witness_predicate
+                and "span_attr_bool" not in plan.raw_graph_value_witness_predicate
+            ),
+            None,
+        )
+
+    def recommended_filter_cursor_seed_batch_size(self) -> int | None:
+        """Amortize sparse scalar traversal without widening exact replay.
+
+        The selector commits only fully rejected/classified ordered prefixes;
+        a failed probe or classifier leaves its unconsumed suffix resumable.
+        The probe's separate wall/byte caps and ten-trace fallback still apply.
+        """
+
+        if self._public_scalar_candidate_witness_predicate(
+            self._candidate_witness_anchor_plan()
+        ):
+            return 200
+        return None
+
+    def filter_candidate_seed_is_optional(self) -> bool:
+        """Only the public scalar history jump may fall back to plain roots."""
+
+        return bool(
+            self._public_scalar_candidate_seed_plan() is not None
+            and self._positive_exact_end_user_seed_filter() is None
+            and self._positive_relational_seed_filter() is None
+        )
+
+    def filter_candidate_witness_is_optional(self) -> bool:
+        """A failed public raw witness must retain every exact candidate."""
+
+        return bool(
+            self._public_scalar_candidate_witness_predicate(
+                self._candidate_witness_anchor_plan()
+            )
+        )
+
     def _candidate_witness_plans(self) -> list[LatestFilterPredicate]:
         """Return positive any-span leaves safe for a finite exact prefilter.
 
@@ -2702,8 +2897,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         for item in self._bounded_filters():
             if not isinstance(item, dict):
                 return []
-            key = item.get("column_id") or item.get("columnId")
-            if key in {"created_at", "start_time"}:
+            if BaseQueryBuilder.is_datetime_filter(item):
                 continue
             try:
                 item_plans, item_residual = self._partition_trace_filter_plans([item])
@@ -2723,7 +2917,10 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             )
             if (
                 plan.scope == "any"
-                and operation in positive_operations
+                and (
+                    operation in positive_operations
+                    or self._public_scalar_candidate_witness_predicate(plan)
+                )
                 and plan.aggregates
                 and plan.predicate
             ):
@@ -2791,8 +2988,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     ) -> bool:
         """Return whether one exact text leaf is selective enough to prefilter."""
 
-        key = str(item.get("column_id") or item.get("columnId") or "")
-        if key in {"created_at", "start_time"}:
+        if BaseQueryBuilder.is_datetime_filter(item):
             return False
         config = item.get("filter_config") or item.get("filterConfig") or {}
         if not isinstance(config, dict):
@@ -2835,7 +3031,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
 
         key = str(item.get("column_id") or item.get("columnId") or "")
-        if key in {"created_at", "start_time"}:
+        if BaseQueryBuilder.is_datetime_filter(item):
             return False
         config = item.get("filter_config") or item.get("filterConfig") or {}
         if not isinstance(config, dict):
@@ -2914,7 +3110,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             (
                 (
                     interactive_list
-                    and self._interactive_candidate_witness_is_expensive()
+                    and (
+                        self._interactive_candidate_witness_is_expensive()
+                        or self._public_scalar_candidate_witness_predicate(
+                            self._candidate_witness_anchor_plan()
+                        )
+                    )
                 )
                 or self.supports_filter_candidate_witness_prefilter_without_hydration()
             )
@@ -2990,14 +3191,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     ) -> tuple[str, dict[str, Any]]:
         """Return finite candidates satisfying one global necessary leaf.
 
-        Physical span versions are collapsed first and the selected leaf is
-        reduced at trace scope across all history.  The candidate identities
-        are finite, so this can safely prove that one required any-span leaf is
-        absent without assuming a maximum trace duration. Using exactly one
-        leaf matters because two filters may be satisfied by sibling spans.
-        Survivors still pass the complete latest-state classifier before
-        publication. ``slice_start``/``slice_end`` are accepted for backwards
-        compatibility but never narrow this global membership replay.
+        Public scalar leaves first use their indexable raw witness. Other
+        supported shapes collapse physical versions before reducing the leaf.
+        Both paths cover all history for finite candidate identities, so a
+        missing witness can safely exclude a root without assuming a maximum
+        trace duration. Exactly one necessary leaf is used: sibling spans may
+        satisfy different filters. Every survivor still passes the complete
+        latest-state classifier. ``slice_start``/``slice_end`` are accepted for
+        compatibility but never narrow child membership.
         """
 
         if not isinstance(seed_rows, list) or not seed_rows or len(seed_rows) > 512:
@@ -3066,6 +3267,23 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             params["project_version_id"] = self.project_version_id
             project_version_fragment = "AND project_version_id = %(project_version_id)s"
 
+        raw_witness = self._public_scalar_candidate_witness_predicate(anchor)
+        if raw_witness:
+            # Never filter deletion or collapse only value-matching versions:
+            # an old match can have a newer non-match/tombstone. Keep this a
+            # necessary raw superset and replay every survivor independently.
+            query = f"""
+            SELECT trace_id
+            FROM {self.TABLE}
+            PREWHERE {self.project_filter_sql()}
+              {project_version_fragment}
+              {candidate_fragment}
+            WHERE {raw_witness}
+            GROUP BY trace_id
+            LIMIT %(filter_candidate_witness_limit)s
+            """
+            return query, params
+
         grouped_project_select = (
             "project_id AS grouped_project_id," if org_scope else ""
         )
@@ -3107,6 +3325,68 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
+    def supports_filter_root_time_discovery(self) -> bool:
+        """Permit only exact public trace cursors to discover raw-root gaps."""
+
+        request_start, request_end = self._bounded_request_window
+        return bool(
+            request_end - request_start > timedelta(hours=1)
+            and not self._bounded_identity_only
+            and not self._bounded_internal_scan
+            and not self._bounded_bulk_scan
+            and not self._bounded_population_proof
+            and self._bounded_sampling_rate is None
+            and not self.sort_params
+            and not self.search
+            # A positive eval/Score relation already seeds an ordered root
+            # superset across the requested window. Raw-population discovery
+            # would reset that window to one hour and repeat the same relation
+            # scan for every empty hour. Keep the finite latest-state
+            # classifier and result-order proof; skip only this redundant probe.
+            and self._positive_relational_seed_filter() is None
+        )
+
+    def build_filter_root_time_discovery_query(
+        self, *, slice_start: datetime, slice_end: datetime
+    ) -> tuple[str, dict[str, Any]]:
+        """Discover a necessary physical root in at most one remaining day.
+
+        This is not latest membership: stale live/root versions may produce
+        false positives, which the unchanged classifier rejects. A completed
+        NULL proves only this interval empty. Never attach any-span attributes
+        or child timestamps, FINAL, sorting, per-trace sets, or sampling here.
+        """
+
+        request_start, request_end = self.parse_time_range(self.filters)
+        if not request_start <= slice_start < slice_end <= request_end:
+            raise ValueError("root discovery must stay inside the request window")
+        if slice_end - slice_start > timedelta(hours=24):
+            raise ValueError("root discovery cannot exceed 24 hours")
+        if not self.supports_filter_root_time_discovery():
+            raise ValueError("root time discovery is unavailable")
+        params = {
+            **self.params,
+            "root_discovery_start_us": _unix_microseconds(slice_start),
+            "root_discovery_end_us": _unix_microseconds(slice_end),
+        }
+        project_version_fragment = ""
+        if self.project_version_id:
+            params["project_version_id"] = self.project_version_id
+            project_version_fragment = "AND project_version_id = %(project_version_id)s"
+        return (
+            f"""
+            SELECT maxOrNull(toUnixTimestamp64Micro(start_time)) AS newest_raw_root_us
+            FROM {self.TABLE}
+            PREWHERE {self.project_filter_sql()}
+              {project_version_fragment}
+              AND start_time >= fromUnixTimestamp64Micro(%(root_discovery_start_us)s)
+              AND start_time < fromUnixTimestamp64Micro(%(root_discovery_end_us)s)
+            WHERE is_deleted = 0
+              AND (parent_span_id IS NULL OR parent_span_id = '')
+            """,
+            params,
+        )
+
     def build_filter_ordered_seed_page(
         self,
         *,
@@ -3118,12 +3398,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         direction: str = "older",
         _positive_user_candidate_first: bool = False,
         _positive_relation_candidate_first: bool = False,
+        _positive_scalar_candidate_first: bool = False,
+        _restrict_scalar_root_population: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Return a root-ordered superset after a common anchor sentinel.
 
-        This path never builds an unbounded trace-id Set. Finite roots are
-        classified against all any-span filters, and the reader stops only
-        when the returned root prefix is mathematically closed.
+        Scalar/user membership sets and root discovery share the statement's
+        read, memory and deadline caps. Finite roots are classified against all
+        filters; publication requires a mathematically closed root prefix.
         """
 
         if direction not in {"older", "newer"}:
@@ -3144,6 +3426,17 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             raise ValueError("trace relation candidate seed is unavailable")
         if _positive_user_candidate_first and _positive_relation_candidate_first:
             raise ValueError("trace candidate seed modes are mutually exclusive")
+        scalar_anchor = (
+            self._public_scalar_candidate_seed_plan()
+            if _positive_scalar_candidate_first
+            else None
+        )
+        if _positive_scalar_candidate_first and (
+            scalar_anchor is None
+            or _positive_user_candidate_first
+            or _positive_relation_candidate_first
+        ):
+            raise ValueError("trace scalar candidate seed is unavailable")
         request_start, request_end = self.parse_time_range(self.filters)
         if not request_start <= slice_start < slice_end <= request_end:
             raise ValueError("trace seed slice must stay inside the request window")
@@ -3308,6 +3601,65 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         )
         candidate_cte = ""
         candidate_membership_fragment = ""
+        if scalar_anchor is not None:
+            raw_witness = self._public_scalar_candidate_witness_predicate(scalar_anchor)
+            params.update(scalar_anchor.params)
+            root_population = (
+                self._scalar_candidate_root_population_predicate()
+                if _restrict_scalar_root_population
+                else ""
+            )
+            # The roots THIS statement can publish are the ones inside the
+            # slice, tightened to the cursor on a keyset continuation: an
+            # older-direction resume can never publish a root above the
+            # cursor, a newer-direction one never below it. A lane that
+            # declares a witness envelope derives it from those bounds, so its
+            # envelope is the tightest one that still carries every
+            # publishable root's own witness.
+            witness_envelope_fragment, witness_envelope_params = (
+                self._scalar_candidate_witness_envelope(
+                    root_start=(
+                        before_start_time
+                        if before_start_time is not None and direction == "newer"
+                        else slice_start
+                    ),
+                    root_end=(
+                        before_start_time
+                        if before_start_time is not None and direction == "older"
+                        else slice_end
+                    ),
+                )
+            )
+            params.update(witness_envelope_params)
+            # A conjunction may additionally require, per trace, that every
+            # other positive leaf's key is witnessed inside the same envelope.
+            # A lane declares that gate only when it also declares an envelope.
+            conjunction_gate_fragment, conjunction_gate_params = (
+                self._scalar_candidate_conjunction_gate(
+                    scalar_anchor,
+                    witness_envelope_fragment=witness_envelope_fragment,
+                    project_version_fragment=project_version_fragment,
+                )
+            )
+            params.update(conjunction_gate_params)
+            # All child timestamps and physical versions must participate.
+            # No inner LIMIT: truncating raw witnesses could hide an older
+            # matching root. Statement limits throw instead of proving absence.
+            candidate_cte = f"""
+        WITH matching_scalar_trace_identities AS (
+            SELECT DISTINCT trace_id
+            FROM {self.TABLE}
+            PREWHERE {self.project_filter_sql()}
+              {project_version_fragment}{witness_envelope_fragment}
+              {root_population}{conjunction_gate_fragment}
+            WHERE {raw_witness}
+        )
+            """
+            candidate_membership_fragment = """
+          AND trace_id IN (
+              SELECT trace_id FROM matching_scalar_trace_identities
+          )
+            """
         if _positive_user_candidate_first:
             if not end_user_seed_predicate:
                 raise ValueError("trace user candidate predicate is unavailable")
@@ -3347,6 +3699,52 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
+    def _scalar_candidate_root_population_predicate(self) -> str:
+        """Storage-specific necessary trace population; never leaf semantics."""
+
+        return ""
+
+    def _scalar_candidate_conjunction_gate(
+        self,
+        anchor: LatestFilterPredicate,
+        *,
+        witness_envelope_fragment: str,
+        project_version_fragment: str,
+    ) -> tuple[str, dict[str, Any]]:
+        """Optional per-trace presence gate on the candidate CTE; none by default.
+
+        The candidate CTE seeds a conjunction from ONE anchor leaf's raw value
+        witness and leaves every other leaf to the exact classifier. A lane
+        may additionally require, per candidate trace, that each other
+        positive leaf's typed-Map key is witnessed by some raw row inside the
+        same envelope the anchor's witness is confined to. That narrows
+        candidacy only, never membership: the classifier stays the authority.
+
+        An empty fragment must leave the statement byte-identical, so the
+        fragment carries its own leading newline and indentation.
+        """
+
+        del anchor, witness_envelope_fragment, project_version_fragment
+        return "", {}
+
+    def _scalar_candidate_witness_envelope(
+        self, *, root_start: datetime, root_end: datetime
+    ) -> tuple[str, dict[str, Any]]:
+        """Optional time bound on the candidate witness scan; none by default.
+
+        The shipped contract lets any raw span of a candidate trace carry the
+        value whatever its own start time, so this emits nothing and the
+        witness CTE stays time-unbounded. A lane may declare an envelope
+        around ``[root_start, root_end]`` - the roots the calling statement can
+        publish - which narrows *candidacy*, never membership: the exact
+        latest-state classifier is a separate statement and is unaffected.
+
+        An empty fragment must leave the statement byte-identical, so the
+        fragment carries its own leading newline and indentation.
+        """
+
+        return "", {}
+
     def build_filter_candidate_seed_page(
         self,
         *,
@@ -3356,11 +3754,16 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         before_start_time: datetime | None = None,
         before_id: Any = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Seed ordered roots from an exact positive relational candidate."""
+        """Seed ordered roots from a necessary scalar or relational candidate."""
 
         positive_user = self._positive_exact_end_user_seed_filter() is not None
         positive_relation = self._positive_relational_seed_filter() is not None
-        if not positive_user and not positive_relation:
+        positive_scalar = (
+            not positive_user
+            and not positive_relation
+            and self._public_scalar_candidate_seed_plan() is not None
+        )
+        if not positive_user and not positive_relation and not positive_scalar:
             # Preserve the established domain error for unsupported callers.
             raise ValueError("trace user candidate seed is unavailable")
 
@@ -3373,6 +3776,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             before_id=before_id,
             _positive_user_candidate_first=positive_user,
             _positive_relation_candidate_first=positive_relation,
+            _positive_scalar_candidate_first=positive_scalar,
         )
 
     def build_filter_navigation_seed_page(
@@ -3836,9 +4240,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self.start_date, self.end_date = request_start, request_end
         self.params.update({"start_date": request_start, "end_date": request_end})
         has_explicit_time_filter = any(
-            (item.get("column_id") or item.get("columnId"))
-            in {"created_at", "start_time"}
-            for item in match_filters
+            BaseQueryBuilder.is_datetime_filter(item) for item in match_filters
         )
         # A continuous-task classifier receives identities from a separate
         # arrival/change seed.  Its default 30-day UI window is not membership:
@@ -3960,7 +4362,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                     latest_parent_span_id IS NULL
                     OR latest_parent_span_id = ''
                 )"""
-        canonical_root_order = "tuple(latest_start_time, grouped_id)"
+        if self.project_version_id and not self._filter_project_version_is_immutable():
+            canonical_root_condition += (
+                " AND _latest_root_project_version = %(project_version_id)s"
+            )
+            # A v2 physical span may move between project versions. Replay its
+            # complete history before applying this mutable membership field.
+            project_version_fragment = ""
+        canonical_root_order = self._filter_classifier_root_order()
         canonical_root_aggregates = [
             (
                 f"argMaxIf(tuple({alias}), {canonical_root_order}, "
@@ -4117,6 +4526,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                         ]
                         branch_label_set_known = True
                     residual_builder = self._FILTER_BUILDER_CLS(
+                        eval_count_mode=self.eval_count_mode,
                         table=self.TABLE,
                         query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
                         annotation_label_ids=branch_label_ids,
@@ -4166,6 +4576,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 residual_predicate = " OR ".join(residual_branches) or "0 = 1"
             else:
                 residual_builder = self._FILTER_BUILDER_CLS(
+                    eval_count_mode=self.eval_count_mode,
                     table=self.TABLE,
                     query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
                     annotation_label_ids=self.annotation_label_ids,
@@ -4207,6 +4618,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         physical_group_by = self.filter_classifier_physical_group_by(
             org_scope=org_scope
         )
+        coordinate_predicate = self._filter_classifier_coordinate_predicate()
         trace_group_by = (
             "grouped_project_id, grouped_trace_id" if org_scope else "grouped_trace_id"
         )
@@ -4216,6 +4628,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             else "start_time DESC, trace_id DESC"
         )
 
+        root_identity_fields = self._filter_classifier_root_identity_fields()
+        root_identity_values = ", ".join(source for source, _ in root_identity_fields)
+        root_identity_projection = ", ".join(
+            f"canonical_root_identity.{index} AS {alias}"
+            for index, (_, alias) in enumerate(root_identity_fields, start=1)
+        )
         if identity_only:
             identity_project_select = (
                 "grouped_project_id AS project_id,\n                "
@@ -4224,20 +4642,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             )
             per_trace_select_fragment = f"""{identity_project_select}grouped_trace_id AS trace_id,
                 argMaxIf(
-                    tuple(grouped_id, latest_start_time),
+                    tuple({root_identity_values}),
                     {canonical_root_order},
                     {canonical_root_condition}
                 ) AS canonical_root_identity{witness_select_fragment}"""
             public_select_fragment = (
-                "project_id, trace_id, canonical_root_identity.1 AS root_span_id, "
-                "canonical_root_identity.2 AS start_time"
-                f"{identity_session_public_fragment}{witness_public_fragment}"
-                if org_scope
-                else (
-                    "trace_id, canonical_root_identity.1 AS root_span_id, "
-                    "canonical_root_identity.2 AS start_time"
-                    f"{identity_session_public_fragment}{witness_public_fragment}"
-                )
+                ("project_id, " if org_scope else "")
+                + f"trace_id, {root_identity_projection}"
+                + f"{identity_session_public_fragment}{witness_public_fragment}"
             )
             hydrate_root_aggregate_fragment = ""
         else:
@@ -4258,7 +4670,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 ("latest_provider", "provider"),
                 ("latest_trace_session_id", "trace_session_id"),
                 ("latest_project_id", "project_id"),
-            )
+            ) + root_identity_fields[2:]
             canonical_fields = [
                 (
                     f"argMaxIf(tuple({source}), {canonical_root_order}, "
@@ -4295,6 +4707,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                         AS latest_trace_session_id,
                     argMax(project_id, _peerdb_version) AS latest_project_id"""
 
+        latest_state_sql = self._filter_classifier_latest_select_sql(f"""
+                    argMax(tuple(parent_span_id), _peerdb_version).1
+                        AS latest_parent_span_id,
+                    argMax(start_time, _peerdb_version) AS latest_start_time,
+                    argMax(is_deleted, _peerdb_version) AS latest_is_deleted
+                    {hydrate_root_aggregate_fragment}
+                    {plan_aggregate_fragment}
+        """)
         query = f"""
         SELECT {public_select_fragment}
         FROM (
@@ -4306,16 +4726,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                     {grouped_project_select_fragment}
                     id AS grouped_id,
                     trace_id AS grouped_trace_id,
-                    argMax(tuple(parent_span_id), _peerdb_version).1
-                        AS latest_parent_span_id,
-                    argMax(start_time, _peerdb_version) AS latest_start_time,
-                    argMax(is_deleted, _peerdb_version) AS latest_is_deleted
-                    {hydrate_root_aggregate_fragment}
-                    {plan_aggregate_fragment}
+                    {latest_state_sql}
                 FROM {self.TABLE}
                 PREWHERE {self.project_filter_sql()}
                   {project_version_fragment}
                   AND trace_id IN %(candidate_trace_ids)s
+                  {coordinate_predicate}
                   {candidate_identity_scan_fragment}
                   {candidate_time_fragment}
                 GROUP BY {physical_group_by}
@@ -4331,6 +4747,28 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         LIMIT {output_limit}
         """
         return query, params
+
+    @staticmethod
+    def _filter_project_version_is_immutable() -> bool:
+        return True
+
+    @staticmethod
+    def _filter_classifier_root_order() -> str:
+        return "tuple(latest_start_time, grouped_id)"
+
+    @staticmethod
+    def _filter_classifier_root_identity_fields() -> tuple[tuple[str, str], ...]:
+        return (("grouped_id", "root_span_id"), ("latest_start_time", "start_time"))
+
+    @staticmethod
+    def _filter_classifier_latest_select_sql(aggregate_sql: str) -> str:
+        """Legacy CDC aggregation; v2 overrides with one physical row tuple."""
+        return aggregate_sql
+
+    def _filter_classifier_coordinate_predicate(self) -> str:
+        """Schema-specific immutable coordinate accelerator; legacy is unchanged."""
+
+        return ""
 
     @staticmethod
     def filter_classifier_has_exact_start_time_identity() -> bool:
@@ -4567,6 +5005,44 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             else start_time,
         )
 
+    def content_root_identities_for_rows(
+        self, rows: list[dict[str, Any]]
+    ) -> list[tuple[Any, ...]] | None:
+        """Keep the legacy optional four-part content contract unchanged."""
+        identities = [
+            (
+                str(row.get("project_id") or self.project_id or ""),
+                str(row.get("trace_id") or ""),
+                str(row.get("root_span_id") or ""),
+                row.get("start_time"),
+            )
+            for row in rows
+            if (row.get("project_id") or self.project_id)
+            and row.get("trace_id")
+            and row.get("root_span_id")
+            and row.get("start_time") is not None
+        ]
+        return identities if len(identities) == len(rows) else None
+
+    def content_root_rows_match(
+        self, expected: list[dict[str, Any]], actual: list[dict[str, Any]]
+    ) -> bool:
+        """Legacy content exposes only tenant/trace identities."""
+
+        def identity(row):
+            return (
+                str(row.get("project_id") or self.project_id or ""),
+                str(row.get("trace_id") or ""),
+            )
+
+        expected_ids = [identity(row) for row in expected]
+        actual_ids = [identity(row) for row in actual]
+        return (
+            len(set(expected_ids)) == len(expected_ids)
+            and len(actual_ids) == len(expected_ids)
+            and set(actual_ids) == set(expected_ids)
+        )
+
     def _span_time_window(
         self, params: dict[str, Any], column: str = "start_time"
     ) -> str:
@@ -4608,6 +5084,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         # Translate attribute / metric filters
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -4771,6 +5248,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = self.end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -4987,6 +5465,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 f"unsafe legacy filtered trace count blocked: {error_code}"
             )
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -5098,6 +5577,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     def build_eval_query(
         self,
         trace_ids: list[str],
+        *,
+        count_mode: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-2 eval-scores query for a page of trace IDs.
 
@@ -5161,39 +5642,27 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # the comparison NULL-safe.
         # New per-status columns are appended after ``str_lists`` so the pivot's
         # positional column fallbacks (0..7) stay valid.
-        query = f"""
-        SELECT
-            trace_id,
-            toString(custom_eval_config_id) AS eval_config_id,
-            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN, which
-            -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
-            ifNotFinite(avgIf(
-                output_float,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ), NULL) AS avg_score,
-            ifNotFinite(avgIf(
-                CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ), NULL) AS pass_rate,
-            countIf(
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS success_count,
-            countIf(
-                error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
-            ) AS error_count,
-            count() AS eval_count,
-            groupArrayIf(
-                output_str_list,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS str_lists,
-            countIf(status = 'skipped') AS skipped_count,
-            countIf(status = 'running') AS running_count,
-            countIf(status = 'pending') AS pending_count,
-            anyIf(skipped_reason, status = 'skipped') AS skipped_reason
-        -- Candidate-scoped latest replay: live/tombstone predicates belong
-        -- outside LIMIT 1 BY id. Applying them in the inner scan resurrects an
-        -- older score when its newest physical version is a deletion marker.
-        FROM (
+        count_projection = ""
+        count_inner_projection = ""
+        if count_mode:
+            # Observe's tile cells need exact attempts, rather than the
+            # averaged / percentage projection used by the other trace lists.
+            # Keep this internal: no request parameter selects this branch.
+            count_projection = """
+            , countIf(
+                if(isNull(output_bool), output_float >= 0.5, output_bool = 1) AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS pass_count
+            , countIf(
+                if(isNull(output_bool), output_float < 0.5, output_bool = 0) AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS fail_count
+            , argMax(target_type, created_at) AS target_type
+            """
+            count_inner_projection = (
+                ",\n                id,\n                observation_span_id,"
+                "\n                created_at,\n                target_type"
+            )
+
+        collapsed = f"""(
             SELECT
                 trace_id,
                 custom_eval_config_id,
@@ -5204,14 +5673,59 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 error,
                 {status_projection},
                 {skipped_reason_projection},
-                {live_projection}
+                {live_projection}{count_inner_projection}
             FROM {eval_table}
             WHERE trace_id IN %(trace_ids)s
               AND custom_eval_config_id IN %(eval_config_ids)s
             ORDER BY {eval_version} DESC
             LIMIT 1 BY id
-        )
-        WHERE {live_predicate}
+        )"""
+        if count_mode:
+            # A tile counts each span once: its newest completed result, the
+            # row the trace-detail rollup shows for that span.
+            eval_source = latest_completed_eval_rows(
+                collapsed,
+                live_predicate,
+                "trace_id, custom_eval_config_id, observation_span_id",
+            )
+        else:
+            eval_source = f"""{collapsed}
+        WHERE {live_predicate}"""
+
+        query = f"""
+        SELECT
+            trace_id,
+            toString(custom_eval_config_id) AS eval_config_id,
+            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN, which
+            -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
+            ifNotFinite(avgIf(
+                output_float,
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ), NULL) AS avg_score,
+            ifNotFinite(avgIf(
+                CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ), NULL) AS pass_rate,
+            countIf(
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS success_count,
+            countIf(
+                error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
+            ) AS error_count,
+            count() AS eval_count,
+            groupArrayIf(
+                {count_mode_choice_array() if count_mode else "output_str_list"},
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS str_lists,
+            countIf(status = 'skipped') AS skipped_count,
+            countIf(status = 'running') AS running_count,
+            countIf(status = 'pending') AS pending_count,
+            anyIf(skipped_reason, status = 'skipped') AS skipped_reason
+            {count_projection}
+        -- Candidate-scoped latest replay: live/tombstone predicates belong
+        -- outside LIMIT 1 BY id. Applying them in the inner scan resurrects an
+        -- older score when its newest physical version is a deletion marker.
+        FROM {eval_source}
         GROUP BY trace_id, custom_eval_config_id
         """
         return query, params
@@ -5219,6 +5733,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     def build_eval_replay_query(
         self,
         trace_ids: list[str],
+        *,
+        count_mode: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Pack exact page eval cells into at most one result row per trace.
 
@@ -5230,7 +5746,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         row count by the already-finite trace page.
         """
 
-        query, params = self.build_eval_query(trace_ids)
+        query, params = self.build_eval_query(trace_ids, count_mode=count_mode)
         if not query:
             return "", {}
         packed_query = f"""
@@ -5248,6 +5764,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 running_count,
                 pending_count,
                 skipped_reason
+                {", pass_count, fail_count, target_type" if count_mode else ""}
             )) AS eval_rows
         FROM (
             {query}
@@ -5259,6 +5776,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     @staticmethod
     def expand_eval_replay_rows(
         eval_rows: list[dict[str, Any]],
+        *,
+        count_mode: bool = False,
     ) -> list[dict[str, Any]]:
         """Expand packed eval replay rows into the established pivot shape."""
 
@@ -5274,7 +5793,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             "running_count",
             "pending_count",
             "skipped_reason",
-        )
+        ) + (("pass_count", "fail_count", "target_type") if count_mode else ())
         expanded: list[dict[str, Any]] = []
         for row in eval_rows:
             packed_cells = row.get("eval_rows")
@@ -5467,6 +5986,10 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     def pivot_eval_results(
         eval_rows: list[tuple],
         eval_columns: list[str],
+        *,
+        count_mode: bool = False,
+        output_types: dict[str, str | None] | None = None,
+        declared_choices: dict[str, list[str]] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by trace_id.
 
@@ -5478,6 +6001,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             A dict of ``{trace_id: {eval_config_id: score_dict}}``.
         """
         result: dict[str, dict[str, Any]] = {}
+        output_types = output_types or {}
+        declared_choices = declared_choices or {}
         col_idx = {name: i for i, name in enumerate(eval_columns)}
 
         def _get(row, key, idx, default=None):
@@ -5504,6 +6029,68 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             # UI can render an error state (distinct from "no eval run").
             if success_count == 0 and error_count > 0:
                 result.setdefault(trace_id, {})[config_id] = {"error": True}
+                continue
+
+            if count_mode:
+                output_type = (
+                    (output_types.get(config_id) or "")
+                    .replace("/", "_")
+                    .replace(" ", "_")
+                    .upper()
+                )
+                if success_count == 0:
+                    marker = non_terminal_eval_marker(
+                        {
+                            "skipped_count": _get(row, "skipped_count", 8, 0) or 0,
+                            "running_count": _get(row, "running_count", 9, 0) or 0,
+                            "pending_count": _get(row, "pending_count", 10, 0) or 0,
+                            "skipped_reason": _get(row, "skipped_reason", 11, None),
+                        }
+                    )
+                    if marker is not None:
+                        result.setdefault(trace_id, {})[config_id] = marker
+                    continue
+
+                if output_type == "PASS_FAIL":
+                    result.setdefault(trace_id, {})[config_id] = {
+                        "pass": _get(row, "pass_count", 12, 0) or 0,
+                        "fail": _get(row, "fail_count", 13, 0) or 0,
+                    }
+                    continue
+
+                if output_type == "CHOICES":
+                    counts = {
+                        str(choice): 0
+                        for choice in declared_choices.get(config_id, [])
+                        if choice not in (None, "")
+                    }
+                    for sl in str_lists:
+                        if isinstance(sl, str) and sl.startswith("["):
+                            try:
+                                sl = _json.loads(sl)
+                            except _json.JSONDecodeError:
+                                sl = []
+                        if not isinstance(sl, list):
+                            continue
+                        for choice in {
+                            str(value) for value in sl if value not in (None, "")
+                        }:
+                            counts[choice] = counts.get(choice, 0) + 1
+                    result.setdefault(trace_id, {})[config_id] = counts
+                    continue
+
+                def _finite_count_value(value):
+                    return (
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        and math.isfinite(value)
+                    )
+
+                result.setdefault(trace_id, {})[config_id] = (
+                    round(avg_score * 100, 2)
+                    if _finite_count_value(avg_score)
+                    else None
+                )
                 continue
 
             # CHOICES eval: compute per-choice percentage across all

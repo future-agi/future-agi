@@ -5,7 +5,7 @@ import re
 import traceback
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
@@ -26,11 +26,11 @@ from tracer.services.clickhouse.v2.deterministic_id import (
     deterministic_end_user_id,
     deterministic_trace_session_id,
 )
-from tracer.tasks.trace_scanner import scan_traces_task
+from tracer.services.trace_investigation import record_trace_notifications
 from tracer.utils.adapters import normalize_span_attributes
 from tracer.utils.otel import bulk_convert_otel_spans_to_observation_spans
 from tracer.utils.parsers import deserialize_trace_payload
-from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
+from tracer.utils.pii_scrubber import PIIScrubError, scrub_pii_in_span_batch
 from tracer.utils.pii_settings import get_pii_settings_for_projects
 from tracer.utils.usage_emit import emit_span_ingestion_usage
 
@@ -251,7 +251,12 @@ def _fetch_or_create_traces(
     if not trace_ids:
         return {}
 
-    existing_traces = {t.id: t for t in Trace.objects.filter(id__in=trace_ids)}
+    # Primary: an earlier export batch of the same trace creates it moments
+    # before this one, and a replica that has not applied it would make this
+    # batch COPY it again.
+    existing_traces = {
+        t.id: t for t in Trace.objects.using("default").filter(id__in=trace_ids)
+    }
 
     unique_new_traces = {}
     for d in parsed_data_list:
@@ -471,6 +476,8 @@ def _parse_otel_request(request_data: dict[str, Any]) -> list[dict[str, Any]]:
                 start_time_unix_nano = int(span.get("start_time_unix_nano", 0))
                 end_time_unix_nano = int(span.get("end_time_unix_nano", 0))
                 span_data = {
+                    "resource": {"attributes": resource_attributes},
+                    "scope": scope_span.get("scope", {}),
                     "trace_id": _format_if_needed(span.get("trace_id")),
                     "span_id": _format_if_needed(span.get("span_id")),
                     "name": span.get("name"),
@@ -480,6 +487,9 @@ def _parse_otel_request(request_data: dict[str, Any]) -> list[dict[str, Any]]:
                     "events": [
                         {
                             "name": event.get("name"),
+                            "dropped_attributes_count": event.get(
+                                "dropped_attributes_count", 0
+                            ),
                             "attributes": _convert_attributes(event.get("attributes")),
                             "timestamp": (
                                 datetime.fromtimestamp(
@@ -491,6 +501,19 @@ def _parse_otel_request(request_data: dict[str, Any]) -> list[dict[str, Any]]:
                         }
                         for event in span.get("events", [])
                     ],
+                    "links": [
+                        {
+                            "trace_id": _format_if_needed(link.get("trace_id")),
+                            "span_id": _format_if_needed(link.get("span_id")),
+                            "attributes": _convert_attributes(link.get("attributes")),
+                            "dropped_attributes_count": link.get(
+                                "dropped_attributes_count", 0
+                            ),
+                        }
+                        for link in span.get("links", [])
+                    ],
+                    "dropped_events_count": span.get("dropped_events_count", 0),
+                    "dropped_links_count": span.get("dropped_links_count", 0),
                     "status": OTLP_STATUS_MAP.get(
                         span.get("status", {}).get("code"), "UNSET"
                     ),
@@ -730,48 +753,104 @@ def _bulk_update_traces(
         Trace.objects.bulk_update(traces_to_bulk_update, list(update_fields))
 
 
-def _trigger_trace_scanner(spans: list[ObservationSpan]):
-    """
-    Detect completed traces (root span with end_time) and trigger the scanner.
-
-    Root span = parent_span_id is None. end_time set = trace is complete.
-    Groups by project_id since scanner activity runs per-project.
-    Only "observe" projects are scanned — experiment projects are throwaway
-    evaluation runs and shouldn't burn scanner LLM tokens or surface in the feed.
-    """
-    complete_traces_by_project: dict[str, set[str]] = defaultdict(set)
-    for span in spans:
-        if span.parent_span_id is None and span.end_time is not None:
-            complete_traces_by_project[str(span.project_id)].add(str(span.trace_id))
-
-    if not complete_traces_by_project:
+def _record_inline_omega_roots(spans: list[ObservationSpan], organization_id: str):
+    """Admit PG-ingested ended roots into the same investigation ledger as Kafka."""
+    roots = [
+        span for span in spans if not span.parent_span_id and span.end_time is not None
+    ]
+    if not roots:
         return
-
-    observe_project_ids = {
-        str(pid)
-        for pid in Project.objects.filter(
-            id__in=complete_traces_by_project.keys(),
+    projects = {
+        str(project.id): project
+        for project in Project.no_workspace_objects.filter(
+            id__in={span.project_id for span in roots},
+            organization_id=organization_id,
             trace_type="observe",
-        ).values_list("id", flat=True)
+        )
     }
-
-    # Bound each scan task to a small batch so it finishes well under the scan
-    # activity's time_limit. One big batch at high sampling can exceed the limit
-    # and time out before writing anything — so split into per-task chunks.
-    scan_batch_size = 15
-    for project_id, trace_ids in complete_traces_by_project.items():
-        if project_id not in observe_project_ids:
+    deliveries = []
+    for span in roots:
+        project = projects.get(str(span.project_id))
+        if project is None:
             continue
-        tid_list = list(trace_ids)
-        for i in range(0, len(tid_list), scan_batch_size):
-            scan_traces_task.apply_async(
-                args=(tid_list[i : i + scan_batch_size], project_id)
+        event_id = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"inline-root:{project.id}:{span.trace_id}:{span.id}:{span.end_time.isoformat()}",
+        )
+        deliveries.append(
+            {
+                "topic": "error-feed.inline.v1",
+                "partition": 0,
+                "offset": 0,
+                "value": {
+                    "version": 1,
+                    "event_id": event_id,
+                    "organization_id": project.organization_id,
+                    "workspace_id": project.workspace_id,
+                    "project_id": project.id,
+                    "event_kind": "root_span_written",
+                    "traces": [
+                        {
+                            "trace_id": span.trace_id,
+                            "root_span_id": str(span.id),
+                            "root_end_time": span.end_time,
+                        }
+                    ],
+                    "emitted_at": span.end_time,
+                },
+            }
+        )
+    for start in range(0, len(deliveries), 100):
+        record_trace_notifications(deliveries=deliveries[start : start + 100])
+
+
+# The wait before each retry of a batch whose PII scrub failed. After the last
+# retry the batch is dropped.
+PII_SCRUB_RETRY_DELAYS = (
+    timedelta(minutes=1),
+    timedelta(minutes=5),
+    timedelta(minutes=15),
+)
+
+
+def _retry_unscrubbed_batch(
+    payload_key: str, payload_bytes: bytes, task_args: list, *, attempt: int, error: str
+) -> None:
+    """Enqueue the batch again after a delay, or drop it after the last retry.
+
+    The task runs once and its payload is deleted on read, so the retry stores the
+    payload again. This logs at WARNING and never raises: Sentry attaches the local
+    variables of every frame, the raw batch among them, to each error event.
+    """
+    dropped = attempt >= len(PII_SCRUB_RETRY_DELAYS)
+    if not dropped:
+        try:
+            bulk_create_observation_span_task.apply_async(
+                args=[payload_storage.store(payload_bytes), *task_args],
+                kwargs={"pii_scrub_attempt": attempt + 1},
+                task_id=f"{payload_key}-pii-retry",
+                start_delay=PII_SCRUB_RETRY_DELAYS[attempt],
             )
+        # The store and Temporal raise many types; any of them drops the batch, logged
+        # below. Raising would hand the raw batch to Sentry in this frame's variables.
+        except Exception as exc:  # noqa: BLE001
+            dropped = True
+            error = f"{error} Retry not enqueued ({type(exc).__name__})."
+    logger.warning(
+        "pii_scrub_batch_dropped" if dropped else "pii_scrub_batch_retried",
+        attempt=attempt,
+        error=error,
+    )
 
 
 @temporal_activity(max_retries=0, time_limit=3600, queue="trace_ingestion")
 def bulk_create_observation_span_task(
-    payload_key: str, organization_id, user_id, workspace_id=None, payload_format="json"
+    payload_key: str,
+    organization_id,
+    user_id,
+    workspace_id=None,
+    payload_format="json",
+    pii_scrub_attempt: int = 0,
 ):
     """
     Temporal activity to create ObservationSpans from a batch of OTEL data using bulk operations.
@@ -783,15 +862,16 @@ def bulk_create_observation_span_task(
         workspace_id: Optional workspace ID
         payload_format: Format of the stored payload — "json" or "protobuf".
             Defaults to "json" for backward compatibility with in-flight tasks.
+        pii_scrub_attempt: How many times this batch's PII scrub failed before.
     """
     try:
         payload_bytes = payload_storage.retrieve(payload_key)
 
         if payload_bytes is None:
             # Expected race: the payload TTL'd out (or its writer hasn't landed)
-            # before this task ran. The raised ValueError below is what Temporal
-            # retries on, so this log is purely informational - WARNING avoids
-            # double-reporting the same condition as a Sentry error.
+            # before this task ran. Nothing retries the raised ValueError
+            # (max_retries=0), and it reaches Sentry, so this log is WARNING
+            # to avoid double-reporting the same condition as a Sentry error.
             logger.warning(
                 "trace_payload_not_found_in_redis",
                 payload_key=payload_key,
@@ -931,8 +1011,8 @@ def bulk_create_observation_span_task(
                     )
                 )
 
-            # 5. Trigger scanner for completed traces (root span with end_time)
-            _trigger_trace_scanner(observation_spans_to_create)
+            # 5. Admit PG-ingested roots without starting the retired scanner.
+            _record_inline_omega_roots(observation_spans_to_create, organization_id)
 
         num_traces = len({p.get("trace") for p in parsed_data_list if p.get("trace")})
         emit_span_ingestion_usage(
@@ -943,6 +1023,15 @@ def bulk_create_observation_span_task(
             source="trace_span",
         )
 
+    except PIIScrubError as exc:
+        # Raised before the first write: the transaction rolled back, nothing is stored.
+        _retry_unscrubbed_batch(
+            payload_key,
+            payload_bytes,
+            [organization_id, user_id, workspace_id, payload_format],
+            attempt=pii_scrub_attempt,
+            error=str(exc),
+        )
     except Exception as exc:
         logger.exception(
             f"Error processing spans in bulk: {exc}\n{traceback.format_exc()}"

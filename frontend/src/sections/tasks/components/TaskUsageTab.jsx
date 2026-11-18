@@ -10,6 +10,8 @@ import {
   Slide,
   Tooltip,
   Typography,
+  useTheme,
+  ButtonBase,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import CellMarkdown from "src/sections/common/CellMarkdown";
@@ -19,7 +21,7 @@ import { alpha } from "@mui/material/styles";
 import Editor from "@monaco-editor/react";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import Iconify from "src/components/iconify";
-import { useSettingsContext } from "src/components/settings/context";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 
 import { useTaskUsageChart, useTaskUsageLogs } from "../hooks/useTaskUsage";
@@ -33,23 +35,26 @@ import { isEditableElement } from "src/utils/keyboardUtils";
 import { parsePythonReprIfNeeded } from "src/sections/develop-detail/DataTab/common";
 import { DATE_OPTION_TO_PERIOD } from "src/sections/evals/Helpers/evalUsageColumns";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { copyToClipboard } from "src/utils/utils";
+import { enqueueSnackbar } from "src/components/snackbar";
+import TaskRunTraceDrawer from "./TaskRunTraceDrawer";
+import {
+  findAdjacentTraceRunIndex,
+  getRunSpanId,
+  getRunTraceId,
+} from "../taskRunTrace";
 
 // ── Inline stat ──
-const StatPill = ({ label, value, color }) => (
+const StatPill = ({ label, value }) => (
   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
     <Typography
       variant="caption"
       color="text.secondary"
-      sx={{ fontSize: "11px" }}
+      sx={{ fontSize: "12px" }}
     >
       {label}:
     </Typography>
-    <Typography
-      variant="caption"
-      fontWeight={700}
-      color={color}
-      sx={{ fontSize: "12px" }}
-    >
+    <Typography variant="caption" fontWeight={600} sx={{ fontSize: "12px" }}>
       {value}
     </Typography>
   </Box>
@@ -67,22 +72,21 @@ const ScoreCell = ({ value }) => {
         —
       </Typography>
     );
+  // Same bands as the eval Usage tab: 0.7 and up passes, below 0.3 fails.
   if (typeof value === "number")
     return (
-      <Chip
+      <StatusBadge
+        role={value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "danger"}
         label={value.toFixed(2)}
-        size="small"
-        color={value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "error"}
-        sx={{ fontSize: "11px", height: 20, fontWeight: 600 }}
+        variant="badge"
+        dot={false}
+        size="sm"
       />
     );
   return (
-    <Chip
-      label={String(value)}
-      size="small"
-      color="default"
-      sx={{ fontSize: "11px", height: 20 }}
-    />
+    <Typography variant="body2" color="text.primary">
+      {String(value)}
+    </Typography>
   );
 };
 
@@ -178,7 +182,6 @@ const useColumns = () =>
                       : "default"
                 }
                 variant="outlined"
-                sx={{ fontSize: "11px", height: 20 }}
               />
               {partialWarning && (
                 <Tooltip
@@ -214,8 +217,6 @@ const useColumns = () =>
                 size="small"
                 variant="outlined"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   maxWidth: 130,
                   "& .MuiChip-label": {
                     overflow: "hidden",
@@ -277,7 +278,7 @@ const useColumns = () =>
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontSize: "11px", color: "text.disabled" }}
+              sx={{ fontSize: "12px", color: "text.disabled" }}
             >
               {d.toLocaleDateString(undefined, {
                 month: "short",
@@ -318,7 +319,15 @@ ExpandableJson.propTypes = {
   value: PropTypes.any,
 };
 
-const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
+const DetailRow = ({
+  label,
+  value,
+  color,
+  chip,
+  chipColor,
+  mono,
+  copyable,
+}) => {
   // If value is a non-null object/array, render it through JsonValueTree
   // so users can drill into nested keys (e.g. `prompt.messages.0.content`)
   // instead of seeing "[object Object]". Strings, numbers, booleans, and
@@ -381,7 +390,6 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
             size="small"
             color={chipColor || "default"}
             variant="outlined"
-            sx={{ fontSize: "11px", height: 20 }}
           />
         ) : isJsonValue ? (
           <ExpandableJson value={resolvedValue} />
@@ -399,6 +407,29 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
           </Typography>
         )}
       </Box>
+      {copyable && (
+        <Tooltip title={`Copy ${label}`}>
+          <IconButton
+            size="small"
+            aria-label={`Copy ${label}`}
+            onClick={async () => {
+              if (await copyToClipboard(value)) {
+                enqueueSnackbar(`${label} copied`, {
+                  variant: "info",
+                  autoHideDuration: 1500,
+                });
+              }
+            }}
+            sx={{ ml: 0.5, p: 0.25, flexShrink: 0 }}
+          >
+            <Iconify
+              icon="solar:copy-linear"
+              width={12}
+              sx={{ color: "text.secondary" }}
+            />
+          </IconButton>
+        </Tooltip>
+      )}
     </Box>
   );
 };
@@ -411,6 +442,7 @@ DetailRow.propTypes = {
   chip: PropTypes.bool,
   chipColor: PropTypes.string,
   mono: PropTypes.bool,
+  copyable: PropTypes.bool,
 };
 
 // ── Error details — structured display for failed eval rows ──
@@ -442,19 +474,16 @@ const ErrorDetails = ({ rawError }) => {
 
       {/* Title row — icon + classified title */}
       <Box
-        sx={(t) => ({
+        sx={{
           display: "flex",
           alignItems: "flex-start",
           gap: 1,
           p: 1.25,
           borderRadius: "6px",
           border: "1px solid",
-          borderColor: alpha(t.palette.error.main, 0.25),
-          bgcolor: alpha(
-            t.palette.error.main,
-            t.palette.mode === "dark" ? 0.1 : 0.05,
-          ),
-        })}
+          borderColor: "status.danger.border",
+          bgcolor: "status.danger.bg",
+        }}
       >
         <Box
           sx={(t) => ({
@@ -485,7 +514,7 @@ const ErrorDetails = ({ rawError }) => {
           <Typography
             variant="body2"
             sx={{
-              fontSize: "11px",
+              fontSize: "12px",
               fontFamily: "monospace",
               color: "text.secondary",
               wordBreak: "break-word",
@@ -505,8 +534,8 @@ const ErrorDetails = ({ rawError }) => {
             fontWeight={600}
             sx={{
               display: "block",
-              fontSize: "10px",
-              textTransform: "uppercase",
+              fontSize: "12px",
+              textTransform: "none",
               letterSpacing: "0.5px",
               color: "text.disabled",
               mb: 0.5,
@@ -531,7 +560,7 @@ const ErrorDetails = ({ rawError }) => {
                 component="li"
                 variant="body2"
                 sx={{
-                  fontSize: "11px",
+                  fontSize: "12px",
                   lineHeight: 1.5,
                   color: "text.secondary",
                 }}
@@ -545,9 +574,8 @@ const ErrorDetails = ({ rawError }) => {
 
       {/* Raw error — collapsed by default, available for support context */}
       <Box sx={{ mt: 1.25 }}>
-        <Box
-          component="button"
-          type="button"
+        <ButtonBase
+          disableRipple
           onClick={() => setShowRaw((v) => !v)}
           sx={{
             display: "flex",
@@ -556,8 +584,8 @@ const ErrorDetails = ({ rawError }) => {
             border: "none",
             background: "transparent",
             color: "text.disabled",
-            fontSize: "10px",
-            textTransform: "uppercase",
+            fontSize: "12px",
+            textTransform: "none",
             letterSpacing: "0.5px",
             fontWeight: 600,
             cursor: "pointer",
@@ -574,7 +602,7 @@ const ErrorDetails = ({ rawError }) => {
             width={12}
           />
           Raw error
-        </Box>
+        </ButtonBase>
         {showRaw && (
           <Box
             sx={(t) => ({
@@ -588,7 +616,7 @@ const ErrorDetails = ({ rawError }) => {
           >
             <Typography
               sx={{
-                fontSize: "11px",
+                fontSize: "12px",
                 fontFamily: "monospace",
                 color: "text.secondary",
                 whiteSpace: "pre-wrap",
@@ -614,7 +642,7 @@ PartialInputWarningDetails.propTypes = {
 };
 
 // ── Detail panel content (Formatted / JSON toggle) ──
-const DetailPanelContent = ({ row, isDark }) => {
+const DetailPanelContent = ({ row, isDark, onOpenTrace }) => {
   const [viewMode, setViewMode] = useState("formatted");
   const detail = row.detail || {};
   const warnings = row.warnings || detail.warnings || [];
@@ -651,23 +679,28 @@ const DetailPanelContent = ({ row, isDark }) => {
             sx={{
               px: 1.5,
               py: 0.375,
-              borderRadius: "5px",
-              fontSize: "11px",
+              borderRadius: "6px",
+              fontSize: "12px",
               cursor: "pointer",
               fontWeight: viewMode === m ? 600 : 400,
               color: viewMode === m ? "text.primary" : "text.disabled",
-              backgroundColor:
-                viewMode === m
-                  ? (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.08)"
-                        : "action.hover"
-                  : "transparent",
+              backgroundColor: viewMode === m ? "action.hover" : "transparent",
             }}
           >
             {m === "formatted" ? "Formatted" : "JSON"}
           </Box>
         ))}
+        {onOpenTrace && (
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<Iconify icon="solar:eye-linear" width={14} />}
+            onClick={onOpenTrace}
+            sx={{ ml: "auto", fontSize: "11px", height: 26 }}
+          >
+            Open trace
+          </Button>
+        )}
       </Box>
 
       {/* Scrollable content area. `pb: 6` keeps the last field above
@@ -753,7 +786,7 @@ const DetailPanelContent = ({ row, isDark }) => {
                 <Typography
                   variant="caption"
                   color="text.secondary"
-                  sx={{ display: "block", py: 0.75, fontSize: "11px" }}
+                  sx={{ display: "block", py: 0.75, fontSize: "12px" }}
                 >
                   Large span JSON and mapped input details are omitted from this
                   bounded list response.
@@ -780,6 +813,7 @@ const DetailPanelContent = ({ row, isDark }) => {
                       label="Session ID"
                       value={detail.session_id}
                       mono
+                      copyable
                     />
                   )}
                 </>
@@ -797,10 +831,20 @@ const DetailPanelContent = ({ row, isDark }) => {
                     <DetailRow label="Span" value={detail.span_name} mono />
                   )}
                   {detail.span_id && (
-                    <DetailRow label="Span ID" value={detail.span_id} mono />
+                    <DetailRow
+                      label="Span ID"
+                      value={detail.span_id}
+                      mono
+                      copyable
+                    />
                   )}
                   {detail.trace_id && (
-                    <DetailRow label="Trace ID" value={detail.trace_id} mono />
+                    <DetailRow
+                      label="Trace ID"
+                      value={detail.trace_id}
+                      mono
+                      copyable
+                    />
                   )}
                 </>
               )}
@@ -828,8 +872,8 @@ const DetailPanelContent = ({ row, isDark }) => {
                         mt: 1.5,
                         mb: 0.5,
                         display: "block",
-                        fontSize: "11px",
-                        textTransform: "uppercase",
+                        fontSize: "12px",
+                        textTransform: "none",
                         letterSpacing: "0.5px",
                         color: "text.disabled",
                       }}
@@ -888,9 +932,8 @@ const DetailPanelContent = ({ row, isDark }) => {
 };
 
 // ── Main ──
-const TaskUsageTab = ({ taskId }) => {
-  const settings = useSettingsContext();
-  const isDark = settings.themeMode === "dark";
+const TaskUsageTab = ({ taskId, projectId }) => {
+  const isDark = useTheme().palette.mode === "dark";
 
   const [dateOption, setDateOption] = useState(DATE_OPTION.THIRTY_DAYS);
   const [dateFilter, setDateFilter] = useState(null);
@@ -898,7 +941,14 @@ const TaskUsageTab = ({ taskId }) => {
   // Default to 50 per page — tasks typically have many runs and 25 felt
   // too narrow once users started exploring all-time data.
   const [pageSize, setPageSize] = useState(50);
-  const [detailIndex, setDetailIndex] = useState(null);
+  // The open run is tracked by id, not position: runs are newest-first, so in
+  // a continuous task a refetch shifts every row down as new runs arrive.
+  // Changing the date range, page or eval filter swaps the list entirely, so
+  // those close the run panel and trace drawer.
+  const [detailRunId, setDetailRunId] = useState(null);
+  // The trace drawer always shows the selected run's trace, so closing it
+  // lands back on the run panel for whichever run it was showing.
+  const [traceDrawerOpen, setTraceDrawerOpen] = useState(false);
   const [evalIdFilter, setEvalIdFilter] = useState("all");
 
   const period = DATE_OPTION_TO_PERIOD[dateOption] || DEFAULT_USAGE_PERIOD;
@@ -977,15 +1027,40 @@ const TaskUsageTab = ({ taskId }) => {
   const visibleLogs = logItems;
 
   const columns = useColumns();
-  const handleRowClick = useCallback(
-    (row) => {
-      const idx = visibleLogs.findIndex((l) => l.id === row.id);
-      setDetailIndex(idx >= 0 ? idx : 0);
-    },
+  const handleRowClick = useCallback((row) => setDetailRunId(row.id), []);
+  const showRunAt = useCallback(
+    (index) => setDetailRunId(visibleLogs[index]?.id ?? null),
     [visibleLogs],
   );
 
+  const foundDetailIndex =
+    detailRunId === null
+      ? -1
+      : visibleLogs.findIndex((l) => l.id === detailRunId);
+  // The open run dropped off this page (enough newer runs pushed it past the
+  // page size): close the panel rather than reopen it if it scrolls back.
+  if (detailRunId !== null && foundDetailIndex === -1) setDetailRunId(null);
+  const detailIndex = foundDetailIndex === -1 ? null : foundDetailIndex;
   const detailRow = detailIndex !== null ? visibleLogs[detailIndex] : null;
+  const detailTraceId = getRunTraceId(detailRow);
+  // Landing on a run without a trace (a session-level row, or the row going
+  // away on refetch) ends the trace view, so a later run with a trace doesn't
+  // reopen the drawer unasked.
+  if (traceDrawerOpen && !detailTraceId) setTraceDrawerOpen(false);
+  const isTraceDrawerShown = traceDrawerOpen && !!projectId && !!detailTraceId;
+  const prevTraceRunIndex =
+    detailIndex !== null
+      ? findAdjacentTraceRunIndex(visibleLogs, detailIndex, -1)
+      : -1;
+  const nextTraceRunIndex =
+    detailIndex !== null
+      ? findAdjacentTraceRunIndex(visibleLogs, detailIndex, 1)
+      : -1;
+
+  const closeDetail = useCallback(() => {
+    setDetailRunId(null);
+    setTraceDrawerOpen(false);
+  }, []);
 
   // Keyboard shortcuts: j/k for next/prev, Esc to close — same as eval usage
   useEffect(() => {
@@ -993,19 +1068,34 @@ const TaskUsageTab = ({ taskId }) => {
     const handler = (e) => {
       if (e.repeat) return;
       if (isEditableElement(e)) return;
+      // The trace drawer handles j/k/Esc itself (on `document`, so before
+      // this `window` listener): skip keys it handled. While it is open it
+      // owns the keyboard, j/k at either end of the run list included. The
+      // voice call drawer has no Esc of its own, so Esc closes it here.
+      if (e.defaultPrevented) return;
+      if (isTraceDrawerShown) {
+        if (e.key === "Escape") setTraceDrawerOpen(false);
+        return;
+      }
       if (e.key === "k") {
         e.preventDefault();
-        setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));
+        showRunAt(Math.max(0, detailIndex - 1));
       } else if (e.key === "j") {
         e.preventDefault();
-        setDetailIndex((i) => Math.min(visibleLogs.length - 1, (i ?? 0) + 1));
+        showRunAt(Math.min(visibleLogs.length - 1, detailIndex + 1));
       } else if (e.key === "Escape") {
-        setDetailIndex(null);
+        closeDetail();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [detailIndex, visibleLogs.length]);
+  }, [
+    detailIndex,
+    visibleLogs.length,
+    isTraceDrawerShown,
+    closeDetail,
+    showRunAt,
+  ]);
 
   return (
     // `position: relative` so the absolutely-positioned detail panel
@@ -1027,7 +1117,7 @@ const TaskUsageTab = ({ taskId }) => {
           minHeight: 0,
           minWidth: 0,
           p: 2,
-          transition: "margin-right 0.25s",
+          transition: "margin-right 0.2s",
         }}
       >
         {/* Date picker + eval filter + stats */}
@@ -1056,12 +1146,14 @@ const TaskUsageTab = ({ taskId }) => {
               setDateOption={(opt) => {
                 setDateOption(opt);
                 setPage(0);
+                closeDetail();
               }}
               setParentDateFilter={(range) => {
                 // The custom range feeds the API query, so editing it while on
                 // page N can land past the end of the new result set.
                 setDateFilter(range);
                 setPage(0);
+                closeDetail();
               }}
               dateFilter={dateFilter}
             />
@@ -1072,7 +1164,7 @@ const TaskUsageTab = ({ taskId }) => {
                 onChange={(e) => {
                   setEvalIdFilter(e.target.value);
                   setPage(0);
-                  setDetailIndex(null);
+                  closeDetail();
                 }}
                 size="small"
                 sx={{
@@ -1081,11 +1173,9 @@ const TaskUsageTab = ({ taskId }) => {
                   minWidth: 180,
                 }}
               >
-                <MenuItem value="all" sx={{ fontSize: "12px" }}>
-                  All evaluations
-                </MenuItem>
+                <MenuItem value="all">All evaluations</MenuItem>
                 {evalsList.map((ev) => (
-                  <MenuItem key={ev.id} value={ev.id} sx={{ fontSize: "12px" }}>
+                  <MenuItem key={ev.id} value={ev.id}>
                     {ev.name}
                   </MenuItem>
                 ))}
@@ -1106,37 +1196,10 @@ const TaskUsageTab = ({ taskId }) => {
                 py: 0.5,
               }}
             >
+              {/* Usage counts successful runs only; errors stay in the logs. */}
               <StatPill
                 label="Runs"
                 value={`${stats.runs_period ?? 0}${lowerBoundSuffix}`}
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Success"
-                value={`${stats.success_count ?? 0}${lowerBoundSuffix}`}
-                color="success.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Errors"
-                value={`${stats.error_count ?? 0}${lowerBoundSuffix}`}
-                color="error.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label={
-                  summaryIsSampled
-                    ? "Sample completion rate"
-                    : "Task Completion Rate"
-                }
-                value={`${stats.pass_rate ?? 0}%`}
-                color="info.main"
               />
             </Box>
           )}
@@ -1152,10 +1215,7 @@ const TaskUsageTab = ({ taskId }) => {
             borderColor: "divider",
             p: 1.5,
             mb: 1.5,
-            backgroundColor: (t) =>
-              t.palette.mode === "dark"
-                ? "rgba(255,255,255,0.01)"
-                : "background.default",
+            backgroundColor: "background.default",
           }}
         >
           {chartLoading ? (
@@ -1233,7 +1293,7 @@ const TaskUsageTab = ({ taskId }) => {
                 <Typography
                   variant="caption"
                   color="warning.main"
-                  sx={{ fontSize: "11px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   Bounded {(100 * pageSize).toLocaleString()}-run browsing
                   window
@@ -1243,7 +1303,7 @@ const TaskUsageTab = ({ taskId }) => {
                 <Typography
                   variant="caption"
                   color="text.disabled"
-                  sx={{ fontSize: "11px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   {totalLogs.toLocaleString()}
                   {logsCountIsLowerBound ? "+" : ""} total run
@@ -1264,6 +1324,7 @@ const TaskUsageTab = ({ taskId }) => {
               isLoading={logsLoading && !logsData}
               rowCount={totalLogs}
               onRowClick={handleRowClick}
+              activeRowId={detailRow?.id}
               emptyMessage={
                 logsError
                   ? QUERY_FAILED_RETRY_MESSAGE
@@ -1294,10 +1355,14 @@ const TaskUsageTab = ({ taskId }) => {
               page={page}
               pageSize={pageSize}
               total={paginationTotal}
-              onPageChange={setPage}
+              onPageChange={(p) => {
+                setPage(p);
+                closeDetail();
+              }}
               onPageSizeChange={(s) => {
                 setPageSize(s);
                 setPage(0);
+                closeDetail();
               }}
               pageSizeOptions={[25, 50, 100]}
             />
@@ -1363,11 +1428,9 @@ const TaskUsageTab = ({ taskId }) => {
                   <IconButton
                     size="small"
                     disabled={detailIndex === 0}
-                    onClick={() =>
-                      setDetailIndex((i) => Math.max(0, (i ?? 0) - 1))
-                    }
+                    onClick={() => showRunAt(detailIndex - 1)}
                   >
-                    <Iconify icon="mingcute:arrow-up-line" width={16} />
+                    <Iconify icon="solar:arrow-up-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -1376,13 +1439,9 @@ const TaskUsageTab = ({ taskId }) => {
                   <IconButton
                     size="small"
                     disabled={detailIndex >= visibleLogs.length - 1}
-                    onClick={() =>
-                      setDetailIndex((i) =>
-                        Math.min(visibleLogs.length - 1, (i ?? 0) + 1),
-                      )
-                    }
+                    onClick={() => showRunAt(detailIndex + 1)}
                   >
-                    <Iconify icon="mingcute:arrow-down-line" width={16} />
+                    <Iconify icon="solar:arrow-down-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -1400,8 +1459,8 @@ const TaskUsageTab = ({ taskId }) => {
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -1415,8 +1474,8 @@ const TaskUsageTab = ({ taskId }) => {
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -1433,25 +1492,52 @@ const TaskUsageTab = ({ taskId }) => {
                 <Typography
                   variant="caption"
                   color="text.disabled"
-                  sx={{ fontFamily: "monospace", fontSize: "10px" }}
+                  sx={{ fontFamily: "monospace", fontSize: "12px" }}
                 >
                   {detailRow.id?.slice(0, 12)}
                 </Typography>
               )}
-              <IconButton size="small" onClick={() => setDetailIndex(null)}>
-                <Iconify icon="mingcute:close-line" width={16} />
+              <IconButton size="small" onClick={closeDetail}>
+                <Iconify icon="solar:close-linear" width={16} />
               </IconButton>
             </Box>
           </Box>
-          {detailRow && <DetailPanelContent row={detailRow} isDark={isDark} />}
+          {detailRow && (
+            <DetailPanelContent
+              row={detailRow}
+              isDark={isDark}
+              onOpenTrace={
+                projectId && detailTraceId
+                  ? () => setTraceDrawerOpen(true)
+                  : undefined
+              }
+            />
+          )}
         </Box>
       </Slide>
+
+      {/* Mounted only while open: each Open trace starts fresh on the
+          evaluated span, not on whichever span was clicked last time. */}
+      {isTraceDrawerShown && (
+        <TaskRunTraceDrawer
+          open
+          onClose={() => setTraceDrawerOpen(false)}
+          projectId={projectId}
+          traceId={detailTraceId}
+          spanId={getRunSpanId(detailRow)}
+          onPrev={() => showRunAt(prevTraceRunIndex)}
+          onNext={() => showRunAt(nextTraceRunIndex)}
+          hasPrev={prevTraceRunIndex !== -1}
+          hasNext={nextTraceRunIndex !== -1}
+        />
+      )}
     </Box>
   );
 };
 
 TaskUsageTab.propTypes = {
   taskId: PropTypes.string.isRequired,
+  projectId: PropTypes.string,
 };
 
 export default TaskUsageTab;

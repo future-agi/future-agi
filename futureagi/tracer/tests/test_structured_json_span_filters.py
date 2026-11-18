@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 from rest_framework import serializers
 
 from tracer.serializers.filters import FilterListField
@@ -75,9 +76,12 @@ def test_serializer_and_compiler_preserve_mixed_typed_picker_values() -> None:
     assert config["attribute_value_types"] == ["string", "number", "boolean"]
 
     where, params = ClickHouseFilterBuilderV2(query_mode="span").translate(validated)
-    assert "mapContains(attrs_string, 'attempt')" in where
-    assert "mapContains(attrs_number, 'attempt')" in where
-    assert "mapContains(attrs_bool, 'attempt')" in where
+    # The attribute key is bound, not inlined; render before asserting on it.
+    assert params["attr_key_1"] == "attempt"
+    rendered = finalize_query(where, params)
+    assert "mapContains(attrs_string, 'attempt')" in rendered
+    assert "mapContains(attrs_number, 'attempt')" in rendered
+    assert "mapContains(attrs_bool, 'attempt')" in rendered
     assert ("1",) in params.values()
     assert (1.0,) in params.values()
     assert (1,) in params.values()
@@ -93,10 +97,13 @@ def test_mixed_typed_not_in_negates_any_matching_representation() -> None:
     payload["filter_config"]["attribute_value_types"] = ["string", "number"]
     validated = FilterListField().run_validation([payload])
 
-    where, _ = ClickHouseFilterBuilderV2(query_mode="span").translate(validated)
+    where, params = ClickHouseFilterBuilderV2(query_mode="span").translate(validated)
     assert "AND NOT" in where
-    assert "mapContains(attrs_string, 'attempt')" in where
-    assert "mapContains(attrs_number, 'attempt')" in where
+    # The attribute key is bound, not inlined; render before asserting on it.
+    assert params["attr_key_1"] == "attempt"
+    rendered = finalize_query(where, params)
+    assert "mapContains(attrs_string, 'attempt')" in rendered
+    assert "mapContains(attrs_number, 'attempt')" in rendered
     assert "NOT IN" not in where
 
 
@@ -161,8 +168,14 @@ def test_bounded_latest_mixed_not_in_requires_key_and_negates_all_types() -> Non
         "latest_attr_exists_0_string OR latest_attr_exists_0_number" in plan.predicate
     )
     assert "AND NOT" in plan.predicate
-    assert plan.raw_witness_predicate is None
-    assert plan.raw_key_witness_predicate is None
+    branches = [
+        f"(indexHint(has(mapKeys({column}), %(latest_filter_key_0)s)) "
+        f"AND has({column}.keys, %(latest_filter_key_0)s))"
+        for column in ("span_attr_str", "span_attr_num")
+    ]
+    assert plan.raw_witness_predicate == f"({' OR '.join(branches)})"
+    assert plan.raw_key_witness_predicate == plan.raw_witness_predicate
+    assert plan.raw_witness_rank == 10
     assert plan.raw_graph_value_witness_predicate is None
 
 

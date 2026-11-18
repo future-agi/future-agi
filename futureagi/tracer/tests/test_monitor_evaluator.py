@@ -13,8 +13,10 @@ import pytest
 from django.core import mail
 from django.test import override_settings
 from django.utils import timezone
+from structlog.testing import capture_logs
 
-from tracer.models.monitor import UserAlertMonitorLog
+from tfc.utils.error_codes import get_error_message
+from tracer.models.monitor import MonitorMetricTypeChoices, UserAlertMonitorLog
 from tracer.utils import monitor as monitor_mod
 from tracer.utils.monitor import (
     MONITOR_CH_SETTINGS,
@@ -114,8 +116,9 @@ def _patch_ch(results: List[Any]) -> mock._patch:
 
 @pytest.fixture(autouse=True)
 def _mute_notifications():
-    with mock.patch.object(monitor_mod, "_send_alert_email"), mock.patch.object(
-        monitor_mod, "_send_slack_notification"
+    with (
+        mock.patch.object(monitor_mod, "_send_alert_email"),
+        mock.patch.object(monitor_mod, "_send_slack_notification"),
     ):
         yield
 
@@ -247,6 +250,49 @@ def test_invalid_observation_type_filter_raises_config_error(
         build_monitor_ch_builder(user_alert_monitor)
 
 
+@pytest.mark.parametrize("metric_type", MonitorMetricTypeChoices.values)
+def test_projectless_monitor_raises_config_error_at_builder(
+    user_alert_monitor, metric_type: str
+) -> None:
+    # Production: monitors with a NULL project bound ``project_id = 'None'``
+    # and failed in ClickHouse (Code 376) on every run. The guard runs before
+    # the eval-config lookup, so every metric type reports the missing project.
+    user_alert_monitor.project = None
+    user_alert_monitor.metric_type = metric_type
+    if metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS:
+        user_alert_monitor.metric = "22222222-2222-2222-2222-222222222222"
+    with pytest.raises(MonitorConfigError) as exc_info:
+        build_monitor_ch_builder(user_alert_monitor)
+    assert str(exc_info.value) == get_error_message("MONITOR_PROJECT_REQUIRED")
+
+
+@pytest.mark.parametrize(
+    "metric_type,filters",
+    [
+        ("count_of_errors", {}),
+        ("error_rates_for_function_calling", {"observation_type": "tool"}),
+        ("daily_tokens_spent", {}),
+    ],
+)
+def test_projectless_monitor_is_skipped_without_ch_or_retry(
+    user_alert_monitor, metric_type: str, filters: dict
+) -> None:
+    # The three production metric types that failed hourly with Code 376.
+    user_alert_monitor.project = None
+    user_alert_monitor.metric_type = metric_type
+    user_alert_monitor.filters = filters
+    user_alert_monitor.save()
+    task_fn = process_monitor_task._original_func
+    patcher = _patch_ch([])  # any CH call raises
+    with patcher, capture_logs() as records:
+        # Returns (no raise, so no Temporal retry) before any CH statement.
+        task_fn(str(user_alert_monitor.id), timezone.now().isoformat())
+    patcher.ch_instance.execute_ch_query.assert_not_called()
+    skipped = [r for r in records if r["event"] == "monitor_misconfigured"]
+    assert [r["monitor_id"] for r in skipped] == [str(user_alert_monitor.id)]
+    assert UserAlertMonitorLog.objects.count() == 0
+
+
 def test_deleted_monitor_returns_quietly() -> None:
     task_fn = process_monitor_task._original_func
     with _patch_ch([]):  # no CH call may happen for a missing monitor
@@ -308,9 +354,7 @@ def test_graph_static_formats_ch_series(user_alert_monitor) -> None:
     instance.execute_ch_query.return_value = _ch_result(
         [{"timestamp": ts, "value": 3}, {"timestamp": ts, "value": None}]
     )
-    with mock.patch.object(
-        graphs_mod, "AnalyticsQueryService", return_value=instance
-    ):
+    with mock.patch.object(graphs_mod, "AnalyticsQueryService", return_value=instance):
         data = graphs_mod.get_static_metric_graph_data(user_alert_monitor)
     assert data == [
         {"timestamp": ts.isoformat(), "value": 3},
@@ -338,9 +382,7 @@ def test_percentage_graph_alert_bars_use_evaluator_band(user_alert_monitor) -> N
         _ch_result([{"timestamp": ts, "value": 1000.0}]),
         _ch_result([{"mean": 100.0, "stddev": 10.0}]),  # per-row band
     ]
-    with mock.patch.object(
-        graphs_mod, "AnalyticsQueryService", return_value=instance
-    ):
+    with mock.patch.object(graphs_mod, "AnalyticsQueryService", return_value=instance):
         out = graphs_mod.get_percentage_change_metric_graph_data(user_alert_monitor)
 
     # A second CH query (the evaluator's historical stats) was issued.

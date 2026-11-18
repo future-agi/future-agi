@@ -23,6 +23,7 @@ import structlog
 logger = structlog.get_logger(__name__)
 from simulate.models.test_execution import CallExecution, CallTranscript
 from simulate.models.chat_message import ChatMessageModel
+
 try:
     from ee.voice.services.types.voice import TranscriptMessage
 except ImportError:
@@ -41,10 +42,10 @@ class ToolEvalAgent:
 
     def __init__(
         self,
-        model_name=ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name,
-        temperature=ModelConfigs.VERTEX_GEMINI_2_5_PRO.temperature,
-        max_tokens=ModelConfigs.VERTEX_GEMINI_2_5_PRO.max_tokens,
-        provider=ModelConfigs.VERTEX_GEMINI_2_5_PRO.provider,
+        model_name=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name,
+        temperature=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.temperature,
+        max_tokens=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.max_tokens,
+        provider=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.provider,
         llm=None,
     ):
         """
@@ -66,9 +67,7 @@ class ToolEvalAgent:
                 provider=provider,
             )
 
-    def evaluate_tool_calls(
-        self, messages: list[TranscriptMessage]
-    ) -> Dict[str, Any]:
+    def evaluate_tool_calls(self, messages: list[TranscriptMessage]) -> Dict[str, Any]:
         """Evaluate tool calls from normalized transcript messages.
 
         This is the primary, provider-agnostic entry point. Adapters produce
@@ -81,9 +80,7 @@ class ToolEvalAgent:
         """
         tool_call_msgs = [m for m in messages if m.role == "tool_call"]
         result_msgs = {
-            m.tool_call_id: m
-            for m in messages
-            if m.role == "tool_call_result"
+            m.tool_call_id: m for m in messages if m.role == "tool_call_result"
         }
 
         if not tool_call_msgs:
@@ -104,9 +101,7 @@ class ToolEvalAgent:
         for tc in tool_call_msgs:
             result_msg = result_msgs.get(tc.tool_call_id)
             timestamp_ms = int(tc.time * 1000)
-            result_timestamp_ms = (
-                int(result_msg.time * 1000) if result_msg else None
-            )
+            result_timestamp_ms = int(result_msg.time * 1000) if result_msg else None
 
             tool_calls_data.append(
                 {
@@ -116,9 +111,7 @@ class ToolEvalAgent:
                     "timestamp_ms": timestamp_ms,
                     "seconds_from_start": tc.time,
                     "result": (
-                        self._parse_result(result_msg.content)
-                        if result_msg
-                        else None
+                        self._parse_result(result_msg.content) if result_msg else None
                     ),
                     "result_timestamp_ms": result_timestamp_ms,
                     "context_before": self._get_context_before(

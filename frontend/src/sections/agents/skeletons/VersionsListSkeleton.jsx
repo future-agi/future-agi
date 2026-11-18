@@ -42,8 +42,8 @@ const VersionsListSkeleton = () => {
           overflowY: "auto",
           "&::-webkit-scrollbar": { width: "6px" },
           "&::-webkit-scrollbar-thumb": {
-            backgroundColor: "rgba(0,0,0,0.3)",
-            borderRadius: "3px",
+            backgroundColor: "border.strong",
+            borderRadius: "4px",
           },
           "&::-webkit-scrollbar-track": { backgroundColor: "transparent" },
           px: theme.spacing(1),

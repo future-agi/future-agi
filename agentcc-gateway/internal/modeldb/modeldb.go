@@ -1,7 +1,9 @@
 package modeldb
 
 import (
+	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -16,6 +18,10 @@ const (
 	ModeAudioSpeech        ModelMode = "audio_speech"
 	ModeRerank             ModelMode = "rerank"
 	ModeModeration         ModelMode = "moderation"
+	ModeDecision           ModelMode = "decision"
+	ModeOCR                ModelMode = "ocr"
+	ModeVideoGeneration    ModelMode = "video_generation"
+	ModeSearch             ModelMode = "search"
 )
 
 // ModelInfo contains all metadata for a single model.
@@ -36,6 +42,10 @@ type ModelInfo struct {
 type ModelDB struct {
 	models     map[string]*ModelInfo
 	byProvider map[string][]*ModelInfo
+	// priceOverridden holds the ids whose price comes from a config override,
+	// so a lookup across several names can rank an operator's price above a
+	// bundled one (DecisionPricingAny).
+	priceOverridden map[string]bool
 }
 
 // New creates a ModelDB from bundled data merged with config overrides.
@@ -54,6 +64,7 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 	}
 
 	// Apply overrides.
+	priceOverridden := make(map[string]bool)
 	for id, ov := range overrides {
 		existing, ok := models[id]
 		if !ok {
@@ -62,6 +73,9 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 			models[id] = existing
 		}
 		mergeOverride(existing, ov)
+		if ov.Pricing != nil {
+			priceOverridden[id] = true
+		}
 	}
 
 	// Build provider index.
@@ -73,7 +87,7 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 		sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
 	}
 
-	return &ModelDB{models: models, byProvider: byProvider}
+	return &ModelDB{models: models, byProvider: byProvider, priceOverridden: priceOverridden}
 }
 
 // Get returns model info by ID. Tries exact match, then strips "provider/"
@@ -97,6 +111,52 @@ func (db *ModelDB) Get(id string) (*ModelInfo, bool) {
 		}
 	}
 	return nil, false
+}
+
+// PriceKey is the key the price table lists a model under.
+//
+// The table keys many models by provider, as "mistral/mistral-ocr-latest" or
+// "perplexity/sonar", while a request names the bare model, and a lookup
+// strips a provider prefix but never adds one.
+//
+// A provider that resells other vendors' models names them with the vendor's
+// prefix, as Perplexity's "google/gemini-3.6-flash". The lookup would strip
+// that to the vendor's own price, so the provider's entry
+// ("perplexity/google/gemini-3.6-flash") is tried first.
+//
+// table is the name the provider states for itself, which its ID need not
+// match: the table lists new Gemini models only under "gemini/" and
+// "vertex_ai/", and a Gemini provider may be named "vertex_ai_global".
+func (db *ModelDB) PriceKey(model, provider, table string) string {
+	if provider == "" || model == "" {
+		return model
+	}
+	if _, ok := db.Get(model); ok && !strings.Contains(model, "/") {
+		return model
+	}
+	for _, name := range []string{provider, table, tableProviderNames[provider]} {
+		if name == "" {
+			continue
+		}
+		if prefixed := name + "/" + model; db.listsExactly(prefixed) {
+			return prefixed
+		}
+	}
+	return model
+}
+
+// tableProviderNames spells a provider the way the price table keys it, where
+// that differs from the gateway's name: "fireworks_ai/accounts/fireworks/models/glm-5p3".
+var tableProviderNames = map[string]string{
+	"fireworks": "fireworks_ai",
+	"together":  "together_ai",
+}
+
+// listsExactly says whether the table has an entry under id itself, not
+// under id with its prefix stripped.
+func (db *ModelDB) listsExactly(id string) bool {
+	m, ok := db.Get(id)
+	return ok && m.ID == id
 }
 
 // GetPricing returns pricing info for a model.
@@ -168,6 +228,135 @@ func (db *ModelDB) CalculateCost(modelID string, inputTokens, outputTokens int, 
 	return m.Pricing.Calculate(inputTokens, outputTokens, opts), true
 }
 
+// AudioCost returns the cost of transcribing the given seconds of audio.
+// Returns 0, false if the model is not found or has no per-second price.
+func (db *ModelDB) AudioCost(modelID string, seconds float64) (float64, bool) {
+	m, ok := db.Get(modelID)
+	if !ok || m.Pricing.InputPerSecond == 0 {
+		return 0, false
+	}
+	return seconds * m.Pricing.InputPerSecond, true
+}
+
+// CharacterCost returns the cost of synthesising the given number of characters.
+// Returns 0, false if the model is not found or has no per-character price.
+func (db *ModelDB) CharacterCost(modelID string, characters int) (float64, bool) {
+	m, ok := db.Get(modelID)
+	if !ok || m.Pricing.InputPerCharacter == 0 {
+		return 0, false
+	}
+	return float64(characters) * m.Pricing.InputPerCharacter, true
+}
+
+// QueryCost returns the cost of the given number of queries, the unit rerank
+// is billed in. Returns 0, false if the model has no per-query price.
+func (db *ModelDB) QueryCost(modelID string, queries int) (float64, bool) {
+	m, ok := db.Get(modelID)
+	if !ok || m.Pricing.InputPerQuery == 0 {
+		return 0, false
+	}
+	return float64(queries) * m.Pricing.InputPerQuery, true
+}
+
+// PageCost returns the cost of reading the given number of document pages.
+// Returns 0, false if the model has no per-page price.
+func (db *ModelDB) PageCost(modelID string, pages int) (float64, bool) {
+	m, ok := db.Get(modelID)
+	if !ok || m.Pricing.PerPage == 0 {
+		return 0, false
+	}
+	return float64(pages) * m.Pricing.PerPage, true
+}
+
+// VideoCost returns the cost of generating the given seconds of video.
+// Returns 0, false if the model has no per-second output price.
+func (db *ModelDB) VideoCost(modelID string, seconds float64) (float64, bool) {
+	m, ok := db.Get(modelID)
+	if !ok || m.Pricing.OutputPerSecond == 0 {
+		return 0, false
+	}
+	return seconds * m.Pricing.OutputPerSecond, true
+}
+
+// ImageCost returns the cost of n images generated at the given size and
+// quality. The price table keys a model priced per pixel by quality and size,
+// as "hd/1024-x-1024/dall-e-3", so those keys are tried first; then the
+// model's own price per image. Returns 0, false if neither has a price.
+//
+// The keys are looked up exactly: Get would strip "1792-x-1024/" and answer
+// with the model's flat price, half the real one at that size. A request that
+// names no quality gets the API's default, standard.
+func (db *ModelDB) ImageCost(modelID, size, quality string, n int) (float64, bool) {
+	if n <= 0 {
+		n = 1
+	}
+	if quality == "" {
+		quality = "standard"
+	}
+	width, height, sized := parseImageSize(size)
+	if sized {
+		sizeKey := fmt.Sprintf("%d-x-%d", width, height)
+		for _, key := range []string{quality + "/" + sizeKey + "/" + modelID, sizeKey + "/" + modelID} {
+			m, ok := db.models[key]
+			if !ok {
+				continue
+			}
+			if perPixel := max(m.Pricing.InputPerPixel, m.Pricing.OutputPerPixel); perPixel > 0 {
+				return perPixel * float64(width*height) * float64(n), true
+			}
+			if perImage := imagePrice(m); perImage > 0 {
+				return perImage * float64(n), true
+			}
+		}
+	}
+	if m, ok := db.Get(modelID); ok {
+		if perImage := imagePrice(m); perImage > 0 {
+			return perImage * float64(n), true
+		}
+	}
+	return 0, false
+}
+
+// ImageTokenCost returns the cost of an image call billed in tokens, as the
+// gpt-image models are: text and image tokens in, image tokens out. Returns
+// 0, false if the model has no token price.
+func (db *ModelDB) ImageTokenCost(modelID string, textIn, imageIn, out int) (float64, bool) {
+	m, ok := db.Get(modelID)
+	if !ok || (m.Pricing.InputPerToken == 0 && m.Pricing.OutputPerImageToken == 0) {
+		return 0, false
+	}
+	imageInRate := m.Pricing.InputPerImageToken
+	if imageInRate == 0 {
+		imageInRate = m.Pricing.InputPerToken
+	}
+	outRate := m.Pricing.OutputPerImageToken
+	if outRate == 0 {
+		outRate = m.Pricing.OutputPerToken
+	}
+	return float64(textIn)*m.Pricing.InputPerToken + float64(imageIn)*imageInRate + float64(out)*outRate, true
+}
+
+// imagePrice is a model's price for one generated image. The table states it
+// as output_cost_per_image for most models and as input_cost_per_image for
+// some OpenAI ones, dall-e-3 among them.
+func imagePrice(m *ModelInfo) float64 {
+	return max(m.Pricing.OutputPerImage, m.Pricing.InputPerImage)
+}
+
+// parseImageSize reads an image size such as "1024x1024".
+func parseImageSize(size string) (width, height int, ok bool) {
+	w, h, found := strings.Cut(size, "x")
+	if !found {
+		return 0, 0, false
+	}
+	width, errW := strconv.Atoi(w)
+	height, errH := strconv.Atoi(h)
+	if errW != nil || errH != nil || width <= 0 || height <= 0 {
+		return 0, 0, false
+	}
+	return width, height, true
+}
+
 // ModelOverride defines config-level overrides for a model entry.
 // Pointer fields are optional — nil means "don't override".
 type ModelOverride struct {
@@ -188,6 +377,12 @@ type PricingOverride struct {
 	CachedInputPerToken *float64 `yaml:"cached_input_per_token"`
 	BatchInputPerToken  *float64 `yaml:"batch_input_per_token"`
 	BatchOutputPerToken *float64 `yaml:"batch_output_per_token"`
+	InputPerSecond      *float64 `yaml:"input_per_second"`
+	InputPerCharacter   *float64 `yaml:"input_per_character"`
+	InputPerQuery       *float64 `yaml:"input_per_query"`
+	PerPage             *float64 `yaml:"per_page"`
+	OutputPerImage      *float64 `yaml:"output_per_image"`
+	OutputPerSecond     *float64 `yaml:"output_per_second"`
 }
 
 // CapOverride allows overriding individual capability flags.
@@ -241,17 +436,37 @@ func mergeOverride(m *ModelInfo, ov ModelOverride) {
 		if p.BatchOutputPerToken != nil {
 			m.Pricing.BatchOutputPerToken = *p.BatchOutputPerToken
 		}
+		if p.InputPerSecond != nil {
+			m.Pricing.InputPerSecond = *p.InputPerSecond
+		}
+		if p.InputPerCharacter != nil {
+			m.Pricing.InputPerCharacter = *p.InputPerCharacter
+		}
+		if p.InputPerQuery != nil {
+			m.Pricing.InputPerQuery = *p.InputPerQuery
+		}
+		if p.PerPage != nil {
+			m.Pricing.PerPage = *p.PerPage
+		}
+		if p.OutputPerImage != nil {
+			m.Pricing.OutputPerImage = *p.OutputPerImage
+		}
+		if p.OutputPerSecond != nil {
+			m.Pricing.OutputPerSecond = *p.OutputPerSecond
+		}
 	}
 
 	if c := ov.Capabilities; c != nil {
 		if c.FunctionCalling != nil {
 			m.Capabilities.FunctionCalling = *c.FunctionCalling
+			m.Capabilities.FunctionCallingUnstated = false
 		}
 		if c.ParallelToolCalls != nil {
 			m.Capabilities.ParallelToolCalls = *c.ParallelToolCalls
 		}
 		if c.Vision != nil {
 			m.Capabilities.Vision = *c.Vision
+			m.Capabilities.VisionUnstated = false
 		}
 		if c.AudioInput != nil {
 			m.Capabilities.AudioInput = *c.AudioInput
@@ -267,6 +482,7 @@ func mergeOverride(m *ModelInfo, ov ModelOverride) {
 		}
 		if c.ResponseSchema != nil {
 			m.Capabilities.ResponseSchema = *c.ResponseSchema
+			m.Capabilities.ResponseSchemaUnstated = false
 		}
 		if c.SystemMessages != nil {
 			m.Capabilities.SystemMessages = *c.SystemMessages

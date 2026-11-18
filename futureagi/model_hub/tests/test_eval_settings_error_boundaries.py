@@ -313,6 +313,65 @@ def test_all_target_unexpected_handlers_preserve_sanitized_400_contract():
         )
 
 
+def _responds_with_exception(handler):
+    """Whether a self._gm response is built from the exception itself
+    (str(exc), an f-string, ...); one of its attributes does not count."""
+    for statement in handler.body:
+        for call in ast.walk(statement):
+            if not (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and ast.unparse(call.func.value) == "self._gm"
+            ):
+                continue
+            for argument in [*call.args, *(k.value for k in call.keywords)]:
+                nodes = list(ast.walk(argument))
+                owners = {id(n.value) for n in nodes if isinstance(n, ast.Attribute)}
+                if any(
+                    isinstance(n, ast.Name)
+                    and n.id == handler.name
+                    and id(n) not in owners
+                    for n in nodes
+                ):
+                    return True
+    return False
+
+
+def test_eval_runs_show_exception_text_only_for_safe_setup_errors():
+    """Only backend-authored setup messages may reach the response.
+
+    EvalConfigError joins CodeEvalSetupError as an explicit safe type; arbitrary
+    ValueError and provider exceptions must still use the private-error boundary.
+    UnavailableModelError is safe too: its text is the backend's own catalog-miss
+    template, quoting only the model name the caller saved or sent (the prompt
+    preview and SDK paths already return the same text).
+    """
+    run_evals = set()
+    for (view, _), method in zip(_TARGET_METHODS, _target_method_nodes(), strict=True):
+        for node in ast.walk(method):
+            if not isinstance(node, ast.Try) or not any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "run_eval_func"
+                for statement in node.body
+                for call in ast.walk(statement)
+            ):
+                continue
+            run_evals.add(view)
+            for handler in node.handlers:
+                if handler.name and _responds_with_exception(handler):
+                    assert isinstance(handler.type, ast.Name) and handler.type.id in {
+                        "CodeEvalSetupError",
+                        "EvalConfigError",
+                        "UnavailableModelError",
+                    }, f"{view}.{method.name} line {handler.lineno}"
+    assert run_evals == {
+        "TraceEvalView",
+        "EvalPlayGroundAPIView",
+        "TestEvaluationTemplateAPIView",
+    }
+
+
 def test_trace_eval_failed_result_never_embeds_runtime_exception_text():
     source = inspect.getsource(inspect.unwrap(separate_evals.TraceEvalView.post))
 

@@ -5,12 +5,9 @@ import {
   Chip,
   Divider,
   IconButton,
-  MenuItem,
-  Select,
   TextField,
   Tooltip,
   Typography,
-  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -21,9 +18,15 @@ import {
   DEFAULT_EVAL_MODEL,
   getEvalBaseName,
 } from "src/sections/common/EvaluationDrawer/common";
-import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
+import ModelSelector, {
+  FAGI_MODEL_VALUES,
+} from "src/sections/evals/components/ModelSelector";
+import JevOutputConfig from "src/sections/evals/components/JevOutputConfig";
+import { hasExtraJevMessages } from "src/sections/evals/utils/jevMapping";
+import useDecisionBinding, {
+  normalizeDecisionOutput,
+} from "./useDecisionBinding";
 import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
-import { FUTUREAGI_LLM_MODELS } from "src/sections/common/EvaluationDrawer/validation";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import { normalizeEvalPickerEval } from "./evalPickerValue";
 
@@ -115,7 +118,6 @@ function autoMapVariables(variables, sourceColumns) {
 }
 
 const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
-  const theme = useTheme();
   // Only clear a seeded Turing model once denial is *confirmed* (capabilities
   // loaded AND not allowed). Doing it in the useState initializer below would
   // wipe a legitimate selection at mount, before the fetch resolves, and never
@@ -157,9 +159,51 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
   const [evalName, setEvalName] = useState(() => {
     return `${getEvalBaseName(normalizedEvalData)}_${format(new Date(), "dd_MMM_yyyy")}`;
   });
-  const [model, setModel] = useState(
-    () => normalizedEvalData?.model || DEFAULT_EVAL_MODEL,
+  const effectiveConfig = useMemo(
+    () => ({
+      ...(evalData?.config || {}),
+      ...(evalData?.config?.run_config || {}),
+      ...(evalData?.run_config || evalData?.runConfig || {}),
+    }),
+    [evalData],
   );
+  const [model, setModel] = useState(
+    () =>
+      effectiveConfig.model || normalizedEvalData?.model || DEFAULT_EVAL_MODEL,
+  );
+  const [decisionMapping, setDecisionMapping] = useState(
+    () => effectiveConfig.jev_mapping || effectiveConfig.jevMapping || {},
+  );
+  const [agentMode, setAgentMode] = useState(
+    () => effectiveConfig.agent_mode || "agent",
+  );
+  const outputType = normalizeDecisionOutput(
+    effectiveConfig.output_type ??
+      normalizedEvalData?.outputType ??
+      effectiveConfig.output,
+  );
+  const choiceScores = useMemo(
+    () =>
+      effectiveConfig.choice_scores || normalizedEvalData?.choiceScores || {},
+    [effectiveConfig, normalizedEvalData],
+  );
+  const decision = useDecisionBinding({
+    model,
+    evalType: normalizedEvalData?.evalType,
+    outputType,
+    choiceScores,
+    mapping: decisionMapping,
+    config: {
+      ...effectiveConfig,
+      agent_mode:
+        normalizedEvalData?.evalType === "agent" ? agentMode : undefined,
+    },
+    multiChoice:
+      effectiveConfig.multi_choice || normalizedEvalData?.multiChoice,
+    messages: effectiveConfig.messages || [],
+    inputDataTypes: evalData?.input_data_types,
+    isComposite: normalizedEvalData?.templateType === "composite",
+  });
   // Drop a seeded Turing model only after denial is confirmed, so entitled
   // users keep their selection through the capabilities fetch.
   useEffect(() => {
@@ -191,6 +235,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
   const unmappedCount = variables.filter((v) => !mapping[v]).length;
 
   const handleSave = useCallback(() => {
+    if (decision.blockedReason) return;
     const templateId =
       evalData?.templateId || evalData?.template_id || evalData?.id;
     const evalConfig = {
@@ -203,10 +248,35 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
       evalType: normalizedEvalData?.evalType,
       templateType: normalizedEvalData?.templateType,
       outputType: normalizedEvalData?.outputType,
-      config: normalizedEvalData?.config,
+      config: decision.active
+        ? {
+            ...effectiveConfig,
+            model,
+            ...decision.payload,
+            run_config: {
+              ...(effectiveConfig.run_config || {}),
+              model,
+              agent_mode: agentMode,
+              ...decision.payload,
+            },
+          }
+        : normalizedEvalData?.config,
+      ...decision.payload,
     };
     onSave(evalConfig);
-  }, [evalData, normalizedEvalData, evalName, model, mapping, onSave]);
+  }, [
+    evalData,
+    normalizedEvalData,
+    evalName,
+    model,
+    mapping,
+    onSave,
+    effectiveConfig,
+    decision.active,
+    decision.payload,
+    decision.blockedReason,
+    agentMode,
+  ]);
 
   return (
     <Box
@@ -227,7 +297,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
         }}
       >
         <IconButton size="small" onClick={onBack} sx={{ p: 0.5 }}>
-          <Iconify icon="solar:arrow-left-linear" width={18} />
+          <Iconify icon="solar:arrow-left-linear" width={20} />
         </IconButton>
         <Typography variant="subtitle1" fontWeight={600}>
           Configure Evaluation
@@ -240,6 +310,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
       <Box
         sx={{
           flex: 1,
+          minHeight: 0,
           overflow: "auto",
           py: 2,
           display: "flex",
@@ -262,7 +333,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
             value={evalName}
             onChange={(e) => setEvalName(e.target.value)}
             placeholder="Enter evaluation name"
-            sx={{ "& .MuiInputBase-root": { fontSize: "13px" } }}
+            sx={{ "& .MuiInputBase-root": { fontSize: "12px" } }}
           />
         </Box>
 
@@ -276,31 +347,32 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
             >
               Model
             </Typography>
-            <Select
-              size="small"
-              fullWidth
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              sx={{ fontSize: "13px" }}
-            >
-              {FUTUREAGI_LLM_MODELS.map((m) => (
-                <MenuItem key={m.value} value={m.value}>
-                  <Box>
-                    <Typography variant="body2" sx={{ fontSize: "13px" }}>
-                      {m.label}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ fontSize: "11px" }}
-                    >
-                      {m.description}
-                    </Typography>
-                  </Box>
-                </MenuItem>
-              ))}
-            </Select>
+            <ModelSelector
+              model={model}
+              onModelChange={setModel}
+              outputType={outputType}
+              choiceCount={Object.keys(choiceScores).length}
+              mode={agentMode}
+              onModeChange={setAgentMode}
+              showMode={false}
+              showPlus={false}
+            />
           </Box>
+        )}
+
+        {decision.active && (
+          <JevOutputConfig
+            outputType={outputType}
+            choiceScores={choiceScores}
+            mapping={decisionMapping}
+            onChange={setDecisionMapping}
+            errors={decision.errors}
+            locked={decision.locked}
+            modelLabel={decision.label}
+            hasExtraMessages={hasExtraJevMessages(
+              effectiveConfig.messages || [],
+            )}
+          />
         )}
 
         {/* Variable Mapping */}
@@ -323,7 +395,6 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
                   size="small"
                   color="warning"
                   variant="outlined"
-                  sx={{ fontSize: "11px", height: 20 }}
                 />
               )}
             </Box>
@@ -337,10 +408,7 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
                 borderRadius: 1,
                 border: "1px solid",
                 borderColor: "divider",
-                bgcolor:
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.02)"
-                    : "rgba(0,0,0,0.01)",
+                bgcolor: "background.neutral",
               }}
             >
               {sourceColumnInventoryControls}
@@ -499,15 +567,16 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
           variant="outlined"
           size="small"
           onClick={onBack}
-          sx={{ textTransform: "none", minWidth: 80 }}
+          sx={{ minWidth: 80 }}
         >
           Back
         </Button>
         <Tooltip
           title={
-            unmappedCount > 0
+            decision.blockedReason ||
+            (unmappedCount > 0
               ? `Map all ${unmappedCount} required variable(s) before adding`
-              : ""
+              : "")
           }
         >
           <span>
@@ -516,8 +585,8 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
               size="small"
               onClick={handleSave}
               loading={isSaving}
-              disabled={unmappedCount > 0}
-              sx={{ textTransform: "none", minWidth: 140 }}
+              disabled={unmappedCount > 0 || Boolean(decision.blockedReason)}
+              sx={{ minWidth: 140 }}
             >
               Add Evaluation
             </LoadingButton>

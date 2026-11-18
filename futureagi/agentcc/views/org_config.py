@@ -17,6 +17,7 @@ from agentcc.serializers.org_config import (
     AgentccOrgConfigSerializer,
     AgentccOrgConfigWriteSerializer,
 )
+from agentcc.services.config_push import validate_org_config
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
@@ -94,15 +95,17 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             with transaction.atomic():
                 if checks_list:
                     # Upsert a UI guardrails policy for this org
-                    policy, _ = AgentccGuardrailPolicy.no_workspace_objects.get_or_create(
-                        organization=org,
-                        name="__ui_guardrails__",
-                        deleted=False,
-                        defaults={
-                            "checks": [],
-                            "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
-                            "is_active": True,
-                        },
+                    policy, _ = (
+                        AgentccGuardrailPolicy.no_workspace_objects.get_or_create(
+                            organization=org,
+                            name="__ui_guardrails__",
+                            deleted=False,
+                            defaults={
+                                "checks": [],
+                                "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
+                                "is_active": True,
+                            },
+                        )
                     )
                     policy_serializer = AgentccGuardrailPolicySerializer(
                         policy, data={"checks": checks_list}, partial=True
@@ -170,6 +173,9 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     created_by=request.user,
                     change_description=data.get("change_description", ""),
                 )
+                # Fail closed: a version the gateway contract rejects must not
+                # become active. Raising here rolls the whole save back.
+                validate_org_config(config)
 
             # Push to gateway
             synced = self._push_config_to_gateway(org.id, config)
@@ -218,6 +224,9 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
 
             org = instance.organization
+            # Fail closed: an older version can hold keys the gateway contract
+            # no longer accepts.
+            validate_org_config(instance)
 
             with transaction.atomic():
                 # Deactivate current active config

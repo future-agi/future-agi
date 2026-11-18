@@ -7,10 +7,12 @@ import {
   MenuItem,
   Select,
   Tab,
-  Tabs,
   Tooltip,
   Typography,
+  Button,
+  ButtonBase,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -303,7 +305,7 @@ const CustomJsonInput = ({
           setTimeout(() => followUpRef.current?.focus(), 100);
         }
       } catch (err) {
-        logger.error("Falcon test-data generation failed", err);
+        logger.error("Test data generation failed", err);
         enqueueSnackbar("Couldn't generate test data. Please try again.", {
           variant: "error",
         });
@@ -354,10 +356,7 @@ const CustomJsonInput = ({
               zIndex: 10,
               borderBottom: "1px solid",
               borderColor: "divider",
-              backgroundColor: (theme) =>
-                theme.palette.mode === "dark"
-                  ? "rgba(26,26,46,0.95)"
-                  : "rgba(250,250,254,0.95)",
+              backgroundColor: "background.aiSurface",
               borderRadius: "8px 8px 0 0",
             }}
           >
@@ -375,7 +374,7 @@ const CustomJsonInput = ({
                   <Typography
                     variant="body2"
                     color="text.secondary"
-                    sx={{ fontSize: "13px" }}
+                    sx={{ fontSize: "12px" }}
                   >
                     Generating...
                   </Typography>
@@ -398,7 +397,7 @@ const CustomJsonInput = ({
                     flex: 1,
                     border: "none",
                     outline: "none",
-                    fontSize: "13px",
+                    fontSize: "12px",
                     backgroundColor: "transparent",
                     color: "text.primary",
                     "&::placeholder": { color: "text.disabled" },
@@ -409,7 +408,7 @@ const CustomJsonInput = ({
                   variant="body2"
                   sx={{
                     flex: 1,
-                    fontSize: "13px",
+                    fontSize: "12px",
                     color: "text.secondary",
                     fontStyle: "italic",
                   }}
@@ -428,37 +427,20 @@ const CustomJsonInput = ({
               >
                 {hasResult && (
                   <>
-                    <Box
-                      component="button"
+                    <Button
+                      size="small"
                       onClick={handleReject}
-                      sx={{
-                        border: "none",
-                        background: "none",
-                        cursor: "pointer",
-                        fontSize: "12px",
-                        color: "text.secondary",
-                        p: "4px 8px",
-                      }}
+                      sx={{ color: "text.secondary" }}
                     >
                       Reject
-                    </Box>
-                    <Box
-                      component="button"
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
                       onClick={handleAccept}
-                      sx={{
-                        border: "1px solid",
-                        borderColor: "primary.main",
-                        background: "none",
-                        cursor: "pointer",
-                        fontSize: "12px",
-                        color: "primary.main",
-                        fontWeight: 600,
-                        p: "4px 10px",
-                        borderRadius: "4px",
-                      }}
                     >
                       Accept
-                    </Box>
+                    </Button>
                   </>
                 )}
                 {!hasResult && !aiLoading && (
@@ -466,7 +448,6 @@ const CustomJsonInput = ({
                     size="small"
                     onClick={() => handleSubmit(aiPrompt)}
                     disabled={!aiPrompt.trim()}
-                    sx={{ p: 0.5 }}
                   >
                     <SvgColor
                       src="/assets/icons/navbar/ic_falcon_ai.svg"
@@ -480,10 +461,10 @@ const CustomJsonInput = ({
                     />
                   </IconButton>
                 )}
-                <IconButton size="small" onClick={handleClose} sx={{ p: 0.25 }}>
+                <IconButton size="small" onClick={handleClose}>
                   <Box
                     sx={{
-                      fontSize: "14px",
+                      fontSize: "12px",
                       color: "text.disabled",
                       lineHeight: 1,
                     }}
@@ -511,7 +492,7 @@ const CustomJsonInput = ({
                     width: "100%",
                     border: "none",
                     outline: "none",
-                    fontSize: "13px",
+                    fontSize: "12px",
                     backgroundColor: "transparent",
                     color: "text.primary",
                     borderTop: "1px solid",
@@ -537,24 +518,16 @@ const CustomJsonInput = ({
         {/* ── Falcon button overlay (bottom-right) ── */}
         {!aiOpen && (
           <Box sx={{ position: "absolute", bottom: 8, right: 12, zIndex: 5 }}>
-            <Tooltip title="Generate test data with Falcon AI" arrow>
+            <Tooltip title="Generate test data with AI" arrow>
               <IconButton
                 size="small"
                 onClick={() => setAiOpen(true)}
                 sx={{
-                  width: 30,
-                  height: 30,
-                  backgroundColor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? "rgba(20,26,33,0.9)"
-                      : "rgba(250,251,252,0.9)",
+                  backgroundColor: "background.paper",
                   border: "1px solid",
                   borderColor: "divider",
                   "&:hover": {
-                    backgroundColor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(124,77,255,0.15)"
-                        : "rgba(124,77,255,0.08)",
+                    backgroundColor: "status.discovery.bg",
                   },
                 }}
               >
@@ -571,8 +544,8 @@ const CustomJsonInput = ({
       {jsonError && (
         <Typography
           variant="caption"
-          color="error.main"
-          sx={{ fontSize: "11px" }}
+          color="status.danger.fg"
+          sx={{ fontSize: "12px" }}
         >
           {jsonError}
         </Typography>
@@ -601,7 +574,7 @@ const CustomJsonInput = ({
               >
                 <Box
                   sx={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     color: "text.secondary",
                     fontFamily: "monospace",
                   }}
@@ -612,7 +585,7 @@ const CustomJsonInput = ({
                   {variable}
                 </Typography>
               </Box>
-              <Box sx={{ fontSize: "14px", color: "text.disabled" }}>→</Box>
+              <Box sx={{ fontSize: "12px", color: "text.disabled" }}>→</Box>
               <Select
                 size="small"
                 displayEmpty
@@ -637,7 +610,7 @@ const CustomJsonInput = ({
                 }}
                 sx={{ flex: 1, fontSize: "12px", height: 30 }}
               >
-                <MenuItem value="" disabled sx={{ fontSize: "12px" }}>
+                <MenuItem value="" disabled>
                   Select column
                 </MenuItem>
                 {jsonKeys.map((k, i) => (
@@ -645,12 +618,10 @@ const CustomJsonInput = ({
                     key={`${k}-${i}`}
                     value={k}
                     sx={{
-                      fontSize: "12px",
                       fontFamily: "monospace",
                       pl: k.includes(".")
                         ? `${12 + (k.split(".").length - 1) * 12}px`
                         : undefined,
-                      color: k.includes(".") ? "primary.main" : "text.primary",
                     }}
                   >
                     {k}
@@ -696,6 +667,7 @@ const TestPlayground = React.forwardRef(
       functionParamsSchema = null,
       configParamsDesc = null,
       codeParams: controlledCodeParams = null,
+      runConfig,
       onCodeParamsChange,
       code = "",
       codeLanguage = "python",
@@ -1025,9 +997,10 @@ const TestPlayground = React.forwardRef(
           endpoints.develop.eval.evalPlayground,
           {
             template_id: tid,
-            model,
+            ...(evalType !== "code" && model ? { model } : {}),
             error_localizer: errorLocalizerEnabled,
             config: {
+              ...(runConfig ? { run_config: runConfig } : {}),
               mapping,
               ...(evalType === "code" ? { params } : {}),
             },
@@ -1072,6 +1045,9 @@ const TestPlayground = React.forwardRef(
       }
     }, [
       variables,
+      evalType,
+      model,
+      runConfig,
       onTestResult,
       errorLocalizerEnabled,
       startErrorLocalizerPoll,
@@ -1126,7 +1102,7 @@ const TestPlayground = React.forwardRef(
       >
         {/* Header - Test Evaluations + Versions (only if saved) */}
         <Box sx={{ display: "flex", gap: 2, mb: 1.5 }}>
-          <Box
+          <ButtonBase
             onClick={() => setActiveMainTab("test")}
             sx={{
               display: "flex",
@@ -1144,7 +1120,7 @@ const TestPlayground = React.forwardRef(
             }}
           >
             <Iconify
-              icon="lucide:play"
+              icon="solar:play-linear"
               width={14}
               sx={{
                 color:
@@ -1162,9 +1138,9 @@ const TestPlayground = React.forwardRef(
             >
               Test Evaluation
             </Typography>
-          </Box>
+          </ButtonBase>
           {(templateId || showVersions) && (
-            <Box
+            <ButtonBase
               onClick={() => setActiveMainTab("versions")}
               sx={{
                 display: "flex",
@@ -1182,7 +1158,7 @@ const TestPlayground = React.forwardRef(
               }}
             >
               <Iconify
-                icon="iconamoon:history"
+                icon="solar:history-linear"
                 width={14}
                 sx={{
                   color:
@@ -1204,7 +1180,7 @@ const TestPlayground = React.forwardRef(
               >
                 Versions
               </Typography>
-            </Box>
+            </ButtonBase>
           )}
         </Box>
 
@@ -1212,7 +1188,7 @@ const TestPlayground = React.forwardRef(
           <>
             {/* Source tabs + Map Variables - same row */}
             <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
-              <Tabs
+              <SegmentedTabs
                 value={activeTab}
                 onChange={(_, val) => {
                   setActiveTab(val);
@@ -1221,61 +1197,16 @@ const TestPlayground = React.forwardRef(
                   setInputValues({});
                   onSourceTabChange?.();
                 }}
-                TabIndicatorProps={{ style: { display: "none" } }}
-                sx={{
-                  minHeight: 28,
-                  "& .MuiTab-root": {
-                    minHeight: 28,
-                    px: 1.5,
-                    py: 0,
-                    mr: "0px !important",
-                    textTransform: "none",
-                    fontSize: "12px",
-                    borderRadius: "6px",
-                  },
-                  border: "1px solid",
-                  borderColor: "divider",
-                  p: "2px",
-                  borderRadius: "8px",
-                  width: "fit-content",
-                  bgcolor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.04)"
-                      : "background.neutral",
-                }}
+                sx={{ width: "fit-content" }}
               >
                 {SOURCE_TABS.map((tab) => (
-                  <Tab
-                    key={tab}
-                    value={tab}
-                    label={tab}
-                    sx={{
-                      bgcolor:
-                        activeTab === tab
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
-                          : "transparent",
-                      boxShadow:
-                        activeTab === tab
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
-                          : "none",
-                      borderRadius: "6px",
-                      fontWeight: activeTab === tab ? 600 : 400,
-                      color:
-                        activeTab === tab ? "text.primary" : "text.disabled",
-                    }}
-                  />
+                  <Tab key={tab} value={tab} label={tab} />
                 ))}
-              </Tabs>
+              </SegmentedTabs>
             </Box>
 
             {/* Tab content */}
-            <Box sx={{ flex: 1, overflow: "auto" }}>
+            <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
               {activeTab === "Custom" && (
                 <>
                   <CustomJsonInput
@@ -1344,11 +1275,11 @@ const TestPlayground = React.forwardRef(
                         p: 1.5,
                         borderRadius: "6px",
                         border: "1px solid",
-                        borderColor: "error.main",
-                        backgroundColor: "error.lighter",
+                        borderColor: "status.danger.border",
+                        backgroundColor: "status.danger.bg",
                       }}
                     >
-                      <Typography variant="caption" color="error.main">
+                      <Typography variant="caption" color="status.danger.fg">
                         {typeof error === "string"
                           ? error
                           : JSON.stringify(error)}
@@ -1399,7 +1330,6 @@ const TestPlayground = React.forwardRef(
                                   ? "error"
                                   : "default"
                             }
-                            sx={{ fontSize: "11px", height: "20px" }}
                           />
                         </Box>
                       )}
@@ -1423,10 +1353,7 @@ const TestPlayground = React.forwardRef(
                               borderRadius: "6px",
                               border: "1px solid",
                               borderColor: "divider",
-                              backgroundColor: (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(255,255,255,0.03)"
-                                  : "background.neutral",
+                              backgroundColor: "background.neutral",
                             }}
                           >
                             {typeof result.reason === "string"
@@ -1445,11 +1372,11 @@ const TestPlayground = React.forwardRef(
                         p: 1.5,
                         borderRadius: 1,
                         border: "1px solid",
-                        borderColor: "error.main",
-                        backgroundColor: "error.lighter",
+                        borderColor: "status.danger.border",
+                        backgroundColor: "status.danger.bg",
                       }}
                     >
-                      <Typography variant="caption" color="error.main">
+                      <Typography variant="caption" color="status.danger.fg">
                         {typeof error === "string"
                           ? error
                           : JSON.stringify(error)}
@@ -1463,9 +1390,10 @@ const TestPlayground = React.forwardRef(
                 <DatasetTestMode
                   ref={datasetTestRef}
                   templateId={templateId}
-                  model={model}
+                  model={evalType === "code" ? "" : model}
                   variables={variables}
                   codeParams={codeParams}
+                  runConfig={runConfig}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
                   onClearResult={onClearResult}
@@ -1480,9 +1408,10 @@ const TestPlayground = React.forwardRef(
                 <TracingTestMode
                   ref={tracingTestRef}
                   templateId={templateId}
-                  model={model}
+                  model={evalType === "code" ? "" : model}
                   variables={variables}
                   codeParams={codeParams}
+                  runConfig={runConfig}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
                   onClearResult={onClearResult}
@@ -1498,9 +1427,10 @@ const TestPlayground = React.forwardRef(
                 <SimulationTestMode
                   ref={simulationTestRef}
                   templateId={templateId}
-                  model={model}
+                  model={evalType === "code" ? "" : model}
                   variables={variables}
                   codeParams={codeParams}
+                  runConfig={runConfig}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
                   onClearResult={onClearResult}
@@ -1595,7 +1525,7 @@ const TestPlayground = React.forwardRef(
           </>
         ) : (
           /* =================== VERSIONS TAB =================== */
-          <Box sx={{ flex: 1, overflow: "auto" }}>
+          <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
             {!templateId ? (
               <Typography
                 variant="body2"
@@ -1653,26 +1583,15 @@ const TestPlayground = React.forwardRef(
                             ? "primary.main"
                             : "transparent",
                           backgroundColor: isSelected
-                            ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(124,77,255,0.08)"
-                                  : "rgba(124,77,255,0.04)"
+                            ? "status.discovery.bg"
                             : isHovered
-                              ? (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "rgba(255,255,255,0.05)"
-                                    : "rgba(0,0,0,0.025)"
+                              ? "action.hover"
                               : "transparent",
                           transition: "all 0.15s",
                           "&:hover": {
-                            backgroundColor: (theme) =>
-                              isSelected
-                                ? theme.palette.mode === "dark"
-                                  ? "rgba(124,77,255,0.12)"
-                                  : "rgba(124,77,255,0.06)"
-                                : theme.palette.mode === "dark"
-                                  ? "rgba(255,255,255,0.05)"
-                                  : "rgba(0,0,0,0.025)",
+                            backgroundColor: isSelected
+                              ? "status.discovery.bg"
+                              : "action.hover",
                           },
                           mb: isLast ? 0 : 0.25,
                         }}
@@ -1702,21 +1621,17 @@ const TestPlayground = React.forwardRef(
                               backgroundColor: isSelected
                                 ? "primary.main"
                                 : isDefault
-                                  ? "rgba(52,138,239,0.12)"
-                                  : (theme) =>
-                                      theme.palette.mode === "dark"
-                                        ? "rgba(255,255,255,0.08)"
-                                        : "action.hover",
+                                  ? "status.info.bg"
+                                  : "action.hover",
                               border:
-                                isDefault && !isSelected
-                                  ? "1.5px solid rgba(52,138,239,0.3)"
-                                  : "none",
+                                isDefault && !isSelected ? "1px solid" : "none",
+                              borderColor: "status.info.border",
                               flexShrink: 0,
                             }}
                           >
                             <Typography
                               sx={{
-                                fontSize: "11px",
+                                fontSize: "12px",
                                 fontWeight: 600,
                                 fontFamily: "'IBM Plex Sans', sans-serif",
                                 color: isSelected
@@ -1768,11 +1683,11 @@ const TestPlayground = React.forwardRef(
                                   px: 0.75,
                                   py: 0.125,
                                   borderRadius: "4px",
-                                  fontSize: "10px",
+                                  fontSize: "12px",
                                   fontWeight: 600,
                                   fontFamily: "'IBM Plex Sans', sans-serif",
-                                  backgroundColor: "rgba(0,162,81,0.1)",
-                                  color: "success.main",
+                                  backgroundColor: "status.success.bg",
+                                  color: "status.success.fg",
                                   lineHeight: 1.4,
                                 }}
                               >
@@ -1785,11 +1700,11 @@ const TestPlayground = React.forwardRef(
                                   px: 0.75,
                                   py: 0.125,
                                   borderRadius: "4px",
-                                  fontSize: "10px",
+                                  fontSize: "12px",
                                   fontWeight: 600,
                                   fontFamily: "'IBM Plex Sans', sans-serif",
-                                  backgroundColor: "rgba(124,77,255,0.1)",
-                                  color: "primary.main",
+                                  backgroundColor: "status.discovery.bg",
+                                  color: "status.discovery.fg",
                                   lineHeight: 1.4,
                                 }}
                               >
@@ -1811,10 +1726,7 @@ const TestPlayground = React.forwardRef(
                                   width: 16,
                                   height: 16,
                                   borderRadius: "50%",
-                                  backgroundColor: (t) =>
-                                    t.palette.mode === "dark"
-                                      ? "rgba(124,77,255,0.15)"
-                                      : "rgba(124,77,255,0.08)",
+                                  backgroundColor: "status.discovery.bg",
                                   display: "flex",
                                   alignItems: "center",
                                   justifyContent: "center",
@@ -1823,7 +1735,7 @@ const TestPlayground = React.forwardRef(
                               >
                                 <Typography
                                   sx={{
-                                    fontSize: "9px",
+                                    fontSize: "12px",
                                     fontWeight: 600,
                                     color: "primary.main",
                                   }}
@@ -1833,7 +1745,7 @@ const TestPlayground = React.forwardRef(
                               </Box>
                               <Typography
                                 sx={{
-                                  fontSize: "11px",
+                                  fontSize: "12px",
                                   fontWeight: 400,
                                   fontFamily: "'IBM Plex Sans', sans-serif",
                                   color: "text.secondary",
@@ -1856,17 +1768,12 @@ const TestPlayground = React.forwardRef(
                               handleVersionMenuOpen(e, v);
                             }}
                             sx={{
-                              width: 28,
-                              height: 28,
                               flexShrink: 0,
                               mt: 0.25,
                               opacity: isHovered || versionMenuAnchor ? 1 : 0.4,
                               transition: "opacity 0.15s",
                               "&:hover": {
-                                backgroundColor: (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "rgba(255,255,255,0.1)"
-                                    : "rgba(0,0,0,0.06)",
+                                backgroundColor: "border.default",
                               },
                             }}
                           >
@@ -1892,8 +1799,7 @@ const TestPlayground = React.forwardRef(
                   slotProps={{
                     paper: {
                       sx: {
-                        minWidth: 180,
-                        boxShadow: 3,
+                        minWidth: 200,
                         borderRadius: "8px",
                         py: 0.5,
                       },
@@ -1901,22 +1807,16 @@ const TestPlayground = React.forwardRef(
                   }}
                 >
                   {!menuVersion?.is_default && (
-                    <MenuItem
-                      onClick={handleSetDefault}
-                      sx={{ fontSize: "13px", gap: 1, py: 1 }}
-                    >
+                    <MenuItem onClick={handleSetDefault} sx={{ gap: 1, py: 1 }}>
                       <Iconify
                         icon="solar:star-bold"
                         width={16}
-                        sx={{ color: "warning.main" }}
+                        sx={{ color: "status.warning.fg" }}
                       />
                       Set as Default
                     </MenuItem>
                   )}
-                  <MenuItem
-                    onClick={handleRestore}
-                    sx={{ fontSize: "13px", gap: 1, py: 1 }}
-                  >
+                  <MenuItem onClick={handleRestore} sx={{ gap: 1, py: 1 }}>
                     <Iconify
                       icon="solar:restart-bold"
                       width={16}
@@ -1956,6 +1856,7 @@ TestPlayground.propTypes = {
   functionParamsSchema: PropTypes.object,
   configParamsDesc: PropTypes.object,
   codeParams: PropTypes.object,
+  runConfig: PropTypes.object,
   onCodeParamsChange: PropTypes.func,
   code: PropTypes.string,
   codeLanguage: PropTypes.string,

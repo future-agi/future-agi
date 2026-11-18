@@ -19,7 +19,7 @@ const VariableTitles = ({ item }) => {
       autoFocus={editing}
       inputProps={{
         style: {
-          textTransform: "uppercase",
+          textTransform: "none",
         },
       }}
       sx={{

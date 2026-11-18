@@ -10,30 +10,45 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import requests
+from temporalio.common import WorkflowIDConflictPolicy
 
 
 class TestProcessPostRegistration:
     """Tests for process_post_registration function."""
 
+    @patch("accounts.models.demo_seed.DemoSeedRequest.objects.get_or_create")
     @patch("tfc.temporal.drop_in.start_activity")
-    def test_calls_start_activity_with_correct_args(self, mock_start_activity):
+    def test_calls_start_activity_with_correct_args(
+        self, mock_start_activity, mock_intent
+    ):
         """Test that process_post_registration calls start_activity correctly."""
         from accounts.utils import process_post_registration
 
-        process_post_registration("user-123", "securePassword123")
+        process_post_registration(
+            "user-123", "securePassword123", organization_id="org-123"
+        )
 
         mock_start_activity.assert_called_once_with(
             "run_post_registration_activity",
             args=("user-123", "securePassword123"),
+            kwargs={"organization_id": "org-123"},
             queue="default",
+            task_id="post-registration-org-123",
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            dispatch_timeout_seconds=2,
         )
 
+    @patch("accounts.models.demo_seed.DemoSeedRequest.objects.get_or_create")
     @patch("tfc.temporal.drop_in.start_activity")
-    def test_handles_uuid_user_id(self, mock_start_activity):
+    def test_handles_uuid_user_id(self, mock_start_activity, mock_intent):
         """Test that function handles UUID-style user IDs."""
         from accounts.utils import process_post_registration
 
-        process_post_registration("550e8400-e29b-41d4-a716-446655440000", "password")
+        process_post_registration(
+            "550e8400-e29b-41d4-a716-446655440000",
+            "password",
+            organization_id="org-123",
+        )
 
         mock_start_activity.assert_called_once()
         call_args = mock_start_activity.call_args
@@ -42,6 +57,65 @@ class TestProcessPostRegistration:
 
 class TestRunPostRegistration:
     """Tests for _run_post_registration implementation function."""
+
+    @patch.dict("os.environ", {"ENV_TYPE": "local"})
+    def test_user_set_password_seeds_without_password_email(self):
+        from accounts.utils import _run_post_registration
+
+        user = MagicMock(id="user-123")
+        org = MagicMock(id="org-123")
+        with (
+            patch("accounts.utils.User.objects.get", return_value=user),
+            patch("accounts.utils.get_user_organization", return_value=org),
+            patch("accounts.utils.send_signup_email") as email,
+            patch("accounts.demo_seeding.seed_pending_demo_data") as inline_seed,
+            patch("accounts.models.demo_seed.DemoSeedRequest.objects.get_or_create"),
+            patch("tfc.temporal.drop_in.start_activity") as dispatch,
+        ):
+            _run_post_registration(user.id, None)
+        email.assert_not_called()
+        inline_seed.assert_not_called()
+        dispatch.assert_called_once()
+        assert dispatch.call_args.kwargs["task_id"] == f"seed-demo-data-{org.id}"
+        assert dispatch.call_args.args[0] == "seed_demo_data_activity"
+
+    @patch.dict("os.environ", {"ENV_TYPE": "staging"})
+    def test_failed_seed_dispatch_never_reruns_notifications(self):
+        """Regression: seeding runs in its own activity, so a seeding failure
+        must not resend the welcome email, HubSpot request, or Slack
+        notification. When the dispatch itself fails, the persisted
+        DemoSeedRequest is picked up later by the recover-demo-seeding
+        schedule (covered in test_demo_seed_recovery.py) — the notifications
+        here still run exactly once and the activity does not raise."""
+        from accounts.utils import _run_post_registration
+
+        user = MagicMock(id="user-123", email="t@example.com", name="T")
+        org = MagicMock(id="org-123")
+        with (
+            patch("accounts.utils.User.objects.get", return_value=user),
+            patch("accounts.utils.get_user_organization", return_value=org),
+            patch("accounts.utils.send_signup_email") as email,
+            patch(
+                "accounts.utils.send_hubspot_notification", return_value=(True, None)
+            ) as hubspot,
+            patch("accounts.utils.send_slack_notification") as slack,
+            patch("accounts.demo_seeding.seed_pending_demo_data") as inline_seed,
+            patch(
+                "accounts.models.demo_seed.DemoSeedRequest.objects.get_or_create"
+            ) as intent,
+            patch(
+                "tfc.temporal.drop_in.start_activity",
+                side_effect=RuntimeError("temporal unavailable"),
+            ) as dispatch,
+        ):
+            _run_post_registration("user-123", "password123")
+
+        email.assert_called_once()
+        hubspot.assert_called_once()
+        slack.assert_called_once()
+        inline_seed.assert_not_called()
+        intent.assert_called_once()
+        dispatch.assert_called_once()
 
     @patch("accounts.utils.get_user_organization", return_value=None)
     @patch("accounts.utils.send_slack_notification")
@@ -87,9 +161,10 @@ class TestRunPostRegistration:
         with pytest.raises(Exception, match="User not found"):
             _run_post_registration("nonexistent-user", "password")
 
+    @patch("accounts.demo_seeding.seed_pending_demo_data")
     @patch("accounts.utils.send_signup_email")
     @patch("accounts.models.User.objects.get")
-    def test_raises_on_email_error(self, mock_user_get, mock_send_email):
+    def test_raises_on_email_error(self, mock_user_get, mock_send_email, mock_seed):
         """Test that function raises on email error (no error handling)."""
         from accounts.utils import _run_post_registration
 

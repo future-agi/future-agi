@@ -5,6 +5,10 @@ import {
   presetToToken,
 } from "src/sections/projects/timeWindowPresets";
 import { serializeTaskFilterRowsForApi } from "src/sections/common/EvalsTasks/task_filter_serialization";
+import {
+  samplingPolicyErrors,
+  samplingPolicyForApi,
+} from "src/sections/tasks/components/samplingPolicyForm";
 
 const TASK_FILTER_PROPERTY_TO_API = {
   span_kind: "observation_type",
@@ -25,6 +29,19 @@ const TOP_LEVEL_SIBLING_KEY_BY_PROPERTY = {
   trace_id: "trace_id",
 };
 
+// Source-less positive ID links retain their legacy sibling payload.
+// Explicit identities and exclusions need canonical rows to retain semantics.
+const isCanonicalIdFilter = (filter) =>
+  ["trace_id", "session_id"].includes(filter?.property) &&
+  Boolean(
+    filter.apiColType ||
+      filter.filterConfig?.colType ||
+      filter.fieldCategory ||
+      filter.registryId ||
+      filter.property_id ||
+      !["equals", "in"].includes(filter.filterConfig?.filterOp || "equals"),
+  );
+
 // One form row → one wire entry. Cross-row composition is the BE's job —
 // merging same-column rows would collapse "not_contains A AND not_contains B"
 // into "in [A, B]" and invert intent. OR is expressed within a single multi-
@@ -33,6 +50,7 @@ export const extractAttributeFilters = (filters) => {
   const attributeRows = (filters || []).filter((f) => {
     if (!f) return false;
     // Sibling keys are emitted separately by getNewTaskFilters.
+    if (isCanonicalIdFilter(f)) return true;
     if (f.property in TOP_LEVEL_SIBLING_KEY_BY_PROPERTY) return false;
     // Legacy rows with neither apiColType nor propertyId are BE no-ops.
     if (!f.propertyId && f.property !== "attributes") return false;
@@ -47,8 +65,19 @@ export const extractAttributeFilters = (filters) => {
 const extractSiblingFilters = (filters) => {
   const out = {};
   (filters || []).forEach((f) => {
-    const beKey = TOP_LEVEL_SIBLING_KEY_BY_PROPERTY[f?.property];
-    if (!beKey) return;
+    // Preserve old saved span links without retyping canonical or raw rows.
+    const beKey =
+      TOP_LEVEL_SIBLING_KEY_BY_PROPERTY[f?.property] ||
+      (f?.property === "span_id" &&
+      !f.propertyId &&
+      !f.apiColType &&
+      !f.filterConfig?.colType &&
+      !f.fieldCategory &&
+      !f.registryId &&
+      !f.property_id
+        ? "span_id"
+        : undefined);
+    if (!beKey || isCanonicalIdFilter(f)) return;
     const val = f?.filterConfig?.filterValue;
     const vals = Array.isArray(val)
       ? val
@@ -71,7 +100,9 @@ export const getNewTaskFilters = (data, projectId, ignoreDate = false) => {
   const attributeFilters = extractAttributeFilters(data?.filters);
   Object.assign(filters, extractSiblingFilters(data?.filters));
 
-  if (data?.runType === "historical" && !ignoreDate) {
+  // A sampling policy's own event-time window is the only time authority for
+  // its population. Never send a second, hidden task date range with it.
+  if (data?.runType === "historical" && !ignoreDate && !data?.samplingPolicy) {
     // A relative preset re-anchors to now on save; Custom is kept verbatim.
     // Writing the key every save is also what migrates pre-existing tasks.
     const preset = data?.datePreset || "Custom";
@@ -97,6 +128,24 @@ export const NewTaskValidationSchema = () =>
         getNumberValidation("Max Spans is required"),
       ]),
       samplingRate: getNumberValidation("Sampling Rate is required"),
+      samplingPolicy: z
+        .object({})
+        .passthrough()
+        .nullable()
+        .optional()
+        .superRefine((policy, ctx) => {
+          // Blank or invalid quotas block save; they never serialize as a
+          // different selection mode, 0, NaN or an implied 100%.
+          Object.entries(samplingPolicyErrors(policy)).forEach(
+            ([path, message]) =>
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: path.split("."),
+                message,
+              }),
+          );
+        })
+        .transform(samplingPolicyForApi),
       evalsDetails: z
         .array(z.any())
         .min(1, { message: "At least one evaluation is required" })
@@ -149,7 +198,7 @@ export const NewTaskValidationSchema = () =>
     })
     .refine(
       (data) => {
-        if (data.runType === "historical") {
+        if (data.runType === "historical" && !data.samplingPolicy) {
           return !!data.spansLimit;
         }
         return true;
@@ -174,6 +223,9 @@ export const NewTaskValidationSchema = () =>
             ? Number(data.spansLimit)
             : data?.spansLimit,
         samplingRate: data?.samplingRate,
+        ...(data.samplingPolicy !== undefined
+          ? { samplingPolicy: data.samplingPolicy }
+          : {}),
         evals: data?.evalsDetails,
         runType: data?.runType,
         rowType: data?.rowType ?? "spans",

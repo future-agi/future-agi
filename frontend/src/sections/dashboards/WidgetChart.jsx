@@ -1,6 +1,7 @@
+import { statusColors } from "src/utils/runStatus";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Alert, Box, CircularProgress, Stack, Typography } from "@mui/material";
+import { Alert, Box, Stack, Typography } from "@mui/material";
 import ChartLegend from "./ChartLegend";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
@@ -14,14 +15,21 @@ import {
   getExactDashboardResult,
   getDashboardMetricSeriesState,
   getPlottedChartSeries,
+  getChartTimeWindow,
+  getTableBucketPlan,
+  describeTableBuckets,
+  isDenseChartSeries,
+  getChartMarkerSizes,
+  isAbsentChartPoint,
   getSeriesScalar,
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  getVisibleIndices,
+  resolveWidgetAxisPlan,
   groupPieSeries,
   resolveSavedSelection,
   seriesHasDataPoints,
-  shouldConnectAcrossMissingBuckets,
 } from "./widgetUtils";
 import WidgetPieCharts from "./WidgetPieCharts";
 import { toTimeRangePayload } from "./dashboardDateRange";
@@ -36,21 +44,11 @@ import {
   getQueryCompletedAt,
 } from "src/utils/queryReadState";
 import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
+import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
+import ContentSkeleton from "src/components/content-skeleton";
+import { seriesColors } from "src/theme/data-colors";
 
 const CHART_HEIGHT_FALLBACK = 280;
-const COLORS = [
-  "#7B56DB", // purple (primary)
-  "#1ABCFE", // cyan
-  "#FF6B6B", // coral red
-  "#2ECB71", // emerald green
-  "#F7B731", // amber
-  "#E84393", // magenta pink
-  "#0984E3", // ocean blue
-  "#FD7E14", // tangerine orange
-  "#00CEC9", // teal
-  "#A29BFE", // lavender
-];
-
 const hashSeriesName = (name) => {
   const s = String(name || "");
   let h = 0;
@@ -62,26 +60,27 @@ const hashSeriesName = (name) => {
 // Name-hash gives cross-reload stability, but a bare hash % palette collides ~50%
 // at 4 series. Walk each name once and, on a taken slot, advance to the next
 // free one — distinct up to palette size, stable for the common non-colliding case.
-const buildSeriesColorMap = (names) => {
+// `palette` is the theme's data palette (seriesColors(theme)).
+const buildSeriesColorMap = (names, palette) => {
   const map = {};
   const used = new Set();
   (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % COLORS.length;
+    const start = hashSeriesName(name) % palette.length;
     let picked = start;
-    for (let i = 0; i < COLORS.length; i += 1) {
-      const candidate = (start + i) % COLORS.length;
+    for (let i = 0; i < palette.length; i += 1) {
+      const candidate = (start + i) % palette.length;
       if (!used.has(candidate)) {
         picked = candidate;
         break;
       }
     }
     used.add(picked);
-    map[name] = COLORS[picked];
+    map[name] = palette[picked];
   });
   return map;
 };
-const getSeriesColorFromMap = (map, name) =>
-  (map && map[name]) || COLORS[hashSeriesName(name) % COLORS.length];
+const getSeriesColorFromMap = (map, name, palette) =>
+  (map && map[name]) || palette[hashSeriesName(name) % palette.length];
 
 function getApexType(chartType) {
   const map = {
@@ -175,41 +174,13 @@ export default function WidgetChart({
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
   const isLineChart = apexType === "line";
-  const connectsAcrossMissingBuckets =
-    shouldConnectAcrossMissingBuckets(apexType);
 
   // Measure container height so charts fill available space
   const containerRef = useRef(null);
   const [chartHeight, setChartHeight] = useState(CHART_HEIGHT_FALLBACK);
 
-  // ApexCharts places the tooltip entirely above the cursor — `cursorY - gridTop -
-  // tooltipHeight` — and never clamps that at 0; it clamps x three ways and clamps y
-  // only against the grid's bottom. Any point in the top `tooltipHeight` px of the
-  // plot therefore gets a negative top and is drawn above the canvas, where the
-  // widget card's `overflow: hidden` slices it. On these cards that is most of the
-  // plot: 134px of tooltip against a 230px grid. The card cannot drop the overflow
-  // (the chart's ResizeObserver then loses its height constraint and the canvas
-  // grows unbounded), `tooltip.fixed` is ignored on the intersect path these charts
-  // use, and a chart-level `mouseMove` hook loses the race — Apex rewrites the style
-  // after it, even a frame later. Watching the attribute is what reliably catches
-  // the write, whenever Apex makes it.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const clampTooltips = () => {
-      el.querySelectorAll(".apexcharts-tooltip").forEach((tip) => {
-        const top = Number.parseFloat(tip.style.top);
-        if (Number.isFinite(top) && top < 0) tip.style.top = "0px";
-      });
-    };
-    const mo = new MutationObserver(clampTooltips);
-    mo.observe(el, {
-      attributes: true,
-      subtree: true,
-      attributeFilter: ["style"],
-    });
-    return () => mo.disconnect();
-  }, []);
+  // Mounted on first render, so this doubles as the tooltip observer's root.
+  useClampedChartTooltips(containerRef, containerRef);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -532,31 +503,67 @@ export default function WidgetChart({
     return series.filter((_, i) => visibleSeries.has(i));
   }, [series, visibleSeries]);
 
+  // chartSeries[i] came from series[chartSeriesIndices[i]]. series_axis is keyed
+  // by that original index, so the dual-axis branch must map through this.
+  const chartSeriesIndices = useMemo(
+    () => getVisibleIndices(series, visibleSeries),
+    [series, visibleSeries],
+  );
+
+  // A missing aggregate bucket is not a zero: unstacked charts drop the null
+  // points and stacked charts pad them (see getPlottedChartSeries).
+  const chartTimeWindow = getChartTimeWindow(result);
+
   const plottedChartSeries = useMemo(
-    () => getPlottedChartSeries(chartSeries, connectsAcrossMissingBuckets),
-    [chartSeries, connectsAcrossMissingBuckets],
+    () => getPlottedChartSeries(chartSeries, { stacked: isStacked }),
+    [chartSeries, isStacked],
   );
 
   // Build from the full `series` list (not filtered chartSeries) so a
   // hidden series keeps its slot and its color stays put when unhidden.
+  const palette = seriesColors(theme);
   const seriesColorMap = useMemo(
-    () => buildSeriesColorMap(series.map((s) => s.name)),
-    [series],
+    () =>
+      buildSeriesColorMap(
+        series.map((s) => s.name),
+        palette,
+      ),
+    [series, palette],
   );
-  const colorFor = (name) => getSeriesColorFromMap(seriesColorMap, name);
+  const colorFor = (name) =>
+    getSeriesColorFromMap(seriesColorMap, name, palette);
 
   // Pie slices are breakdown values, which repeat across metrics. Key their
   // colours by the raw breakdown name so a given project is the same colour in
   // every pie — the composite series label differs per metric.
   const pieColorMap = useMemo(
-    () => buildSeriesColorMap([...new Set(series.map((s) => s.breakdownName))]),
-    [series],
+    () =>
+      buildSeriesColorMap(
+        [...new Set(series.map((s) => s.breakdownName))],
+        palette,
+      ),
+    [series, palette],
   );
-  const pieColorFor = (name) => getSeriesColorFromMap(pieColorMap, name);
+  const pieColorFor = (name) =>
+    getSeriesColorFromMap(pieColorMap, name, palette);
+
+  const isDenseSeries = isDenseChartSeries(plottedChartSeries);
+  const markerSizes = useMemo(
+    () =>
+      getChartMarkerSizes(
+        plottedChartSeries,
+        isLineChart ? 5 : apexType === "area" ? 4 : 0,
+      ),
+    [plottedChartSeries, isLineChart, apexType],
+  );
 
   const outOfRangeWarning = useMemo(
-    () => getYAxisRangeWarning(chartSeries, axisConfig),
-    [chartSeries, axisConfig],
+    () =>
+      getYAxisRangeWarning(chartSeries, chartSeriesIndices, axisConfig, {
+        stacked: isStacked,
+        chartType,
+      }),
+    [chartSeries, chartSeriesIndices, axisConfig, isStacked, chartType],
   );
 
   const hasNoDataForRange = useMemo(
@@ -635,7 +642,7 @@ export default function WidgetChart({
           minHeight: 0,
         }}
       >
-        <CircularProgress size={24} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -752,7 +759,9 @@ export default function WidgetChart({
   // Table
   if (isTable) {
     // Time as rows, Segments as columns
-    const timeData = series[0]?.data || [];
+    // One row per bucket becomes thousands of rows at minute granularity, so
+    // empty buckets are dropped and the remainder capped (TH-7757).
+    const bucketPlan = getTableBucketPlan(series);
     const granLabel = (queryConfig?.granularity || "day").toLowerCase();
     const dateFmt =
       granLabel === "minute"
@@ -795,7 +804,7 @@ export default function WidgetChart({
                   textAlign: "left",
                   padding: "6px 10px",
                   fontWeight: 600,
-                  fontSize: "11px",
+                  fontSize: "12px",
                   color: theme.palette.text.secondary,
                   borderBottom: `2px solid ${theme.palette.divider}`,
                   position: "sticky",
@@ -807,6 +816,20 @@ export default function WidgetChart({
                 }}
               >
                 Time
+                {describeTableBuckets(bucketPlan) && (
+                  <Box
+                    component="span"
+                    sx={{
+                      display: "block",
+                      fontWeight: 400,
+                      fontSize: "10px",
+                      color: "text.disabled",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {describeTableBuckets(bucketPlan)}
+                  </Box>
+                )}
               </th>
               {series.map((s, i) => (
                 <th
@@ -815,7 +838,7 @@ export default function WidgetChart({
                     textAlign: "right",
                     padding: "6px 10px",
                     fontWeight: 500,
-                    fontSize: "11px",
+                    fontSize: "12px",
                     color: theme.palette.text.secondary,
                     borderBottom: `2px solid ${theme.palette.divider}`,
                     position: "sticky",
@@ -838,7 +861,7 @@ export default function WidgetChart({
                       sx={{
                         width: 8,
                         height: 8,
-                        borderRadius: "2px",
+                        borderRadius: "4px",
                         bgcolor: colorFor(s.name),
                         display: "inline-block",
                         flexShrink: 0,
@@ -860,7 +883,11 @@ export default function WidgetChart({
             </tr>
           </thead>
           <tbody>
-            {timeData.map((pt, ri) => {
+            {bucketPlan.indices.map((ri) => {
+              // The plan is sized by the widest series, so a shorter series[0]
+              // must not drop a row another series still reports (TH-7757 review).
+              const pt = series.find((s) => s?.data?.[ri])?.data?.[ri];
+              if (!pt) return null;
               const hasNonZero = series.some(
                 (s) => s.data[ri]?.y != null && s.data[ri].y !== 0,
               );
@@ -993,7 +1020,7 @@ export default function WidgetChart({
                 sx={{
                   width: 10,
                   height: 10,
-                  borderRadius: "2px",
+                  borderRadius: "4px",
                   bgcolor: colorFor(s.name),
                   flexShrink: 0,
                 }}
@@ -1029,7 +1056,7 @@ export default function WidgetChart({
               flexShrink: 0,
               fontWeight: 600,
               color: "text.secondary",
-              fontSize: "11px",
+              fontSize: "12px",
             }}
           >
             Metric
@@ -1040,7 +1067,7 @@ export default function WidgetChart({
               flex: 1,
               fontWeight: 600,
               color: "text.secondary",
-              fontSize: "11px",
+              fontSize: "12px",
             }}
           >
             Value
@@ -1096,10 +1123,8 @@ export default function WidgetChart({
                     sx={{
                       flex: 1,
                       height: 18,
-                      bgcolor: isDark
-                        ? "rgba(255,255,255,0.04)"
-                        : "rgba(0,0,0,0.02)",
-                      borderRadius: "3px",
+                      bgcolor: "background.neutral",
+                      borderRadius: "4px",
                       overflow: "hidden",
                     }}
                   >
@@ -1108,7 +1133,7 @@ export default function WidgetChart({
                         height: "100%",
                         width: `${Math.max(pct, 1)}%`,
                         bgcolor: color,
-                        borderRadius: "3px",
+                        borderRadius: "4px",
                         transition: "width 0.4s ease",
                       }}
                     />
@@ -1171,7 +1196,11 @@ export default function WidgetChart({
       toolbar: { show: false },
       zoom: { enabled: true },
       stacked: isStacked,
-      animations: { enabled: true, easing: "easeinout", speed: 400 },
+      animations: {
+        enabled: !isDenseSeries,
+        easing: "easeinout",
+        speed: 400,
+      },
       events: {
         mouseMove: (event, chartContext, config) => {
           const el = chartContext?.el;
@@ -1281,10 +1310,11 @@ export default function WidgetChart({
     plotOptions: { bar: { horizontal: isHorizontal } },
     xaxis: {
       type: isHorizontal ? undefined : "datetime",
-      tickAmount: Math.min(chartSeries[0]?.data?.length || 10, 12),
+      // Span the window that was queried, not just the buckets that reported.
+      ...(!isHorizontal && chartTimeWindow ? chartTimeWindow : {}),
       labels: {
         show: axisConfig?.xAxis?.visible !== false,
-        style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+        style: { colors: theme.palette.text.secondary, fontSize: "12px" },
         datetimeUTC: false,
         ...(!isHorizontal && {
           datetimeFormatter: {
@@ -1313,20 +1343,27 @@ export default function WidgetChart({
     yaxis: (() => {
       const leftCfg = axisConfig?.leftY || {};
       const rightCfg = axisConfig?.rightY || {};
-      const sa = axisConfig?.seriesAxis || {};
-      const hasRightAxis =
-        rightCfg.visible && Object.values(sa).some((s) => s === "right");
+      // Shared with WidgetEditorView so the saved widget and the editor preview
+      // cannot scale differently — see resolveWidgetAxisPlan.
+      const { hasRightAxis, sideOf, bounds } = resolveWidgetAxisPlan(
+        chartSeries,
+        chartSeriesIndices,
+        axisConfig,
+        { stacked: isStacked, chartType },
+      );
       if (!hasRightAxis) {
         const hideOOB = leftCfg.outOfBounds === "hidden";
+        const { min, max } = bounds.left;
         return {
           show: leftCfg.visible !== false,
           tickAmount: 5,
           forceNiceScale: !hideOOB,
           logarithmic: leftCfg.scale === "logarithmic",
-          ...(leftCfg.min !== undefined &&
-            leftCfg.min !== "" && { min: Number(leftCfg.min) }),
-          ...(leftCfg.max !== undefined &&
-            leftCfg.max !== "" && { max: Number(leftCfg.max) }),
+          // Never emit null: apexcharts 3.49.1 reads `min !== null` when
+          // deciding whether an explicit max was given (Scales.js:33), so a
+          // null min silently discards both bounds.
+          ...(min != null && { min }),
+          ...(max != null && { max }),
           ...(leftCfg.label && {
             title: {
               text: leftCfg.label,
@@ -1334,29 +1371,30 @@ export default function WidgetChart({
             },
           }),
           labels: {
-            style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+            style: { colors: theme.palette.text.secondary, fontSize: "12px" },
             formatter: formatVal,
           },
         };
       }
+      // Bounds are resolved once per side and written to every entry on that
+      // side. ApexCharts binds yaxis[i] to series[i] and scales each entry on
+      // its own, so without this a small series sharing an axis is stretched
+      // to fill the plot and cannot be read off the axis beside it.
       return chartSeries.map((_, i) => {
-        const side = sa[i] || "left";
+        const side = sideOf(i);
         const cfg = side === "right" ? rightCfg : leftCfg;
+        const { min, max } = bounds[side];
         return {
           show:
             i === 0 ||
             (side === "right" &&
-              !chartSeries
-                .slice(0, i)
-                .some((__, j) => (sa[j] || "left") === "right")),
+              !chartSeries.slice(0, i).some((__, j) => sideOf(j) === "right")),
           opposite: side === "right",
           tickAmount: 5,
           forceNiceScale: cfg.outOfBounds !== "hidden",
           logarithmic: cfg.scale === "logarithmic",
-          ...(cfg.min !== undefined &&
-            cfg.min !== "" && { min: Number(cfg.min) }),
-          ...(cfg.max !== undefined &&
-            cfg.max !== "" && { max: Number(cfg.max) }),
+          ...(min != null && { min }),
+          ...(max != null && { max }),
           ...(cfg.label && {
             title: {
               text: cfg.label,
@@ -1364,14 +1402,19 @@ export default function WidgetChart({
             },
           }),
           labels: {
-            style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+            style: { colors: theme.palette.text.secondary, fontSize: "12px" },
             formatter: makeFormatter(cfg),
           },
         };
       });
     })(),
     stroke: {
-      curve: "monotoneCubic",
+      // Not monotoneCubic: it derives each control handle from the
+      // neighbouring gap widths, so a tight cluster beside a long empty
+      // stretch gets a handle hundreds of px past its own segment and the
+      // line visibly runs forward then doubles back. "smooth" does not, and
+      // is what every other chart in the app already uses.
+      curve: "smooth",
       width: apexType === "area" ? 2 : apexType === "line" ? 2.5 : 0,
     },
     fill: (() => {
@@ -1389,9 +1432,9 @@ export default function WidgetChart({
       };
     })(),
     markers: {
-      size: isLineChart ? 5 : apexType === "area" ? 4 : 0,
+      size: markerSizes,
       strokeWidth: 2,
-      strokeColors: isDark ? theme.palette.background.paper : "#fff",
+      strokeColors: theme.palette.background.paper,
       hover: isLineChart
         ? { size: 8, sizeOffset: 2 }
         : { size: 6, sizeOffset: 3 },
@@ -1416,7 +1459,9 @@ export default function WidgetChart({
             format: "MMM dd, yyyy",
           },
           y: {
-            formatter: (val, { seriesIndex } = {}) => {
+            formatter: (val, { seriesIndex, dataPointIndex, w } = {}) => {
+              if (isAbsentChartPoint(w, seriesIndex, dataPointIndex))
+                return "-";
               const seriesUnit = chartSeries[seriesIndex]?.unit;
               const cfg = seriesUnit
                 ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
@@ -1428,10 +1473,12 @@ export default function WidgetChart({
       : {
           enabled: true,
           shared: false,
-          intersect: isLineChart,
+          // A series without markers has nothing to intersect, so a dense chart
+          // finds the hovered point by position instead.
+          intersect: isLineChart && !isDenseSeries,
           custom: ({ series: s, seriesIndex, dataPointIndex, w }) => {
             const sName = w.globals.seriesNames[seriesIndex] || "";
-            const color = w.globals.colors[seriesIndex] || "#6366F1";
+            const color = w.globals.colors[seriesIndex] || palette[0];
             const val = s[seriesIndex]?.[dataPointIndex];
             const prevVal =
               dataPointIndex > 0 ? s[seriesIndex]?.[dataPointIndex - 1] : null;
@@ -1442,28 +1489,26 @@ export default function WidgetChart({
               ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
               : leftAxisFormatConfig;
             const fmtVal = makeFormatter(perSeriesCfg)(val);
-            const bg = isDark ? "#1e1e2e" : "#fff";
-            const _border = isDark
-              ? "rgba(255,255,255,0.08)"
-              : "rgba(0,0,0,0.06)";
-            const textPrimary = isDark ? "#fff" : "#1a1a2e";
-            const textSecondary = isDark
-              ? "rgba(255,255,255,0.5)"
-              : "rgba(0,0,0,0.45)";
+            const bg = theme.palette.background.paper;
+            const border = theme.palette.divider;
+            const textPrimary = theme.palette.text.primary;
+            const textSecondary = theme.palette.text.secondary;
             let changeHtml = "";
             if (prevVal != null && prevVal !== 0 && val != null) {
               const pct = ((val - prevVal) / Math.abs(prevVal)) * 100;
               const sign = pct >= 0 ? "+" : "";
-              const changeColor = pct >= 0 ? "#22C55E" : "#FF4842";
-              changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
+              const changeColor = statusColors(
+                theme,
+                pct >= 0 ? "success" : "danger",
+              ).fg;
+              changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:12px">from previous</span></div>`;
             }
-            return `<div style="display:flex;background:${bg};border:none;border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
-              <div style="width:4px;flex-shrink:0;background:${color}"></div>
-              <div style="padding:14px 16px;flex:1">
-                <div style="font-weight:700;font-size:14px;color:${textPrimary};line-height:1.3">${escapeHtml(sName)}</div>
+            return `<div style="display:flex;background:${bg};border:1px solid ${border};border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
+                            <div style="padding:14px 16px;flex:1">
+                <div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:14px;color:${textPrimary};line-height:1.3"><span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${color}"></span>${escapeHtml(sName)}</div>
                 <div style="font-size:12px;color:${textSecondary};margin-top:3px">${escapeHtml(dateStr)}</div>
                 <div style="display:flex;align-items:baseline;gap:8px;margin-top:8px">
-                  <span style="font-weight:700;font-size:20px;color:${textPrimary}">${escapeHtml(fmtVal)}</span>
+                  <span style="font-weight:600;font-size:20px;color:${textPrimary}">${escapeHtml(fmtVal)}</span>
                 </div>
                 ${changeHtml}
               </div>
