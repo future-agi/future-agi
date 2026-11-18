@@ -111,15 +111,18 @@ def _built(contract=AUTHORED, sealed=SEALED, **extra) -> bytes:
 def _blocked(environment, version=None, agent_version_id=None, suite=None) -> list[str]:
     """What the run gate holds back for a run of ``version`` by the agent and suite named, else the defaults; no
     pins at all without a version."""
-    pins = (
-        SimpleNamespace(
+    pins = None
+    if version is not None:
+        from simulate.models import HarnessAgentVersionRuntime
+
+        pins = SimpleNamespace(
             environment_version=version,
-            agent_version_id=agent_version_id or environment.agent_version_id,
             suite_version=suite or environment.suite_version,
+            # The bundle a run replays is the one its agent's side row, versions and suite key.
+            runtime=HarnessAgentVersionRuntime.no_workspace_objects.filter(
+                agent_version_id=agent_version_id or environment.agent_version_id
+            ).first(),
         )
-        if version is not None
-        else None
-    )
     return [entry["tool"] for entry in blocked_tools(environment, pins)]
 
 
@@ -233,7 +236,7 @@ def _resealed(contract=AUTHORED, sealed=SEALED) -> bytes:
     return archives.pack_archive(files)
 
 
-def test_a_draft_that_leaves_the_contract_alone_runs_with_the_build_s_until_the_contract_is_edited(
+def test_a_draft_runs_with_the_build_s_reach_whether_or_not_it_edits_the_contract(
     user, workspace, storage
 ):
     environment = _environment(user, workspace, "rc-inherit")
@@ -258,10 +261,10 @@ def test_a_draft_that_leaves_the_contract_alone_runs_with_the_build_s_until_the_
         _authoring(contract=edited, sealed=False, **{"handlers/refund.py": "x = 1\n"}),
         origin="chat",
     )
-    assert (
-        recorded_contract(drafts.open_draft(environment, "environment").documents)
-        == edited
-    )
+    # An edit to the contract that leaves how the tools are reached alone is recorded with the build's reach.
+    assert recorded_contract(
+        drafts.open_draft(environment, "environment").documents
+    ) == {**edited, "tool_entrypoints": SEALED["tool_entrypoints"]}
 
 
 def test_a_new_version_saved_from_a_chat_reseal_runs_with_the_contract_it_sealed(
@@ -319,7 +322,14 @@ class TestVersionRecordedBeforeItsSealedContract:
         return environment, version, storage
 
     def _bundle(
-        self, environment, version, storage, contract=SEALED, agent_version_id=None
+        self,
+        environment,
+        version,
+        storage,
+        contract=SEALED,
+        agent_version_id=None,
+        resealed=False,
+        built=False,
     ):
         from simulate.tests.test_harness_versioning_picks import _ready
 
@@ -332,7 +342,15 @@ class TestVersionRecordedBeforeItsSealedContract:
         if contract is not None:
             storage.objects[row.object_key] = archives.pack_archive(
                 {
-                    "environment-bundle/manifest.json": b"{}",
+                    # A chat's reseal stamps the tree it sealed from, a build stamps that it is one; an older
+                    # bundle says neither.
+                    "environment-bundle/manifest.json": json.dumps(
+                        {"metadata": {"sealed_from": "sha256:tree"}}
+                        if resealed
+                        else {"metadata": {"sealed_from": "build"}}
+                        if built
+                        else {}
+                    ).encode(),
                     "environment-bundle/contract.json": json.dumps(contract).encode(),
                 }
             )
@@ -712,15 +730,19 @@ class TestVersionRecordedBeforeItsSealedContract:
             "service": "billing-api",
         }
         HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
-            documents={
-                "contract": edited,
-                "run_contract": {
-                    **edited,
-                    "tool_entrypoints": [billing, *AUTHORED["tool_entrypoints"][1:]],
-                },
-            }
+            origin="chat"
         )
         saved.refresh_from_db()
+        self._bundle(
+            environment,
+            saved,
+            storage,
+            contract={
+                **edited,
+                "tool_entrypoints": [billing, *AUTHORED["tool_entrypoints"][1:]],
+            },
+            resealed=True,
+        )
 
         entries = {
             one["tool"]: one
@@ -781,16 +803,16 @@ class TestVersionRecordedBeforeItsSealedContract:
             origin="chat"
         )
         saved.refresh_from_db()
-        self._bundle(environment, saved, storage, contract=edited)
+        self._bundle(environment, saved, storage, contract=edited, resealed=True)
 
         blocked, statuses = self._through_the_views(auth_client, environment)
 
         assert blocked == []
         assert statuses == {one["tool"]: one["status"] for one in tool_status(SEALED)}
 
-    def _builder_saved(self, environment, version, run_entries, written=None):
+    def _builder_saved(self, environment, version, storage, run_entries, written=None):
         """A builder's save over ``version``: authored entries as the author writes them (``written``, else with
-        empty keys and all), and the entries its reseal recorded."""
+        empty keys and all), and the entries its resealed bundle carries."""
         full = written or [
             {**one, "factory": "", "first_arg": "", "door_unreached": "", "notes": ""}
             for one in AUTHORED["tool_entrypoints"]
@@ -802,11 +824,15 @@ class TestVersionRecordedBeforeItsSealedContract:
         edited = {**authored, "hard_constraints": ["Never refund an unshipped order."]}
         saved = self._saved_edit(environment, version, edited)
         HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
-            origin="chat",
-            documents={
-                "contract": edited,
-                "run_contract": {**edited, "tool_entrypoints": run_entries},
-            },
+            origin="chat", documents={"contract": edited}
+        )
+        saved.refresh_from_db()
+        self._bundle(
+            environment,
+            saved,
+            storage,
+            contract={**edited, "tool_entrypoints": run_entries},
+            resealed=True,
         )
         return saved
 
@@ -818,7 +844,7 @@ class TestVersionRecordedBeforeItsSealedContract:
         )
         self._bundle(environment, version, storage)
         # The reseal keeps the author's import entries but drops the keys left empty.
-        self._builder_saved(environment, version, AUTHORED["tool_entrypoints"])
+        self._builder_saved(environment, version, storage, AUTHORED["tool_entrypoints"])
 
         blocked, statuses = self._through_the_views(auth_client, environment)
 
@@ -834,7 +860,7 @@ class TestVersionRecordedBeforeItsSealedContract:
         self._bundle(environment, version, storage)
         moved = {**AUTHORED["tool_entrypoints"][0], "callable": "_orders.get_order"}
         self._builder_saved(
-            environment, version, [moved, *AUTHORED["tool_entrypoints"][1:]]
+            environment, version, storage, [moved, *AUTHORED["tool_entrypoints"][1:]]
         )
 
         blocked, _ = self._through_the_views(auth_client, environment)
@@ -852,6 +878,7 @@ class TestVersionRecordedBeforeItsSealedContract:
         self._builder_saved(
             environment,
             version,
+            storage,
             # The reseal wrote the default method out, in lower case.
             [{**one, "method": "post"} for one in AUTHORED["tool_entrypoints"]],
             # The author left the method out.
@@ -892,6 +919,181 @@ class TestVersionRecordedBeforeItsSealedContract:
         assert reached["get_order"] == {**sealed["get_order"], "effect": "write"}
         blocked, _ = self._through_the_views(auth_client, environment)
         assert blocked == []
+
+    def test_the_gate_reads_the_bundle_a_run_replays_by_its_key_even_under_new_version_ids(
+        self, user, workspace, monkeypatch
+    ):
+        """A credential rotation or a check-only suite edit moves the version ids but keeps the bundle's key, and a
+        rerun keeps a historical key: the run replays the bundle under that key."""
+        environment, version, storage = self._version(
+            user, workspace, "rc-key", monkeypatch
+        )
+        row = self._bundle(environment, version, storage)
+        # New version ids, read as a full build of the author's contract would be: only the key finds the bundle.
+        moved = self._saved_edit(environment, version, AUTHORED)
+        HarnessEnvironmentVersion._base_manager.filter(id=moved.id).update(
+            origin="authoring"
+        )
+        moved.refresh_from_db()
+        keyed = SimpleNamespace(
+            environment_version=moved,
+            suite_version=environment.suite_version,
+            assembly_key=row.assembly_key,
+        )
+        unkeyed = SimpleNamespace(
+            environment_version=moved, suite_version=environment.suite_version
+        )
+
+        assert [entry["tool"] for entry in blocked_tools(environment, keyed)] == []
+        assert [
+            entry["tool"] for entry in blocked_tools(environment, unkeyed)
+        ] == sorted(TOOLS)
+
+    @pytest.mark.parametrize(
+        "origin, resealed, blocked",
+        # A present stamp always wins over the version's origin.
+        [
+            ("authoring", False, list(TOOLS)),
+            ("chat", True, []),
+            ("authoring", True, []),
+        ],
+    )
+    def test_a_bundle_reads_as_its_own_stamp_says_it_was_sealed(
+        self, user, workspace, monkeypatch, origin, resealed, blocked
+    ):
+        """Identical authored bytes, two seals: a build's (no stamp, on a version a full build made) is kept as
+        sealed, even keeping the author's import entries; a chat's stamped reseal is reached as built."""
+        environment, version, storage = self._version(
+            user, workspace, f"rc-reused-{origin}", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        edited = {**AUTHORED, "hard_constraints": ["Never refund twice."]}
+        saved = self._saved_edit(environment, version, edited)
+        HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
+            origin=origin
+        )
+        saved.refresh_from_db()
+        self._bundle(environment, saved, storage, contract=edited, resealed=resealed)
+
+        assert _blocked(environment, saved) == sorted(blocked)
+
+    def test_the_gate_reads_the_scenarios_of_the_pinned_suite(
+        self, user, workspace, monkeypatch
+    ):
+        from simulate.models import HarnessSuiteVersion
+        from simulate.services.harness_tool_reach import refuse_production_only
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        environment, version, storage = self._version(
+            user, workspace, "rc-suite", monkeypatch
+        )
+        older = HarnessSuiteVersion.no_workspace_objects.get(
+            job=environment, version_number=1
+        )
+        HarnessSuiteVersion._base_manager.filter(id=older.id).update(
+            documents={
+                **(older.documents or {}),
+                "scenarios": [
+                    {"name": "refund", "solution": [{"tool": "issue_refund"}]}
+                ],
+            }
+        )
+        HarnessSuiteVersion._base_manager.filter(
+            id=environment.suite_version_id
+        ).update(
+            documents={
+                **(environment.suite_version.documents or {}),
+                "scenarios": [{"name": "lookup", "solution": [{"tool": "lookup"}]}],
+            }
+        )
+        older.refresh_from_db()
+        pins = SimpleNamespace(environment_version=version, suite_version=older)
+
+        found = {
+            entry["tool"]: entry["scenarios"]
+            for entry in blocked_tools(environment, pins)
+        }
+        assert found["issue_refund"] == [{"key": "refund", "name": "refund"}]
+        with pytest.raises(HostedHarnessError) as refused:
+            refuse_production_only(environment, pins, ["refund"])
+        assert refused.value.code == "production_only"
+
+    def test_a_built_entry_clears_the_reach_fields_it_leaves_out(
+        self, user, workspace, monkeypatch
+    ):
+        from simulate.selectors.environment_documents import version_contract
+
+        environment, version, storage = self._version(
+            user, workspace, "rc-clear", monkeypatch
+        )
+        # The build's entry names only the service route: no module, callable or door note.
+        served = {
+            "tool": "get_order",
+            "mode": "service",
+            "service": "tools-api",
+            "endpoint": "/find",
+            "method": "POST",
+        }
+        imported = {
+            **AUTHORED["tool_entrypoints"][0],
+            "door_unreached": "a method of a helper object",
+            "notes": "the author's note",
+        }
+        authored = {**AUTHORED, "tool_entrypoints": [imported]}
+        HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+            documents={**version.documents, "contract": authored}
+        )
+        version.refresh_from_db()
+        self._bundle(
+            environment,
+            version,
+            storage,
+            contract={**authored, "tool_entrypoints": [served]},
+        )
+        saved = self._saved_edit(
+            environment,
+            version,
+            {**authored, "hard_constraints": ["Never refund twice."]},
+        )
+
+        (entry,) = version_contract(environment, saved)["tool_entrypoints"]
+        assert entry == {**served, "effect": "read", "notes": "the author's note"}
+
+    def test_a_long_history_is_read_without_recursing_and_stops_at_a_recorded_contract(
+        self, user, workspace, monkeypatch
+    ):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from simulate.selectors.environment_documents import version_contract
+
+        environment, version, storage = self._version(
+            user, workspace, "rc-history", monkeypatch
+        )
+        self._bundle(environment, version, storage)
+        parent = version
+        for number in range(2, 402):
+            parent = HarnessEnvironmentVersion._base_manager.create(
+                job=environment,
+                organization_id=environment.organization_id,
+                workspace_id=environment.workspace_id,
+                status="active",
+                version_number=version.version_number + number,
+                hash=f"sha256:{number:064d}",
+                parent=parent,
+                archive_size=0,
+                documents={"contract": AUTHORED},
+            )
+
+        # Saved before run contracts were recorded: four hundred versions back to the first build's bundle.
+        assert production_only(version_contract(environment, parent)) == []
+        # A recorded run contract stops the walk where it is.
+        HarnessEnvironmentVersion._base_manager.filter(id=parent.parent_id).update(
+            documents={"contract": AUTHORED, "run_contract": SEALED}
+        )
+        with CaptureQueriesContext(connection) as queries:
+            assert production_only(version_contract(environment, parent)) == []
+        assert len(queries) < 10
 
 
 def test_a_builder_save_that_seals_the_authored_entries_again_runs_as_the_first_build(
@@ -963,3 +1165,96 @@ def test_a_full_build_that_keeps_a_tool_imported_is_read_as_that_build_sealed_it
         == (AUTHORED["tool_entrypoints"])
     )
     assert _blocked(environment, rebuilt) == sorted(TOOLS)
+
+
+def test_a_draft_keeps_an_unchanged_fault_on_a_tool_its_build_moved_behind_the_door(
+    user, workspace, storage
+):
+    """The author's contract imports get_order where the door cannot reach it; the build served it from the tools
+    service, so a timeout fault on it holds. An edit elsewhere keeps that fault, judged on the contract the draft
+    runs with."""
+    from simulate.tests.test_harness_versioning_record import NAMES, _scenario
+
+    unreached = {
+        **AUTHORED,
+        "tool_entrypoints": [
+            {**one, "door_unreached": "a method of a helper object"}
+            if one["tool"] == "get_order"
+            else one
+            for one in AUTHORED["tool_entrypoints"]
+        ],
+    }
+    faulted = [
+        _scenario(NAMES[0], faults=[{"action": "get_order", "mode": "timeout"}]),
+        _scenario(NAMES[1]),
+    ]
+    tree = {
+        "scenarios.json": json.dumps(faulted),
+        **{
+            f"scenarios/{one['name']}/scenario.json": json.dumps(one) for one in faulted
+        },
+    }
+    environment = _environment(user, workspace, "rc-draft-fault")
+    record_authoring(
+        environment, _built(contract=unreached, **tree), origin="authoring"
+    )
+    environment.refresh_from_db()
+
+    write = drafts.record_draft(
+        environment,
+        _authoring(
+            contract=unreached,
+            sealed=False,
+            **tree,
+            **{"handlers/refund.py": "x = 1\n"},
+        ),
+        origin="chat",
+    )
+
+    assert write is not None and "environment" in write.written
+
+
+class TestResealsSavedBeforeTheyWereStamped:
+    """A chat save resealed its bundle before reseals were stamped: no `sealed_from`, on a version a chat saved."""
+
+    def test_an_unstamped_bundle_on_a_chat_saved_version_is_read_as_a_reseal(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        legacy = TestVersionRecordedBeforeItsSealedContract()
+        environment, version, storage = legacy._version(
+            user, workspace, "rc-unstamped", monkeypatch
+        )
+        legacy._bundle(environment, version, storage)
+        edited = {**AUTHORED, "hard_constraints": ["Never refund twice."]}
+        saved = legacy._saved_edit(environment, version, edited)
+        HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
+            origin="chat"
+        )
+        saved.refresh_from_db()
+        # The reseal carries the author's import entries and no stamp.
+        legacy._bundle(environment, saved, storage, contract=edited)
+
+        blocked, statuses = legacy._through_the_views(auth_client, environment)
+
+        assert blocked == []
+        assert statuses == {one["tool"]: one["status"] for one in tool_status(SEALED)}
+
+    def test_a_chat_saved_row_reused_by_a_stamped_build_reads_as_the_build_sealed_it(
+        self, user, workspace, monkeypatch
+    ):
+        """A build stamps its seal, so a row a chat save made, reused by a later full build that kept the author's
+        import entries, reads as that build sealed it."""
+        legacy = TestVersionRecordedBeforeItsSealedContract()
+        environment, version, storage = legacy._version(
+            user, workspace, "rc-build-stamp", monkeypatch
+        )
+        legacy._bundle(environment, version, storage)
+        edited = {**AUTHORED, "hard_constraints": ["Never refund twice."]}
+        saved = legacy._saved_edit(environment, version, edited)
+        HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
+            origin="chat"
+        )
+        saved.refresh_from_db()
+        legacy._bundle(environment, saved, storage, contract=edited, built=True)
+
+        assert _blocked(environment, saved) == sorted(TOOLS)
