@@ -2383,7 +2383,7 @@
               "boolean"
             ]
           },
-          "description": "Extra environment variables (FI_* overrides, see fi-collector/README.md), as `NAME: value`."
+          "description": "Extra environment variables as `NAME: value`. `FI_ADMIN_ADDR: \":9500\"` moves the Pod listener, readiness and GKE check; the Service still accepts 9464. See UPGRADING.md for supported binds."
         },
         "podAnnotations": {
           "type": "object",
@@ -3313,7 +3313,7 @@
               "properties": {
                 "enabled": {
                   "type": "boolean",
-                  "description": "GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its admin port 9464, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs)."
+                  "description": "GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its configured Pod admin port, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs)."
                 }
               }
             }
