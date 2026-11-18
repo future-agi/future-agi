@@ -240,26 +240,34 @@ def _status(task, run) -> str:
     return str(task.status or EvalTaskStatus.PENDING)
 
 
-def _workflow_gone(task) -> bool:
-    """Whether no Temporal workflow is draining the task (a restart or a
-    crash took it), asked at most every 20 s per task. An unreachable
-    Temporal is not an answer: the run is then taken to be running."""
+def _workflow_gone(task) -> bool | None:
+    """Fresh drain check for control actions. None means Temporal couldn't confirm."""
     from tfc.temporal.eval_tasks.client import (
         WF_ABSENT,
         WF_CLOSED,
+        WF_PROGRESSING,
         describe_eval_task_workflow_sync,
     )
 
-    key = f"ie-wf-gone:{task.id}"
-    known = cache.get(key)
-    if known is not None:
-        return known
     try:
-        gone = describe_eval_task_workflow_sync(task.id) in (WF_ABSENT, WF_CLOSED)
+        state = describe_eval_task_workflow_sync(task.id)
     except Exception:
         logger.warning("instant_eval_describe_failed", task_id=str(task.id))
-        gone = False
-    cache.set(key, gone, STALL_CHECK_TTL)
+        return None
+    if state in (WF_ABSENT, WF_CLOSED):
+        return True
+    if state == WF_PROGRESSING:
+        return False
+    return None
+
+
+def _cached_workflow_gone(task) -> bool:
+    """Poll at most every 20 s; only a confirmed stop is displayed as stalled."""
+    key = f"ie-wf-gone:{task.id}"
+    gone = cache.get(key)
+    if gone is None:
+        gone = _workflow_gone(task) is True
+        cache.set(key, gone, STALL_CHECK_TTL)
     return gone
 
 
@@ -381,7 +389,7 @@ def _stalled(task, status: str, data: dict, progress: dict) -> bool:
         progress["last_ms"] or 0,
         task.updated_at.timestamp() * 1000 if task.updated_at else 0,
     )
-    return now_ms - quiet_since > STALL_AFTER_S * 1000 and _workflow_gone(task)
+    return now_ms - quiet_since > STALL_AFTER_S * 1000 and _cached_workflow_gone(task)
 
 
 def summary_with_start_decision(task, payload, refusal: Refusal | None):

@@ -1925,7 +1925,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
     @transaction.atomic(using="default")
     def perform_destroy(self, instance):
         # Match fresh Re-run and bulk delete: task first, then loggers/results.
-        # Use the locked row, not the snapshot DRF read before this transaction.
+        # Recheck scope on the writer: if the task left it, skip the entire cascade.
         instance = (
             self._scope_eval_task_queryset(EvalTask.objects.using("default"))
             .select_for_update(of=("self",))
@@ -2867,6 +2867,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     deleted_at=timezone.now(),
                     status=EvalTaskStatus.DELETED,
                 )
+                # Cascade only over the scoped IDs we locked, not every requested ID.
                 EvalTaskStartRequest.void_for_tasks(locked)
                 EvalTaskLogger.objects.filter(eval_task_id__in=locked).update(
                     deleted=True, deleted_at=timezone.now()
@@ -2919,9 +2920,8 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 eval_task.save(update_fields=["status", "updated_at"])
                 EvalTaskStartRequest.void_for_tasks([eval_task.pk])
 
-            # Nudge the running workflow to stop launching new evals immediately.
-            # Best-effort: the paused status above is the durable signal the
-            # workflow also honours at its next batch boundary.
+            # Signal only after the outermost commit; a rolled-back Pause must
+            # not stop the workflow. The saved status also stops its next batch.
             transaction.on_commit(
                 lambda: signal_pause_eval_task_workflow(eval_task.id), using="default"
             )

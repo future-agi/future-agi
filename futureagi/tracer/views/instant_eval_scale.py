@@ -1532,6 +1532,10 @@ class InstantEvalExportView(_InstantEvalSelectionView):
 
 
 # ─── Control ─────────────────────────────────────────────────────────────────
+class _RestartRefused(Exception):
+    """Unwind the entire control transaction, including writes before the restart."""
+
+
 class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
@@ -1553,6 +1557,8 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         handler = getattr(self, f"_{action}")
         try:
             return handler(request, task, run, data)
+        except _RestartRefused as refusal:
+            return self._gm.bad_request(str(refusal))
         except CreditCheckUnavailable:
             return credit_check_unavailable(self._gm)
 
@@ -1614,6 +1620,7 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
                 InstantEvalRun.objects.filter(id=run.id).update(
                     answers_version=F("answers_version") + 1
                 )
+            # The initial read may be stale. Only pause a still-active writer row.
             current = (
                 EvalTask.objects.select_for_update(of=("self",))
                 .filter(pk=task.pk, status__in=ACTIVE)
@@ -1632,7 +1639,19 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             logger.warning("instant_eval_pause_signal_failed", task_id=str(task.id))
         return self._ok(task, "Paused. Answers already being read will still land.")
 
+    @transaction.atomic
     def _restart(self, task):
+        # Decide under the task lock, not from the caller's routed snapshot.
+        current = (
+            EvalTask.objects.select_for_update(of=("self",))
+            .only("status", "instant_paused_before_start_at")
+            .filter(pk=task.pk)
+            .first()
+        )
+        if current is None:
+            raise _RestartRefused("Eval task not found")
+        if refusal := start_refusal(current):
+            raise _RestartRefused(refusal.instant)
         EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PENDING)
         task.status = EvalTaskStatus.PENDING
         EvalTaskStartRequest.void_for_tasks([task.pk])
@@ -1719,9 +1738,15 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         )
         if not failed.exists():
             return self._gm.bad_request("No rows failed.")
-        # A stalled run (it says running, but no workflow drains it) is
-        # restarted, or nothing would answer the requeued rows.
-        running = task.status in ACTIVE and not _workflow_gone(task)
+        # Only a confirmed live workflow can take these rows without a restart.
+        running = False
+        if task.status in ACTIVE:
+            gone = _workflow_gone(task)
+            if gone is None:
+                return self._gm.custom_error_response(
+                    503, "The run's status couldn't be checked. Try again shortly."
+                )
+            running = not gone
         if not running and (refused := self._replacement_refusal(task, run)):
             return refused
         if not running and (busy := self._busy(request, task)):
