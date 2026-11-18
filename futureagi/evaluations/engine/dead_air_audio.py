@@ -1,22 +1,43 @@
 """Decode an AAC recording to PCM for the dead-air preprocessor's second try."""
 
 import json
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
-from tfc.utils.media_tools import require_ffmpeg
+from tfc.utils.media_tools import MediaToolUnavailable
+
+FEATURE = "dead-air audio decoding"
 
 
 class RecordingDecodeError(ValueError):
     """A specific reason not to score this recording, rather than a format miss."""
 
 
+def _require_tools() -> str:
+    """Return the ffmpeg path, or name every missing tool in one hint.
+
+    The retry runs both ffprobe and ffmpeg. An image built without either
+    needs both, so don't stop at the first one."""
+    ffmpeg = shutil.which("ffmpeg")
+    missing = [] if ffmpeg else ["ffmpeg"]
+    if shutil.which("ffprobe") is None:
+        missing.append("ffprobe")
+    if missing or ffmpeg is None:
+        error = MediaToolUnavailable(FEATURE, " and ".join(missing))
+        if len(missing) > 1:
+            hint = str(error).replace(" is not installed", " are not installed", 1)
+            error.args = (hint,)
+        raise error
+    return ffmpeg
+
+
 def aac_to_wav(audio_bytes: bytes) -> bytes:
     from tfc.utils.lazy_extras import soundfile
     from tfc.utils.storage import MAX_AUDIO_FILE_SIZE
 
-    ffmpeg = require_ffmpeg("dead-air audio decoding", ffprobe=True)
+    ffmpeg = _require_tools()
     if len(audio_bytes) > MAX_AUDIO_FILE_SIZE:
         raise RecordingDecodeError("Audio recording is too large")
 

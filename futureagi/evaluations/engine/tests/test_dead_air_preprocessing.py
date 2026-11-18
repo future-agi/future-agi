@@ -145,17 +145,6 @@ def test_decodable_wav_does_not_require_ffmpeg():
     which.assert_not_called()
 
 
-def test_missing_ffmpeg_keeps_original_decode_error(tmp_path, monkeypatch):
-    pytest.importorskip("librosa")
-    audio = (Path(__file__).parent / "fixtures" / "dead_air" / "tone.m4a").read_bytes()
-    monkeypatch.setenv("PATH", str(tmp_path))  # FFMPEG_FLAVOR=none
-    actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
-    error = actual["_dead_air_error"]
-    assert "Format not recognised" in error
-    assert "ffmpeg is not installed" in error.split("Format not recognised", 1)[1]
-    assert "_dead_air_percentage" not in actual
-
-
 def test_raw_aac_decodes_all_frames():
     # Same tone as the M4A, but ADTS has three full AAC frames and no edit list.
     audio = _recording("tone.aac")
@@ -172,20 +161,38 @@ def test_incomplete_m4a_is_not_scored():
     assert "_dead_air_error" in actual
 
 
-def test_missing_ffprobe_keeps_original_decode_error(tmp_path, monkeypatch):
+TONE_M4A = (Path(__file__).parent / "fixtures" / "dead_air" / "tone.m4a").read_bytes()
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [("ffmpeg", "ffprobe"), ("ffmpeg",), ("ffprobe",)],
+    ids=["neither-tool", "no-ffmpeg", "no-ffprobe"],
+)
+@pytest.mark.parametrize(
+    "audio", [TONE_M4A, b"not audio at all"], ids=["tone-m4a", "invalid-bytes"]
+)
+def test_missing_tools_keep_original_decode_error(
+    audio, missing, tmp_path, monkeypatch
+):
+    # FFMPEG_FLAVOR=none has neither tool; a partial image can lack one.
     pytest.importorskip("librosa")
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        pytest.skip("ffmpeg required for the ffprobe-only control")
-    (tmp_path / "ffmpeg").symlink_to(ffmpeg)
+    for tool in {"ffmpeg", "ffprobe"} - set(missing):
+        path = shutil.which(tool)
+        if not path:
+            pytest.skip(f"{tool} required for this control")
+        (tmp_path / tool).symlink_to(path)
     monkeypatch.setenv("PATH", str(tmp_path))
-    actual = preprocess_inputs(
-        "dead_air_detection", {"input_audio": {"bytes": b"not audio at all"}}
-    )
+    actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
     error = actual["_dead_air_error"]
     assert "Format not recognised" in error
-    assert "ffprobe is not installed" in error.split("Format not recognised", 1)[1]
-    assert "ffmpeg is not installed" not in error
+    hint = error.split("Format not recognised", 1)[1]
+    if len(missing) == 2:
+        assert "ffmpeg and ffprobe are not installed" in hint
+    else:
+        assert f"{missing[0]} is not installed" in hint
+        other = ({"ffmpeg", "ffprobe"} - set(missing)).pop()
+        assert other not in hint
     assert "_dead_air_percentage" not in actual
 
 
