@@ -145,16 +145,14 @@ def test_decodable_wav_does_not_require_ffmpeg():
     which.assert_not_called()
 
 
-def test_missing_ffmpeg_keeps_original_decode_error(monkeypatch):
-    librosa = pytest.importorskip("librosa")
-    monkeypatch.setenv("PATH", "")
-    with patch.object(
-        librosa, "load", side_effect=RuntimeError("unsupported recording")
-    ):
-        actual = preprocess_inputs(
-            "dead_air_detection", {"input_audio": {"bytes": b"recording"}}
-        )
-    assert actual["_dead_air_error"] == "Could not decode audio: unsupported recording"
+def test_missing_ffmpeg_keeps_original_decode_error(tmp_path, monkeypatch):
+    pytest.importorskip("librosa")
+    audio = (Path(__file__).parent / "fixtures" / "dead_air" / "tone.m4a").read_bytes()
+    monkeypatch.setenv("PATH", str(tmp_path))  # FFMPEG_FLAVOR=none
+    actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
+    error = actual["_dead_air_error"]
+    assert "Format not recognised" in error
+    assert "ffmpeg is not installed" in error.split("Format not recognised", 1)[1]
     assert "_dead_air_percentage" not in actual
 
 
@@ -174,12 +172,20 @@ def test_incomplete_m4a_is_not_scored():
     assert "_dead_air_error" in actual
 
 
-def test_missing_ffprobe_names_tool(tmp_path, monkeypatch):
-    audio = _recording("tone.m4a")
-    (tmp_path / "ffmpeg").symlink_to(shutil.which("ffmpeg"))
+def test_missing_ffprobe_keeps_original_decode_error(tmp_path, monkeypatch):
+    pytest.importorskip("librosa")
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg required for the ffprobe-only control")
+    (tmp_path / "ffmpeg").symlink_to(ffmpeg)
     monkeypatch.setenv("PATH", str(tmp_path))
-    actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
-    assert "ffprobe is not installed" in actual["_dead_air_error"]
+    actual = preprocess_inputs(
+        "dead_air_detection", {"input_audio": {"bytes": b"not audio at all"}}
+    )
+    error = actual["_dead_air_error"]
+    assert "Format not recognised" in error
+    assert "ffprobe is not installed" in error.split("Format not recognised", 1)[1]
+    assert "ffmpeg is not installed" not in error
     assert "_dead_air_percentage" not in actual
 
 

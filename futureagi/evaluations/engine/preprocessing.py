@@ -447,14 +447,12 @@ def _preprocess_dead_air_detection(inputs):
         try:
             y, sr = librosa.load(io.BytesIO(aac_to_wav(audio_bytes)), sr=None)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as retry:
-            # Keep the first decoder's reason for unknown formats and on
-            # installations without FFmpeg. Otherwise report a concrete cause.
-            reason = e
-            if isinstance(retry, RecordingDecodeError) or (
-                isinstance(retry, MediaToolUnavailable) and retry.tool == "ffprobe"
-            ):
-                reason = retry
-            logger.warning("dead_air_preprocess_decode_failed", error=str(reason))
+            reason = str(e)
+            if isinstance(retry, MediaToolUnavailable):
+                reason = f"{reason} {retry}"
+            elif isinstance(retry, RecordingDecodeError):
+                reason = str(retry)
+            logger.warning("dead_air_preprocess_decode_failed", error=reason)
             inputs["_dead_air_error"] = f"Could not decode audio: {reason}"
             return inputs
 
