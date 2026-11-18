@@ -406,6 +406,9 @@ const REQUEST_CLOSED_NOTE = {
   expired: 'This request expired.',
 };
 
+// The server says the approved request still applies and this person may move production.
+const readIsCurrent = (data) => Boolean(data) && data.canExecute === true && data.preview?.current === true && !data.staleCode && !data.renewalRequired;
+
 // After the request is sent, the same panel is a status tracker (UXF-08): waiting for the reviewer,
 // approved (production moves from one button here), then checking that apps updated. The server
 // decides every step; this panel only reads the request and, once it is approved, sends the same
@@ -438,8 +441,8 @@ function RollbackTracker({ candidate, submitted, read, link, evidenceItems, onRe
           <OperationFeedback error={execute.error} action="move production" onRefresh={onRefresh} onRetry={move} onReconcile={move} />
         </Stack>
       ) : (
-        <Typography variant="s3" color="text.secondary">{submitted.resumed
-          // A request found again after a reload was not checked in this page session: the request page confirms it first.
+        <Typography variant="s3" color="text.secondary">{submitted.resumed && readIsCurrent(read.data)
+          // A current request found again after a reload was not checked in this page session: the request page confirms it first.
           ? 'Open the request to move production. It shows the change for you to confirm before production moves.'
           : 'Open the request to move production: it has changed since it was sent, or moving production needs someone else.'}</Typography>
       ))}

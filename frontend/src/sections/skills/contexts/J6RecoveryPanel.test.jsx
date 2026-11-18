@@ -1106,3 +1106,14 @@ it('offers no request form while the open-request check is loading or failed', (
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(openRefetch).toHaveBeenCalled();
 });
+
+it('says a resumed approval that no longer applies has changed, instead of promising a confirmation', () => {
+  reloadedPage();
+  openRequests = { isLoading: false, data: [openRollback({ status: 'approved' })] };
+  requestRead = { data: { request: { id: 'req-1', status: 'approved', revision: 1 }, preview: { current: false, fingerprint: 'fp' }, canExecute: true, staleCode: 'review_stale' } };
+  render(<J6RecoveryPanel contextId="ctx" contextName="Support policy" />);
+  expect(screen.queryByRole('button', { name: /Move production/ })).toBeNull();
+  expect(screen.queryByText(/It shows the change for you to confirm/)).toBeNull();
+  expect(screen.getByText(/it has changed since it was sent, or moving production needs someone else/)).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Open request' })).toBeVisible();
+});
