@@ -142,10 +142,11 @@ def test_missing_digests_compare_by_text(user, workspace, storage):
     }
     with patch.object(
         harness_scenario_sources,
-        "file_bodies",
-        lambda version, paths: {
-            p: b for p, b in bodies[version.id].items() if p in paths
-        },
+        "read_files",
+        lambda version, paths: (
+            {p: b for p, b in bodies[version.id].items() if p in paths},
+            True,
+        ),
     ):
         changed = changed_refs(child, contents)
 

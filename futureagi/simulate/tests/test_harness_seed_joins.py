@@ -181,3 +181,109 @@ def test_an_unreadable_archive_is_never_remembered_and_its_citing_cases_are_held
     assert "could not be read just now" in plan.view["reasons"]["unreadable"]
     assert plan.view["running"] == 1
     cache.clear()
+
+
+def _validated(environment, *, recorded):
+    """A finished validation of the environment's pair, whose proofs were or were not read before its sandbox went."""
+    import uuid
+
+    from simulate.models import HostedHarnessJob
+
+    job = HostedHarnessJob.no_workspace_objects.get(id=environment.id)
+    payload = dict(job.payload or {})
+    payload["metadata"] = {
+        **(payload.get("metadata") or {}),
+        "certify_only": True,
+        "scenario_proofs_recorded": recorded,
+    }
+    job.pk = job.id = uuid.uuid4()
+    job.environment_id = environment.id
+    job.idempotency_key = f"check-{job.id}"
+    job.run_id = uuid.uuid4()
+    job.state = HostedHarnessJob.State.COMPLETED
+    job.payload = payload
+    job.save()
+    return job
+
+
+def test_a_validation_whose_proofs_could_not_be_read_holds_its_cases_until_one_is_read(
+    user, workspace, storage
+):
+    """Unknown, never "not validated" or a stale Active: the cases are held as unreadable, then read Active again once
+    a validation's proofs are read."""
+    environment = _environment(user, workspace, storage, "proofs-unread")
+    _suite(environment, _ten())
+    _proofs(environment, dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED))
+    key = LOOKUP_KEYS[0]
+    assert _views(environment)[key]["state"] == "active"
+
+    _validated(environment, recorded=False)
+    held = _views(environment)[key]
+    plan = selection.select_for_run(resolve_pairing(environment), keys=[key], trials=1)
+
+    assert (held["state"], held["reason"]) == ("draft", "proofs_unread")
+    assert not runnable(held)
+    assert plan.view["held_back"]["by"] == {"unreadable": 1}
+
+    _validated(environment, recorded=True)
+
+    assert _views(environment)[key]["state"] == "active"
+
+
+def test_a_cited_file_that_cannot_be_compared_just_now_holds_the_case_and_recovers(
+    user, workspace, storage, monkeypatch
+):
+    """A version that recorded no file digests compares a cited file's text with its parent's: an archive that cannot
+    be read just now leaves the case unknown, never changed or Active."""
+    from simulate.models import HarnessEnvironmentVersion, HarnessSuiteMember
+    from simulate.services.harness_versioning import archives
+
+    environment = _environment(user, workspace, storage, "files-unread")
+    _suite(environment, _ten())
+    key = LOOKUP_KEYS[0]
+    member = HarnessSuiteMember.no_workspace_objects.get(
+        suite_version=environment.suite_version, scenario_key=key
+    )
+    HarnessSuiteMember.no_workspace_objects.filter(id=member.id).update(
+        content={
+            **member.content,
+            "sources": [
+                {"kind": "file", "ref": f"file:{ORDERS}", "quote": "O-1"},
+            ],
+        }
+    )
+    # Versions saved before file digests were recorded: the cited file's text is compared from both archives.
+    version = environment.environment_version
+    documents = {
+        name: one
+        for name, one in (version.documents or {}).items()
+        if name != "file_digests"
+    }
+    parent = HarnessEnvironmentVersion._base_manager.get(id=version.id)
+    parent.pk = parent.id = None
+    parent.version_number = None
+    parent.hash = "sha256:parent"
+    parent.documents = documents
+    parent.save()
+    HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+        parent_id=parent.id, documents=documents
+    )
+    _proofs(environment, dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED))
+    reads = {"fail": True}
+    real = archives.stream_members
+
+    def stream(*args):
+        if reads["fail"]:
+            raise OSError("storage down")
+        return real(*args)
+
+    monkeypatch.setattr(archives, "stream_members", stream)
+    environment.refresh_from_db()
+
+    held = _views(environment)[key]
+    reads["fail"] = False
+    again = _views(environment)[key]
+
+    assert (held["state"], held["reason"]) == ("draft", "storage_unreadable")
+    assert held["source_changed"] == []
+    assert again["reason"] != "storage_unreadable"

@@ -54,6 +54,7 @@ from simulate.services.harness_readiness.workers import (
     case_holds,
 )
 from simulate.services.harness_scenario_lifecycle import (
+    UNREAD_REASONS,
     reason_text,
     runnable,
     scenario_lifecycle,
@@ -84,7 +85,8 @@ NOT_ACTIVE_ROW = "not_active"
 # Held-back key for a case its last proof found a defect in (a leaked answer, a control that passed, no control): a
 # validation would only repeat the verdict, so it waits for the case to be fixed.
 PROOF_FAILED_ROW = "proof_failed"
-# Held-back key for a case whose cited seed records could not be read just now: nothing failed, it is unknown.
+# Held-back key for a case something it needs could not be read for (its seed records, its cited files, its pair's
+# last proofs): nothing failed, it is unknown.
 SEED_UNREAD_ROW = "unreadable"
 # The Draft reasons a validation can settle; any other Draft reason is a proof's verdict on the case itself.
 UNVALIDATED_REASONS = frozenset(
@@ -954,7 +956,7 @@ def _place(
     elif not runnable(view) and view["reason"] in UNVALIDATED_REASONS:
         blocked.append(NOT_VALIDATED_ROW)
         lifecycle_reason = view["reason_text"]
-    elif not runnable(view) and view["reason"] == "seed_records_unread":
+    elif not runnable(view) and view["reason"] in UNREAD_REASONS:
         blocked.append(SEED_UNREAD_ROW)
         lifecycle_reason = view["reason_text"]
     elif not runnable(view):

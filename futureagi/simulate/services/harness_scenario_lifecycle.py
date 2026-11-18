@@ -66,6 +66,8 @@ REASON_TEXTS = {
     "proved_on_other_agent": "Proved with another agent version; validate it with this one to run it.",
     "broken_join": "Its seed records do not join up: {joins}. Map the field or add the rows.",
     "seed_records_unread": "Its seed records could not be read just now, so it is held back. Try again in a few minutes.",
+    "storage_unreadable": "The files it cites could not be read just now, so it is held back. Try again in a few minutes.",
+    "proofs_unread": "The last validation's proofs could not be read, so it is held back. Validate these versions again.",
     "negative_control_passed": "The checks pass a wrong behaviour: {control} ({control_why}). Tighten {checks}.",
     "answer_leaked": 'What the {who} sees gives the answer away: {field} repeats "{excerpt}" from {grader_field}.',
     "source_unresolved": "A cited source is not in this environment: {kind} {ref}.",
@@ -495,7 +497,9 @@ def scenario_lifecycle(
             if isinstance(entry, Mapping) and entry.get("format") == 2
         },
     )
-    changed = source_changed(environment_version, contents)
+    unread: set[str] = set()
+    changed = changed_refs(environment_version, contents, unread=unread)
+    proofs_lost = _proofs_unread(environment, suite_version, environment_version)
     cited_files = {
         key: {
             file_path(str(one.get("ref") or ""))
@@ -621,6 +625,10 @@ def scenario_lifecycle(
                 "broken_join",
                 reason_text("broken_join", entry, joins=broken_join_text(broken)),
             )
+        if view["state"] != "archived" and (proofs_lost or key in unread):
+            # Unknown just now, never "not validated": the case is held until the read works.
+            reason = "proofs_unread" if proofs_lost else "storage_unreadable"
+            _demote(view, reason, reason_text(reason))
         if default and key in failed and view["state"] != "archived":
             _demote(
                 view,
@@ -653,6 +661,12 @@ def scenario_lifecycle(
     return views
 
 
+# Reasons a case is held because something could not be read, never because a proof found anything.
+UNREAD_REASONS = frozenset(
+    {"seed_records_unread", "storage_unreadable", "proofs_unread"}
+)
+
+
 def _demote(view: LifecycleView, reason: str, text: str | None) -> None:
     """A case its proof would run, held back as Draft for a reason found after the proof."""
     view["state"] = "draft"
@@ -683,6 +697,31 @@ def _last_check_ending(
     if last is None or last.state != HostedHarnessJob.State.FAILED:
         return None
     return check_ending(last)
+
+
+def _proofs_unread(
+    environment: HostedHarnessJob,
+    suite_version: HarnessSuiteVersion,
+    environment_version: HarnessEnvironmentVersion,
+) -> bool:
+    """Whether the newest validation of this pair finished but its proofs could not be read: what it proved is
+    unknown, so no earlier proof of the pair speaks for its cases."""
+    last = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            environment_id=environment.id,
+            suite_version=suite_version,
+            environment_version=environment_version,
+            payload__metadata__certify_only=True,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    return (
+        last is not None
+        and last.state == HostedHarnessJob.State.COMPLETED
+        and ((last.payload or {}).get("metadata") or {}).get("scenario_proofs_recorded")
+        is False
+    )
 
 
 def _uncaptured_check(
@@ -906,13 +945,15 @@ def changed_refs(
     contents: Mapping[str, Any],
     *,
     parent_documents: Mapping[str, Any] | None = None,
+    unread: set[str] | None = None,
 ) -> dict[str, list[str]]:
     """For each key, the rule and file refs it cites whose text changed from the parent version.
 
     A rule changed when no rule of this version holds its quote, or the rule holding it now reads
     differently; a rule that only moved index is not a change. A file changed when its digest
     differs; when either version recorded no digests, both texts are read and compared, and a file
-    either side cannot read counts as changed, which errs toward revalidating.
+    either side cannot read counts as changed, which errs toward revalidating; given ``unread``, its key is added
+    there instead, as unknown.
     """
     parent = (
         parent_documents
@@ -925,7 +966,7 @@ def changed_refs(
     new_rules, old_rules = rules_of(documents), rules_of(parent)
     new_files = documents.get("file_digests")
     old_files = parent.get("file_digests")
-    by_text: dict[str, bool] = {}
+    by_text: dict[str, bool | None] = {}
     if not isinstance(new_files, Mapping) or not isinstance(old_files, Mapping):
         by_text = _files_differ_by_text(environment_version, contents)
     changed: dict[str, list[str]] = {}
@@ -948,7 +989,10 @@ def changed_refs(
                 if not isinstance(new_files, Mapping) or not isinstance(
                     old_files, Mapping
                 ):
-                    if by_text.get(path, True):
+                    differs = by_text.get(path, True)
+                    if differs is None and unread is not None:
+                        unread.add(key)
+                    elif differs is not False:
                         refs.append(ref)
                 elif _file_digest(path, new_files) != _file_digest(path, old_files):
                     refs.append(ref)
@@ -959,12 +1003,13 @@ def changed_refs(
 
 def _files_differ_by_text(
     environment_version: HarnessEnvironmentVersion, contents: Mapping[str, Any]
-) -> dict[str, bool]:
+) -> dict[str, bool | None]:
     """For each cited file, whether its text differs from the parent version's, read from both
-    archives when a version recorded no digests. A file either side cannot read reads changed."""
+    archives when a version recorded no digests. A file one side lacks reads changed; None when an archive could
+    not be read just now."""
     import hashlib
 
-    from simulate.services.harness_scenario_sources import file_bodies
+    from simulate.services.harness_scenario_sources import read_files
 
     paths = {
         file_path(str(source.get("ref") or ""))
@@ -977,20 +1022,18 @@ def _files_differ_by_text(
     parent = HarnessEnvironmentVersion._base_manager.filter(
         id=environment_version.parent_id
     ).first()
-    now, before = file_bodies(environment_version, paths), file_bodies(parent, paths)
+    (now, now_read), (before, before_read) = (
+        read_files(environment_version, paths),
+        read_files(parent, paths),
+    )
+    if not (now_read and before_read):
+        return dict.fromkeys(paths)
     return {
         path: path not in now
         or path not in before
         or hashlib.sha256(now[path]).digest() != hashlib.sha256(before[path]).digest()
         for path in paths
     }
-
-
-def source_changed(
-    environment_version: HarnessEnvironmentVersion, contents: Mapping[str, Any]
-) -> dict[str, list[str]]:
-    """T21: for each key, the refs it cites that changed since the parent environment version."""
-    return changed_refs(environment_version, contents)
 
 
 class DroppedCase(TypedDict):
