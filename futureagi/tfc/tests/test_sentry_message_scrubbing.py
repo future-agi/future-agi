@@ -575,8 +575,10 @@ def test_an_over_budget_event_sends_no_glued_literal(count):
 @pytest.mark.parametrize("as_dict", [False, True])
 def test_an_over_budget_event_filters_every_param(as_dict):
     # Empty arguments too: past the budget nothing of the event is kept.
-    message = "password=x%s " * _MANY
-    params = [f"y{i}" for i in range(_MANY)] + [""]
+    # 1100 distinct arguments and redacted values exceed the search budget.
+    count = 1100
+    message = "password=x%s " * count
+    params = [f"y{i}" for i in range(count)] + [""]
     if as_dict:
         params = {f"k{i}": param for i, param in enumerate(params)}
     event = {
@@ -594,4 +596,4 @@ def test_an_over_budget_event_filters_every_param(as_dict):
     logentry = event["logentry"]
     assert logentry["message"] == logentry["formatted"] == "[Filtered]"
     values = logentry["params"].values() if as_dict else logentry["params"]
-    assert list(values) == ["[Filtered]"] * (_MANY + 1)
+    assert list(values) == ["[Filtered]"] * (count + 1)
