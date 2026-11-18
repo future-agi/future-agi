@@ -1,0 +1,43 @@
+# Air-gapped install: the platform's own calls to the internet are off (one
+# minimal telemetry registration attempt remains; offline it fails harmlessly
+# and is retried). Layer it over examples/external.yaml (datastores inside
+# your network).
+#
+# 1. Mirror the chart and every image it pulls, keeping digests and signatures.
+#    List the upstream images (global.imageRegistry reset: this file points
+#    it at the mirror) and copy each into the mirror under its own path:
+#      helm pull oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z
+#      deploy/helm/futureagi/hack/list-images.sh futureagi-X.Y.Z.tgz -- \
+#        -f external.yaml -f airgap.yaml --set global.imageRegistry= > images.txt
+#      (or the futureagi-images-X.Y.Z.txt release asset, or its Hauler manifest)
+#      while read -r ref; do crane copy "$ref" "registry.example.com/futureagi-mirror/${ref#*/}"; done < images.txt
+#      helm push futureagi-X.Y.Z.tgz oci://registry.example.com/charts
+#    `oras copy -r` works as well; a mirror that re-pushes images (new
+#    digests) needs image.pinDigests=false.
+# 2. Pre-seed the serving models on its volume (serving cannot download them
+#    offline): run serving once with network access and the same
+#    serving.persistence (a connected staging cluster), call each embedding
+#    type once, then copy the volume's contents (/models) into this cluster's
+#    PVC <release>-futureagi-serving-models, e.g. with a helper pod and
+#    `kubectl cp`. The defaults are BAAI/bge-small-en-v1.5,
+#    sentence-transformers all-MiniLM-L6-v2 and clip-ViT-B-32, and wav2clip
+#    (DEFAULT_EMBEDDING_MODEL, TEXT_EMBEDDING_MODEL, IMAGE_EMBEDDING_MODEL,
+#    AUDIO_EMBEDDING_MODEL in serving.extraEnv). Or turn serving off.
+# 3. Point LLM features at a model endpoint inside your network (a workspace's
+#    provider settings, or the gateway's providers): hosted providers are
+#    unreachable.
+global:
+  airgap: true
+  imageRegistry: registry.example.com/futureagi-mirror
+  imagePullSecrets:
+    - name: registry-credentials
+
+# Telemetry is off with global.airgap; this makes it explicit.
+config:
+  telemetry: false
+
+serving:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 20Gi

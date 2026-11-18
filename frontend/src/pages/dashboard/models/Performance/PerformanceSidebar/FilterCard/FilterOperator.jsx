@@ -36,7 +36,7 @@ const FilterOperator = ({ operator, setOperator, dataType }) => {
         </Typography>
         {!disabled && (
           <Iconify
-            icon="ion:chevron-down"
+            icon="solar:alt-arrow-down-linear"
             color="text.disabled"
             sx={{ transform: isDropdownOpen ? "rotate(180deg)" : "" }}
           />

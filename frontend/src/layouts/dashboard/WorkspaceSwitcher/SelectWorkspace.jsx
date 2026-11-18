@@ -1,8 +1,8 @@
 import { Box, Button, Popper, Skeleton, Typography } from "@mui/material";
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import PropTypes from "prop-types";
-import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { useMutation } from "@tanstack/react-query";
+import { useWorkspacesList } from "src/api/workspaces/list";
 import SVGColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { useCreateWorkspaceModal } from "../states";
@@ -24,21 +24,12 @@ const SelectWorkspaceChild = React.forwardRef(
     const newWorkspaceId = useRef(null);
     const canCreateWorkspace = typeof orgLevel === "number" && orgLevel >= 8;
 
-    const { data, fetchNextPage, isPending, isFetchingNextPage } =
-      useInfiniteQuery({
-        queryFn: ({ pageParam }) =>
-          axios.get(endpoints.workspaces.list, {
-            params: {
-              page: pageParam,
-              limit: 10,
-            },
-          }),
-        queryKey: ["workspaces-list"],
-        getNextPageParam: ({ data }) =>
-          data?.next ? data?.current_page + 1 : null,
-        initialPageParam: 1,
-        staleTime: Infinity,
-      });
+    const {
+      data: workspaces,
+      fetchNextPage,
+      isPending,
+      isFetchingNextPage,
+    } = useWorkspacesList();
 
     const { mutate: doSwitch, isPending: isSwitching } = useMutation({
       mutationFn: (newId) => switchWorkspace(newId, currentWorkspaceId),
@@ -54,11 +45,6 @@ const SelectWorkspaceChild = React.forwardRef(
         // switchWorkspace already shows a snackbar on error
       },
     });
-
-    const workspaces = useMemo(
-      () => data?.pages.flatMap((page) => page.data.results),
-      [data],
-    );
 
     // Sync sidebar display name with the authoritative workspace list
     useEffect(() => {
@@ -103,7 +89,7 @@ const SelectWorkspaceChild = React.forwardRef(
           border: "1px solid",
           borderColor: "divider",
           borderRadius: 1,
-          boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.1)",
+          boxShadow: (theme) => theme.customShadows?.dropdown,
           p: 1,
           minWidth: "200px",
           display: "flex",
@@ -124,17 +110,17 @@ const SelectWorkspaceChild = React.forwardRef(
           <ShowComponent condition={isPending}>
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
           </ShowComponent>
@@ -154,7 +140,7 @@ const SelectWorkspaceChild = React.forwardRef(
                   px: 1,
                   py: 0.5,
                   cursor: isSwitching ? "wait" : "pointer",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   backgroundColor:
                     workspace.id === currentWorkspaceId
                       ? "background.neutral"
@@ -177,7 +163,7 @@ const SelectWorkspaceChild = React.forwardRef(
                 </Typography>
                 <ShowComponent condition={workspace.id === currentWorkspaceId}>
                   <Iconify
-                    icon="eva:checkmark-fill"
+                    icon="solar:check-linear"
                     sx={{ width: 16, height: 16, color: "primary.main" }}
                   />
                 </ShowComponent>
@@ -187,15 +173,15 @@ const SelectWorkspaceChild = React.forwardRef(
           <ShowComponent condition={isFetchingNextPage}>
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5, height: "20px", minHeight: "20px" }}
+              sx={{ borderRadius: "4px", height: "20px", minHeight: "20px" }}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5, height: "20px", minHeight: "20px" }}
+              sx={{ borderRadius: "4px", height: "20px", minHeight: "20px" }}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5, height: "20px", minHeight: "20px" }}
+              sx={{ borderRadius: "4px", height: "20px", minHeight: "20px" }}
             />
           </ShowComponent>
         </Box>

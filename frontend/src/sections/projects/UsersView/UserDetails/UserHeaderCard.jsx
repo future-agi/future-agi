@@ -20,7 +20,7 @@ const UserHeaderCard = ({
       py={2}
       border="1px solid"
       borderColor="divider"
-      borderRadius={0.5}
+      borderRadius="4px"
       height={"100%"}
     >
       {/* Icon wrapper with light background */}

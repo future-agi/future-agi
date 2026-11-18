@@ -3,34 +3,28 @@ from django.db.models import QuerySet
 from rest_framework.request import Request
 
 DEFAULT_PAGE_SIZE = 10
+MAX_PAGE_SIZE = 100
 
 
 def paginate_queryset(queryset: QuerySet, request: Request) -> tuple[list, dict]:
     """
     Paginate a queryset using ``page_number`` and ``page_size`` query params.
 
-    Uses Django's ``Paginator.get_page()`` to resolve ``page_number``:
-    non-numeric values return the first page, while out-of-range values
-    are clamped to the nearest valid page. Note that values below 1 are
-    out of range, not non-numeric, so they clamp to the *last* page.
+    Django's ``Paginator.get_page()`` returns the first page for non-numeric
+    page numbers and the last page for out-of-range numbers, including zero
+    and negative numbers. Missing page numbers default to the first page.
 
-    Args:
-        queryset: The Django QuerySet to paginate.
-        request: DRF request whose ``query_params`` supply ``page_number``
-            (default 1) and ``page_size`` (default 10).
+    Missing, non-numeric, or non-positive page sizes use ``DEFAULT_PAGE_SIZE``.
+    Larger requests are capped at ``MAX_PAGE_SIZE``.
     """
-    # ``get_page`` already clamps out-of-range and non-numeric page numbers to
-    # a valid page, so pass the raw value straight through.
     page_number = request.query_params.get("page_number", 1)
-
-    # ``page_size`` feeds ``Paginator(..., per_page)``; a non-numeric or
-    # non-positive value would otherwise raise ValueError / ZeroDivisionError.
     try:
         page_size = int(request.query_params.get("page_size", DEFAULT_PAGE_SIZE))
     except (TypeError, ValueError):
         page_size = DEFAULT_PAGE_SIZE
     if page_size < 1:
         page_size = DEFAULT_PAGE_SIZE
+    page_size = min(page_size, MAX_PAGE_SIZE)
 
     paginator = Paginator(queryset, page_size)
     page = paginator.get_page(page_number)

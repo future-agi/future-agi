@@ -118,7 +118,7 @@ describe("Actions", () => {
 
     renderActions();
 
-    expect(screen.getByText(/2 Selected/)).toBeInTheDocument();
+    expect(screen.getByText(/2 selected/)).toBeInTheDocument();
     expect(screen.getByText("Delete")).toBeInTheDocument();
     expect(screen.getByText("Cancel")).toBeInTheDocument();
   });
@@ -133,7 +133,7 @@ describe("Actions", () => {
     renderActions();
 
     // selectedCount = 10 - 1 = 9
-    expect(screen.getByText(/9 Selected/)).toBeInTheDocument();
+    expect(screen.getByText(/9 selected/)).toBeInTheDocument();
   });
 
   it("does not show selection when selectAll=true but all items excluded", () => {
@@ -269,7 +269,7 @@ describe("Actions — edge cases", () => {
 
     // selectedCount = 0 - 0 = 0, userMadeSelection should be false
     // because totalRowCount > 0 is false
-    expect(screen.queryByText(/Selected/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /create agent/i }),
     ).toBeInTheDocument();

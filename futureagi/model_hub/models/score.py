@@ -260,6 +260,22 @@ class Score(BaseModel):
             ),
         ]
 
+    @staticmethod
+    def appended_value_history(previous_value, previous_history, previous_at):
+        """``previous_history`` plus an entry for the value being superseded.
+
+        Shared with the batched submit path, which already holds the previous row
+        and so must not re-read it just to build the same entry.
+        """
+        history = list(previous_history or [])
+        history.append(
+            {
+                "value": previous_value,
+                "at": (previous_at or timezone.now()).isoformat(),
+            }
+        )
+        return history
+
     def save(self, *args, **kwargs):
         update_fields = kwargs.get("update_fields")
         should_track_value_change = update_fields is None or "value" in update_fields
@@ -276,17 +292,11 @@ class Score(BaseModel):
                 previous = None
 
             if previous is not None and previous.value != self.value:
-                history = list(previous.value_history or [])
-                previous_at = (
-                    previous.updated_at or previous.created_at or timezone.now()
+                self.value_history = self.appended_value_history(
+                    previous.value,
+                    previous.value_history,
+                    previous.updated_at or previous.created_at,
                 )
-                history.append(
-                    {
-                        "value": previous.value,
-                        "at": previous_at.isoformat(),
-                    }
-                )
-                self.value_history = history
                 if update_fields is not None:
                     kwargs["update_fields"] = set(update_fields) | {"value_history"}
 
@@ -302,7 +312,7 @@ class Score(BaseModel):
                 f"source_type '{self.source_type}' requires '{fk_field}' to be set."
             )
         # Ensure no other source FK is set
-        for st, field in SCORE_SOURCE_FK_MAP.items():
+        for _st, field in SCORE_SOURCE_FK_MAP.items():
             if field != fk_field and getattr(self, f"{field}_id") is not None:
                 raise ValidationError(
                     f"Only '{fk_field}' should be set for source_type '{self.source_type}', "

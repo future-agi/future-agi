@@ -60,7 +60,8 @@ from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
 from model_hub.utils import annotation_queue_helpers as helpers
 from tracer.models.observation_span import ObservationSpan
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
+from tracer.models.span_notes import SpanNotes
 from tracer.services.clickhouse.v2.span_reader import CHSpan
 
 CH_READER_PATH = "tracer.services.clickhouse.v2.get_reader"
@@ -138,11 +139,27 @@ class _ReaderCM:
     def __exit__(self, *exc):
         return False
 
-    def get(self, span_id):
+    def get(self, span_id, *, project_id=None, project_ids=None):
         self.get_calls.append(str(span_id))
         if self._span is None:
             return None
+        if project_ids is not None and str(self._span.project_id) not in project_ids:
+            return None
         return self._span if str(span_id) == str(self._span.id) else None
+
+    def newest_span_projects(self, span_ids, project_ids):
+        if self._span is None or str(self._span.id) not in {str(s) for s in span_ids}:
+            return {}
+        if str(self._span.project_id) not in project_ids:
+            return {}
+        return {str(self._span.id): str(self._span.project_id)}
+
+    def list_by_ids(self, span_ids, *, project_id=None, **_):
+        if self._span is None or str(self._span.id) not in {str(s) for s in span_ids}:
+            return []
+        if project_id is not None and str(self._span.project_id) != str(project_id):
+            return []
+        return [self._span]
 
     def root_ids_by_trace_ids(self, trace_ids, project_ids=None):
         """Lean stub: ``{trace_id: (root_span_id, project_id)}``, roots only."""
@@ -160,7 +177,7 @@ class _ReaderCM:
         return [self._span] if str(self._span.trace_id) == str(trace_id) else []
 
     def roots_by_trace_ids(
-        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None
+        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None, **_
     ):
         # Mirror the real reader: parentless spans for the given traces.
         if self._span is None or getattr(self._span, "parent_span_id", None):
@@ -745,6 +762,9 @@ def test_collector_span_round_trips_create_to_annotate(
     # Score persists the collector soft id — and NO PG ObservationSpan backs it.
     assert str(score.observation_span_id) == str(span.id)
     assert not ObservationSpan.objects.filter(id=span.id).exists()
+    # The whole-item note lands on the CH-resolved span.
+    note = SpanNotes.objects.get(created_by_user=user)
+    assert (str(note.span_id), note.notes) == (str(span.id), "looks good")
 
 
 # ─────────── for_source: collector trace span_notes (TH-6622) ────────────────
@@ -827,6 +847,7 @@ class _CountingReaderCM:
 
     def __init__(self, spans):
         self._by_id = {str(s.id): s for s in spans}
+        self.newest_span_projects_calls = []
         self.list_by_ids_calls = []
         self.get_calls = []
 
@@ -836,10 +857,24 @@ class _CountingReaderCM:
     def __exit__(self, *exc):
         return False
 
-    def list_by_ids(self, span_ids, *, project_id=None, include_heavy=True):
+    def newest_span_projects(self, span_ids, project_ids):
+        ids = [str(s) for s in span_ids]
+        self.newest_span_projects_calls.append(ids)
+        return {
+            i: self._by_id[i].project_id
+            for i in ids
+            if i in self._by_id and self._by_id[i].project_id in project_ids
+        }
+
+    def list_by_ids(self, span_ids, *, project_id=None, include_heavy=True, **_):
         ids = [str(s) for s in span_ids]
         self.list_by_ids_calls.append(ids)
-        return [self._by_id[i] for i in ids if i in self._by_id]
+        return [
+            self._by_id[i]
+            for i in ids
+            if i in self._by_id
+            and (project_id is None or self._by_id[i].project_id == project_id)
+        ]
 
     def get(self, span_id):  # the per-item path — must NOT be hit when batched
         self.get_calls.append(str(span_id))
@@ -902,10 +937,14 @@ def test_list_serializer_batches_collector_ch_reads(organization, workspace, use
     ):
         data = QueueItemSerializer(items, many=True).data
 
-    # one batch span read, carrying every collector span id — never a per-item point read
+    # The items predate QueueItem.project: one lean read resolves every span id's
+    # project in the items' tenant, then one batch span read carries them all —
+    # never a per-item point read.
+    assert len(reader_cm.newest_span_projects_calls) == 1
+    assert set(reader_cm.newest_span_projects_calls[0]) == {str(s.id) for s in spans}
     assert len(reader_cm.list_by_ids_calls) == 1, reader_cm.list_by_ids_calls
     assert reader_cm.get_calls == [], reader_cm.get_calls
-    assert get_reader.call_count == 1
+    assert get_reader.call_count == 2
     assert set(reader_cm.list_by_ids_calls[0]) == {str(s.id) for s in spans}
     # one batch session read, carrying every collector session id
     assert resolve_sessions.call_count == 1
@@ -1099,8 +1138,16 @@ class _MultiSpanReaderCM:
     def __exit__(self, *exc):
         return False
 
+    def newest_trace_projects(self, trace_ids, project_ids):
+        ids = {str(t) for t in trace_ids}
+        return {
+            str(s.trace_id): str(s.project_id)
+            for s in self._spans
+            if str(s.trace_id) in ids and str(s.project_id) in project_ids
+        }
+
     def roots_by_trace_ids(
-        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None
+        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None, **_
     ):
         self.roots_calls.append((tuple(sorted(str(t) for t in trace_ids)), project_id))
         ids = {str(t) for t in trace_ids}
@@ -1161,17 +1208,29 @@ def test_for_items_scopes_read_to_item_project():
     assert reader.roots_calls == [((tid,), proj)]
 
 
-def test_for_items_null_project_falls_back_unscoped():
-    """A pre-denormalization item (project_id NULL) is read UNSCOPED (project_id
-    None) and still resolves — the migration degrades gracefully, never wrong."""
+@pytest.mark.django_db
+def test_for_items_null_project_reads_the_copy_in_the_items_tenant(
+    organization, workspace
+):
+    """A pre-denormalization item (project_id NULL) still resolves, from the copy
+    in its own organization: the trace id is resolved to a project of the item's
+    tenant, then read scoped to it. Another organization's copy of the same id is
+    never read (an unscoped read rendered whichever copy it met first)."""
+    project = _make_project(organization=organization, workspace=workspace)
     tid = str(uuid.uuid4())
     reader = _MultiSpanReaderCM(
-        [_make_chspan(project_id=str(uuid.uuid4()), trace_id=tid, parent_span_id="")]
+        [
+            _make_chspan(project_id=str(uuid.uuid4()), trace_id=tid, parent_span_id=""),
+            _make_chspan(project_id=str(project.id), trace_id=tid, parent_span_id=""),
+        ]
     )
+    item = _trace_item(tid, None)
+    item.organization = organization
+    item.workspace = workspace
     with mock.patch(CH_READER_PATH, return_value=reader):
-        cache = helpers.CollectorSourceCache.for_items([_trace_item(tid, None)])
-    assert cache.trace_root(tid) is not None
-    assert reader.roots_calls == [((tid,), None)]
+        cache = helpers.CollectorSourceCache.for_items([item])
+    assert cache.trace_root(tid).project_id == str(project.id)
+    assert reader.roots_calls == [((tid,), str(project.id))]
 
 
 def test_for_items_read_count_is_bounded_by_projects_not_items():
@@ -1197,3 +1256,108 @@ def test_for_items_read_count_is_bounded_by_projects_not_items():
     assert {pid for _tids, pid in reader.roots_calls} == {proj_a, proj_b}
     assert all(pid is not None for _tids, pid in reader.roots_calls)
     assert all(cache.trace_root(it.trace_id) is not None for it in items)
+
+
+# ─────────────────── trace content: project_source (TH-7077) ──────────────────
+
+
+@pytest.mark.django_db
+def test_trace_content_includes_project_source(organization, workspace, user):
+    """A trace item in a voice (simulator-source) project carries ``project_source``
+    so the FE renders the voice call UI instead of the raw trace tree. FAILS on
+    revert — the CH-native cutover dropped this key and regressed voice calls."""
+    project = _make_project(organization=organization, workspace=workspace)
+    project.source = ProjectSourceChoices.SIMULATOR.value
+    project.save(update_fields=["source"])
+    trace_id = str(uuid.uuid4())
+    span = _make_chspan(project_id=project.id, trace_id=trace_id, parent_span_id="")
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    item = QueueItem.objects.create(
+        queue=queue,
+        source_type=QueueItemSourceType.TRACE.value,
+        trace_id=trace_id,
+        project=project,
+        organization=organization,
+        workspace=workspace,
+        status=QueueItemStatus.PENDING.value,
+    )
+
+    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(span)):
+        content = helpers.resolve_source_content(item)
+
+    assert content["type"] == "trace"
+    assert content["project_source"] == ProjectSourceChoices.SIMULATOR.value
+
+
+@pytest.mark.django_db
+def test_trace_content_project_source_none_when_project_unset(
+    organization, workspace, user
+):
+    """A trace item with no denormalized project (NULL soft FK — e.g. a pre-backfill
+    row or a CH-outage add) degrades to ``project_source=None``. The lookup must
+    never raise: ``resolve_source_content`` wraps every branch in one try/except, so
+    a throw would collapse the whole item to the error sentinel."""
+    project = _make_project(organization=organization, workspace=workspace)
+    trace_id = str(uuid.uuid4())
+    span = _make_chspan(project_id=project.id, trace_id=trace_id, parent_span_id="")
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    item = QueueItem.objects.create(
+        queue=queue,
+        source_type=QueueItemSourceType.TRACE.value,
+        trace_id=trace_id,
+        project=None,
+        organization=organization,
+        workspace=workspace,
+        status=QueueItemStatus.PENDING.value,
+    )
+
+    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(span)):
+        content = helpers.resolve_source_content(item)
+
+    assert content["type"] == "trace"
+    assert content["project_source"] is None
+
+
+@pytest.mark.django_db
+def test_project_source_uses_preloaded_relation_no_n_plus_1(
+    organization, workspace, user
+):
+    """``project_source`` reads the ``select_related('project')`` the batched
+    export/list loops already fetch — resolving many items must issue ZERO extra
+    ``tracer_project`` queries. FAILS on revert if the helper re-queries Project per
+    item (the N+1 the export path must never regress)."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    project = _make_project(organization=organization, workspace=workspace)
+    project.source = ProjectSourceChoices.SIMULATOR.value
+    project.save(update_fields=["source"])
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    for _ in range(5):
+        QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace_id=str(uuid.uuid4()),
+            project=project,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+
+    # Mirror the export/list queryset: project is select_related, so the source
+    # read is a join hit already materialized, not a per-item query.
+    items = list(
+        QueueItem.objects.filter(queue=queue, deleted=False).select_related("project")
+    )
+    with CaptureQueriesContext(connection) as ctx:
+        sources = [helpers._queue_item_project_source(it) for it in items]
+
+    assert sources == [ProjectSourceChoices.SIMULATOR.value] * 5
+    project_queries = [q for q in ctx.captured_queries if "tracer_project" in q["sql"]]
+    assert not project_queries, f"N+1: {len(project_queries)} per-item project queries"

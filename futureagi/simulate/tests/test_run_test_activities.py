@@ -24,10 +24,14 @@ from simulate.models.run_test import RunTest
 from simulate.models.simulation_phone_number import SimulationPhoneNumber
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
+
 try:
     from ee.voice.services.phone_number_service import PhoneNumberService
 except ImportError:
-    PhoneNumberService = None
+    pytest.skip(
+        "EE voice phone number service is not available in OSS",
+        allow_module_level=True,
+    )
 
 # ============================================================================
 # Fixtures

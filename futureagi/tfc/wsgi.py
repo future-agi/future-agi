@@ -28,3 +28,12 @@ except ImportError as e:
 from django.core.wsgi import get_wsgi_application
 
 application = get_wsgi_application()
+
+# Django leaves ROOT_URLCONF lazy for WSGI just as it does for ASGI.  Import
+# every nested resolver only after the application registry and middleware are
+# ready, but before this module exposes a worker that can serve its first
+# customer request.  The traversal is deterministic Python import work and
+# performs no database bootstrap or mutation.
+from tfc.asgi_startup import warm_http_urlconf  # noqa: E402
+
+warm_http_urlconf()

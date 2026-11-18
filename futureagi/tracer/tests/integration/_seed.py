@@ -41,32 +41,49 @@ CHOICE_OPTIONS = ["good", "bad", "neutral"]
 # value:
 #   raw  -> value as stored          int  -> round to integer
 #   pct2 -> round(v/(v+1)*100, 2)    (agent-talk-percentage style)
+#   pct0 -> round(v/(v+1)*100)       (talk_ratio filter: integer-rounded)
 #
-# Three known display-vs-filter mismatches are currently NOT covered here:
-#   - wpm: filter round()s to int; displayed value is raw.
-#   - call.status: filter matches raw 'ended'; UI shows 'completed'.
-#   - call_type: filter reads raw_log.type (not stored) -> always 'outbound'.
-# The auto-matrix pins the filter's own rounding/raw-value semantics (so it
-# passes), leaving the display divergence untested.
-# TODO: add an explicit known-bug family to pin these display-vs-filter gaps.
+# The list and filter both apply the precision documented here. In particular,
+# WPM values are integer-rounded at list assembly and call_type accepts the
+# already-normalized attribute used by collector/seed rows when raw_log is
+# absent; provider-backed rows derive the same value from their raw payload.
 
 # (col_id, seed_key, formula, precision)
 VOICE_NUM_SPEC: list[tuple] = [
     # curated + FE aliases (handled) — read the real stored key
-    ("talk_ratio", "call.talk_ratio", lambda i: round(0.2 + i * 0.12, 4), "pct2"),
-    # wpm carry a fractional .4 (rounds down): the auto-matrix uses the filter's
-    # int precision so it passes (display-vs-filter gap not covered — see above).
+    ("talk_ratio", "call.talk_ratio", lambda i: round(0.2 + i * 0.12, 4), "pct0"),
+    # WPM carry a fractional .4 (rounds down) to exercise list/filter rounding.
     ("bot_wpm", "call.bot_wpm", lambda i: round(120.0 + i * 4 + 0.4, 4), "int"),
     ("user_wpm", "call.user_wpm", lambda i: round(110.0 + i * 5 + 0.4, 4), "int"),
     ("duration", "call.duration", lambda i: float(20 + i), "raw"),
     ("agent_latency", "avg_agent_latency_ms", lambda i: float(500 + i * 25), "int"),
     ("ai_interruptions", "ai_interruption_count", lambda i: float(i % 4), "int"),
     ("user_interruptions", "user_interruption_count", lambda i: float(i % 5), "int"),
-    ("ai_interruption_rate", "ai_interruption_rate", lambda i: round((i % 8) / 10.0 + 0.03, 4), "raw"),
-    ("user_interruption_rate", "user_interruption_rate", lambda i: round((i % 10) / 10.0 + 0.05, 4), "raw"),
-    ("stop_time_after_interruption", "avg_stop_time_after_interruption_ms", lambda i: float(100 + i * 10), "raw"),
+    (
+        "ai_interruption_rate",
+        "ai_interruption_rate",
+        lambda i: round((i % 8) / 10.0 + 0.03, 4),
+        "raw",
+    ),
+    (
+        "user_interruption_rate",
+        "user_interruption_rate",
+        lambda i: round((i % 10) / 10.0 + 0.05, 4),
+        "raw",
+    ),
+    (
+        "stop_time_after_interruption",
+        "avg_stop_time_after_interruption_ms",
+        lambda i: float(100 + i * 10),
+        "raw",
+    ),
     ("total_cost", "cost_breakdown.total", lambda i: round(0.01 * (i + 1), 4), "raw"),
-    ("customer_cost", "cost_breakdown.total", lambda i: round(0.01 * (i + 1), 4), "raw"),
+    (
+        "customer_cost",
+        "cost_breakdown.total",
+        lambda i: round(0.01 * (i + 1), 4),
+        "raw",
+    ),
     ("llm_cost", "cost_breakdown.llm", lambda i: round(0.005 * (i + 1), 4), "raw"),
     ("stt_cost", "cost_breakdown.stt", lambda i: round(0.002 * (i + 1), 4), "raw"),
     ("tts_cost", "cost_breakdown.tts", lambda i: round(0.003 * (i + 1), 4), "raw"),
@@ -92,16 +109,23 @@ VOICE_NUM_SPEC: list[tuple] = [
 # (col_id, seed_key, formula)
 _PERSONA = ["formal", "casual", "curt"]
 VOICE_STR_SPEC: list[tuple] = [
-    ("ended_reason", "ended_reason", lambda i: "customer-ended-call" if i % 2 == 0 else "exceeded-max-duration"),
-    # call.status is stored raw ('ended'); the auto-matrix filters that raw value
-    # (passes). The 'ended'->'completed' display normalization gap is NOT covered
-    # (see the spec header). call_type is seeded below but SKIPPED by the matrix
-    # (its filter reads raw_log.type, not this key — display gap uncovered).
+    (
+        "ended_reason",
+        "ended_reason",
+        lambda i: "customer-ended-call" if i % 2 == 0 else "exceeded-max-duration",
+    ),
+    # call.status is stored raw ('ended'); the voice-list matrix filters the
+    # normalized public value ('completed'). With no provider raw_log,
+    # call_type is an already-normalized collector attribute.
     ("call_status", "call.status", lambda i: "ended"),
     ("call_type", "call_type", lambda i: "inbound" if i % 2 == 0 else "outbound"),
     # fallback string metrics — seeded under the FE col_id key.
     ("scenario", "scenario", lambda i: ["refund", "billing", "support"][i % 3]),
-    ("scenario_type", "scenario_type", lambda i: "inbound" if i % 2 == 0 else "outbound"),
+    (
+        "scenario_type",
+        "scenario_type",
+        lambda i: "inbound" if i % 2 == 0 else "outbound",
+    ),
     ("simulation", "simulation", lambda i: f"sim_{i % 3}"),
     ("run_test", "run_test", lambda i: f"run_{i % 4}"),
     ("test_execution", "test_execution", lambda i: f"exec_{i % 3}"),
@@ -115,13 +139,25 @@ VOICE_STR_SPEC: list[tuple] = [
     ("persona", "persona", lambda i: _PERSONA[i % 3]),
     ("persona_gender", "persona_gender", lambda i: ["male", "female"][i % 2]),
     ("persona_accent", "persona_accent", lambda i: ["us", "uk", "in"][i % 3]),
-    ("persona_age_group", "persona_age_group", lambda i: ["18-25", "26-40", "40+"][i % 3]),
+    (
+        "persona_age_group",
+        "persona_age_group",
+        lambda i: ["18-25", "26-40", "40+"][i % 3],
+    ),
     ("persona_language", "persona_language", lambda i: ["en", "es"][i % 2]),
     ("persona_location", "persona_location", lambda i: ["us", "eu"][i % 2]),
     ("persona_profession", "persona_profession", lambda i: ["eng", "sales"][i % 2]),
     ("persona_personality", "persona_personality", lambda i: _PERSONA[i % 3]),
-    ("persona_communication_style", "persona_communication_style", lambda i: _PERSONA[i % 3]),
-    ("persona_conversation_speed", "persona_conversation_speed", lambda i: ["slow", "fast"][i % 2]),
+    (
+        "persona_communication_style",
+        "persona_communication_style",
+        lambda i: _PERSONA[i % 3],
+    ),
+    (
+        "persona_conversation_speed",
+        "persona_conversation_speed",
+        lambda i: ["slow", "fast"][i % 2],
+    ),
 ]
 
 # stored_key -> formula (deduped) for the seeder.

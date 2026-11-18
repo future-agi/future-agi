@@ -74,15 +74,21 @@ def ch_client():
             password=ch.get("CH_PASSWORD", ""),
         )
         native.execute("SELECT 1")
-        return _CHDriverAdapter(native)
     except Exception as exc:
         pytest.skip(f"ClickHouse not reachable for integration tests: {exc}")
+    try:
+        yield _CHDriverAdapter(native)
+    finally:
+        native.disconnect_connection()
 
 
 @pytest.fixture(scope="session")
 def ch_schema(ch_client):
     """Apply schema DDL once per session. Targets the database in settings.CLICKHOUSE['CH_DATABASE']."""
     from tracer.services.clickhouse.schema import get_all_schema_ddl
+    from tracer.services.clickhouse.v2.apply_schema_rewriter import (
+        with_dictionary_credentials,
+    )
 
     db = settings.CLICKHOUSE["CH_DATABASE"]
     ch_client.command(f"CREATE DATABASE IF NOT EXISTS {db}")
@@ -92,13 +98,26 @@ def ch_schema(ch_client):
     except Exception:
         pass
     for _name, ddl in get_all_schema_ddl():
-        rewritten = ddl.replace("futureagi.", f"{db}.")
+        rewritten = with_dictionary_credentials(
+            ddl.replace("futureagi.", f"{db}."),
+            settings.CLICKHOUSE.get("CH_USERNAME", "default"),
+            settings.CLICKHOUSE.get("CH_PASSWORD", ""),
+        )
         try:
             ch_client.command(rewritten)
         except Exception:
             # idempotent — table/view already exists from a previous session,
             # or DDL refers to dependencies that don't materialize here.
             pass
+    # Test-only parity with the deployed direct-write Score table. The legacy
+    # bootstrap DDL intentionally remains untouched by this release, while the
+    # US/EU runtime tables already carry this tenant fence. Integration queries
+    # must compile against that real shape or project-scoped Score regressions
+    # are hidden behind a test-only Code 47.
+    ch_client.command(
+        f"ALTER TABLE {db}.model_hub_score "
+        "ADD COLUMN IF NOT EXISTS tracer_project_id UUID"
+    )
     # The eval filter subqueries hardcode ``tracer_eval_logger`` with the v2
     # column shape (``is_deleted``), but the legacy DDL above and the django
     # boot hook create that name CDC-shaped. Reshape it to a structural clone
@@ -135,9 +154,16 @@ def ch_schema(ch_client):
     # (deleted = 0 OR deleted IS NULL)`` (see query_builders/eval_metrics.py,
     # schema.py:CDC_EVAL_LOGGER). Add those CDC columns (defaulting to
     # not-deleted) so both readers resolve against the seeded rows.
+    # `_peerdb_version` backs the enrichment reader's `ORDER BY _peerdb_version
+    # DESC LIMIT 1 BY id` page-scoped dedup; without it the eval read 500s.
+    # NB: no seeder writes `_peerdb_version` here, so it stays at the DEFAULT 0
+    # constant — the version-collapse/supersede behaviour is NOT exercised by
+    # this fixture, only kept present so the reader resolves. Add a seeder that
+    # sets distinct versions if that dedup ever needs real coverage.
     for col_ddl in (
         "_peerdb_is_deleted UInt8 DEFAULT 0",
         "deleted UInt8 DEFAULT 0",
+        "_peerdb_version Int64 DEFAULT 0",
     ):
         ch_client.command(
             f"ALTER TABLE {db}.tracer_eval_logger ADD COLUMN IF NOT EXISTS {col_ddl}"

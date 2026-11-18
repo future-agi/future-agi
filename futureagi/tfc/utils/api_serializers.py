@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
+from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES, ApiErrorCode
 from tfc.utils.serializer_fields import JsonValueField
 
 
@@ -169,6 +169,19 @@ class ApiTooLargeErrorSerializer(ApiTextErrorResponseSerializer):
     )
 
 
+class DatasetLimitCheckFailedErrorSerializer(ApiTextErrorResponseSerializer):
+    """503 of a dataset create whose plan limit could not be verified.
+
+    The code tells the client this 5xx carries a message for the user.
+    """
+
+    code = serializers.ChoiceField(
+        choices=(ApiErrorCode.DATASET_LIMIT_CHECK_FAILED.value,),
+        required=False,
+        allow_blank=True,
+    )
+
+
 class ApiSelectionTooLargeDetailSerializer(serializers.Serializer):
     type = serializers.ChoiceField(choices=("selection_too_large",))
     message = serializers.CharField()
@@ -212,6 +225,30 @@ class DeploymentInfoResultSerializer(serializers.Serializer):
 class DeploymentInfoResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = DeploymentInfoResultSerializer()
+
+
+class SetupCheckSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    label = serializers.CharField()
+    status = serializers.ChoiceField(choices=("passed", "warning", "failed", "skipped"))
+    required = serializers.BooleanField()
+    detail = serializers.CharField(allow_blank=True)
+    fix = serializers.CharField(allow_blank=True)
+    docs_url = serializers.CharField(allow_blank=True)
+
+
+class SetupChecksResultSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=("ok", "issues"))
+    mode = serializers.ChoiceField(choices=("live", "experiment"))
+    setup = serializers.ChoiceField(choices=("standalone", "distributed", "helm"))
+    collector_http_url = serializers.CharField()
+    account_exists = serializers.BooleanField()
+    checks = SetupCheckSerializer(many=True)
+
+
+class SetupChecksResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = SetupChecksResultSerializer()
 
 
 class LangfuseHealthResponseSerializer(serializers.Serializer):

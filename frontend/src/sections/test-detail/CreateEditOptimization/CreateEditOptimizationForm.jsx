@@ -242,7 +242,7 @@ const CreateEditOptimizationForm = ({ onClose, defaultValues, onSuccess }) => {
             backgroundColor: "background.default",
             padding: 2,
             paddingTop: 0,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             maxHeight: "300px",
             overflowY: "scroll",
           }}
@@ -274,7 +274,7 @@ const CreateEditOptimizationForm = ({ onClose, defaultValues, onSuccess }) => {
               border: "1px solid",
               bgColor: "divider",
               borderColor: "divider",
-              borderRadius: 0.5,
+              borderRadius: "4px",
               py: 2,
               px: 1.75,
             }}

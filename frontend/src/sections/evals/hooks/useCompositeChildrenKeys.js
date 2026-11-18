@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { evalDetailQuery } from "./useEvalDetail";
 
 // Internal: shared queries hook so callers can derive both the union of
 // required keys AND per-child schema (function_params_schema +
@@ -13,13 +13,7 @@ function useCompositeChildrenDetailResults(children) {
 
   return useQueries({
     queries: childIds.map((id) => ({
-      queryKey: ["evals", "detail", id],
-      queryFn: async () => {
-        const { data } = await axios.get(
-          endpoints.develop.eval.getEvalDetail(id),
-        );
-        return data?.result;
-      },
+      ...evalDetailQuery(id),
       enabled: !!id,
     })),
   });

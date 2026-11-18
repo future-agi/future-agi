@@ -122,6 +122,62 @@ func TestManager_RecordAndEvaluate_NoFire(t *testing.T) {
 	}
 }
 
+func TestWindowCounter_Mean(t *testing.T) {
+	wc := NewWindowCounter(time.Minute, 60)
+	if _, ok := wc.Mean(); ok {
+		t.Fatal("an empty counter has no mean")
+	}
+
+	wc.Record(100)
+	wc.Record(300)
+
+	mean, ok := wc.Mean()
+	if !ok || mean != 200 {
+		t.Fatalf("Mean() = (%f, %v), want (200, true)", mean, ok)
+	}
+}
+
+// A latency rule must look at how slow requests were, not at how many there were.
+func TestManager_LatencyAvgComparesTheMeanNotTheSum(t *testing.T) {
+	ch := &captureChannel{}
+	rule := NewRule("slow", "latency_avg", ">", 2000, time.Minute, 0, []string{"test"})
+	mgr := NewManagerWithChannels([]*Rule{rule}, map[string]Channel{"test": ch})
+
+	// Ten fast requests: 5000 ms in total, 500 ms on average.
+	for i := 0; i < 10; i++ {
+		mgr.Record("latency_avg", 500)
+	}
+	mgr.Evaluate()
+	if n := len(ch.Alerts()); n != 0 {
+		t.Fatalf("fired %d alerts on ten 500 ms requests; the mean is under the 2000 ms threshold", n)
+	}
+
+	// Ten slow ones pull the mean to 2750 ms.
+	for i := 0; i < 10; i++ {
+		mgr.Record("latency_avg", 5000)
+	}
+	mgr.Evaluate()
+	alerts := ch.Alerts()
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert once the mean passed the threshold, got %d", len(alerts))
+	}
+	if alerts[0].Value != 2750 {
+		t.Fatalf("alert value = %f, want the mean 2750", alerts[0].Value)
+	}
+}
+
+func TestManager_LatencyAvgWithNoRequestsDoesNotFire(t *testing.T) {
+	ch := &captureChannel{}
+	rule := NewRule("fast", "latency_avg", "<", 100, time.Minute, 0, []string{"test"})
+	mgr := NewManagerWithChannels([]*Rule{rule}, map[string]Channel{"test": ch})
+
+	mgr.Evaluate()
+
+	if n := len(ch.Alerts()); n != 0 {
+		t.Fatalf("fired %d alerts with no request in the window", n)
+	}
+}
+
 func TestManager_Cooldown(t *testing.T) {
 	ch := &captureChannel{}
 	rule := NewRule("test", "error_count", ">=", 1, time.Minute, 10*time.Second, []string{"test"})

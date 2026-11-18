@@ -15,6 +15,13 @@ import { generateNMarks } from "./common";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useController } from "react-hook-form";
 import CreateResponseSchema from "src/components/custom-model-options/CreateResponseSchema";
+import { buildResponseFormatMenu } from "src/utils/responseFormat";
+
+const DEFAULT_MENUS = [
+  { value: "text", label: "Text" },
+  { value: "json_object", label: "JSON" },
+  { value: "none", label: "None" },
+];
 
 const ModelOptions = ({
   responseSchema = [],
@@ -37,18 +44,10 @@ const ModelOptions = ({
     name: `${fieldNamePrefix}.responseFormat`,
     control,
   });
-  const defaultMenus = [
-    { value: "text", label: "Text" },
-    { value: "json_object", label: "JSON" },
-    { value: "none", label: "None" },
-  ];
-  const menuItems = useMemo(() => {
-    const menus = [...defaultMenus];
-    responseSchema.forEach((item) => {
-      menus.push({ label: item.name, value: item.id });
-    });
-    return menus;
-  }, [responseSchema]);
+  const menuItems = useMemo(
+    () => buildResponseFormatMenu({ defaults: DEFAULT_MENUS, responseSchema }),
+    [responseSchema],
+  );
   const renderInfo = () => {
     return (
       <Box

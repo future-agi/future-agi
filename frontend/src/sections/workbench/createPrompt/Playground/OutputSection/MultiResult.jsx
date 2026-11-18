@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, IconButton, Stack, Typography, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemePrompt } from "src/hooks/use-ag-theme";
 import "./MultiResult.css";
 import OutputMeta from "./OutputMeta";
@@ -343,16 +344,14 @@ const MultiResult = ({
               }}
               sx={{
                 bgcolor: "background.paper",
-                padding: theme.spacing(0.75, 1.5),
-                borderRadius: theme.spacing(0.5),
                 border: "1px solid",
                 borderColor: "divider",
               }}
             >
               <SvgColor
                 sx={{
-                  height: 20,
-                  width: 20,
+                  height: 16,
+                  width: 16,
                   color: selectedVersion?.is_draft ? "divider" : "text.primary",
                 }}
                 src="/assets/icons/ic_tag.svg"
@@ -377,16 +376,14 @@ const MultiResult = ({
               }}
               sx={{
                 bgcolor: "background.paper",
-                padding: theme.spacing(0.75, 1.5),
-                borderRadius: theme.spacing(0.5),
                 border: "1px solid",
                 borderColor: "divider",
               }}
             >
               <SvgColor
                 sx={{
-                  height: 20,
-                  width: 20,
+                  height: 16,
+                  width: 16,
                   color: selectedVersion?.is_draft ? "divider" : "text.primary",
                 }}
                 src="/assets/icons/ic_template.svg"

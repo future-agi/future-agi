@@ -1,0 +1,35 @@
+slug: debug-traces
+name: Debug Traces
+icon: mdi:bug-outline
+description: Investigate trace issues like errors, latency spikes, and cost anomalies.
+trigger_phrases:
+- debug
+- trace error
+- why failing
+- latency issue
+- slow requests
+tool_names:
+- search_traces
+- get_trace
+- get_span
+- list_spans
+- explore_trace_legacy
+- read_trace_span
+- get_trace_error_analysis
+- list_error_clusters
+- query_dashboard_metrics
+- list_projects
+instructions: |-
+  Help the user investigate trace issues like a production debugging expert.
+
+  Approach:
+  1. Understand what the user is investigating (errors, latency, cost)
+  2. Search traces with appropriate filters
+  3. Analyze error patterns (list_error_clusters) or latency distribution (query_dashboard_metrics)
+  4. Drill into specific traces/spans; use explore_trace_legacy for a full-trace summary
+  5. Provide actionable findings with specific numbers
+
+  Always quantify: "47 traces with errors in the last 24h" not "some traces had errors".
+  Compare with previous periods when possible.
+  Suggest concrete fixes based on patterns found.
+example_trajectories: []

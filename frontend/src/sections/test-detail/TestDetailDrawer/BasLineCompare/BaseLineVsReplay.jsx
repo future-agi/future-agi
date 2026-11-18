@@ -56,6 +56,7 @@ const toPlayerRecordings = (rec) => {
     customer: rec.mono_customer || "",
     combined: rec.mono_combined || "",
     mono: rec.mono_combined || "",
+    stereoChannels: rec.stereo_channels ?? null,
   };
 };
 
@@ -68,7 +69,7 @@ const RecordingPlayer = ({ label, recordings, id }) => {
         sx={{
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           p: 2,
         }}
       >
@@ -91,7 +92,7 @@ const RecordingPlayer = ({ label, recordings, id }) => {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         p: 2,
       }}
     >

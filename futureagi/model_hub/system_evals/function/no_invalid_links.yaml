@@ -1,6 +1,6 @@
 eval_id: 42
 name: no_invalid_links
-description: Checks if the text contains no invalid URLs
+description: Checks that all detected URLs are reachable on operator-approved public hosts. Links with a scheme other than http or https, and scheme-relative //host links (which are not resolved as https), count as invalid and are never requested; only http(s) links count toward the 20-link limit.
 eval_tags:
 - Output Validation
 visible_ui: true
@@ -18,27 +18,239 @@ config:
   config_params_desc:
     text: The input text to be evaluated for invalid links
   code: |
-    def evaluate(input, output, expected, context, **kwargs):
+    # Kept identical in both self-contained system-eval programs. The executor
+    # receives only the YAML code, not the model_hub Python package.
+    def _links(text):
         import re
-        import urllib.request
-        text = kwargs.get("text", output or "")
+
+        # Explicit schemes retain malformed/private candidates for refusal rather
+        # than treating them as link-free prose: any "<scheme>://" (RFC 3986
+        # scheme characters, so ftp://, ws:// and typos such as htp:// too) and
+        # scheme-relative "//host". A "//host" starts a word or follows "=" or
+        # ":" (an unquoted attribute such as src=//host, or a typo such as
+        # http:://host), and names a dotted domain, an IPv4 address or a
+        # bracketed IPv6 address, followed by the end, a port, "/", "?" or "#",
+        # so code comments and build labels such as "//TODO", "//go:build" or
+        # "//pkg:target" are not links. A "<scheme>://" link is matched whole
+        # by the first alternative, so its "//" is never a second link. Quotes
+        # include typographic ones, and the last domain label may be punycode.
+        # Bare domains need alphabetic TLDs.
+        pattern = (
+            r"(?<![\w@.+-])[A-Za-z][A-Za-z0-9+.-]*://[^\s<>\"']*|"
+            r"(?<![^\s\"'`(\[{<=:\u201c\u2018\u00ab])//(?:[^\s/?#@<>\"'\[\]]*@)?"
+            r"(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+"
+            r"(?:[A-Za-z]{2,}|xn--[A-Za-z0-9-]+)\.?|"
+            r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}|\[[0-9A-Fa-f.]*:[0-9A-Za-z:.%~_-]*\])"
+            r"(?::[0-9]+)?(?=[/?#\s<>\"'`)\]}\u201d\u2019\u00bb]|"
+            r"[.,;!?:]+(?:[\s<>\"'`)\]}\u201d\u2019\u00bb]|$)|$)"
+            r"(?:[/?#][^\s<>\"']*)?|"
+            r"(?<![\w@.+/:-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+"
+            r"[A-Za-z]{2,}(?![\w-]|\.[A-Za-z0-9])(?::[0-9]+)?(?:[/?#][^\s<>\"']*)?"
+        )
         text = str(text)
-        pattern = r"(?!.*@)(?:https?://)?(?:www\.)?\S+\.\S+"
-        links = re.findall(pattern, text)
-        if not links:
-            return {"score": 1.0, "reason": "No links found in output, so none are invalid"}
-        invalid_links = []
-        for link in links:
-            url = link
-            if not url.startswith(("http://", "https://")):
-                url = "http://" + url
+        result = []
+        checked = 0
+        # Whitespace-separated words, read once in step with the matches, so
+        # the email check below stays linear in the length of the text.
+        words = re.finditer(r"\S+", text)
+        word_end = 0
+        in_email = False
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            candidate = match.group().rstrip(".,;!?:")
+            # Drop unbalanced closing brackets at the end, counted once.
+            for close, opening in ((")", "("), ("]", "[")):
+                surplus = candidate.count(close) - candidate.count(opening)
+                trailing = len(candidate) - len(candidate.rstrip(close))
+                candidate = candidate[: len(candidate) - max(0, min(surplus, trailing))]
+            explicit = re.match(r"[a-z][a-z0-9+.-]*://|//", candidate, re.IGNORECASE)
+            if not explicit:
+                # A suffix after punctuation in an email is still part of the email.
+                while word_end <= match.start():
+                    word = next(words)
+                    word_end = word.end()
+                    authority = re.split(r"[/?#]", word.group(), maxsplit=1)[0]
+                    in_email = "@" in authority
+                if in_email:
+                    continue
+            if not explicit or explicit.group() == "//":
+                # Common filenames are prose, not links ("//package.json" is a code
+                # comment). An explicit scheme or www prefix disambiguates a real
+                # domain with one of these endings.
+                authority = re.split(r"[/?#]", candidate.removeprefix("//"), maxsplit=1)[0]
+                host = authority.rsplit("@", 1)[-1].split(":")[0]
+                if not host.lower().startswith("www.") and host.rsplit(".", 1)[-1].lower() in {
+                    "txt", "pdf", "json", "yaml", "yml", "csv", "png", "jpg", "jpeg",
+                    "gif", "svg", "zip", "py", "js", "ts", "log", "html", "css",
+                }:
+                    continue
+            if not explicit:
+                candidate = "http://" + candidate
+            result.append(candidate)
+            # Only http(s) links are requested; the others are never valid.
+            checked += _web_link(candidate)
+            if checked > 20:
+                raise ValueError("Too many links to validate")
+        return result
+
+
+    def _web_link(url):
+        return url.lower().startswith(("http://", "https://"))
+
+
+    def _link_status(url, deadline):
+        import http.client
+        import ipaddress
+        import os
+        import queue
+        import re
+        import socket
+        import threading
+        import time
+        from urllib.parse import urlsplit, urlunsplit
+
+        def refused():
+            return ValueError("Link destination is not permitted")
+
+        def hostname(value):
+            value = value.rstrip(".").encode("idna").decode("ascii").lower()
+            if not value or len(value) > 253:
+                raise refused()
             try:
-                req = urllib.request.Request(url, method='HEAD')
-                resp = urllib.request.urlopen(req, timeout=5)
-                if resp.status != 200:
-                    invalid_links.append(f"{url} (status {resp.status})")
-            except Exception as e:
-                invalid_links.append(f"{url} (unreachable: {str(e)})")
-        if invalid_links:
-            return {"score": 0.0, "reason": f"Found invalid links: {', '.join(invalid_links)}"}
-        return {"score": 1.0, "reason": f"All {len(links)} link(s) are valid"}
+                return str(ipaddress.ip_address(value))
+            except ValueError:
+                if not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in value.split(".")):
+                    raise refused()
+                return value
+
+        if any(ord(char) <= 32 or ord(char) == 127 for char in url) or "\\" in url:
+            raise refused()
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username is not None or parsed.password is not None:
+            raise refused()
+        host = hostname(parsed.hostname)
+        port = parsed.port if parsed.port is not None else (443 if parsed.scheme == "https" else 80)
+        if not 0 < port < 65536 or port in {6379, 5432, 3306, 27017, 9200, 11211, 2379}:
+            raise refused()
+        # Deployment authority only: input/kwargs cannot enable a destination.
+        setting = os.environ.get("LINK_EVAL_ALLOWED_HOSTS", "")
+        if len(setting) > 8192:
+            raise refused()
+        allowed = {hostname(item.strip()) for item in setting.split(",") if item.strip()}
+        if host not in allowed or host in {"metadata", "metadata.google.internal", "metadata.goog", "instance-data", "instance-data.ec2.internal"}:
+            raise refused()
+
+        def remaining():
+            budget = deadline - time.monotonic()
+            if budget <= 0:
+                raise TimeoutError("Link validation timed out")
+            return budget
+
+        # A bounded resolver wait; a stalled resolver thread cannot keep an eval
+        # alive. All DNS answers must be public, not just the chosen first address.
+        answers = queue.Queue(maxsize=1)
+        def resolve():
+            try:
+                answers.put(socket.getaddrinfo(host, port, type=socket.SOCK_STREAM))
+            except OSError:
+                answers.put([])
+        threading.Thread(target=resolve, daemon=True).start()
+        try:
+            records = answers.get(timeout=remaining())
+        except queue.Empty:
+            raise TimeoutError("Link validation timed out") from None
+        if not records:
+            raise ValueError("Link host could not be resolved")
+        for family, kind, proto, canonname, address in records:
+            ip = ipaddress.ip_address(address[0])
+            # Transition/tunnel addresses do not establish a directly public peer.
+            # Azure's WireServer is publicly numbered but is a metadata service;
+            # mirror the product's never-allowed metadata exception explicitly.
+            if not ip.is_global or ip.is_reserved or ip.is_multicast or str(ip) == "168.63.129.16" or (ip.version == 6 and (ip.is_site_local or ip.ipv4_mapped or ip.sixtofour or ip.teredo)):
+                raise refused()
+        connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        connection = connection_type(host, port, timeout=remaining())
+        guard = threading.Lock()
+        state = {"expired": False, "watch": None}
+        opened = []
+        def expire():
+            with guard:
+                state["expired"] = True
+                watch = state["watch"]
+            if watch is not None:
+                try:
+                    watch.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+        def pinned_connection(*args, **kwargs):
+            # Try each validated numeric sockaddr in order, as
+            # socket.create_connection does, without another DNS lookup.
+            error = None
+            for family, kind, proto, canonname, address in records:
+                budget = remaining()
+                raw = socket.socket(family, kind, proto)
+                # TLS wrapping takes over raw's descriptor; a duplicate still
+                # refers to the same connection, so expire() can always end it.
+                watch = raw.dup()
+                opened.extend((raw, watch))
+                with guard:
+                    expired = state["expired"]
+                    state["watch"] = watch
+                if expired:
+                    raise TimeoutError("Link validation timed out")
+                try:
+                    raw.settimeout(budget)
+                    raw.connect(address)
+                    return raw
+                except OSError as exc:
+                    error = exc
+                    raw.close()
+                    watch.close()
+            remaining()
+            raise error
+        # Keep Host and TLS verification/SNI on the original hostname while
+        # connecting to the validated numeric sockaddr without another DNS lookup.
+        connection._create_connection = pinned_connection
+        timer = threading.Timer(remaining(), expire)
+        timer.daemon = True
+        timer.start()
+        try:
+            path = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+            connection.request("HEAD", path, headers={"Connection": "close"})
+            with connection.getresponse() as response:
+                remaining()
+                # http.client neither follows redirects nor reads proxy settings.
+                return response.status
+        except Exception:
+            with guard:
+                expired = state["expired"]
+            if expired:
+                raise TimeoutError("Link validation timed out") from None
+            raise
+        finally:
+            timer.cancel()
+            connection.close()
+            for sock in opened:
+                sock.close()
+
+
+    def evaluate(input, output, expected, context, **kwargs):
+        import time
+        try:
+            links = _links(kwargs.get("text", output or ""))
+            if not links:
+                return {"score": 1.0, "reason": "No links found in output, so none are invalid"}
+            if not all(_web_link(link) for link in links):
+                return {"score": 0.0, "reason": "Found invalid links (not http or https)"}
+            deadline = time.monotonic() + 5
+            for link in links:
+                status = _link_status(link, deadline)
+                if status != 200:
+                    return {"score": 0.0, "reason": f"Found invalid links (status {status})"}
+            return {"score": 1.0, "reason": f"All {len(links)} link(s) are valid"}
+        except (ValueError, TimeoutError) as error:
+            reason = str(error)
+            if reason not in {"Link destination is not permitted", "Link validation timed out", "Link host could not be resolved", "Too many links to validate"}:
+                reason = "Link destination is not permitted"
+            return {"score": 0.0, "reason": reason}
+        except Exception:
+            return {"score": 0.0, "reason": "Link could not be validated"}
