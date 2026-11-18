@@ -858,9 +858,11 @@ async def set_eval_task_status_activity(input: SetStatusInput) -> SetStatusOutpu
         )
     if result["failed_continuous"]:
         info = activity.info()
-        await notify_eval_task_failed(
-            result["task_id"], info.workflow_id, info.workflow_run_id
-        )
+        # Always set here: this activity only runs inside the eval-task workflow.
+        if info.workflow_id is not None and info.workflow_run_id is not None:
+            await notify_eval_task_failed(
+                result["task_id"], info.workflow_id, info.workflow_run_id
+            )
     return SetStatusOutput(
         task_id=result["task_id"],
         changed=result["changed"],
