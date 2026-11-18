@@ -24599,6 +24599,84 @@ export const HarnessScenarioRowApiDraftChange = {
   unchanged: "unchanged",
 } as const;
 
+/**
+ * active and kept_as_written run; kept_as_written runs labelled as not proved.
+ */
+export type HarnessScenarioLifecycleApiState =
+  (typeof HarnessScenarioLifecycleApiState)[keyof typeof HarnessScenarioLifecycleApiState];
+
+export const HarnessScenarioLifecycleApiState = {
+  draft: "draft",
+  validated: "validated",
+  active: "active",
+  kept_as_written: "kept_as_written",
+  archived: "archived",
+} as const;
+
+export type HarnessScenarioProofApiControlsItem = { [key: string]: string };
+
+export type HarnessScenarioProofApiLeaksItem = { [key: string]: string };
+
+export interface HarnessScenarioProofApi {
+  /** Its checks ran and held on these versions. */
+  proved: boolean;
+  /** @minLength 1 */
+  outcome: string;
+  /** Tools whose steps never ran because they have no endpoint here. */
+  assumed: string[];
+  /** Each negative control: name, why, failed (the checks failed it, as they should), assumed. */
+  controls: HarnessScenarioProofApiControlsItem[];
+  leaks: HarnessScenarioProofApiLeaksItem[];
+  judged_only: boolean;
+  /** @minLength 1 */
+  proved_at: string;
+  /**
+   * The agent version the proof was made with; null for a proof made before it was recorded.
+   * @minLength 1
+   */
+  agent_version_id?: string;
+  /** @minLength 1 */
+  environment_version_id?: string;
+  /** @minLength 1 */
+  suite_version_id?: string;
+}
+
+export type HarnessScenarioLifecycleApiSourcesItem = { [key: string]: string };
+
+export type HarnessScenarioLifecycleApiNegativeControlsItem = {
+  [key: string]: string;
+};
+
+/**
+ * Its lifecycle on the pair in view; null for an environment that is not versioned.
+ */
+export interface HarnessScenarioLifecycleApi {
+  /** active and kept_as_written run; kept_as_written runs labelled as not proved. */
+  state: HarnessScenarioLifecycleApiState;
+  /**
+   * Why it is in this state, as a code; null when nothing holds it.
+   * @minLength 1
+   */
+  reason: string;
+  /** @minLength 1 */
+  reason_text: string;
+  /** @minLength 1 */
+  warning: string;
+  /** @minLength 1 */
+  warning_text: string;
+  /** Proved before proofs were checked per case. */
+  legacy: boolean;
+  proof: HarnessScenarioProofApi;
+  /** Where each requirement of the case comes from, with its label. */
+  sources: HarnessScenarioLifecycleApiSourcesItem[];
+  source_changed: string[];
+  source_changed_version: number;
+  /** @minLength 1 */
+  source_changed_version_id: string;
+  must_pass: boolean;
+  negative_controls: HarnessScenarioLifecycleApiNegativeControlsItem[];
+}
+
 export interface HarnessScenarioRowApi {
   id: string;
   scenario_id: string;
@@ -24633,6 +24711,7 @@ export interface HarnessScenarioRowApi {
   group?: string;
   /** Present while the list shows unsaved changes. */
   draft_change?: HarnessScenarioRowApiDraftChange;
+  lifecycle?: HarnessScenarioLifecycleApi;
 }
 
 /**
@@ -24672,6 +24751,19 @@ export interface HarnessScenarioGroupingApi {
   value: string;
   /** @minLength 1 */
   label: string;
+}
+
+/**
+ * Present for a versioned environment.
+ */
+export interface HarnessLifecycleCountsApi {
+  draft: number;
+  validated: number;
+  active: number;
+  kept_as_written: number;
+  archived: number;
+  proved: number;
+  not_proved: number;
 }
 
 /**
@@ -24757,6 +24849,7 @@ export interface HarnessScenarioListResponseApi {
   groupings: HarnessScenarioGroupingApi[];
   /** The name to show for each coverage level, sub-goal and noise bed on the page, keyed by it. */
   level_labels: HarnessScenarioListResponseApiLevelLabels;
+  lifecycle_counts?: HarnessLifecycleCountsApi;
   /** Scenario fields only the grader reads: never shown to the agent or to a simulated person. */
   private_fields?: string[];
   /** Cases a rebuild dropped from this suite version for a capability the agent lost, with why. */

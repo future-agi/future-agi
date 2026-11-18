@@ -71108,6 +71108,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        lifecycle_counts: {
+          $ref: "#/definitions/HarnessLifecycleCounts",
+        },
         private_fields: {
           description:
             "Scenario fields only the grader reads: never shown to the agent or to a simulated person.",
@@ -112451,6 +112454,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessLifecycleCounts: {
+      description: "Present for a versioned environment.",
+      required: [
+        "draft",
+        "validated",
+        "active",
+        "kept_as_written",
+        "archived",
+        "proved",
+        "not_proved",
+      ],
+      type: "object",
+      properties: {
+        draft: {
+          title: "Draft",
+          type: "integer",
+        },
+        validated: {
+          title: "Validated",
+          type: "integer",
+        },
+        active: {
+          title: "Active",
+          type: "integer",
+        },
+        kept_as_written: {
+          title: "Kept as written",
+          type: "integer",
+        },
+        archived: {
+          title: "Archived",
+          type: "integer",
+        },
+        proved: {
+          title: "Proved",
+          type: "integer",
+        },
+        not_proved: {
+          title: "Not proved",
+          type: "integer",
+        },
+      },
+    },
     HarnessRestoredCase: {
       description:
         "Cases the parent suite version had dropped that are back under their keys.",
@@ -112772,6 +112818,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["added", "changed", "unchanged"],
           "x-nullable": true,
+        },
+        lifecycle: {
+          $ref: "#/definitions/HarnessScenarioLifecycle",
         },
       },
     },
@@ -134693,6 +134742,113 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessScenarioLifecycle: {
+      description:
+        "Its lifecycle on the pair in view; null for an environment that is not versioned.",
+      required: [
+        "state",
+        "reason",
+        "reason_text",
+        "warning",
+        "warning_text",
+        "legacy",
+        "proof",
+        "sources",
+        "source_changed",
+        "source_changed_version",
+        "source_changed_version_id",
+        "must_pass",
+        "negative_controls",
+      ],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          description:
+            "active and kept_as_written run; kept_as_written runs labelled as not proved.",
+          type: "string",
+          enum: ["draft", "validated", "active", "kept_as_written", "archived"],
+        },
+        reason: {
+          title: "Reason",
+          description:
+            "Why it is in this state, as a code; null when nothing holds it.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        reason_text: {
+          title: "Reason text",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        warning: {
+          title: "Warning",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        warning_text: {
+          title: "Warning text",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        legacy: {
+          title: "Legacy",
+          description: "Proved before proofs were checked per case.",
+          type: "boolean",
+        },
+        proof: {
+          $ref: "#/definitions/HarnessScenarioProof",
+        },
+        sources: {
+          description:
+            "Where each requirement of the case comes from, with its label.",
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        source_changed: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+        },
+        source_changed_version: {
+          title: "Source changed version",
+          type: "integer",
+          "x-nullable": true,
+        },
+        source_changed_version_id: {
+          title: "Source changed version id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        must_pass: {
+          title: "Must pass",
+          type: "boolean",
+        },
+        negative_controls: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessScenarioPersona: {
       type: "object",
       properties: {
@@ -144404,6 +144560,91 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minimum: 0,
         },
       },
+    },
+    HarnessScenarioProof: {
+      required: [
+        "proved",
+        "outcome",
+        "assumed",
+        "controls",
+        "leaks",
+        "judged_only",
+        "proved_at",
+      ],
+      type: "object",
+      properties: {
+        proved: {
+          title: "Proved",
+          description: "Its checks ran and held on these versions.",
+          type: "boolean",
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        assumed: {
+          description:
+            "Tools whose steps never ran because they have no endpoint here.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        controls: {
+          description:
+            "Each negative control: name, why, failed (the checks failed it, as they should), assumed.",
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        leaks: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        judged_only: {
+          title: "Judged only",
+          type: "boolean",
+        },
+        proved_at: {
+          title: "Proved at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          description:
+            "The agent version the proof was made with; null for a proof made before it was recorded.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          minLength: 1,
+        },
+        suite_version_id: {
+          title: "Suite version id",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
     },
     InsightAskEvidence: {
       required: ["unit_id", "quote"],
