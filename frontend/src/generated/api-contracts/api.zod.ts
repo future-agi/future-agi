@@ -64243,6 +64243,20 @@ export const SimulateV3TestExecutionTrialRoutesResponse = zod.object({
                 .array(zod.number())
                 .describe("Every step's key in this cell."),
               count: zod.number(),
+              states: zod
+                .array(
+                  zod.enum([
+                    "step",
+                    "failed",
+                    "no_answer",
+                    "cut_off",
+                    "repeated",
+                    "absent",
+                  ]),
+                )
+                .describe(
+                  "Each occurrence's own state, in the order the trial took them.",
+                ),
             })
             .describe(
               "One per column; null when the trial has no route to compare.",
@@ -64293,6 +64307,20 @@ export const SimulateV3TestExecutionTrialRoutesResponse = zod.object({
             "absent",
           ]),
           count: zod.number(),
+          states: zod
+            .array(
+              zod.enum([
+                "step",
+                "failed",
+                "no_answer",
+                "cut_off",
+                "repeated",
+                "absent",
+              ]),
+            )
+            .describe(
+              "Each occurrence's own state, in order; trials split when these differ.",
+            ),
           trials: zod.array(zod.number()),
         }),
       ),

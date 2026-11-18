@@ -166,16 +166,21 @@ def _lined_up(
 
 
 def _cell(found: list[tuple[int, RouteCellState]]) -> RouteCell:
+    states = [state for _, state in found]
     if not found:
-        return {"state": "absent", "step": None, "steps": [], "count": 0}
-    if len(found) == 1:
-        key, state = found[0]
-        return {"state": state, "step": key, "steps": [key], "count": 1}
+        return {
+            "state": "absent",
+            "step": None,
+            "steps": [],
+            "count": 0,
+            "states": states,
+        }
     return {
-        "state": "repeated",
+        "state": states[0] if len(found) == 1 else "repeated",
         "step": found[0][0],
         "steps": [key for key, _ in found],
         "count": len(found),
+        "states": states,
     }
 
 
@@ -186,16 +191,22 @@ def _split(columns: list[RouteColumn], trials: list[RouteTrial]) -> RouteSplit |
         groups: list[RouteSplitGroup] = []
         for trial in compared:
             cell = (trial["cells"] or [])[index]
+            # Each occurrence's own end, in order: two trials that asked twice split when the asks ended differently.
             group = next(
                 (
                     one
                     for one in groups
-                    if (one["state"], one["count"]) == (cell["state"], cell["count"])
+                    if (one["state"], one["states"]) == (cell["state"], cell["states"])
                 ),
                 None,
             )
             if group is None:
-                group = {"state": cell["state"], "count": cell["count"], "trials": []}
+                group = {
+                    "state": cell["state"],
+                    "count": cell["count"],
+                    "states": cell["states"],
+                    "trials": [],
+                }
                 groups.append(group)
             group["trials"].append(trial["number"])
         if len(groups) > 1:

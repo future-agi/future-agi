@@ -113,7 +113,14 @@ def call_workers(
             call.snapshots.filter(
                 id=attempt, rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL
             )
-            .only("status", "snapshot_timestamp", "completed_at", "provider_call_data")
+            .only(
+                "status",
+                "snapshot_timestamp",
+                "started_at",
+                "completed_at",
+                "provider_call_data",
+                "transcripts",
+            )
             .first()
         )
         if snapshot is None:

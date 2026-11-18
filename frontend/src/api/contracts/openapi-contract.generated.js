@@ -138550,7 +138550,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RouteSplitGroup: {
-      required: ["state", "count", "trials"],
+      required: ["state", "count", "states", "trials"],
       type: "object",
       properties: {
         state: {
@@ -138569,6 +138569,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Count",
           type: "integer",
         },
+        states: {
+          description:
+            "Each occurrence's own state, in order; trials split when these differ.",
+          type: "array",
+          items: {
+            type: "string",
+            enum: [
+              "step",
+              "failed",
+              "no_answer",
+              "cut_off",
+              "repeated",
+              "absent",
+            ],
+          },
+        },
         trials: {
           type: "array",
           items: {
@@ -138580,7 +138596,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     RouteCell: {
       description:
         "One per column; null when the trial has no route to compare.",
-      required: ["state", "step", "steps", "count"],
+      required: ["state", "step", "steps", "count", "states"],
       type: "object",
       properties: {
         state: {
@@ -138612,6 +138628,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         count: {
           title: "Count",
           type: "integer",
+        },
+        states: {
+          description:
+            "Each occurrence's own state, in the order the trial took them.",
+          type: "array",
+          items: {
+            type: "string",
+            enum: [
+              "step",
+              "failed",
+              "no_answer",
+              "cut_off",
+              "repeated",
+              "absent",
+            ],
+          },
         },
       },
       "x-nullable": true,
