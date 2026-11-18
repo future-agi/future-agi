@@ -84,8 +84,11 @@ def test_only_the_cases_citing_the_broken_file_are_held(
     files = _files([{"id": "R-2", "order_id": "O-999"}])
     monkeypatch.setattr(
         harness_seed_joins,
-        "file_bodies",
-        lambda version, paths: {path: files[path] for path in paths if path in files},
+        "read_files",
+        lambda version, paths: (
+            {path: files[path] for path in paths if path in files},
+            True,
+        ),
     )
 
     views = _views(environment)
@@ -107,11 +110,11 @@ def test_an_archive_is_streamed_once_for_its_joins_and_remembered(monkeypatch):
     files = _files([{"id": "R-2", "order_id": "O-999"}])
     reads = []
 
-    def file_bodies(version, paths):
+    def read_files(version, paths):
         reads.append(set(paths))
-        return {path: files[path] for path in paths if path in files}
+        return {path: files[path] for path in paths if path in files}, True
 
-    monkeypatch.setattr(harness_seed_joins, "file_bodies", file_bodies)
+    monkeypatch.setattr(harness_seed_joins, "read_files", read_files)
     version = SimpleNamespace(
         archive_object_key="harness-sealed/once.tar.gz",
         documents={"file_digests": dict.fromkeys(files, "sha256:x")},
@@ -122,4 +125,50 @@ def test_an_archive_is_streamed_once_for_its_joins_and_remembered(monkeypatch):
 
     assert len(reads) == 1
     assert first == again and first
+    cache.clear()
+
+
+def test_an_unreadable_archive_is_never_remembered_and_its_citing_cases_are_held(
+    user, workspace, storage, monkeypatch
+):
+    """A storage blip is unknown, not "nothing broken": nothing is cached, and the case citing a seed file is held
+    instead of reading Active."""
+    from django.core.cache import cache
+
+    from simulate.models import HarnessEnvironmentVersion, HarnessSuiteMember
+    from simulate.services.harness_versioning import archives
+
+    cache.clear()
+    environment = _environment(user, workspace, storage, "seed-joins-unread")
+    _suite(environment, _ten())
+    citing = REFUND_KEYS[0]
+    member = HarnessSuiteMember.no_workspace_objects.get(
+        suite_version=environment.suite_version, scenario_key=citing
+    )
+    HarnessSuiteMember.no_workspace_objects.filter(id=member.id).update(
+        content={
+            **member.content,
+            "sources": [{"kind": "file", "ref": f"file:{REFUNDS}", "quote": "R-2"}],
+        }
+    )
+    _proofs(environment, dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED))
+    version = HarnessEnvironmentVersion._base_manager.get(
+        id=environment.environment_version_id
+    )
+    monkeypatch.setattr(
+        archives,
+        "stream_members",
+        lambda *_args: (_ for _ in ()).throw(OSError("storage blip")),
+    )
+
+    views = _views(environment)
+
+    assert harness_seed_joins.environment_broken_joins(version, {REFUNDS}) is None
+    assert cache.get(harness_seed_joins._cache_key(version.archive_object_key)) is None
+    assert (views[citing]["state"], views[citing]["reason"]) == (
+        "draft",
+        "seed_records_unread",
+    )
+    assert not runnable(views[citing])
+    assert views[REFUND_KEYS[1]]["reason"] != "seed_records_unread"
     cache.clear()

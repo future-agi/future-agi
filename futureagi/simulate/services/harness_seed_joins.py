@@ -20,7 +20,7 @@ from pathlib import PurePosixPath
 from django.core.cache import cache
 
 from simulate.services.harness_actor_rules import KNOWLEDGE_ROLES, file_roles
-from simulate.services.harness_scenario_sources import file_bodies
+from simulate.services.harness_scenario_sources import read_files
 
 # The field suffix that names a row of another seed file, and the field that names a row itself.
 JOIN_SUFFIX = "_id"
@@ -102,10 +102,11 @@ def broken_joins(files: Mapping[str, bytes]) -> dict[str, list[BrokenJoin]]:
 
 def environment_broken_joins(
     version: object, cited: set[str]
-) -> dict[str, list[BrokenJoin]]:
+) -> dict[str, list[BrokenJoin]] | None:
     """The broken joins of the seed files a version attaches, read only when a case cites an attached file. The
     archive is streamed once, for the roles file and every file that could hold seed rows (named by the version's
-    file digests), and what it holds is remembered by the archive, which never changes."""
+    file digests), and what it holds is remembered by the archive, which never changes. ``None`` when the archive
+    could not be read just now: unknown, never remembered, and never read as "nothing broken"."""
     archive = getattr(version, "archive_object_key", None)
     if not cited or not archive:
         return {}
@@ -123,7 +124,9 @@ def environment_broken_joins(
         and path.startswith("knowledge/")
         and path.endswith(SEED_FORMATS)
     }
-    files = file_bodies(version, {KNOWLEDGE_ROLES, *candidates})
+    files, readable = read_files(version, {KNOWLEDGE_ROLES, *candidates})
+    if not readable:
+        return None
     if KNOWLEDGE_ROLES in files:
         # A seed file the digests did not name (a version saved before they were kept) is read in a second pass.
         unread = {
@@ -134,7 +137,10 @@ def environment_broken_joins(
             and path not in files
         }
         if unread:
-            files = {**files, **file_bodies(version, unread)}
+            more, readable = read_files(version, unread)
+            if not readable:
+                return None
+            files = {**files, **more}
     found = broken_joins(files) if KNOWLEDGE_ROLES in files else {}
     cache.set(
         _cache_key(archive),

@@ -61,6 +61,7 @@ REASON_TEXTS = {
     "not_active": "Validated on these versions, which are not saved yet: save them to run it.",
     "proved_on_other_agent": "Proved with another agent version; validate it with this one to run it.",
     "broken_join": "Its seed records do not join up: {joins}. Map the field or add the rows.",
+    "seed_records_unread": "Its seed records could not be read just now, so it is held back. Try again in a few minutes.",
     "negative_control_passed": "The checks pass a wrong behaviour: {control} ({control_why}). Tighten {checks}.",
     "answer_leaked": 'What the {who} sees gives the answer away: {field} repeats "{excerpt}" from {grader_field}.',
     "source_unresolved": "A cited source is not in this environment: {kind} {ref}.",
@@ -589,14 +590,20 @@ def scenario_lifecycle(
                     ref=bad["ref"] or bad["label"],
                 ),
             )
-        broken = next(
-            (
-                joins.get(path) or joins.get(f"knowledge/{path}")
-                for path in sorted(cited_files.get(key) or ())
-                if joins.get(path) or joins.get(f"knowledge/{path}")
-            ),
-            None,
-        )
+        if joins is None:
+            # Whether its seed rows join up is unknown just now: held, never read as fine.
+            if cited_files.get(key) and view["state"] != "archived":
+                _demote(view, "seed_records_unread", reason_text("seed_records_unread"))
+            broken = None
+        else:
+            broken = next(
+                (
+                    joins.get(path) or joins.get(f"knowledge/{path}")
+                    for path in sorted(cited_files.get(key) or ())
+                    if joins.get(path) or joins.get(f"knowledge/{path}")
+                ),
+                None,
+            )
         if broken and view["state"] != "archived":
             # The rows it starts from do not join up: only the cases citing that file are held.
             _demote(

@@ -259,10 +259,16 @@ FILE_READ_LIMIT = 1024 * 1024
 def file_bodies(version: Any, paths: set[str]) -> dict[str, bytes]:
     """Each named file of a version's archive, read once (also under ``knowledge/``); a path the
     archive does not hold, or an unreadable archive, is left out."""
+    return read_files(version, paths)[0]
+
+
+def read_files(version: Any, paths: set[str]) -> tuple[dict[str, bytes], bool]:
+    """``file_bodies``, and whether the archive could be read: a caller that remembers what it read
+    must not remember an archive it could not read as one holding nothing."""
     from simulate.services.harness_versioning import archives
 
     if not paths or not getattr(version, "archive_object_key", None):
-        return {}
+        return {}, True
     wanted = paths | {f"knowledge/{path}" for path in paths}
     try:
         members = archives.stream_members(
@@ -274,13 +280,13 @@ def file_bodies(version: Any, paths: set[str]) -> dict[str, bytes]:
             version_id=str(getattr(version, "id", "")),
             exc_info=True,
         )
-        return {}
+        return {}, False
     found: dict[str, bytes] = {}
     for path in paths:
         body = members.get(path) or members.get(f"knowledge/{path}")
         if body is not None:
             found[path] = body
-    return found
+    return found, True
 
 
 def _rule_match(quote: str, rules: list[str]) -> int | None:
