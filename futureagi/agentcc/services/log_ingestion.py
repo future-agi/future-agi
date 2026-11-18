@@ -257,7 +257,7 @@ def _compute_cost_details(entry):
         and math.isfinite(gateway_cost)
         and gateway_cost >= 0
     ):
-        return gateway_cost
+        return {"total_cost": gateway_cost, "pricing_source": "provider_usage"}
 
     try:
         if gateway_cost and Decimal(str(gateway_cost)) > 0:
