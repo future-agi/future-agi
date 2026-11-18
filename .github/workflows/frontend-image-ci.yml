@@ -15,6 +15,7 @@ on:
       - "frontend/Dockerfile"
       - "frontend/frontend-healthcheck.sh"
       - "frontend/nginx*.conf*"
+      - "frontend/security-headers.conf"
       - "frontend/tests/image/**"
       - ".github/workflows/frontend-image-ci.yml"
   push:
@@ -24,6 +25,7 @@ on:
       - "frontend/Dockerfile"
       - "frontend/frontend-healthcheck.sh"
       - "frontend/nginx*.conf*"
+      - "frontend/security-headers.conf"
       - "frontend/tests/image/**"
       - ".github/workflows/frontend-image-ci.yml"
   workflow_dispatch:
