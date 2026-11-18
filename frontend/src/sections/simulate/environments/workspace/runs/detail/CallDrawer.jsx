@@ -2,13 +2,16 @@ import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { Drawer } from "@mui/material";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
-import { useHasWorkers } from "src/api/simulate-environments/runDetail";
+import {
+  useHasWorkers,
+  useTrialRoutes,
+} from "src/api/simulate-environments/runDetail";
 
 import ChatCallDrawer from "./ChatCallDrawer";
 import VoiceCallDrawer from "./VoiceCallDrawer";
 import { isVoiceCall } from "./callRouting";
 import useCallTraceOpen from "./useCallTraceOpen";
-import { resetTrialRoutesView } from "./participants/store";
+import useTrialRoutesView, { resetTrialRoutesView } from "./participants/store";
 
 /**
  * The per-call drawer. Opens on a trace row-click and routes to the matching
@@ -37,6 +40,22 @@ export default function CallDrawer({
   const hasWorkers = useHasWorkers(task?.id, task?.status);
   const [wide, setWide] = useState(false);
   if (hasWorkers !== undefined && hasWorkers !== wide) setWide(hasWorkers);
+  // A multi-agent call's trials come from its trial routes, the same list the trials table shows, so a trial off
+  // the table's loaded page is listed and opened too; other calls list the trials the table has loaded.
+  const showTools = useTrialRoutesView((view) => view.showTools);
+  const { data: routes } = useTrialRoutes(
+    wide ? executionId : null,
+    task?.sourceScenarioKey ?? null,
+    showTools,
+  );
+  const pickerTrials = routes
+    ? routes.trials.map((one) => ({
+        id: one.call_execution_id,
+        trialIndex: one.number,
+        status: one.result,
+      }))
+    : trials;
+  const pickTrial = routes ? (id) => onOpenTrial?.(id, null) : onPickTrial;
   const { traceOpen, onTracePanelMountedChange } = useCallTraceOpen();
   const covered = useDrawerCovered(open);
   // The trials table's open/tool-call view lasts while moving between trials, not past closing the drawer.
@@ -81,8 +100,8 @@ export default function CallDrawer({
             hasNext={hasNext}
             traceOpen={traceOpen}
             onTracePanelMountedChange={onTracePanelMountedChange}
-            trials={trials}
-            onPickTrial={onPickTrial}
+            trials={pickerTrials}
+            onPickTrial={pickTrial}
             onOpenTrial={onOpenTrial}
             wide={wide}
           />
@@ -97,8 +116,8 @@ export default function CallDrawer({
             hasNext={hasNext}
             traceOpen={traceOpen}
             onTracePanelMountedChange={onTracePanelMountedChange}
-            trials={trials}
-            onPickTrial={onPickTrial}
+            trials={pickerTrials}
+            onPickTrial={pickTrial}
             onOpenTrial={onOpenTrial}
             wide={wide}
           />
@@ -111,6 +130,7 @@ CallDrawer.propTypes = {
     id: PropTypes.string,
     simulationCallType: PropTypes.string,
     status: PropTypes.string,
+    sourceScenarioKey: PropTypes.string,
   }),
   executionId: PropTypes.string,
   agentType: PropTypes.string,

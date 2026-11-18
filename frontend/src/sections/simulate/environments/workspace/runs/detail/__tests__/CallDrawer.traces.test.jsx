@@ -21,6 +21,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
     ...actual,
     useCallDetail: () => ({ callDetail: null, isLoading: false }),
     useHasWorkers: () => mocks.hasWorkers,
+    useTrialRoutes: () => ({ data: undefined }),
     // A call not read yet is pending, as the next call is while its detail loads.
     useCallExecutionV3Detail: (id) =>
       id === "voice-1"

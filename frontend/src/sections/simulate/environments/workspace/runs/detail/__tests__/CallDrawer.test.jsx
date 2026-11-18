@@ -14,6 +14,7 @@ const useCallTraces = vi.fn(() => ({
   isError: false,
 }));
 const useHasWorkers = vi.fn(() => true);
+const useTrialRoutes = vi.fn(() => ({ data: undefined }));
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -22,6 +23,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
     useCallExecutionV3Detail: (...a) => useCallExecutionV3Detail(...a),
     useCallTraces: (...a) => useCallTraces(...a),
     useHasWorkers: (...a) => useHasWorkers(...a),
+    useTrialRoutes: (...a) => useTrialRoutes(...a),
   };
 });
 
@@ -177,6 +179,39 @@ describe("isVoiceCall", () => {
     expect(isVoiceCall({ simulationCallType: "voice" }, "text")).toBe(true);
     expect(isVoiceCall({ simulationCallType: null }, "voice")).toBe(true);
     expect(isVoiceCall({ simulationCallType: null }, "text")).toBe(false);
+  });
+});
+
+describe("CallDrawer — trial picker", () => {
+  it("lists a multi-agent call's trials from its trial routes, and opens one that is off the table's page", async () => {
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
+    useHasWorkers.mockReturnValue(true);
+    useTrialRoutes.mockReturnValue({
+      data: {
+        trials: [
+          { number: 1, call_execution_id: "chat-1", result: "passed" },
+          { number: 2, call_execution_id: "off-page", result: "failed" },
+        ],
+      },
+    });
+    const onOpenTrial = vi.fn();
+    render(
+      <CallDrawer
+        task={{ ...chatTask, sourceScenarioKey: "refund" }}
+        executionId="ex1"
+        trials={[{ id: "chat-1", trialIndex: 1, status: "passed" }]}
+        onPickTrial={vi.fn()}
+        onOpenTrial={onOpenTrial}
+        agentType="text"
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Trial 2, Failed" }));
+    expect(onOpenTrial).toHaveBeenCalledWith("off-page", null);
+    useTrialRoutes.mockReturnValue({ data: undefined });
   });
 });
 
