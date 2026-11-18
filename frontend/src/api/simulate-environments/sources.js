@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSafeAuthContext } from "src/auth/hooks/use-auth-context";
 import { addSampleEdits, draftReviewKey, sampleFileEdits } from "./draftReview";
 import { ALL_SCENARIOS } from "./_fixtures/draftReview";
 import {
@@ -61,8 +62,9 @@ const settle = (source) =>
 
 // Reads every file, skips ones the environment already has (same name and
 // size, or the same Knowledge base file), and returns #4158's prepare shape.
-// Each new file starts `reading` and settles to `ui.settlesTo` at `ui.readUntil`.
-const prepare = (queryClient, envId, files) => {
+// Each new file starts `reading` and settles to `ui.settlesTo` at `ui.readUntil`;
+// one the reader doesn't take by extension is refused at once, unread.
+const prepare = (queryClient, envId, files, owner) => {
   const known = new Set(
     summaryOf(queryClient, envId).sources.map((source) => source.source_id),
   );
@@ -73,6 +75,8 @@ const prepare = (queryClient, envId, files) => {
   });
   const now = Date.now();
   const sources = settled.map((source, index) => {
+    if (source.status === "unsupported")
+      return { ...source, ui: { ...source.ui, owner, readMs: 0 } };
     const readMs = Math.min(1500 + index * 600, 3000);
     return {
       ...source,
@@ -80,6 +84,7 @@ const prepare = (queryClient, envId, files) => {
       status_note: null,
       ui: {
         ...source.ui,
+        owner,
         readMs,
         readUntil: now + readMs,
         settlesTo: { status: source.status, status_note: source.status_note },
@@ -109,11 +114,14 @@ const prepare = (queryClient, envId, files) => {
 
 const usePrepare = (envId, filesOf) => {
   const queryClient = useQueryClient();
+  const { user } = useSafeAuthContext();
+  // Who added the file, by first name, as the backend will send it.
+  const owner = user?.name?.split(" ")[0] || "You";
   return useMutation({
     scope: { id: `env-sources-${envId}` },
     meta: { errorHandled: true },
     mutationFn: async (body) =>
-      prepare(queryClient, envId, await filesOf(body)),
+      prepare(queryClient, envId, await filesOf(body), owner),
     onSuccess: (result) => {
       queryClient.setQueryData(sourceSummaryKey(envId), (summary) => {
         const current = summary || sampleSourceSummary();
@@ -442,9 +450,22 @@ export const useAcceptSource = (envId) => {
       ui,
     }) => {
       const ids = idsOf(importRef);
-      const sources = summaryOf(queryClient, envId).sources.map((source) =>
-        ids.has(source.source_id) ? savedStatusOf(source) : source,
-      );
+      // The accepted scenarios that cite each file, for its Used by.
+      const scenariosOf = (sourceId) =>
+        (ui?.accepted || [])
+          .filter(
+            (item) =>
+              item.kind === "scenario" && item.cite?.sourceId === sourceId,
+          )
+          .flatMap((item) => (item.scenario || []).map((one) => one.t));
+      const sources = summaryOf(queryClient, envId).sources.map((source) => {
+        if (!ids.has(source.source_id)) return source;
+        const saved = savedStatusOf(source);
+        return {
+          ...saved,
+          ui: { ...saved.ui, scenarios: scenariosOf(source.source_id) },
+        };
+      });
       return checked(SourceAcceptResponseSchema, {
         draft: { id: STUB_DRAFT_ID, revision: (draft?.revision ?? 0) + 1 },
         snapshot_digest: `sha256:stub-snapshot-${sources.length}`,
@@ -455,13 +476,17 @@ export const useAcceptSource = (envId) => {
       });
     },
     onSuccess: (result, { import_ref: importRef }) => {
-      queryClient.setQueryData(sourceSummaryKey(envId), (summary) => ({
-        ...(summary || sampleSourceSummary()),
-        draft: true,
-        snapshot_digest: result.snapshot_digest,
-        sources: result.sources,
-        validation_status: "accepted",
-      }));
+      queryClient.setQueryData(sourceSummaryKey(envId), (summary) => {
+        const current = summary || sampleSourceSummary();
+        return {
+          ...current,
+          draft: true,
+          snapshot_digest: result.snapshot_digest,
+          sources: result.sources,
+          validation_status: "accepted",
+          ui: { ...current.ui, saved_at: new Date().toISOString() },
+        };
+      });
       queryClient.setQueryData(sourceCapabilitiesKey(envId), (capabilities) =>
         capabilities ? { ...capabilities, draft: result.draft } : capabilities,
       );

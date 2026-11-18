@@ -1,8 +1,16 @@
 // World & tools → Sources: the files an environment is built from, what each
 // is used as and who reads it in a run. Ids match the sources API.
 
+import { relativeTime } from "src/utils/format-time";
+
 const MB = 1024 * 1024;
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// What the world's records are, by the sources summary's `ui.data_mode`.
+const DATA_MODES = {
+  real_records: "Real records, a private sample",
+  synthetic: "Synthetic data",
+};
 
 export const ROLES = [
   {
@@ -65,19 +73,25 @@ export const dataImportCommand = (envId, source) =>
 export const isSaved = (source) =>
   source.status === "ready" || source.status === "rows_rejected";
 
-// What the file feeds once saved, from what reading it found.
+// What the file feeds once saved: rules from what reading it found, the
+// accepted scenarios that cite it, and its table. `count` is the Used by cell.
 export const usageOf = (source) => {
   const parsed = source.ui?.parsed;
   const saved = isSaved(source);
+  const rules =
+    saved && source.role === "policy" && parsed?.kind === "text"
+      ? parsed.passages.filter((passage) => passage.rule)
+      : [];
+  const scenarios = saved ? source.ui?.scenarios || [] : [];
+  const seeds =
+    saved && source.role === "seed_records" && parsed?.kind === "table"
+      ? [parsed]
+      : [];
   return {
-    rules:
-      saved && source.role === "policy" && parsed?.kind === "text"
-        ? parsed.passages.filter((passage) => passage.rule)
-        : [],
-    seeds:
-      saved && source.role === "seed_records" && parsed?.kind === "table"
-        ? [parsed]
-        : [],
+    rules,
+    scenarios,
+    seeds,
+    count: rules.length + scenarios.length + seeds.length,
   };
 };
 
@@ -126,9 +140,12 @@ export const SOURCES_COPY = {
       "The files and data this world is built from. None yet: attach one in builder chat, or add it here.",
     notSaved: (n) =>
       `${n} not saved yet. Accept the builder's proposal to add ${n === 1 ? "it" : "them"} to the world.`,
-    saved: (snapshot, notSaved) =>
+    saved: (summary, notSaved) =>
       [
-        snapshot && `Snapshot ${snapshot.replace(/^sha256:/, "").slice(0, 12)}`,
+        DATA_MODES[summary?.ui?.data_mode],
+        summary?.snapshot_digest &&
+          `snapshot ${summary.snapshot_digest.replace(/^sha256:/, "").slice(0, 12)}`,
+        summary?.ui?.saved_at && `updated ${relativeTime(summary.ui.saved_at)}`,
         notSaved && `${notSaved} not saved yet`,
       ]
         .filter(Boolean)

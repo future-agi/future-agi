@@ -28,6 +28,8 @@ export const sampleSourceSummary = () => ({
   snapshot_digest: null,
   sources: [],
   validation_status: null,
+  // `data_mode` is real_records or synthetic; `saved_at` is set on accept.
+  ui: { data_mode: "real_records", saved_at: null },
 });
 
 // How long after a copy is saved its Knowledge base file changes, for files

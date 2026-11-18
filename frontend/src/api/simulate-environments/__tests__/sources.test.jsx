@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { buildSourceReview } from "src/sections/simulate/environments/workspace/sources/sourceReview";
+import { usageOf } from "src/sections/simulate/environments/workspace/sources/sources.constants";
 import {
   sourceSummaryKey,
   useAcceptSource,
@@ -61,8 +62,14 @@ describe("environment sources stub", () => {
       fileOf("Refund policy 2026.pdf"),
     ]);
 
-    expect(ui.sources.map((source) => source.ui.settlesTo.status)).toEqual([
+    // Refused by its extension at once, so it never shows as reading.
+    expect(ui.sources.map((source) => source.status)).toEqual([
       "unsupported",
+      "reading",
+      "reading",
+    ]);
+    expect(ui.sources.map((source) => source.ui.settlesTo?.status)).toEqual([
+      undefined,
       "unreadable",
       "not_saved",
     ]);
@@ -71,8 +78,8 @@ describe("environment sources stub", () => {
     );
   });
 
-  it("accepting moves the files read from not saved to ready", async () => {
-    const prepared = await prepare([fileOf("policy.pdf")]);
+  it("accepting moves the files read to ready, used by its rules and scenarios", async () => {
+    const prepared = await prepare([fileOf("refund-policy.pdf")]);
     await act(async () => vi.advanceTimersByTime(5000));
     expect(statusesOf()).toEqual(["not_saved"]);
 
@@ -85,8 +92,15 @@ describe("environment sources stub", () => {
         expected_draft: prepared.capabilities.draft,
         expected_draft_digest: prepared.draft_digest,
         review: buildSourceReview(prepared.draft),
+        ui: {
+          accepted: prepared.ui.items.filter((item) => !item.blocking),
+          failed: [],
+        },
       }),
     );
     expect(statusesOf()).toEqual(["ready"]);
+    // 3 rules and the two day-boundary scenarios citing it, as the prototype counts.
+    const [saved] = client.getQueryData(sourceSummaryKey("env-1")).sources;
+    expect(usageOf(saved).count).toBe(5);
   });
 });

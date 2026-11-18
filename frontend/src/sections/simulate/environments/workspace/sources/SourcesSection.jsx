@@ -184,8 +184,7 @@ export default function SourcesSection({
   };
 
   let subtitle = COPY.subtitle.empty;
-  if (saved.length)
-    subtitle = COPY.subtitle.saved(summary?.snapshot_digest, notSaved);
+  if (saved.length) subtitle = COPY.subtitle.saved(summary, notSaved);
   else if (sources.length) subtitle = COPY.subtitle.notSaved(sources.length);
 
   return (
@@ -420,8 +419,7 @@ function SourceRow({
   const saved = isSaved(source);
   // Only a saved copy can have changed since it was added.
   const changed = saved && Boolean(source.ui?.changed_upstream);
-  const usage = usageOf(source);
-  const usedBy = usage.rules.length + usage.seeds.length;
+  const usedBy = usageOf(source).count;
 
   return (
     <Box
