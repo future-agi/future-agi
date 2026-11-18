@@ -12,12 +12,16 @@
 // The goal is that shipped tickets end up closed: what can be closed safely is
 // closed automatically; the rest are surfaced in #tech so their owners close them.
 //
-// Ticket discovery: diff the previous stable tag against this one, harvest PR
+// Ticket discovery: diff the previous stable tag against this one (every page of
+// the compare — a dev→main promotion can carry thousands of commits), harvest PR
 // numbers from the commit messages (squash `(#123)` and `Merge pull request #123`),
-// and union TH- ids from the release body, commit messages, and each PR's title +
-// body — so a ticket referenced only in a PR description is still caught, and one
-// PR can close several tickets. Branch names are NOT used (repo convention
-// `type/short-description` carries no ticket id).
+// and collect candidate TH- ids from the release body, commit messages, and each
+// PR's title + body + branch.
+//
+// A candidate is only acted on when Linear shows one of THIS release's PRs
+// attached to it (the GitHub integration's PR link). A ticket that is merely
+// mentioned — "pre-existing, see TH-123", a follow-up, a sub-issue named in a
+// parent's PR — has no such attachment and is left alone: not closed, not nudged.
 //
 // Scope: Tech team only. Customer (CSR-) tickets are intentionally left alone.
 //
@@ -55,6 +59,9 @@ const DRY = DRY_RUN === 'true'
 // Linear team prefixes to look for. Tech only by design; add keys to widen scope.
 const TEAM_PREFIXES = ['TH']
 const ID_RE = new RegExp(`\\b(${TEAM_PREFIXES.join('|')})-\\d+\\b`, 'gi')
+// A Linear attachment pointing at a PR in this repo (what the GitHub integration
+// adds when a PR is linked to the ticket).
+const PR_URL_RE = new RegExp(`^https://github\\.com/${OWNER}/${REPO}/pull/(\\d+)(?:[/?#]|$)`, 'i')
 
 // State whose tickets are auto-closed to Done (clearly shipped + approved).
 const CLOSE_STATES = new Set(['Ready to Merge'])
@@ -64,6 +71,7 @@ const SKIP_TYPES = new Set(['completed', 'canceled', 'duplicate', 'triage', 'bac
 const SKIP_STATE_NAMES = new Set(['On hold'])
 
 const CONCURRENCY = 8
+const COMPARE_PAGE = 100
 
 // ── Linear API ──────────────────────────────────────────────────────────────
 
@@ -91,11 +99,17 @@ async function resolveIssue(identifier) {
         state { id name type }
         assignee { displayName }
         team { key states { nodes { id name type } } }
+        attachments(first: 250) { nodes { url } }
       }
     }
   `, { id: identifier })
   const issue = data?.issue
   if (!issue) return null
+  const attachedPrs = new Set()
+  for (const a of issue.attachments?.nodes ?? []) {
+    const m = PR_URL_RE.exec(a.url ?? '')
+    if (m) attachedPrs.add(Number(m[1]))
+  }
   const states = issue.team?.states?.nodes ?? []
   const done =
     states.find(s => s.type === 'completed' && s.name === 'Done') ??
@@ -110,6 +124,7 @@ async function resolveIssue(identifier) {
     assigneeName: issue.assignee?.displayName ?? null,
     doneStateId:  done?.id ?? null,
     doneName:     done?.name ?? null,
+    attachedPrs,
   }
 }
 
@@ -152,10 +167,17 @@ async function getReleaseBody(version) {
   return rel?.body ?? ''
 }
 
+// PR fetches are shared by text harvesting and the shipped-PR gate.
+const prCache = new Map()
+function getPr(number) {
+  if (!prCache.has(number)) prCache.set(number, gh(`/repos/${OWNER}/${REPO}/pulls/${number}`))
+  return prCache.get(number)
+}
+
 async function getPrText(number) {
-  const pr = await gh(`/repos/${OWNER}/${REPO}/pulls/${number}`)
+  const pr = await getPr(number)
   if (!pr) return ''
-  return `${pr.title ?? ''}\n${pr.body ?? ''}`
+  return `${pr.title ?? ''}\n${pr.body ?? ''}\n${pr.head?.ref ?? ''}`
 }
 
 async function previousStableTag(version) {
@@ -171,14 +193,21 @@ async function previousStableTag(version) {
 // Diff the previous stable tag against this one and harvest PR numbers and ticket
 // ids from every commit message. release-please writes commit-SHA links (not PR
 // refs) into the release body, so this compare — not the body — is the reliable
-// source of PRs.
+// source of PRs. The compare returns at most 250 commits unless paged, so walk
+// every page.
 async function compareData(version) {
   const prev = await previousStableTag(version)
-  if (!prev) return { prev: null, prNumbers: [], ids: new Set() }
-  const cmp = await gh(`/repos/${OWNER}/${REPO}/compare/${prev}...${version}`)
+  if (!prev) return { prev: null, prNumbers: [], ids: new Set(), shas: new Set() }
+  const commits = []
+  for (let page = 1; ; page++) {
+    const cmp = await gh(`/repos/${OWNER}/${REPO}/compare/${prev}...${version}?per_page=${COMPARE_PAGE}&page=${page}`)
+    const batch = cmp?.commits ?? []
+    commits.push(...batch)
+    if (batch.length < COMPARE_PAGE) break
+  }
   const prNumbers = new Set()
   const ids = new Set()
-  for (const c of cmp?.commits ?? []) {
+  for (const c of commits) {
     const msg = c.commit?.message ?? ''
     // Only the two real merge formats — squash `(#123)` and merge-commit
     // `Merge pull request #123` — so stray `#123` mentions in prose don't drag
@@ -186,7 +215,7 @@ async function compareData(version) {
     for (const m of msg.matchAll(/(?:\(#|Merge pull request #)(\d+)/g)) prNumbers.add(Number(m[1]))
     for (const id of extractIds(msg)) ids.add(id)
   }
-  return { prev, prNumbers: [...prNumbers], ids }
+  return { prev, prNumbers: [...prNumbers], ids, shas: new Set(commits.map(c => c.sha)) }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -260,10 +289,10 @@ async function main() {
   log(`[linear-release-done] ${VERSION}${DRY ? ' (dry run)' : ''} on ${GITHUB_REPOSITORY}`)
 
   // PR numbers from the tag compare (reliable) plus any written into the release
-  // body. Ids unioned from release body, commit messages, and each PR's title +
-  // body so a ticket referenced in ANY of them is caught.
+  // body. Candidate ids unioned from release body, commit messages, and each PR's
+  // title + body + branch; each is then checked for an attached release PR below.
   const body = await getReleaseBody(VERSION)
-  const { prev, prNumbers: cmpPrNumbers, ids: cmpIds } = await compareData(VERSION)
+  const { prev, prNumbers: cmpPrNumbers, ids: cmpIds, shas } = await compareData(VERSION)
 
   const prNumbers = new Set(cmpPrNumbers)
   for (const m of body.matchAll(/#(\d+)/g)) prNumbers.add(Number(m[1]))
@@ -276,11 +305,28 @@ async function main() {
   const identifiers = [...ids].sort()
   log(`[linear-release-done] ${identifiers.length} ticket reference(s): ${identifiers.join(', ') || '(none)'}`)
 
-  const moved = [], nudged = [], skipped = [], notFound = []
+  const moved = [], nudged = [], skipped = [], notFound = [], unlinked = []
 
   await mapWithConcurrency(identifiers, CONCURRENCY, async (identifier) => {
     const issue = await resolveIssue(identifier)
     if (!issue) { log(`  ❓ ${identifier}: not found in Linear`); notFound.push(identifier); return }
+
+    // Only a ticket with one of this release's PRs attached shipped here. A bare
+    // mention in a PR, commit or the release body is not enough. An attached PR is
+    // in the release when it is merged and either its number was harvested from
+    // the commits or its merge commit is in the compare range (rebase merges and
+    // hand-written merge messages carry no `(#123)`).
+    const attached = [...issue.attachedPrs].sort((a, b) => a - b)
+    const inRelease = await Promise.all(attached.map(async (n) => {
+      const pr = await getPr(n)
+      return Boolean(pr?.merged_at) && (prNumbers.has(n) || shas.has(pr.merge_commit_sha))
+    }))
+    const shippedPrs = attached.filter((_, i) => inRelease[i])
+    if (!shippedPrs.length) {
+      log(`  ·  ${issue.identifier}: mentioned, but no PR from this release is attached — ignored`)
+      unlinked.push(issue.identifier); return
+    }
+    const via = shippedPrs.map(n => `[#${n}](https://github.com/${OWNER}/${REPO}/pull/${n})`).join(', ')
 
     // Skip terminal / not-in-flight states.
     if (SKIP_TYPES.has(issue.stateType) || SKIP_STATE_NAMES.has(issue.stateName)) {
@@ -296,19 +342,19 @@ async function main() {
       }
       const ok = await moveIssueToDone(issue)
       if (!ok) { skipped.push({ identifier: issue.identifier, reason: 'update failed' }); return }
-      await commentOnIssue(issue, `Shipped in [${VERSION}](${RELEASE_URL || ''}). Auto-closed by the release ticket-sync.`)
+      await commentOnIssue(issue, `Shipped in [${VERSION}](${RELEASE_URL || ''}) via ${via}. Auto-closed by the release ticket-sync.`)
       log(`  ✅ ${issue.identifier}: ${issue.stateName} → ${issue.doneName}`)
       moved.push({ identifier: issue.identifier }); return
     }
 
     // In-flight but not "Ready to Merge": comment on the ticket and collect it for
     // the #tech round-up so its owner closes it.
-    await commentOnIssue(issue, `Shipped in [${VERSION}](${RELEASE_URL || ''}) but this ticket is still in "${issue.stateName}". If the work is complete, please move it to Done — it wasn't auto-closed because it wasn't in "Ready to Merge".`)
+    await commentOnIssue(issue, `Shipped in [${VERSION}](${RELEASE_URL || ''}) via ${via}, but this ticket is still in "${issue.stateName}". If the work is complete, please move it to Done — it wasn't auto-closed because it wasn't in "Ready to Merge".`)
     log(`  📣 ${issue.identifier}: in "${issue.stateName}" — flagged for #tech`)
     nudged.push({ identifier: issue.identifier, stateName: issue.stateName, assigneeName: issue.assigneeName, url: issue.url })
   })
 
-  log(`[linear-release-done] done — closed ${moved.length}, flagged ${nudged.length}, skipped ${skipped.length}, not-found ${notFound.length}`)
+  log(`[linear-release-done] done — closed ${moved.length}, flagged ${nudged.length}, skipped ${skipped.length}, not-found ${notFound.length}, mentioned-only ${unlinked.length}`)
   await postSlack({ moved, nudged, skipped, notFound })
 }
 
