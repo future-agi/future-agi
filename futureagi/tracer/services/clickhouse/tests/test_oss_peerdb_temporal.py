@@ -3,6 +3,7 @@
 import asyncio
 import io
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -498,6 +499,62 @@ assert not any(name == 'django' or name.startswith('django.') for name in sys.mo
             timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_entry_point_reports_and_leaves_without_interpreter_shutdown(self):
+        # An exit hook that prints proves whether interpreter shutdown ran.
+        code = """
+import atexit, runpy, sys
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+from temporalio.api.enums.v1 import IndexedValueType, NamespaceState
+from temporalio.api.namespace.v1 import NamespaceInfo
+from temporalio.api.operatorservice.v1 import ListSearchAttributesResponse
+from temporalio.api.workflowservice.v1 import DescribeNamespaceResponse
+
+atexit.register(print, "interpreter shutdown ran")
+registered = DescribeNamespaceResponse(
+    namespace_info=NamespaceInfo(
+        name="default", state=NamespaceState.NAMESPACE_STATE_REGISTERED
+    )
+)
+custom = {"MirrorName": IndexedValueType.INDEXED_VALUE_TYPE_TEXT}
+listed = ListSearchAttributesResponse(
+    custom_attributes=custom if sys.argv[1] == "present" else {}
+)
+client = SimpleNamespace(
+    workflow_service=SimpleNamespace(
+        describe_namespace=AsyncMock(return_value=registered)
+    ),
+    operator_service=SimpleNamespace(
+        list_search_attributes=AsyncMock(return_value=listed)
+    ),
+)
+sys.argv = ["oss_peerdb_temporal"]
+with patch("temporalio.client.Client.connect", AsyncMock(return_value=client)):
+    runpy.run_module(
+        "tracer.services.clickhouse.oss_peerdb_temporal", run_name="__main__"
+    )
+"""
+        # Inherited unbuffered output or Temporal settings would change the check.
+        dropped = {
+            "PYTHONUNBUFFERED",
+            "TEMPORAL_CLI_ADDRESS",
+            "PEERDB_TEMPORAL_NAMESPACE",
+        }
+        env = {name: value for name, value in os.environ.items() if name not in dropped}
+        for attribute, ready in (("present", True), ("absent", False)):
+            with self.subTest(attribute=attribute):
+                result = subprocess.run(
+                    [sys.executable, "-B", "-c", code, attribute],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    env=env,
+                )
+                self.assertEqual(result.returncode, 0 if ready else 1, result.stderr)
+                self.assertEqual(
+                    result.stdout, json.dumps({"ready": ready, "applied": False}) + "\n"
+                )
 
 
 if __name__ == "__main__":

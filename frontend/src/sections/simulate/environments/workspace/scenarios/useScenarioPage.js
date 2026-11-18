@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
 import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHooks";
+import { selectableRowIds } from "./scenarios.constants";
 
 /**
  * The server-pagination seam.
@@ -68,7 +69,9 @@ export default function useScenarioPage({
     return out.map((g) => ({ ...g, totalInGroup: groupCounts[g.name] ?? g.rows.length }));
   }, [rows, appliedGroupBy, groupCounts, levelLabels]);
 
-  const pageIds = useMemo(() => rows.map((r) => r.id).filter(Boolean), [rows]);
+  // Rows only the unsaved changes add can't be selected, so the page's
+  // header checkbox leaves them out.
+  const pageIds = useMemo(() => selectableRowIds(rows), [rows]);
 
   return {
     rows,

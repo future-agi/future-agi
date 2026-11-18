@@ -28,6 +28,11 @@ describe("useEnvironmentsTab", () => {
     expect(result.current.tab).toBe("my-environments");
   });
 
+  it("reads the personas tab param", () => {
+    const { result } = renderTab("/x?tab=personas");
+    expect(result.current.tab).toBe("personas");
+  });
+
   it("falls back to build for an unknown tab param", () => {
     const { result } = renderTab("/x?tab=bogus");
     expect(result.current.tab).toBe("build");

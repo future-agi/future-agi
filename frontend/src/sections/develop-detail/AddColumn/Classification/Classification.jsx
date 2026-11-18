@@ -27,6 +27,7 @@ import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import { transformDynamicColumnConfig } from "../common";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const getDefaultValue = () => {
   return {
@@ -158,7 +159,7 @@ export const ClassificationChild = ({
             mb: 2,
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             {editId ? "Edit Classification" : "Classification"}
           </Typography>
           <IconButton
@@ -168,7 +169,7 @@ export const ClassificationChild = ({
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Box
@@ -205,7 +206,7 @@ export const ClassificationChild = ({
           />
           <Accordion defaultExpanded>
             <AccordionSummary>
-              <Typography fontSize="12px" fontWeight={700}>
+              <Typography fontSize="12px" fontWeight={600}>
                 Labels
               </Typography>
             </AccordionSummary>
@@ -311,10 +312,12 @@ const Classification = ({ initialData, onFormSubmit }) => {
     select: (data) => data?.data?.result?.metadata,
   });
 
+  const covered = useDrawerCovered(openClassification);
   return (
     <Drawer
       anchor="right"
       open={openClassification}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       variant="persistent"
       PaperProps={{
@@ -322,8 +325,7 @@ const Classification = ({ initialData, onFormSubmit }) => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

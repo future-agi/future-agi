@@ -1,14 +1,7 @@
-import {
-  Badge,
-  Box,
-  Button,
-  Divider,
-  IconButton,
-  Stack,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import SelectionBar from "src/components/selection-bar";
+import { Badge, Box, IconButton, Stack } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, {
   useCallback,
   useEffect,
@@ -21,7 +14,7 @@ import SvgColor from "src/components/svg-color";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import ColumnDropdown from "src/components/ColumnDropdown/ColumnDropdown";
-import FilterPanel from "src/components/filter-panel/FilterPanel";
+import { ObjectFilterPanel } from "src/components/filter";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import {
@@ -159,7 +152,7 @@ const TableAction = () => {
           />
         </IconButton>
       </Stack>
-      <FilterPanel
+      <ObjectFilterPanel
         anchorEl={filterRef?.current}
         open={openFilter}
         onClose={() => setOpenFilter(false)}
@@ -183,7 +176,6 @@ const TableAction = () => {
 };
 
 const RowActions = () => {
-  const theme = useTheme();
   const {
     selectedRows,
     handleCancelSelection,
@@ -194,63 +186,23 @@ const RowActions = () => {
     excludingIds,
   } = useAlertSheetView();
 
-  const message = selectedAll
-    ? `${totalRows - excludingIds?.length} Selected`
-    : `${selectedRows.length} Selected`;
+  const count = selectedAll
+    ? totalRows - excludingIds?.length
+    : selectedRows.length;
 
   return (
-    <Stack
-      direction={"row"}
-      gap={2}
-      alignItems={"center"}
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 0.5,
-        padding: theme.spacing(0, 2),
-        height: "38px",
-      }}
-    >
-      <Typography
-        variant="s1"
-        fontWeight={"fontWeightMedium"}
-        color={"primary.main"}
-      >
-        {message}
-      </Typography>
-      <Divider
-        orientation="vertical"
-        sx={{
-          borderColor: "divider",
-          height: "80%",
-        }}
-      />
-      <Button
-        variant="text"
-        size="small"
-        onClick={handleResolveAlerts}
-        disabled={isResolving}
-        sx={{
-          mr: 1,
-          typography: "s1",
-          color: "text.primary",
-          fontWeight: "fontWeightRegular",
-        }}
-        startIcon={<SvgColor src="/assets/icons/status/success.svg" />}
-      >
-        Resolve issues
-      </Button>
-      <Divider
-        orientation="vertical"
-        sx={{
-          borderColor: "divider",
-          height: "80%",
-        }}
-      />
-      <Button onClick={handleCancelSelection} size="small" variant="text">
-        Cancel
-      </Button>
-    </Stack>
+    <SelectionBar
+      count={count}
+      onCancel={handleCancelSelection}
+      actions={[
+        {
+          label: "Resolve issues",
+          icon: "solar:check-circle-linear",
+          onClick: handleResolveAlerts,
+          disabled: isResolving,
+        },
+      ]}
+    />
   );
 };
 

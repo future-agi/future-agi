@@ -132,13 +132,11 @@ const ModelContainer = ({
   };
 
   const handleOnModelTypeChange = (newModelType) => {
-    setModelConfig((pre) => {
-      // If changing to "all", keep the current model
-      if (newModelType === "all") {
-        return { ...pre, model_type: newModelType };
-      }
-      // For any other change (from "all" or between types), reset to default
-      return { ...modelConfigDefault, model_type: newModelType };
+    // Filter tabs only narrow the model list. Keep the current configuration
+    // (model, output format, tools, ...) and skip autosave so browsing tabs
+    // does not create a draft version.
+    setModelConfig((pre) => ({ ...pre, model_type: newModelType }), {
+      skipSave: true,
     });
   };
 
@@ -247,7 +245,7 @@ const ModelContainer = ({
         <Box
           display={"flex"}
           flexDirection={"row"}
-          borderRadius={0.5}
+          borderRadius="4px"
           gap={1}
           ref={modelContainerRef}
           sx={{
@@ -274,7 +272,7 @@ const ModelContainer = ({
             }
             buttonIcon={
               <Iconify
-                icon="radix-icons:box-model"
+                icon="solar:graph-linear"
                 width="16px"
                 height="16px"
                 sx={{
@@ -356,16 +354,14 @@ const ModelContainer = ({
             sx={{
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "4px",
-              padding: "5px 10px",
               flexShrink: 0,
             }}
             onClick={handleUseTemplate}
           >
             <SvgColor
               sx={{
-                height: 20,
-                width: 20,
+                height: 16,
+                width: 16,
                 color: "text.primary",
               }}
               src={"/assets/icons/ic_import.svg"}

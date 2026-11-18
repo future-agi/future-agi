@@ -105,7 +105,6 @@ export default function ItemAssignmentPanel({
           label={hasAssignments ? "Assigned" : "Unassigned"}
           color={hasAssignments ? "default" : "warning"}
           variant={hasAssignments ? "outlined" : "soft"}
-          sx={{ height: 22 }}
         />
         <Tooltip title={assignmentLabel}>
           <Typography
@@ -124,7 +123,6 @@ export default function ItemAssignmentPanel({
             onClick={openPicker}
             disabled={isPending}
             startIcon={<Iconify icon="solar:users-group-rounded-bold" />}
-            sx={{ minHeight: 26, px: 1 }}
           >
             Assign
           </Button>
@@ -137,7 +135,7 @@ export default function ItemAssignmentPanel({
         onClose={closePicker}
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{ paper: { sx: { width: 280 } } }}
+        slotProps={{ paper: { sx: { width: 320 } } }}
       >
         <Box sx={{ p: 1 }}>
           <TextField

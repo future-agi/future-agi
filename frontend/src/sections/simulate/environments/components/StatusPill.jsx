@@ -1,58 +1,33 @@
 import PropTypes from "prop-types";
-import { alpha, keyframes } from "@mui/material/styles";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { STATUS_META, ENV_STATUS } from "../myEnvironments.constants";
 
-const pulse = keyframes`
-  0%,100% { opacity: 0.55; }
-  50%     { opacity: 1; }
-`;
+// Statuses this area uses that the shared status map doesn't name yet.
+const ROLE_FALLBACK = {
+  ready: "success",
+  finalizing: "info",
+  cancelling: "neutral",
+};
 
+// Design system: renders through the shared StatusBadge and the one status map,
+// so an environment's status looks like every other status in the product.
 export default function StatusPill({ status, progress }) {
   const meta = STATUS_META[status] || STATUS_META.not_run;
   const detail =
     status === ENV_STATUS.BUILDING && progress
       ? `${progress.done}/${progress.total} steps`
       : "";
-  const isAnimated =
-    status === ENV_STATUS.BUILDING ||
-    status === ENV_STATUS.FINALIZING ||
-    status === ENV_STATUS.CANCELLING ||
-    status === ENV_STATUS.RUNNING;
-
   return (
     <CustomTooltip show={!!detail} arrow size="small" title={detail}>
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={0.75}
-        sx={{
-          display: "inline-flex",
-          px: 0.875,
-          py: 0.375,
-          borderRadius: 999,
-          border: "1px solid",
-          borderColor: alpha(meta.color, 0.35),
-          bgcolor: (t) =>
-            alpha(meta.color, t.palette.mode === "dark" ? 0.14 : 0.09),
-        }}
-      >
-        <Box
-          sx={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            bgcolor: meta.color,
-            animation: isAnimated ? `${pulse} 1.4s ease-in-out infinite` : "none",
-          }}
+      <Box component="span" sx={{ display: "inline-flex" }}>
+        <StatusBadge
+          status={status}
+          label={meta.label}
+          role={ROLE_FALLBACK[status]}
         />
-        <Typography
-          sx={{ typography: "s3", fontWeight: "fontWeightBold", color: meta.color }}
-        >
-          {meta.label}
-        </Typography>
-      </Stack>
+      </Box>
     </CustomTooltip>
   );
 }

@@ -27,6 +27,7 @@ const STARS = [
 export default function HorizontalSpaceship({ progress = 0, height = 60, sx }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
+  // eslint-disable-next-line no-restricted-syntax -- ds: illustration (first-run spaceship)
   const LINE = isDark ? "#EAEFF6" : theme.palette.grey[700];
   const starColor = isDark
     ? theme.palette.common.white

@@ -87,3 +87,7 @@ class GetCustomEvalTemplateSerializer(serializers.Serializer):
 class CustomEvalConfigListQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField(required=False)
     task_id = serializers.UUIDField(required=False)
+    # Read the list from the primary. For a caller that decides from the list
+    # what to create next (the Ask page reuses an evaluator or picks a unique
+    # name), so a config it created moments ago must be in it.
+    fresh = serializers.BooleanField(required=False, default=False)

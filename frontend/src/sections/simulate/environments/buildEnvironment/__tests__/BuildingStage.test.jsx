@@ -58,6 +58,20 @@ describe("BuildingStage", () => {
     expect(stop).toHaveBeenCalled();
   });
 
+  it("keeps the collapsed rail's dot on while the builder waits on a question", () => {
+    window.localStorage.setItem("simEnv.chatPane.collapsed", "true");
+    try {
+      const chat = { turns: [], running: false, send: vi.fn(), inFlight: false, waiting: true, frozen: false };
+      const { rerender } = render(<BuildingStage progress={makeProgress()} chat={chat} />);
+      expect(screen.getByTestId("chat-split-busy")).toBeInTheDocument();
+
+      rerender(<BuildingStage progress={makeProgress()} chat={{ ...chat, waiting: false }} />);
+      expect(screen.queryByTestId("chat-split-busy")).not.toBeInTheDocument();
+    } finally {
+      window.localStorage.removeItem("simEnv.chatPane.collapsed");
+    }
+  });
+
   it("labels the deriving hero 'understand' when nothing is done yet", () => {
     render(<BuildingStage progress={makeProgress({ done: [] })} />);
     expect(screen.getByTestId("deriving")).toHaveTextContent(DERIVING_LABEL.understand);

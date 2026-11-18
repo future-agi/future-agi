@@ -11,6 +11,7 @@ import { keyframes } from "@mui/system";
 // then separates hull from arcs in either theme.
 const useLineColor = () => {
   const theme = useTheme();
+  // eslint-disable-next-line no-restricted-syntax -- ds: illustration (first-run spaceship)
   return theme.palette.mode === "dark" ? "#EAEFF6" : theme.palette.grey[700];
 };
 

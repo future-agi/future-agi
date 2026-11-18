@@ -20,7 +20,6 @@ const LOGS_WEBHOOK_PATH = '/agentcc/webhook/logs/';
 const WEBHOOK_SECRET =
   process.env.AGENTCC_WEBHOOK_SECRET || 'e2e-agentcc-webhook-secret';
 const REQUEST_LOGS_PATH = '/agentcc/request-logs/';
-const APPLICATION_PLACEHOLDER = 'Select applications...';
 const APPLICATION_CELL = 'tbody tr td:nth-child(4)';
 // Ingestion is synchronous, but the poll keeps a slow runner from flaking.
 const LOG_VISIBLE = POLL.ASYNC_JOB;
@@ -61,6 +60,7 @@ test(
         'each request stored in PG agentcc_request_log under the key\'s org with the caller metadata the gateway parsed',
         'the list endpoint returns only the rows of the filtered application',
         'two applications in one filter return both, a service filter and a team tag filter narrow the same way',
+        'filtering by the delivering key\'s gateway_key_id returns all rows stamped with that key, not a 400',
         'metadata-values offers exactly the two applications the org sent',
         'usage analytics grouped by application counts each application on its own',
         'the filtered UI row set equals the API result for the same filter',
@@ -135,6 +135,10 @@ test(
       expect((await listFor({ service: 'answer' })).count).toBe(1);
       expect((await listFor({ tags: `team:${team}` })).count).toBe(3);
 
+      // gatewayKeyId is the gateway's own key id (e.g. "gw-key-7f3a"), not the
+      // API key's UUID primary key; api_key_id must accept it.
+      expect((await listFor({ api_key_id: gatewayKeyId })).count).toBe(3);
+
       const options = await actor.api.get<{
         result: { application: string[]; service: string[] };
       }>('/agentcc/request-logs/metadata-values/');
@@ -170,12 +174,17 @@ test(
           r.url().includes(`application=${checkout}`),
         { timeout: UI_READY },
       );
-      await page.getByRole('button', { name: 'Filters' }).click();
-      // The picker's options are the metadata-values endpoint's answer.
-      await page.getByPlaceholder(APPLICATION_PLACEHOLDER).click();
-      await page.getByRole('option', { name: checkout, exact: true }).click();
+      // The shared Filter panel applies as values change; there is no Apply.
+      await page.getByRole('button', { name: 'Filter', exact: true }).click();
+      await page.getByRole('button', { name: 'Property', exact: true }).click();
+      await page.getByPlaceholder('Search properties...').fill('Application');
+      await page.locator('[data-filter-property-option="application"]').click();
+      await page.locator('[data-filter-value-trigger="application"]').click();
+      // The value options are the metadata-values endpoint's answer.
+      await page.getByPlaceholder('Search values...').fill(checkout);
+      await page.locator(`[data-filter-value-option="${checkout}"][role="checkbox"]`).click();
       await page.keyboard.press('Escape');
-      await page.getByRole('button', { name: 'Apply' }).click();
+      await page.keyboard.press('Escape');
       await filtered;
 
       await expect(applicationCells).toHaveText([checkout, checkout], { timeout: UI_READY });

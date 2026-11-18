@@ -216,6 +216,9 @@ class TestGetEvalAttributesListSessions:
         # No phantom positions
         assert "traces.0.spans.3.input" not in result
         assert "traces.2.spans.0.input" not in result
+        # The whole conversation is offered, so a session evaluator need not
+        # map a bare "traces" list or type the path by hand.
+        assert result[2:4] == ["transcript", "transcript_full"]
 
 
 @pytest.mark.integration

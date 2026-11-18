@@ -63,7 +63,10 @@ def test_user_aggregate_graph_replays_latest_physical_span_versions():
     sql, params = builder.build()
 
     _assert_latest_replay_precedes_live_filter(sql)
-    assert "physical.start_time, physical.is_deleted, physical.end_user_id, physical.trace_session_id" in sql
+    assert (
+        "physical.start_time, physical.is_deleted, physical.end_user_id, physical.trace_session_id"
+        in sql
+    )
     # Both the aggregate and trace-membership filter read the replayed CTE.
     assert sql.count("FROM latest_spans") >= 2
     assert "FROM latest_spans WHERE" in " ".join(sql.split())
@@ -92,9 +95,16 @@ def test_project_user_detail_graph_prunes_and_buckets_on_start_time():
     fence = sql.index("AS latest_membership", replay)
     assert replay < fence < sql.index("WHERE is_deleted = 0", fence)
     assert "LIMIT 1 BY project_id, trace_id, id, start_time" not in sql
-    assert "project_id, observation_type, service_name," in sql
-    assert "toStartOfHour(start_time), trace_id, id" in sql
-    assert "candidate_span_identities AS" in sql
+    assert "candidate_user_trace_ids AS" in sql
+    assert "SELECT DISTINCT project_id, trace_id" in sql
+    assert "SELECT project_id, trace_id FROM candidate_user_trace_ids" in sql
+    # Whole traces retain other users' children for monetary summary proof;
+    # the requested user only narrows final output after latest-row replay.
+    assert "FROM graph_monetary_spans AS graph_money" in sql
+    assert "WHERE end_user_id IN (SELECT end_user_id FROM target_end_user)" in sql
+    replay_scan = sql.split("FROM spans FINAL", 1)[1].split("AS physical", 1)[0]
+    assert "end_user_id IN" not in replay_scan
+    assert "toStartOfHour(start_time)" in replay_scan
     assert sql.count("FROM spans") == 2
     assert "FROM latest_spans AS rs" in sql
     assert "toDate(start_time) BETWEEN" in sql

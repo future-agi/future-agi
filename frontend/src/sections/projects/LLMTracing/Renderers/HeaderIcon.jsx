@@ -6,7 +6,7 @@ import { HEADER_ICON_CONFIG } from "./common";
 
 const HeaderIcon = ({ displayName, isGroup, isEvaluationMetric }) => {
   const iconConfig = HEADER_ICON_CONFIG[displayName];
-  const iconSize = { width: 20, height: 20 };
+  const iconSize = { width: 16, height: 16 };
 
   const wrapperStyle = {
     display: "flex",
@@ -30,8 +30,8 @@ const HeaderIcon = ({ displayName, isGroup, isEvaluationMetric }) => {
           <Iconify
             icon={iconConfig.icon}
             color={iconConfig.color}
-            width="20px"
-            height="20px"
+            width="16px"
+            height="16px"
           />
         ) : (
           <SvgColor src={iconConfig.src} sx={iconSize} />

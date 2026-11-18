@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { evalDetailQuery } from "src/sections/evals/hooks/useEvalDetail";
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
@@ -193,14 +194,13 @@ const EvalPickerContent = ({
             <Button
               variant="outlined"
               size="small"
-              startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={() => setStep("create")}
-              sx={{ textTransform: "none", fontSize: "12px" }}
             >
               Create New Eval
             </Button>
             <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
-              <Iconify icon="mingcute:close-line" width={20} />
+              <Iconify icon="solar:close-linear" width={20} />
             </IconButton>
           </Box>
         </Box>
@@ -222,7 +222,7 @@ const EvalPickerContent = ({
               }}
             >
               <Iconify
-                icon="mdi:alert-circle-outline"
+                icon="solar:danger-circle-linear"
                 width={40}
                 sx={{ color: "error.main" }}
               />
@@ -240,7 +240,6 @@ const EvalPickerContent = ({
                   handleBackToList();
                   resetErrorBoundary();
                 }}
-                sx={{ textTransform: "none" }}
               >
                 Back to list
               </Button>
@@ -293,6 +292,7 @@ const EvalPickerContent = ({
  * @param {Array} addedEvals - Opt-in: already-added evals ({ id, name, meta }) shown in a collapsible "Added evaluations" box and left out of the list
  * @param {Object} addedEvalAction - Opt-in: one button per added row ({ label, onClick(addedEval), busyName?, disabled?, show?(addedEval) })
  * @param {boolean} requireInputs - Opt-in: refuse to add an eval that has no inputs to map
+ * @param {boolean} hideCompositeCreate - Opt-in: "Create new" offers single evals only
  * @param {string} drawerType - MUI Drawer variant: "temporary" (default) or "persistent"
  * @param {number|string} width - Drawer width (default: 700px)
  */
@@ -309,7 +309,7 @@ const EvalPickerDrawer = ({
   onEvalAdded,
   existingEvals = [],
   drawerType = "temporary",
-  width = 900,
+  width = 960,
   // When editing an existing eval, pass its template info here to skip the
   // list step and open directly at the config step.
   initialEval = null,
@@ -361,8 +361,12 @@ const EvalPickerDrawer = ({
   addedEvalAction = null,
   // Opt-in: refuse to add an eval that has no inputs to map.
   requireInputs = false,
+  // Opt-in: for hosts that can't grade a composite eval, "Create new" drops
+  // its Composite mode.
+  hideCompositeCreate = false,
 }) => {
   const [currentStep, setCurrentStep] = useState("list");
+  const covered = useDrawerCovered(open);
 
   return (
     <Drawer
@@ -370,6 +374,7 @@ const EvalPickerDrawer = ({
       open={open}
       variant={drawerType}
       onClose={onClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: (theme) => ({
           width:
@@ -424,6 +429,7 @@ const EvalPickerDrawer = ({
         addedEvals={addedEvals}
         addedEvalAction={addedEvalAction}
         requireInputs={requireInputs}
+        hideCompositeCreate={hideCompositeCreate}
       >
         <EvalPickerContent
           onStepChange={setCurrentStep}
@@ -481,6 +487,7 @@ EvalPickerDrawer.propTypes = {
     show: PropTypes.func,
   }),
   requireInputs: PropTypes.bool,
+  hideCompositeCreate: PropTypes.bool,
 };
 
 export default EvalPickerDrawer;

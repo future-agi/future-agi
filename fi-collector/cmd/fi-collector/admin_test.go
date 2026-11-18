@@ -1,110 +1,78 @@
 package main
 
 import (
-	"io"
-	"log/slog"
+	"flag"
+	"fmt"
+	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
-
-	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"time"
 )
 
-func testWriter(t *testing.T) *chwriter.Writer {
-	t.Helper()
-	w, err := chwriter.New(chwriter.Config{
-		URL:            "http://127.0.0.1:1",
-		DeadLetterFile: filepath.Join(t.TempDir(), "dead_letter.jsonl"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = w.Close() })
-	return w
-}
-
-func TestLoadConfig_AdminAddr(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cfg.yaml")
-	if err := os.WriteFile(path, []byte("admin:\n  addr: \":19464\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg := loadConfig(slog.New(slog.NewJSONHandler(io.Discard, nil)), path)
-	if cfg.Admin.Addr != ":19464" {
-		t.Fatalf("admin.addr=%q, want :19464 (yaml key was discarded)", cfg.Admin.Addr)
-	}
-}
-
-func TestLoadConfig_ShippedCollectorYAMLAdminAddr(t *testing.T) {
-	cfg := loadConfig(slog.New(slog.NewJSONHandler(io.Discard, nil)), filepath.Join("..", "..", "config", "collector.yaml"))
-	if cfg.Admin.Addr != "127.0.0.1:9464" {
-		t.Fatalf("shipped admin.addr=%q, want 127.0.0.1:9464", cfg.Admin.Addr)
-	}
-}
-
-func TestApplyEnvOverrides_AdminAddr(t *testing.T) {
-	t.Setenv("FI_ADMIN_ADDR", ":19464")
-	var cfg rootConfig
-	if err := applyEnvOverrides(slog.Default(), &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Admin.Addr != ":19464" {
-		t.Fatalf("admin.addr=%q, want :19464", cfg.Admin.Addr)
-	}
-}
-
-func TestResolveAdminAddr(t *testing.T) {
-	if got := resolveAdminAddr(rootConfig{}); got != "127.0.0.1:9464" {
-		t.Fatalf("empty addr default=%q", got)
-	}
-	if got := resolveAdminAddr(rootConfig{Admin: adminConfig{Addr: "  "}}); got != "127.0.0.1:9464" {
-		t.Fatalf("whitespace addr default=%q", got)
-	}
-	if got := resolveAdminAddr(rootConfig{Admin: adminConfig{Addr: ":19464"}}); got != ":19464" {
-		t.Fatalf("configured addr=%q", got)
-	}
-}
-
-func TestAdminMux_ServesHealthzAndMetrics(t *testing.T) {
-	mux := adminMux(testWriter(t))
-
-	rr := httptest.NewRecorder()
-	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("healthz status=%d body=%s", rr.Code, rr.Body.String())
-	}
-	if !strings.Contains(rr.Body.String(), `"status":"ok"`) {
-		t.Fatalf("healthz body=%s", rr.Body.String())
+// Exercise startup, not just YAML decoding: a parsed address has no effect
+// if main still passes a constant to the HTTP listener.
+func TestConfiguredAdminListener(t *testing.T) {
+	if path := os.Getenv("TEST_COLLECTOR_ADMIN_CONFIG"); path != "" {
+		flag.CommandLine = flag.NewFlagSet("fi-collector", flag.ExitOnError)
+		os.Args = []string{"fi-collector", "-config", path}
+		main()
+		return
 	}
 
-	rr = httptest.NewRecorder()
-	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("metrics status=%d body=%s", rr.Code, rr.Body.String())
-	}
-	body := rr.Body.String()
-	for _, want := range []string{
-		"fi_collector_batches_inserted_total",
-		"fi_collector_batches_failed_total",
-		"# TYPE fi_collector_batches_inserted_total counter",
-		"go_goroutines",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("metrics missing %q", want)
-		}
-	}
-	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "text/plain") {
-		t.Errorf("content-type=%q", ct)
-	}
-}
+	for _, source := range []string{"yaml", "env_over_yaml"} {
+		t.Run(source, func(t *testing.T) {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr := ln.Addr().String()
+			if err := ln.Close(); err != nil {
+				t.Fatal(err)
+			}
 
-func TestAdminMux_UnknownPathNotFound(t *testing.T) {
-	mux := adminMux(testWriter(t))
-	rr := httptest.NewRecorder()
-	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/not-a-route", nil))
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("status=%d, want 404", rr.Code)
+			dir := t.TempDir()
+			path := filepath.Join(dir, "collector.yaml")
+			cmd := exec.Command(os.Args[0], "-test.run=^TestConfiguredAdminListener$")
+			cmd.Env = []string{
+				"TEST_COLLECTOR_ADMIN_CONFIG=" + path,
+				"FI_CH_URL=http://127.0.0.1:1", "FI_PG_WRITE=postgres://test@127.0.0.1:1/test",
+				"FI_GRPC_ADDR=127.0.0.1:0", "FI_HTTP_ADDR=disable", "FI_PRICING_CATALOGUE_URL=",
+				"FI_DEAD_LETTER_FILE=" + filepath.Join(dir, "dead-letter.jsonl"),
+			}
+			yamlAddr := addr
+			if source == "env_over_yaml" {
+				yamlAddr = "127.0.0.1:0"
+				cmd.Env = append(cmd.Env, "FI_ADMIN_ADDR="+addr)
+			}
+			if err := os.WriteFile(path, []byte(fmt.Sprintf("admin:\n  addr: %q\n", yamlAddr)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd.Stderr = os.Stderr
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+
+			client := http.Client{Timeout: time.Second}
+			defer client.CloseIdleConnections()
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				resp, err := client.Get("http://" + addr + "/healthz")
+				if err == nil {
+					resp.Body.Close()
+					if resp.StatusCode != http.StatusOK {
+						t.Fatalf("/healthz returned %s", resp.Status)
+					}
+					return
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("/healthz did not answer on the configured address %s: %v", addr, err)
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		})
 	}
 }

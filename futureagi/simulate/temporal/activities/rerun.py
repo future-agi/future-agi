@@ -11,7 +11,6 @@ connection pool exhaustion when using PgBouncer.
 from django.db import close_old_connections
 from temporalio import activity
 
-from simulate.temporal.signals import SIGNAL_CANCEL_CALL
 from simulate.temporal.types.rerun import (
     CancelRerunCallsInput,
     FinalizeRerunInput,
@@ -150,35 +149,55 @@ async def finalize_rerun_execution(input: FinalizeRerunInput) -> None:
                     test_execution_id=input.test_execution_id,
                 )
 
-        # Trigger eval summary if completed
+        # The calls say the run is done and not failed. Complete it if it is
+        # still open, queue its summary only if this write moved it, and
+        # release the rerun's hold on it either way.
         if final_status == TestExecution.ExecutionStatus.COMPLETED:
-            test_execution.eval_explanation_summary_status = (
-                EvalExplanationSummaryStatus.PENDING
-            )
-            update_fields.extend(
-                [
-                    "completed_at",
-                    "picked_up_by_executor",
-                    "eval_explanation_summary_status",
-                ]
-            )
-            await test_execution.asave(update_fields=update_fields)
+            from simulate.services.scoring_status import SETTLE_FROM_STATUSES
 
-            # Trigger eval summary task
-            try:
-                from simulate.tasks.eval_summary_tasks import run_eval_summary_task
+            # The scoring sweeper's settle may have completed this run in the
+            # seconds before this activity, and a stop or a failure may have
+            # ended it. Only a run still open is completed here, so its
+            # summary is built once and a finished run is not stamped again.
+            moved = await TestExecution.objects.filter(
+                id=test_execution.id, status__in=SETTLE_FROM_STATUSES
+            ).aupdate(
+                status=final_status,
+                completed_calls=completed_count,
+                failed_calls=failed_count,
+                completed_at=test_execution.completed_at,
+                eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING,
+            )
+            # Whether or not the update above moved the run, and whatever
+            # status it holds now (completed by the settle, or ended by a
+            # stop or a failure), the rerun gives up its claim on it. When its
+            # marker, which the rerun and stop entry points read, was cleared
+            # above, that removal is saved in the same write.
+            released = ["picked_up_by_executor"]
+            if "execution_metadata" in update_fields:
+                released.append("execution_metadata")
 
-                run_eval_summary_task.apply_async(args=(str(test_execution.id),))
-                logger.info(
-                    "triggered_eval_summary_for_rerun",
-                    test_execution_id=input.test_execution_id,
-                )
-            except Exception as e:
-                logger.warning(
-                    "failed_to_trigger_eval_summary",
-                    test_execution_id=input.test_execution_id,
-                    error=str(e),
-                )
+            # Trigger eval summary task. Before the release is written: if
+            # that write fails, the retry of this activity finds the run
+            # completed and moves no row, so it would never queue the summary.
+            if moved:
+                try:
+                    from simulate.tasks.eval_summary_tasks import (
+                        run_eval_summary_task,
+                    )
+
+                    run_eval_summary_task.apply_async(args=(str(test_execution.id),))
+                    logger.info(
+                        "triggered_eval_summary_for_rerun",
+                        test_execution_id=input.test_execution_id,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "failed_to_trigger_eval_summary",
+                        test_execution_id=input.test_execution_id,
+                        error=str(e),
+                    )
+            await test_execution.asave(update_fields=released)
         elif final_status == TestExecution.ExecutionStatus.FAILED:
             update_fields.extend(["completed_at", "picked_up_by_executor"])
             await test_execution.asave(update_fields=update_fields)

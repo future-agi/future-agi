@@ -5,16 +5,15 @@ export default function CategoryHeader({ label, count, blurb }) {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1.25}>
-        <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold", letterSpacing: 0.5, textTransform: "uppercase" }}>
+        <Typography sx={{ typography: "s1_2", fontWeight: 500 }}>
           {label}
         </Typography>
         <Typography
           sx={{
             typography: "s3",
-            fontWeight: "fontWeightBold",
+            fontWeight: 500,
             color: "text.subtitle",
             fontVariantNumeric: "tabular-nums",
-            letterSpacing: 0.2,
           }}
         >
           {String(count).padStart(2, "0")}

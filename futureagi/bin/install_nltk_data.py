@@ -16,7 +16,8 @@ NLTK_DATA_PROFILE selects what is installed:
            ee/agenthub/trace_scanner/compress.py, evaluations/engine/
            preprocessing.py (METEOR); tfc/utils/nltk_data.py lists the same
            resources. Left out: omw-1.4 (only wordnet lang != "eng"; no caller
-           passes lang=), the other punkt_tab languages, and the legacy pickled
+           passes lang=; omw-2.0 on nltk>=3.10), the other punkt_tab languages,
+           and the legacy pickled
            punkt / averaged_perceptron_tagger (nltk>=3.9 never loads them; they
            are added automatically when the installed nltk is older).
 
@@ -70,9 +71,17 @@ PACKAGES = {
         "corpora/wordnet.zip",
         "cbda5ea6eef7f36a97a43d4a75f85e07fccbb4f23657d27b4ccbc93e2646ab59",
     ),
+    # nltk<3.10 resolves the multilingual WordNet through omw-1.4; nltk>=3.10
+    # wires WordNetCorpusReader's omw reader to omw-2.0 (nltk/corpus/__init__.py)
+    # and raises LookupError for a lang!="eng" lookup without it. Both are
+    # installed so the layer serves either nltk.
     "corpora/omw-1.4": (
         "corpora/omw-1.4.zip",
         "3b941e664852f3297b6040236626065796a2aaf7d7f9eec8779a3beaa1096c2d",
+    ),
+    "corpora/omw-2.0": (
+        "corpora/omw-2.0.zip",
+        "049c0de0a2d097f6d4d1c97394ea8422bba1faaa30f92e054f18efdb534423ed",
     ),
 }
 
@@ -200,7 +209,11 @@ def install() -> None:
         raise RuntimeError("NLTK part-of-speech tagger verification failed")
     if WordNetLemmatizer().lemmatize("cars", "n") != "car":
         raise RuntimeError("NLTK WordNet verification failed")
-    if "corpora/omw-1.4" in selected and not wordnet.synsets("chien", lang="fra"):
+    # Either package means the multilingual data was installed; which one the
+    # lookup reads depends on the nltk version (see PACKAGES).
+    if {"corpora/omw-1.4", "corpora/omw-2.0"} & selected.keys() and not wordnet.synsets(
+        "chien", lang="fra"
+    ):
         raise RuntimeError("NLTK multilingual WordNet verification failed")
 
 
