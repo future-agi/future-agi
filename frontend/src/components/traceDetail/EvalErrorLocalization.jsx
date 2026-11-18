@@ -94,6 +94,14 @@ const EvalErrorLocalization = ({
       return data?.result || null;
     },
     enabled: traceFetchEnabled,
+    // Keep polling while the span's localization task is still queued or
+    // running, so the spinner resolves to the finished or failed card.
+    refetchInterval: (q) => {
+      const r = q?.state?.data;
+      if (!r || r.error_analysis) return false;
+      const status = r.error_localizer_status;
+      return status === "pending" || status === "running" ? 3000 : false;
+    },
     refetchOnWindowFocus: false,
     // Suppress global onError toast (app.jsx); inline empty state already rendered.
     meta: { errorHandled: true },

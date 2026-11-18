@@ -19,7 +19,7 @@ import EvalErrorLocalization from "../EvalErrorLocalization";
 const OUTPUT = "The moon is made of cheese.";
 
 function renderTrace(result, props = {}) {
-  get.mockResolvedValue({ data: { result } });
+  if (result !== undefined) get.mockResolvedValue({ data: { result } });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -116,4 +116,35 @@ describe("EvalErrorLocalization on an Observe span eval", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("No error localization yet")).toBeNull();
   });
+
+  it("polls a running localization until it finishes", async () => {
+    get
+      .mockResolvedValueOnce({
+        data: {
+          result: { error_analysis: null, error_localizer_status: "running" },
+        },
+      })
+      .mockResolvedValue({
+        data: {
+          result: {
+            error_analysis: null,
+            error_localizer_status: "failed",
+            error_localizer_message: "Error localization failed (timeout).",
+          },
+        },
+      });
+    renderTrace(undefined);
+
+    expect(
+      await screen.findByText("Error localization running…"),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "Error localization failed (timeout).",
+        {},
+        { timeout: 5000 },
+      ),
+    ).toBeInTheDocument();
+    expect(get).toHaveBeenCalledTimes(2);
+  }, 10000);
 });
