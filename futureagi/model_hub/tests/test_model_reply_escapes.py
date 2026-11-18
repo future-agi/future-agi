@@ -26,6 +26,7 @@ from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
         ("Using {'reviewer's notes'} to grade: ", r"\t", ""),
         ("Using {'scale':'binary'} to grade: ", "", ""),
         ("""Using {"rubric": reviewer's scale} to grade: """, r"\t", ""),
+        ('Using {rubric: 5" screens}, the verdict: ', r"\t", ""),
     ],
     ids=[
         "plain",
@@ -38,6 +39,7 @@ from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
         "quoted-placeholder",
         "python-style-rubric",
         "apostrophe-in-rubric-value",
+        "stray-quote-in-prose",
     ],
 )
 def test_custom_judge_preserves_explanation(monkeypatch, prefix, indent, suffix):
@@ -100,10 +102,21 @@ def assert_legacy_reply(reply, expected):
 @pytest.mark.parametrize("caller", ["judge", "legacy"])
 @pytest.mark.parametrize(
     "form",
-    ["labelled-example", "fenced-example", "quoted-rubric", "nbsp", "field-fence"],
+    [
+        "labelled-example",
+        "unlabelled-answer",
+        "fenced-example",
+        "quoted-rubric",
+        "nbsp",
+        "field-fence",
+    ],
 )
 def test_answer_not_example_or_evidence(monkeypatch, caller, form):
     reason = 'Graded: "}"\t' + r"C:\temp\report.txt"
+    if form == "unlabelled-answer":
+        # Without a label after the example, the answer is found by the
+        # bracket scan, which a quoted closing brace in the answer would end.
+        reason = "Graded:\t" + r"C:\temp\report.txt"
     expected = (
         {"result": "Pass", "explanation": reason}
         if caller == "judge"
@@ -113,6 +126,8 @@ def test_answer_not_example_or_evidence(monkeypatch, caller, form):
     answer = json.dumps(expected)
     if form == "labelled-example":
         reply = f"Example only: {json.dumps(demo)}. Actual answer: {answer}"
+    elif form == "unlabelled-answer":
+        reply = f"Example: {json.dumps(demo)} {answer}"
     elif form == "fenced-example":
         reply = f"Example:\n```json\n{json.dumps(demo)}\n```\nFinal: {answer}"
     elif form == "quoted-rubric":
