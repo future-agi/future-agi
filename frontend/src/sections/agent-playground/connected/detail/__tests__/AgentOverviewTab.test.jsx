@@ -86,7 +86,27 @@ describe("AgentOverviewTab", () => {
     expect(screen.getByText("v3")).toBeInTheDocument();
     expect(
       screen.getByTestId("pass-rate-68dedb99-42b6-46e7-8e94-b511041fa2cb"),
-    ).toHaveTextContent("30% 3/10");
+    ).toHaveTextContent("33.33% 3/9 · 1 inconclusive, not in the rate");
+  });
+
+  it("reads the run's trial pass and says which trials are not in it", () => {
+    runsState.current = loaded([
+      {
+        ...ENVIRONMENT_RUN,
+        pass_rate: 10,
+        trials_passed: 1,
+        trials_evaluated: 4,
+        trials_inconclusive: 9,
+        trials_excluded_not_comparable: 2,
+        trial_pass_rate: 25,
+      },
+    ]);
+    renderTab();
+    expect(
+      screen.getByTestId("pass-rate-68dedb99-42b6-46e7-8e94-b511041fa2cb"),
+    ).toHaveTextContent(
+      "25% 1/4 · 9 inconclusive, 2 not comparable, not in the rate",
+    );
   });
 
   it("marks a running Simulate run and gives it no pass rate", () => {

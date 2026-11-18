@@ -57,11 +57,18 @@ export const runHarnessEnvironment = async (
   trials,
   idempotencyKey,
   picks,
+  seed,
 ) =>
   (
     await axios.post(
       environmentRunPath(id),
-      { scenario_ids: scenarioIds, trials, ...versionPickFields(picks) },
+      {
+        scenario_ids: scenarioIds,
+        trials,
+        ...versionPickFields(picks),
+        // Omitted so the run keeps the environment's seed.
+        ...(seed != null ? { seed } : {}),
+      },
       { headers: { "Idempotency-Key": idempotencyKey } },
     )
   ).data;

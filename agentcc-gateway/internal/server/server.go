@@ -362,6 +362,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err
@@ -457,6 +458,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			rc.Provider = provider.ID()
 
 			providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+				noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
 				resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 				if err != nil {
 					return err
@@ -655,6 +657,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err

@@ -1,5 +1,6 @@
 import json
 import uuid
+from typing import Any
 
 import structlog
 
@@ -464,7 +465,7 @@ def _run_batched_standalone_eval(
     custom_eval_name,
     span_id,
 ):
-    results = []
+    results: list[Any] = []
     if not inputs or not isinstance(list(inputs.values())[0], list):
         raise ValueError("Inputs must be a list")
 
