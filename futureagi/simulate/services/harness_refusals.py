@@ -2,8 +2,7 @@
 
 The kit answers with a code (``github_ref_invalid``), a code and the name it is about
 (``environment_value_contains_nul: API_URL``), or a short phrase (``uploaded source was
-not found``). The platform owns every sentence a user reads (ADR-010,
-~/Desktop/coordination/architecture/decisions/ADR-010-refusal-codes-and-sentences.md):
+not found``). The platform owns every sentence a user reads (TH-8978, ADR-010):
 
 - a refusal the user can fix says what failed, naming the field by its label on the
   Connect page, then the one thing to do;
@@ -15,8 +14,6 @@ not found``). The platform owns every sentence a user reads (ADR-010,
 A name the refusal carries is shown only when it passes the check for a setting name or
 a relative path, and is short: it came from what the user typed, and a secret pasted
 where a name belongs must not be echoed.
-
-The codes and where the kit raises them are listed in ~/Desktop/TH-8978/birch-refusal-codes.md.
 """
 
 from __future__ import annotations
@@ -124,6 +121,13 @@ _USER: dict[str, tuple[str, str | None]] = {
         "and read that name in the agent.",
         None,
     ),
+    # A non-secret row of Additional environment values goes to the agent's settings, which
+    # refuse a name the runner uses.
+    "connector_config_name_reserved": (
+        "The environment value name{name} is used by the runner itself. Send the value "
+        "under another name and read that name in the agent.",
+        _SETTING,
+    ),
     "environment_value_contains_nul": (
         "The environment value{name} contains a null character. Remove it and save "
         "again.",
@@ -143,11 +147,6 @@ _USER: dict[str, tuple[str, str | None]] = {
     "sandbox_secret_reference_refused": (
         "The credential{name} can't be used in the cloud check. Enter its value again "
         "or upload it with Upload credential file.",
-        _SETTING,
-    ),
-    "sandbox_vault_reference_unknown": (
-        "The credential{name} wasn't found. Enter its value again or choose another "
-        "saved credential.",
         _SETTING,
     ),
     "secret_file_reference_unavailable_or_consumed": (
@@ -222,6 +221,18 @@ _PLATFORM = frozenset(
         "source_path is outside allowed roots",
         # The sandbox has no token configured: our deployment, not the user's request.
         "sandbox_token_not_configured",
+        # The platform sends credentials as platform-vault refs, which the sandbox refuses on
+        # a hosted job.
+        "sandbox_vault_reference_unknown",
+    }
+)
+# Our-side refusals a retry can't fix: on the sandbox path the page sends no commit, and the
+# sandbox refuses the platform's vault refs. Their sentence never says to try again.
+_PLATFORM_NO_RETRY = frozenset(
+    {
+        "github_commit_sha_required",
+        "github_commit_sha_invalid",
+        "sandbox_vault_reference_unknown",
     }
 )
 
@@ -243,6 +254,10 @@ _PLATFORM_SLUGS = {
 _PLATFORM_SENTENCE = (
     "We couldn't start the check because of a problem on our side ({code}). Try again; "
     "if it keeps happening, contact support."
+)
+_PLATFORM_NO_RETRY_SENTENCE = (
+    "We couldn't start the check because of a problem on our side ({code}). Trying again "
+    "won't help until we fix it; contact support."
 )
 _UNKNOWN_SENTENCE = (
     "The agent sandbox refused this{code}. Check the agent source and its settings, "
@@ -291,6 +306,16 @@ def _shown_name(name: str | None, kind: str | None) -> str | None:
     return name
 
 
+def our_side_sentence(code: str) -> str:
+    """The shared our-side sentence for a fault of the platform's own, logged by its caller."""
+    return _PLATFORM_SENTENCE.format(code=code)
+
+
+def is_our_side(message: str) -> bool:
+    """Whether a refusal message is one only the platform's own request can cause."""
+    return _split(message)[0] in _PLATFORM
+
+
 def refusal_sentence(message: str) -> str:
     """The sentence the page shows for one refusal message from the sandbox."""
     code, name = _split(message)
@@ -303,7 +328,12 @@ def refusal_sentence(message: str) -> str:
         logger.error(
             "harness_sandbox_refusal_on_our_side", code=shown, kit_message=message[:500]
         )
-        return _PLATFORM_SENTENCE.format(code=shown)
+        template = (
+            _PLATFORM_NO_RETRY_SENTENCE
+            if code in _PLATFORM_NO_RETRY
+            else _PLATFORM_SENTENCE
+        )
+        return template.format(code=shown)
     logger.warning("harness_sandbox_refusal_unknown", kit_message=message[:500])
     shown_code = code if _CODE.fullmatch(code) else None
     return _UNKNOWN_SENTENCE.format(code=f" ({shown_code})" if shown_code else "")

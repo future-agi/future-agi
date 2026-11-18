@@ -1,12 +1,9 @@
 """Every refusal the ALK sandbox can return on the connect and read path reads as a
 sentence that says what went wrong and what to do about it (TH-8978).
 
-The codes and where the kit raises them are listed in
-~/Desktop/TH-8978/birch-refusal-codes.md; the rules are ADR-010
-(~/Desktop/coordination/architecture/decisions/). A code the user can fix names the field
-and the one action to take; a code only the platform can cause says so and keeps the
-code for support; any other code gets a generic sentence and its code, never the kit's
-own message.
+A code the user can fix names the field and the one action to take; a code only the
+platform can cause says so and keeps the code for support; any other code gets a generic
+sentence and its code, never the kit's own message.
 """
 
 import re
@@ -47,7 +44,13 @@ USER_CODES = [
     ("uploaded source was not found", None),
     ("uploaded source is incomplete", None),
     ("sandbox_secret_reference_refused: OPENAI_API_KEY", "OPENAI_API_KEY"),
-    ("sandbox_vault_reference_unknown: OPENAI_API_KEY", "OPENAI_API_KEY"),
+    # Dileep, #4184: a reserved name typed into Additional environment values.
+    (
+        "connector_config_name_reserved: HTTP_PROXY (the name steers a process the runner "
+        "starts, or is the runner's own; send the value under another name and read that "
+        "name in the agent)",
+        "HTTP_PROXY",
+    ),
     ("secret_file_reference_unavailable_or_consumed", None),
     ("environment_name is invalid", None),
     ("environment_name is reserved", None),
@@ -104,6 +107,16 @@ PLATFORM_CODES = [
     "source_path is outside allowed roots",
     # Hawk L6 on #4184: a sandbox with no token configured is our configuration fault.
     "sandbox_token_not_configured",
+    # Dileep, #4184: the platform sends platform-vault refs the sandbox refuses on a hosted job.
+    "sandbox_vault_reference_unknown: OPENAI_API_KEY",
+]
+
+# Our-side refusals a retry can't fix (Dileep, #4184): the page sends no commit on the sandbox
+# path, and the sandbox refuses the platform's vault refs. Their sentence never says to retry.
+NO_RETRY = [
+    "github_commit_sha_required",
+    "github_commit_sha_invalid",
+    "sandbox_vault_reference_unknown: OPENAI_API_KEY",
 ]
 
 
@@ -184,10 +197,6 @@ def test_a_code_only_the_platform_causes_says_so_keeps_the_code_and_is_logged(
             "livekit_connect_only_requires_agent_name",
         ),
         ("connect_only_requires_assistant_id", "connect_only_requires_assistant_id"),
-        (
-            "connector_config_name_reserved: PYTHONPATH",
-            "connector_config_name_reserved",
-        ),
         ("The sandbox said something new: sk-live-pasted-here", None),
         ("", None),
     ],
@@ -202,7 +211,6 @@ def test_an_unknown_code_gets_a_generic_sentence_never_the_kits_message(
     if message and message != code:
         assert message not in sentence
     assert "SOME_NAME" not in sentence and "sk-live" not in sentence
-    assert "PYTHONPATH" not in sentence
     # The kit's message goes to the server log, not to the page.
     assert logged == [("warning", "harness_sandbox_refusal_unknown", message)]
 
@@ -212,7 +220,7 @@ def test_an_unknown_code_gets_a_generic_sentence_never_the_kits_message(
     [
         "environment_value_contains_nul: " + "A" * 65,
         "environment_value_contains_nul: sk-live-0123456789",
-        "sandbox_vault_reference_unknown: bad name",
+        "secret_alias_reserved: bad name",
         "duplicate source path: /etc/passwd",
         "duplicate source path: app/../../secret",
         "duplicate source path: " + "a/" * 150 + "x",
@@ -243,3 +251,20 @@ def test_a_path_with_brackets_is_shown_whole():
     sentence = refusal_sentence("duplicate source path: docs/Report (1).md")
 
     assert "docs/Report (1).md" in sentence
+
+
+@pytest.mark.parametrize("message", NO_RETRY)
+def test_an_our_side_refusal_a_retry_cannot_fix_never_says_try_again(message):
+    sentence = refusal_sentence(message)
+
+    assert sentence.startswith(
+        "We couldn't start the check because of a problem on our side"
+    )
+    assert "Try again" not in sentence and "try again" not in sentence
+
+
+def test_whether_a_message_is_our_side_is_known():
+    assert harness_refusals.is_our_side("github_commit_sha_required") is True
+    assert harness_refusals.is_our_side("hosted_isolation_must_be_dedicated_vm") is True
+    assert harness_refusals.is_our_side("environment_name_invalid: A") is False
+    assert harness_refusals.is_our_side("a_code_the_kit_adds_later") is False

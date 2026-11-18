@@ -8,7 +8,11 @@ from typing import Any
 import requests
 import structlog
 
-from simulate.services.harness_refusals import refusal_sentence
+from simulate.services.harness_refusals import (
+    is_our_side,
+    our_side_sentence,
+    refusal_sentence,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -145,31 +149,47 @@ class HarnessSandboxClient:
                 **kwargs,
             )
         except requests.RequestException as exc:
+            # The host, port and library text go to the server log only (TH-8978).
+            logger.warning(
+                "harness_sandbox_unreachable",
+                base_url=self.base_url,
+                error=type(exc).__name__,
+                detail=str(exc)[:500],
+            )
             raise HarnessSandboxUnavailable(
-                f"ALK sandbox is unavailable at {self.base_url}: {exc}"
+                "The agent sandbox couldn't be reached right now. Try again in a few minutes."
             ) from exc
         if response.status_code == 401:
             # The frontend treats any 401 as an expired session, so a token
             # mismatch with the sandbox must reach the browser as a 503. A 403 is the
             # sandbox's own refusal (a path outside its allowed roots) and passes through.
             if sends_token:
-                reason = "rejected the platform's token"
+                code, reason = "sandbox_token_rejected", "rejected the platform's token"
             elif authenticated:
+                code = "sandbox_token_missing"
                 reason = "requires a token, and ALK_HARNESS_SANDBOX_TOKEN is not set"
             else:
+                code = "sandbox_refused_unauthenticated"
                 reason = "refused an unauthenticated request"
-            raise HarnessSandboxUnavailable(
-                f"ALK sandbox {reason} ({response.status_code})"
-            )
+            # Our deployment's fault: the reason, with the setting it names, is logged only.
+            logger.error("harness_sandbox_unauthorized", code=code, reason=reason)
+            raise HarnessSandboxUnavailable(our_side_sentence(code))
         if response.status_code >= 400:
             try:
                 detail = response.json().get("detail")
             except (ValueError, AttributeError):
                 detail = response.text[:500]
             if response.status_code < 500:
+                if not connect:
+                    raise HarnessSandboxRejected(
+                        response.status_code, _kit_text(detail)
+                    )
+                # A refusal only our own request can cause is our bug: a 503, so it is not
+                # counted as a client error (TH-8978).
+                if _all_our_side(detail):
+                    raise HarnessSandboxUnavailable(_refusal_message(detail))
                 raise HarnessSandboxRejected(
-                    response.status_code,
-                    _refusal_message(detail) if connect else _kit_text(detail),
+                    response.status_code, _refusal_message(detail)
                 )
             # The sandbox has no token configured: our deployment's fault, not an outage.
             if str(detail or "").strip() == "sandbox_token_not_configured":
@@ -193,6 +213,23 @@ class HarnessSandboxClient:
                 f"(HTTP {response.status_code}). Try again in a few minutes."
             )
         return response.json()
+
+
+def _messages(detail: Any) -> list[str]:
+    """Each refusal message a detail holds, without pydantic's "Value error, " prefix."""
+    items = detail if isinstance(detail, list) else [detail]
+    found = []
+    for error in items:
+        message = error.get("msg") if isinstance(error, dict) else error
+        message = str(message or "").strip().removeprefix("Value error, ").strip()
+        if message:
+            found.append(message)
+    return found
+
+
+def _all_our_side(detail: Any) -> bool:
+    messages = _messages(detail)
+    return bool(messages) and all(is_our_side(message) for message in messages)
 
 
 def _kit_text(detail: Any) -> str:

@@ -44,7 +44,7 @@ def test_token_refusal_is_unavailable_without_the_token(sandbox, status_code):
         client.list_jobs()
 
     assert sandbox.sent["headers"]["Authorization"] == f"Bearer {TOKEN}"
-    assert str(status_code) in str(caught.value)
+    assert "(sandbox_token_rejected)" in str(caught.value)
     assert TOKEN not in str(caught.value)
 
 
@@ -75,7 +75,7 @@ def test_server_error_is_unavailable(sandbox):
     assert "boom" not in str(caught.value)
 
 
-def test_a_refusal_with_no_token_set_names_the_missing_setting(monkeypatch):
+def test_a_refusal_with_no_token_set_shows_no_setting_name(monkeypatch):
     def fake_request(method, url, *, headers, timeout, **kwargs):
         assert "Authorization" not in headers
         return SimpleNamespace(status_code=401, json=lambda: {}, text="")
@@ -83,10 +83,12 @@ def test_a_refusal_with_no_token_set_names_the_missing_setting(monkeypatch):
     monkeypatch.setattr(harness_sandbox.requests, "request", fake_request)
     client = HarnessSandboxClient(base_url="http://sandbox.test", token="")
 
-    with pytest.raises(
-        HarnessSandboxUnavailable, match="ALK_HARNESS_SANDBOX_TOKEN is not set"
-    ):
+    # Dileep, #4184: the page sees no setting name; the reason is in the server log.
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
         client.list_jobs()
+
+    assert "ALK_HARNESS_SANDBOX_TOKEN" not in str(caught.value)
+    assert "(sandbox_token_missing)" in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -174,8 +176,8 @@ def test_a_401_on_a_request_that_carried_no_token_does_not_blame_the_token(monke
     with pytest.raises(HarnessSandboxUnavailable) as caught:
         client.health()
 
-    assert "rejected the platform's token" not in str(caught.value)
-    assert "401" in str(caught.value)
+    assert "(sandbox_token_rejected)" not in str(caught.value)
+    assert "(sandbox_refused_unauthenticated)" in str(caught.value)
 
 
 # The kit's request validation answers 422 with FastAPI's list of errors. Its
@@ -188,14 +190,13 @@ def _validation_errors(*messages):
 
 
 def test_a_github_source_without_a_commit_is_refused_in_a_sentence(sandbox):
-    # The page resolves the commit, so a missing one is the platform's own fault:
-    # the sentence says so and keeps the code for support (TH-8978).
+    # The page resolves no commit on the sandbox path, so a missing one is the platform's own
+    # fault: the sentence says so, keeps the code, and comes back as a 503 (TH-8978).
     client = sandbox(422, detail=_validation_errors("github_commit_sha_required"))
 
-    with pytest.raises(HarnessSandboxRejected) as caught:
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
         client.submit({"github_repository": "acme/agent"})
 
-    assert caught.value.status_code == 422
     assert str(caught.value) == refusal_sentence("github_commit_sha_required")
     assert str(caught.value).startswith("We couldn't start the check")
 
@@ -345,3 +346,51 @@ def test_a_sandbox_without_its_token_reads_as_our_side_not_an_outage(sandbox):
 
     assert str(caught.value) == refusal_sentence("sandbox_token_not_configured")
     assert "(sandbox_token_not_configured)" in str(caught.value)
+
+
+# Dileep, #4184: an our-side refusal is our bug, so it reaches the browser as a 503, never as the
+# kit's 4xx a client error alert would ignore.
+def test_an_our_side_4xx_comes_back_as_unavailable(sandbox):
+    client = sandbox(422, detail=_validation_errors("github_commit_sha_required"))
+
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
+        client.submit({"github_repository": "acme/agent"})
+
+    assert str(caught.value) == refusal_sentence("github_commit_sha_required")
+
+
+def test_a_4xx_mixing_our_side_and_user_refusals_stays_rejected(sandbox):
+    client = sandbox(
+        422,
+        detail=_validation_errors(
+            "github_commit_sha_required", "environment_value_contains_nul: API_URL"
+        ),
+    )
+
+    with pytest.raises(HarnessSandboxRejected) as caught:
+        client.submit({"source_id": "abc"})
+
+    assert caught.value.status_code == 422
+
+
+# Dileep, #4184: the connection failure shows no host, port, path or library text.
+def test_an_unreachable_sandbox_shows_a_fixed_sentence(monkeypatch):
+    def fake_request(method, url, **kwargs):
+        raise harness_sandbox.requests.ConnectionError(
+            "HTTPConnectionPool(host='host.docker.internal', port=8788): Max retries"
+        )
+
+    monkeypatch.setattr(harness_sandbox.requests, "request", fake_request)
+    client = HarnessSandboxClient(
+        base_url="http://host.docker.internal:8788", token=TOKEN
+    )
+
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
+        client.submit({"source_id": "abc"})
+
+    message = str(caught.value)
+    assert "host.docker.internal" not in message and "8788" not in message
+    assert "HTTPConnectionPool" not in message and "/v1/jobs" not in message
+    assert message == (
+        "The agent sandbox couldn't be reached right now. Try again in a few minutes."
+    )
