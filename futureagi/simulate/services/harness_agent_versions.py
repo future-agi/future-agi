@@ -1311,6 +1311,7 @@ def _run_preflight(
     organization: Any,
     secret_payload: dict[str, Any],
     scan: Mapping[str, Any] | None = None,
+    workspace_id: Any = None,
 ) -> tuple[bool, dict]:
     """Check the source and the credentials; a ``scan`` already made of this source
     stands for acquiring it again."""
@@ -1326,7 +1327,9 @@ def _run_preflight(
         else None
     )
     secret_checks, secret_readiness, secret_probe, source_error, analysis = (
-        run_preflight_checks(organization, secret_payload, analysis)
+        run_preflight_checks(
+            organization, secret_payload, analysis, workspace_id=workspace_id
+        )
     )
     detected, required_files, scanned = analysis
     passed = not any(check["status"] == "failed" for check in secret_checks)
@@ -1398,6 +1401,7 @@ def preflight_agent_version(
                 runtime.organization,
                 _preflight_payload(runtime, secret_set, provider_secrets),
                 _parent_scan(runtime),
+                workspace_id=runtime.workspace_id,
             )
         except Exception as exc:  # noqa: BLE001 - its text may carry a value
             logger.warning(

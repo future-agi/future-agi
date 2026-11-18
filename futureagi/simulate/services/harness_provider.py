@@ -642,7 +642,7 @@ def _connector_credential_readiness(
     }
 
 
-def _preflight_source_connectors(organization, payload):
+def _preflight_source_connectors(organization, payload, workspace_id=None):
     """Scan the submitted source the same way authoring will, so preflight asks for the
     credential family the agent actually uses instead of every family."""
     from simulate.services.hosted_harness_gateway import (
@@ -655,7 +655,9 @@ def _preflight_source_connectors(organization, payload):
     # the repository source scanner with a synthetic source.
     if payload["source"]["kind"] in {"remote", "provider"}:
         return [], [], 0
-    probe = HostedHarnessJob(organization=organization, payload=payload)
+    probe = HostedHarnessJob(
+        organization=organization, workspace_id=workspace_id, payload=payload
+    )
     archive, _commit = HostedSourceAcquirer().acquire(probe)
     detected, required_files, scanned = detect_source_credentials(
         archive, subfolder=payload["source"].get("subfolder")
@@ -665,11 +667,11 @@ def _preflight_source_connectors(organization, payload):
     return detected, required_files, scanned
 
 
-def _validate_required_credential_files(organization, payload):
+def _validate_required_credential_files(organization, payload, workspace_id=None):
     """Refuse a launch whose source explicitly requires an absent credential file."""
     from simulate.services.hosted_harness import HostedHarnessError
 
-    analysis = _preflight_source_connectors(organization, payload)
+    analysis = _preflight_source_connectors(organization, payload, workspace_id)
     required_files = analysis[1] if len(analysis) == 3 else []
     present = {
         str(alias).upper() for alias in (payload["agent"].get("secret_refs") or {})
@@ -956,7 +958,9 @@ def _preflight_checks(
     return checks
 
 
-def run_preflight_checks(organization, secret_payload, analysis=None):
+def run_preflight_checks(
+    organization, secret_payload, analysis=None, workspace_id=None
+):
     """The build preflight's checks of a payload; ``analysis`` (detected connectors,
     required files, scanned files) stands for scanning its source again.
 
@@ -968,7 +972,9 @@ def run_preflight_checks(organization, secret_payload, analysis=None):
     source_error = None
     if analysis is None:
         try:
-            analysis = _preflight_source_connectors(organization, secret_payload)
+            analysis = _preflight_source_connectors(
+                organization, secret_payload, workspace_id
+            )
         except HostedHarnessError as exc:
             source_error = exc
             analysis = ([], [], 0)
@@ -1483,7 +1489,9 @@ class HostedHarnessProvider:
                 return response
             raise
         try:
-            source_analysis = _validate_required_credential_files(organization, payload)
+            source_analysis = _validate_required_credential_files(
+                organization, payload, getattr(workspace, "id", None)
+            )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         try:
@@ -1610,7 +1618,9 @@ class HostedHarnessProvider:
 
         runtime = payload["runtime"]
         checks, credentials, _probe, source_error, _analysis = run_preflight_checks(
-            request_organization(request), payload
+            request_organization(request),
+            payload,
+            workspace_id=getattr(request_workspace(request), "id", None),
         )
         failed = any(check["status"] == "failed" for check in checks)
         runtime_name, runtime_digest = sandbox_runtime_reference()

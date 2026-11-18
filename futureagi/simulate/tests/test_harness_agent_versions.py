@@ -1572,7 +1572,7 @@ class TestActivation:
         a2 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "v2"})
         report = {"checks": [], "missing": [], "invalid": [], "error": None}
 
-        def raced(*_args):
+        def raced(*_args, **_kwargs):
             # Another run of the check passes the version first.
             HarnessAgentVersionRuntime.no_workspace_objects.filter(
                 agent_version=a2

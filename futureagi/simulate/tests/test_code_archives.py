@@ -106,6 +106,9 @@ def test_pinned_commit_is_served_from_the_store_without_git(
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway.shutil.which", lambda _: None
     )
+    monkeypatch.setattr(
+        "integrations.services.github_app.installation_connected", lambda **_: True
+    )
 
     archive, commit_sha = HostedSourceAcquirer().acquire(_job(organization, "stored"))
 
@@ -303,3 +306,82 @@ def test_a_private_source_is_refused_after_github_is_disconnected(
     assert refused.value.code == "github_installation_not_connected"
     assert refused.value.status_code == 422
     assert minted == []
+
+
+@pytest.mark.django_db
+def test_a_build_preflight_reads_a_private_source_with_its_workspaces_connection(
+    organization, workspace, user, storage, monkeypatch
+):
+    from integrations.models import (
+        ConnectionStatus,
+        IntegrationConnection,
+        IntegrationPlatform,
+    )
+    from integrations.services.credentials import CredentialManager
+    from simulate.services.harness_provider import _preflight_source_connectors
+
+    IntegrationConnection.no_workspace_objects.create(
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+        platform=IntegrationPlatform.GITHUB,
+        display_name="acme",
+        host_url="https://github.com",
+        encrypted_credentials=CredentialManager.encrypt(
+            {"installation_id": "installation-1"}
+        ),
+        external_project_name="installation-1",
+        status=ConnectionStatus.ACTIVE,
+        backfill_completed=True,
+    )
+
+    def checkout(_repository, _ref, path, _token):
+        path.mkdir(parents=True)
+        (path / "agent.py").write_text("print('agent')", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.github_checkout", checkout
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.subprocess.run",
+        lambda *_a, **_k: SimpleNamespace(returncode=0, stdout="a" * 40 + "\n"),
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.GitHubAppTokenProvider.from_settings",
+        lambda: SimpleNamespace(credential=lambda _: nullcontext("installation-token")),
+    )
+
+    assert _preflight_source_connectors(organization, _payload(), workspace.id) == (
+        [],
+        [],
+        1,
+    )
+    with pytest.raises(HostedHarnessError) as refused:
+        _preflight_source_connectors(organization, _payload())
+    assert refused.value.code == "github_installation_not_connected"
+
+
+@pytest.mark.django_db
+def test_a_stored_private_archive_is_refused_after_github_is_disconnected(
+    organization, workspace, storage, monkeypatch
+):
+    _store(organization, workspace_id=workspace.id)
+    looked_up = []
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.stored_commit_archive",
+        lambda **kwargs: looked_up.append(kwargs) or b"stored-archive",
+    )
+    source = {
+        "kind": "github",
+        "repository": REPOSITORY,
+        "ref": "main",
+        "commit_sha": COMMIT,
+        "visibility": "private",
+        "installation_id": "installation-1",
+    }
+
+    with pytest.raises(HostedHarnessError) as refused:
+        acquire_source_archive(organization.id, workspace.id, source, label="t")
+
+    assert refused.value.code == "github_installation_not_connected"
+    assert looked_up == []

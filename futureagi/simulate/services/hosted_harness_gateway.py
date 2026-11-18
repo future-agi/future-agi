@@ -1005,17 +1005,6 @@ def acquire_source_archive(
         )
     if ".." in ref or not _SOURCE_REF.fullmatch(ref):
         raise HostedHarnessError("github_ref_invalid", "invalid GitHub ref")
-    pinned_commit = str(source.get("commit_sha") or "").lower()
-    if pinned_commit:
-        stored = stored_commit_archive(
-            organization_id=organization_id,
-            workspace_id=workspace_id,
-            repository=repository,
-            commit_sha=pinned_commit,
-        )
-        if stored is not None:
-            return stored, pinned_commit
-    credential = nullcontext("")
     if source.get("visibility") == "private":
         from integrations.services.github_app import installation_connected
 
@@ -1031,6 +1020,19 @@ def acquire_source_archive(
                 " private repository",
                 status_code=422,
             )
+    pinned_commit = str(source.get("commit_sha") or "").lower()
+    if pinned_commit:
+        stored = stored_commit_archive(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            repository=repository,
+            commit_sha=pinned_commit,
+        )
+        if stored is not None:
+            return stored, pinned_commit
+    credential = nullcontext("")
+    if source.get("visibility") == "private":
+        installation_id = str(source.get("installation_id") or "")
         credential = GitHubAppTokenProvider.from_settings().credential(installation_id)
     with (
         credential as token,
