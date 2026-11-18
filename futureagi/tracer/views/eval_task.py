@@ -2157,6 +2157,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     "start_time",
                     "end_time",
                     "status",
+                    "failure_reason",
                     "run_type",
                     "row_type",
                 )
@@ -2281,6 +2282,9 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 # and the fetch that first sees "completed" already carries the
                 # final tallies — no off-by-one-tick stale count.
                 "status": eval_task.status,
+                "failure_reason": eval_task.failure_reason
+                if eval_task.status == EvalTaskStatus.FAILED
+                else None,
                 # Duration is only meaningful for historical runs (which finalize
                 # with an end_time). Continuous tasks never end, so the frontend
                 # hides the Duration card based on this.
@@ -2953,11 +2957,14 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             if not eval_task_id:
                 return self._gm.bad_request("Eval task ID is required")
 
+            # The writer lock serializes intent checks and the generation handoff.
+            # A fast worker waits for commit; a rejected start rolls everything back.
             with transaction.atomic(using="default"):
                 try:
-                    # Check the locked writer row; a replica may still say Paused.
                     eval_task = self._scope_eval_task_queryset(
-                        EvalTask.objects.select_for_update(of=("self",))
+                        EvalTask.objects.using("default").select_for_update(
+                            of=("self",)
+                        )
                     ).get(id=eval_task_id)
                 except EvalTask.DoesNotExist:
                     return self._gm.bad_request("Eval task not found")
@@ -2973,13 +2980,9 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     eval_task_id=str(eval_task.id),
                     status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
                 ).count()
-                eval_task.status = EvalTaskStatus.PENDING
-                eval_task.save(update_fields=["status"])
+                eval_task.prepare_workflow_replacement()
                 EvalTaskStartRequest.void_for_tasks([eval_task.pk])
-
-            # Pause exits the workflow; resuming starts a fresh run that picks up
-            # the remaining pending/running entries.
-            start_eval_task_workflow_sync(eval_task, replace_existing=True)
+                start_eval_task_workflow_sync(eval_task, replace_existing=True)
             # Counts and the previous status only — never an entry payload or
             # any tenant-identifying value.
             logger.info(
@@ -3253,7 +3256,9 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     eval_task, data=update_fields, partial=True
                 )
                 task_serializer.is_valid(raise_exception=True)
-                eval_task = task_serializer.save()
+                eval_task = task_serializer.save(
+                    workflow_generation=uuid_module.uuid4(), failure_reason=None
+                )
                 record_rerun(eval_task)
 
                 effective_run_type = update_fields.get("run_type", original_run_type)
@@ -3294,7 +3299,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 # against the old row and leave an active workflow stranded
                 # behind a PENDING task.  Keep callback failures non-robust so
                 # the existing API error contract still surfaces dispatch
-                # failures; the committed PENDING row is safe to retry.
+                # failures; another explicit rerun can retry the committed row.
                 transaction.on_commit(
                     lambda: start_eval_task_workflow_sync(
                         eval_task, replace_existing=True

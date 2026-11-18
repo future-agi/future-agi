@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("tracer", "0135_eval_put_back"),
+        ("tracer", "0137_evaltask_workflow_generation"),
     ]
 
     operations = [

@@ -7,8 +7,8 @@ from django.db.migrations.executor import MigrationExecutor
 
 from tracer.models.eval_task import EvalTask, EvalTaskStartRequest
 
-PREVIOUS = ("tracer", "0135_eval_put_back")
-CURRENT = ("tracer", "0136_eval_task_start_request")
+PREVIOUS = ("tracer", "0137_evaltask_workflow_generation")
+CURRENT = ("tracer", "0138_eval_task_start_request")
 
 
 @pytest.mark.django_db(transaction=True)

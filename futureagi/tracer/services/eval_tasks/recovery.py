@@ -7,16 +7,19 @@ is the policy. Candidates come from ``tracer.selectors.eval_tasks.stranded``.
 from __future__ import annotations
 
 import structlog
+from django.db import transaction
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from tfc.temporal.eval_tasks.types import ReapInput
 from tracer.models.eval_task import EvalTask, EvalTaskStatus
+from tracer.models.instant_eval import InstantEvalRun
 from tracer.selectors.eval_tasks.stranded import (
     find_stranded_tasks,
     only_unreclaimable_claims_remain,
 )
 from tracer.services.eval_tasks.reaper import (
+    StaleRunningClaims,
     effective_stale_seconds,
-    reap_stale_running,
 )
 from tracer.services.eval_tasks.start_requests import start_refusal
 
@@ -96,22 +99,15 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
     sweepable, nothing written — and a later tick restarts it once a claim is
     reclaimable. ``deferred`` reports it.
 
-    The restart coalesces (``replace_existing=False``) rather than terminating:
-    the workflow id is per task, so the Temporal server decides atomically
-    whether a live execution already owns it. A describe is a read taken a
-    moment earlier, so terminating on it would kill a workflow a user started
-    in between — the exact failure this whole change exists to prevent. For the
-    same reason ``restarted`` counts starts *issued*: one that coalesced onto an
-    execution started in the gap is counted too, because the server resolves
-    that and does not report which way it went. Coalescing is also what lets
-    the describe's answer travel with the start: a start absorbed by an
-    execution begun in the gap is discarded with its input, so the answer only
-    reaches a run that started with nothing draining.
+    A restart must both fence the closed run's late writes and leave a racing
+    live owner alone. Rotate the generation under the task lock and ask Temporal
+    to fail on conflict. Only a new start can then acknowledge our generation;
+    a conflict defers the task without committing the handoff.
     """
     from tfc.temporal.eval_tasks.client import (
         WF_PROGRESSING,
         describe_eval_task_workflow_sync,
-        start_eval_task_workflow_sync,
+        start_recovery_workflow_sync,
     )
 
     outcome = {
@@ -129,61 +125,81 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         outcome["progressing"] = True
         return outcome
 
-    # Gate before reaping entries or flipping Failed to Pending. A watched
-    # create belongs to its fenced sender, even when the sweep found work.
-    if start_refusal(task, delivery=True):
-        outcome["deferred"] = True
-        return outcome
+    def lock_candidate():
+        return (
+            EvalTask.no_workspace_objects.using("default")
+            .select_for_update(of=("self",))
+            .filter(
+                pk=task.pk,
+                status=task.status,
+                workflow_generation=task.workflow_generation,
+            )
+            .first()
+        )
 
-    outcome["requeued"], outcome["failed"] = reap_stale_running(
+    # Use the describe's evidence. The sweep's configured minimum is already
+    # the blind floor; the replacement's own initial reap uses the lower floor.
+    claims = StaleRunningClaims(
         task,
-        # Through the same helper as the workflow's own reap, carrying the
-        # same evidence: the describe above just answered that no execution
-        # owns this task. ``SWEEP_STALE_RUNNING_SECONDS`` declares its minimum
-        # as ``LONGEST_RUNNING_ENTRY_SECONDS + 1`` — the blind floor — so both
-        # branches of ``effective_stale_seconds`` agree at every value an
-        # operator can set; the flag records the evidence, it does not lower
-        # the threshold.
         older_than_seconds=effective_stale_seconds(
             stale_running_seconds, workflow_confirmed_stopped=True
         ),
         max_attempts=_MAX_ENTRY_ATTEMPTS,
     )
 
-    try:
-        # Checked before the FAILED flip below, so an opted-in failed task that
-        # has to wait is left failed rather than made pending with nothing to
-        # run.
-        if only_unreclaimable_claims_remain(
-            task, reclaimable_after_seconds=RESTART_REAP_SECONDS
-        ):
+    # Retryable requeues remain selectable even if the start fails; keep them
+    # committed separately. Check durable ownership on the locked writer row
+    # before touching any entry, not just before the eventual send.
+    with transaction.atomic(using="default"):
+        current = lock_candidate()
+        if current is None:
+            return outcome  # A committed handoff, pause or delete won the race.
+        if start_refusal(current, delivery=True):
             outcome["deferred"] = True
             return outcome
+        outcome["requeued"] = claims.requeue_retryable()
 
-        if task.status == EvalTaskStatus.FAILED:
-            # A failed row makes ``get_eval_task_state_activity`` report the
-            # task inactive, so a restart would exit on its first state check.
-            # Clear it the way Resume does, guarded so a concurrent pause or
-            # delete wins.
-            changed = EvalTask.objects.filter(
-                id=task.id, status=EvalTaskStatus.FAILED
-            ).update(status=EvalTaskStatus.PENDING)
-            if not changed:
+    try:
+        with transaction.atomic(using="default"):
+            # Poisoning projects Instant answers. Match controls' run -> task
+            # lock order so neither can wait for the other's writer lock.
+            (
+                InstantEvalRun.objects.using("default")
+                .select_for_update(of=("self",))
+                .filter(eval_task_id=task.pk)
+                .values_list("pk", flat=True)
+                .first()
+            )
+            current = lock_candidate()
+            if current is None:
                 return outcome
-            task.status = EvalTaskStatus.PENDING
-
-        # The describe above is the evidence the restarted run's first reap
-        # needs, and it has answered: nothing owns the task. Handed over
-        # rather than asked again, so the deferral check's 600 s is the
-        # threshold the run really applies — a second describe that failed
-        # would drop it to the blind floor after this tick had admitted the
-        # restart on 600 s.
-        start_eval_task_workflow_sync(
-            task, replace_existing=False, workflow_confirmed_stopped=True
-        )
+            if start_refusal(current, delivery=True):
+                outcome["deferred"] = True
+                return outcome
+            # Poisoning the last claim removes the task from the selector, so
+            # terminal entry writes must commit with the generation handoff.
+            failed = claims.fail_exhausted()
+            if only_unreclaimable_claims_remain(
+                current, reclaimable_after_seconds=RESTART_REAP_SECONDS
+            ):
+                outcome["deferred"] = True
+            else:
+                # Repair the drain without resetting a running task's activation.
+                current.prepare_workflow_replacement(
+                    status=EvalTaskStatus.RUNNING
+                    if current.status == EvalTaskStatus.RUNNING
+                    else EvalTaskStatus.PENDING
+                )
+                start_recovery_workflow_sync(current)
+    except WorkflowAlreadyStartedError:
+        # The save rolls back the generation and terminal entry writes. Never
+        # terminate the racing owner; retryable requeues remain committed.
+        outcome["deferred"] = True
+        return outcome
     except Exception as exc:
         raise RecoveryInterrupted(outcome, exc) from exc
-    outcome["restarted"] = True
+    outcome["failed"] = failed
+    outcome["restarted"] = not outcome["deferred"]
     return outcome
 
 

@@ -21,6 +21,7 @@ import TaskPanels from "./components/task_panels";
 import TaskLogsView from "src/sections/common/EvalsTasks/TaskLogsView";
 import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
 import { isResumableTaskStatus } from "src/sections/common/EvalsTasks/task_status";
+import { useResumeEvalTask } from "src/sections/common/EvalsTasks/useResumeEvalTask";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
@@ -205,7 +206,6 @@ const TaskDetailPage = () => {
       queryClient.setQueryData(["taskDetails", taskId], ctx.prev);
   };
   const reconcileStatus = () => {
-    queryClient.invalidateQueries({ queryKey: ["eval-task-logs", taskId] });
     queryClient.invalidateQueries({ queryKey: ["samplingAudit", taskId] });
     queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
     queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
@@ -221,12 +221,15 @@ const TaskDetailPage = () => {
       enqueueSnackbar("Failed to pause task", { variant: "error" });
     },
     onSuccess: () => enqueueSnackbar("Task paused", { variant: "success" }),
-    onSettled: reconcileStatus,
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["eval-task-logs", taskId] });
+      reconcileStatus();
+    },
   });
 
-  const { mutate: resumeTask } = useMutation({
-    mutationFn: () => axios.post(endpoints.project.resumeEvalTask(taskId), {}),
-    meta: { errorHandled: true },
+  // The shared Resume hook already refreshes Logs on success. Don't refetch
+  // them a second time or replace the old summary after a rejected Resume.
+  const { mutate: resumeTask } = useResumeEvalTask({
     // pending (not running): resume re-queues, so the badge moves forward only.
     onMutate: () => optimisticStatus("pending"),
     onError: (_e, _v, ctx) => {
@@ -507,7 +510,7 @@ const TaskDetailPage = () => {
         <Button
           variant="outlined"
           size="small"
-          onClick={() => resumeTask()}
+          onClick={() => resumeTask(taskId)}
           startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
         >
           Resume

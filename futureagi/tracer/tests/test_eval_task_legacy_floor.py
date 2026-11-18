@@ -64,8 +64,12 @@ def _live_span_ids(task):
 
 def _start(task):
     """The workflow's guarded PENDING -> RUNNING transition."""
+    task.refresh_from_db(fields=["workflow_generation"])
     result = _set_task_status_sync(
-        str(task.pk), EvalTaskStatus.RUNNING, EvalTaskStatus.PENDING
+        str(task.pk),
+        EvalTaskStatus.RUNNING,
+        EvalTaskStatus.PENDING,
+        workflow_generation=task.workflow_generation,
     )
     assert result["changed"]
     task.refresh_from_db()

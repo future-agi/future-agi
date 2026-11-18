@@ -73,6 +73,12 @@ class EvalTask(BaseModel):
     status = models.CharField(
         max_length=255, choices=EvalTaskStatus.choices, blank=True, null=True
     )
+    # A control failure can precede every EvalLogger entry. Only a public
+    # selector reason (never an exception chain or a query) belongs here.
+    failure_reason = models.CharField(max_length=255, blank=True, null=True)
+    # Rotated by a replacement request; NULL denotes a pre-fence/initial run.
+    # Unlike a Temporal run_id this survives continue-as-new.
+    workflow_generation = models.UUIDField(null=True, editable=False)
     start_time = models.DateTimeField(blank=True, null=True)
     end_time = models.DateTimeField(blank=True, null=True)
     # Set only at Instant Pause, cleared only by an explicit new submission.
@@ -107,6 +113,13 @@ class EvalTask(BaseModel):
     def delete(self, using=None, keep_parents=False):
         super().delete(using=using, keep_parents=keep_parents)
         EvalTaskStartRequest.void_for_tasks([self.pk])
+
+    def prepare_workflow_replacement(self, *, status=EvalTaskStatus.PENDING):
+        """Rotate the worker's write fence on the locked task row."""
+        self.workflow_generation = uuid.uuid4()
+        self.status = status
+        self.failure_reason = None
+        self.save(update_fields=["workflow_generation", "status", "failure_reason"])
 
     def __str__(self):
         return f"Eval Task {self.id}"
@@ -156,7 +169,9 @@ class EvalTaskStartRequest(models.Model):
     @classmethod
     def void_for_tasks(cls, task_ids):
         """Revoke only live creates in the transaction that wrote the task."""
-        live = cls.objects.using("default").filter(cls.live_condition(), pk__in=task_ids)
+        live = cls.objects.using("default").filter(
+            cls.live_condition(), pk__in=task_ids
+        )
         live.update(
             state=cls.State.VOID,
             last_outcome="superseded",

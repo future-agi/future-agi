@@ -653,8 +653,10 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
     row_type: rowType = "spans",
     run_type: runType,
     status: responseStatus,
+    failure_reason: failureReason,
   } = data;
-  const effectiveStatus = responseStatus ?? taskStatus;
+  const effectiveStatus = String(responseStatus ?? taskStatus).toLowerCase();
+  const isFailed = effectiveStatus === "failed";
   const isRunning = effectiveStatus === "running";
   const isPending = effectiveStatus === "pending";
   // Continuous tasks never finalize, so duration is meaningless for them.
@@ -673,12 +675,16 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
   const hasErrors = errorGroups.length > 0 || Boolean(startGroup);
   // The recorded reason survives later status writes. Only the action hint
   // depends on a confirmed failure and the current page's Re-run control.
+  const isCurrentLog = !isFetching && !isPaused && !isError;
   const confirmedStartFailure = ["start_failed", "exhausted"].includes(
     startGroup?.start_reason_code,
   );
   const suggestRerun =
-    confirmedStartFailure && canRerun && !isRunning && !isPending &&
-    !isFetching && !isPaused && !isError;
+    confirmedStartFailure &&
+    canRerun &&
+    !isRunning &&
+    !isPending &&
+    isCurrentLog;
   const hasWarnings = warningGroups.length > 0;
   // Groups sort by count, and a group with no key breakdown cannot expand, so
   // auto-expand the largest one that actually has something behind it.
@@ -690,6 +696,38 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
   const processedCount = successCount + errorsCount + skippedCount;
   const isDrained = totalCount > 0 && processedCount >= totalCount;
   const isHighErrorRate = errorRate > 50;
+  // Defaulted counters aren't evidence of an empty log. Even explicit zeros
+  // describe only visible entries; earlier runs may have been archived.
+  const hasEmptyLog =
+    [
+      data.total_count,
+      data.success_count,
+      data.errors_count,
+      data.skipped_count,
+      data.warnings_count ?? data.warningsCount,
+    ].every((count) => count === 0) &&
+    !hasErrors &&
+    !hasWarnings;
+
+  let taskFailureMessage = null;
+  if (isFailed && isCurrentLog) {
+    taskFailureMessage = failureReason;
+    if (!taskFailureMessage && hasEmptyLog) {
+      taskFailureMessage =
+        "This task failed. No evaluation runs are available in this log, and the failure reason is unavailable.";
+    }
+  }
+  // Task-level diagnostics share one alert, not the per-evaluation Error Log.
+  // If both fields describe the same failure, show the actionable start copy.
+  const startMessage = startGroup?.sample;
+
+  let progressLabel = totalCount > 0 ? "Processing" : "No data";
+  if (isFailed) progressLabel = "Failed";
+  else if (isRunning) progressLabel = "Running...";
+  else if (isPending) progressLabel = "Pending";
+  else if (effectiveStatus === "completed" && isCurrentLog && hasEmptyLog)
+    progressLabel = "Completed — no evaluation runs in this log";
+  else if (isDrained) progressLabel = "Completed";
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
@@ -705,6 +743,23 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
           Could not refresh task logs. The previous summary is still shown.
         </Alert>
       )}
+      {(taskFailureMessage || startMessage) && (
+        <Alert
+          severity={
+            taskFailureMessage || confirmedStartFailure ? "error" : "info"
+          }
+        >
+          {taskFailureMessage && taskFailureMessage !== startMessage && (
+            <div>{taskFailureMessage}</div>
+          )}
+          {startMessage && (
+            <div>
+              {startMessage}
+              {suggestRerun && " Choose Re-run to try again."}
+            </div>
+          )}
+        </Alert>
+      )}
       {/* Progress Bar */}
       <Box>
         <Box
@@ -716,15 +771,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
           }}
         >
           <Typography variant="caption" color="text.secondary" fontWeight={500}>
-            {isRunning
-              ? "Running..."
-              : isPending
-                ? "Pending"
-                : isDrained
-                  ? "Completed"
-                  : totalCount > 0
-                    ? "Processing"
-                    : "No data"}
+            {progressLabel}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             {totalCount > 0
@@ -844,7 +891,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
                 color="text.secondary"
                 sx={{ fontSize: "12px" }}
               >
-                Completed
+                {isFailed ? "Ended" : "Completed"}
               </Typography>
               <Typography variant="body2" sx={{ fontSize: "12px" }}>
                 {format(new Date(endTime), "MMM dd, yyyy h:mm a")}
@@ -946,12 +993,6 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
       )}
 
       {/* Error Log — grouped by category with actionable fixes */}
-      {startGroup && (
-        <Alert severity={confirmedStartFailure ? "error" : "info"}>
-          {startGroup.sample}
-          {suggestRerun && " Choose Re-run to try again."}
-        </Alert>
-      )}
       {errorGroups.length > 0 && (
         <Box>
           <Box
@@ -1034,30 +1075,8 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
         </Box>
       )}
 
-      {String(effectiveStatus).toLowerCase() === "failed" &&
-        !isFetching &&
-        !isError &&
-        // Defaults used for the counters are not evidence of an empty log.
-        // These counts exclude archived entries; they cannot describe history.
-        [
-          data.total_count,
-          data.success_count,
-          data.errors_count,
-          data.skipped_count,
-          data.warnings_count ?? data.warningsCount,
-        ].every((count) => count === 0) &&
-        totalCount === 0 &&
-        processedCount === 0 &&
-        !hasErrors &&
-        !hasWarnings && (
-          <Alert severity="error">
-            This task failed. No evaluation runs are available in this log, and
-            the failure reason is unavailable.
-          </Alert>
-        )}
-
       {/* Empty state for no errors */}
-      {!hasErrors && !hasWarnings && isDrained && (
+      {!isFailed && !hasErrors && !hasWarnings && isDrained && (
         <Box
           sx={{
             p: 3,
