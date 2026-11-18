@@ -20,6 +20,7 @@ Usage:
 import json
 import os
 import re
+import unicodedata
 from collections.abc import Callable
 from typing import Any
 
@@ -211,10 +212,18 @@ def _scrub(value: Any, depth: int = 0) -> Any:
 # runs to the next whitespace or delimiter: there is no way to tell where an
 # unquoted value with spaces ends, so callers that log one as a %s argument are
 # covered by matching that argument by position instead.
+#
+# The name is the whole run of name characters (``[\w.\-]``) around a
+# sensitive substring: a separator can only follow the end of the run, so the
+# run is matched from its start only (the lookbehind), checked for a sensitive
+# substring by a lookahead, and then taken possessively. Every position is so
+# tried once, and before_send, which runs on the logging thread, stays linear
+# in the length of the text; ``[\w.\-]*(?:...)[\w.\-]*`` backtracked through
+# each start and split of a long run (seconds on a few kilobytes).
 _SENSITIVE_PAIR_IN_TEXT = re.compile(
-    r"""(?P<key>[\w.\-]*(?:"""
+    r"""(?<![\w.\-])(?P<key>(?=[\w.\-]*?(?:"""
     + "|".join(re.escape(key) for key in SENSITIVE_KEY_SUBSTRINGS)
-    + r""")[\w.\-]*)(?P<sep>(?:\\*["'])?\s*[:=]\s*)"""
+    + r"""))[\w.\-]++)(?P<sep>(?:\\*["'])?\s*[:=]\s*)"""
     r"""(?:(?P<quote>\\*["'])"""
     r"""(?P<quoted>(?:(?!(?P=quote))(?:\\+[\s\S]?|[^\\]))*)"""
     r"""(?:(?P<close>(?P=quote))|\Z)"""
@@ -233,9 +242,18 @@ def _already_redacted(match: re.Match) -> bool:
     quote running on over later text) is redacted again."""
     if match["quote"]:
         return match["quoted"] == _REDACTED
-    # The unquoted value stops before the closing bracket.
-    return match["value"] == _REDACTED[:-1] and match.string.startswith(
-        _REDACTED, match.start("value")
+    # The unquoted value stops before the closing bracket, and includes an
+    # opening quote or bracket that is not a delimiter, such as the curly
+    # quote of ``password=“[Filtered]”``.
+    value = match["value"]
+    if value[:1] != _REDACTED[:1] and unicodedata.category(value[:1]) in (
+        "Pi",
+        "Pf",
+        "Ps",
+    ):
+        value = value[1:]
+    return value == _REDACTED[:-1] and match.string.startswith(
+        _REDACTED, match.end("value") - len(value)
     )
 
 
@@ -351,14 +369,6 @@ def _param_spans(
     return spans
 
 
-def _occurrences(text: str, part: str) -> list[int]:
-    found, index = [], text.find(part)
-    while index != -1:
-        found.append(index)
-        index = text.find(part, index + 1)
-    return found
-
-
 def _overlaps(span: tuple[int, int], spans: list[tuple[int, int]]) -> bool:
     return any(span[0] < end and start < span[1] for start, end in spans)
 
@@ -398,11 +408,16 @@ def _scrub_log_params(
             return False
         if located is not None:
             return any(_overlaps(span, spans) for span in located.get(key, ()))
-        starts = {start for start, _ in spans}
-        to_end = [span for span in spans if span[1] == len(formatted)]
+        # Whether some occurrence of ``rendered`` starts where a redacted
+        # value starts or overlaps one that runs to the end of the text.
+        # Checked per span rather than by listing every occurrence, which is
+        # quadratic for a long, repetitive argument.
+        if any(formatted.startswith(rendered, start) for start, _ in spans):
+            return True
         return any(
-            i in starts or _overlaps((i, i + len(rendered)), to_end)
-            for i in _occurrences(formatted, rendered)
+            formatted.find(rendered, max(0, start - len(rendered) + 1)) != -1
+            for start, end in spans
+            if end == len(formatted)
         )
 
     def one(param: Any, key: Any) -> Any:

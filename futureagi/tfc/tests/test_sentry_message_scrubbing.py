@@ -5,15 +5,17 @@ Events go through a real Sentry client with the production ``before_send``
 and are checked as the serialized envelopes it would send.
 """
 
+import base64
 import collections
 import json
 import logging
+import time
 
 import pytest
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
-from tfc.logging.sentry import _before_breadcrumb
+from tfc.logging.sentry import _before_breadcrumb, _scrub_text
 from tfc.tests.sentry_capture import sentry_capture
 
 LOGGER = "tfc.tests.synthetic_scrubbing"
@@ -430,3 +432,59 @@ def test_probe_table_as_a_log_message(transport, case):
     else:
         assert logentry["params"] == case.params
         assert logentry["formatted"] == case.formatted
+
+
+def test_a_curly_quoted_template_is_not_redacted_twice(transport):
+    logging.getLogger(LOGGER).error("login failed password=“%s”", "Prbcurly")
+
+    sent = _sent(transport)
+    assert "Prbcurly" not in sent
+    assert "[Filtered]]" not in sent
+    logentry = transport.events[0]["logentry"]
+    assert logentry["params"] == ["[Filtered]"]
+    assert logentry["formatted"] == "login failed password=“[Filtered]”"
+
+
+# before_send runs synchronously on the logging thread, so scrubbing must stay
+# linear in the length of the text. Each input is about 100,000 characters;
+# the old name pattern took seconds on 1,600.
+_LONG = 100_000
+ADVERSARIAL = {
+    "password repeated": "password" * (_LONG // 8),
+    "token repeated": "token" * (_LONG // 5),
+    "token inside a long word": "a" * (_LONG // 2) + "token" + "b" * (_LONG // 2),
+    "long unquoted value": "password=" + "A" * _LONG,
+    "base64-like": base64.b64encode(bytes(range(256)) * (_LONG // 340)).decode(),
+    "name without separator": "x-api-key" + "\\" * _LONG,
+    "spaces after separator": "password:" + " " * _LONG,
+    "escaped quotes": "password=" + ("\\" * 8 + '"') * (_LONG // 9),
+    "backslash run": 'password="' + "\\" * _LONG,
+    "nested JSON": "token=" + json.dumps(json.dumps(json.dumps(["'\"\\"] * 9000))),
+    "quote runs": "token='" * (_LONG // 7 + 1),
+    "[Filtered] repeated": "password=[Filtered] " * (_LONG // 20),
+    "many pairs": "token=x " * (_LONG // 8),
+}
+_BOUND_SECONDS = 1.0
+
+
+def _timed(call, *args) -> float:
+    start = time.perf_counter()
+    call(*args)
+    return time.perf_counter() - start
+
+
+@pytest.mark.parametrize("text", ADVERSARIAL.values(), ids=ADVERSARIAL.keys())
+def test_scrubbing_text_is_linear(text):
+    assert len(text) >= _LONG
+    assert _timed(_scrub_text, text) < _BOUND_SECONDS
+
+
+@pytest.mark.parametrize("text", ADVERSARIAL.values(), ids=ADVERSARIAL.keys())
+def test_scrubbing_an_event_is_linear(transport, text):
+    # Exception value, %s argument and formatted message, in one event each.
+    assert _timed(_capture_probe, text) < _BOUND_SECONDS
+    assert _timed(_log_probe, "upstream said %s", (text,)) < _BOUND_SECONDS
+    assert _timed(_log_probe, "upstream said " + text.replace("%", "%%"), ()) < (
+        _BOUND_SECONDS
+    )
+    assert len(transport.events) == 3
