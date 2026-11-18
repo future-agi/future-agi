@@ -205,8 +205,9 @@ export const PROPOSALS_COPY = {
   done: "Done",
   add: (n) => `Add ${plural(n, "change")}`,
   // Counted against the button: of the `count` on it, the blocked ones didn't apply.
+  // `count` is the button's number: blocked items were never on it.
   added: (count, failed) =>
-    `Added ${failed ? `${Math.max(0, count - failed)} of ${plural(count, "change")}` : plural(count, "change")} to your unsaved changes${failed ? ` · ${failed} couldn't apply` : ""}. Review and save them to make the version.`,
+    `Added ${failed ? `${count} of ${plural(count + failed, "change")}` : plural(count, "change")} to your unsaved changes${failed ? ` · ${failed} couldn't apply` : ""}. Review and save them to make the version.`,
   addFailed: "Couldn't add these changes. Try again in a moment.",
   reviewChanges: "Review changes",
 };

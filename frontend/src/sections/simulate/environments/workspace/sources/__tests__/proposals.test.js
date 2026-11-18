@@ -116,9 +116,9 @@ describe("readProgress", () => {
 });
 
 describe("the added snackbar", () => {
-  it("counts against the button: of 8 with 2 blocked, 6 were added", () => {
+  it("counts what the button added, out of everything proposed", () => {
     expect(PROPOSALS_COPY.added(8, 2)).toMatch(
-      /^Added 6 of 8 changes .* 2 couldn't apply/,
+      /^Added 8 of 10 changes .* 2 couldn't apply/,
     );
   });
 });

@@ -279,7 +279,11 @@ export const appendAcceptedEdits = (
       return fileChange({
         kind: CHANGE_KINDS[item.kind] || "source",
         key: item.id,
-        summary: rule ? `Rule: ${rule}` : item.title,
+        summary: rule
+          ? `Rule: ${rule}`
+          : item.kind === "actor" && item.edited
+            ? `${item.title} · approval scope: ${item.edited}`
+            : item.title,
         from: readFrom(sourceId, nameOf(sourceId), item.cite),
       });
     }),
