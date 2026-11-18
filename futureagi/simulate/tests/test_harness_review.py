@@ -139,6 +139,58 @@ def test_sealed_bundles_and_session_files_are_never_review_items_and_an_index_en
     assert items["scenario:dup"].value == {"_index": {"scenario_key": "dup"}}
 
 
+def test_a_scenario_the_builder_round_tripped_unchanged_is_not_a_change():
+    """A case whose document once took its index entry's bookkeeping (its folder and step count) and was written back
+    without it by the builder reads unchanged; a real edit beside it is still the one change."""
+    case = {
+        "name": "refund",
+        "solution": [{"tool": "get_order"}],
+        "tests": "refunds once",
+    }
+    entry = {**case, "steps": 1, "folder": "scenarios/refund"}
+    default = _tree(
+        {},
+        **{
+            "scenarios.json": [
+                entry,
+                {**case, "name": "lookup", "steps": 1, "folder": "scenarios/lookup"},
+            ],
+            "scenarios/refund/scenario.json": entry,
+            "scenarios/lookup/scenario.json": {
+                **case,
+                "name": "lookup",
+                "steps": 1,
+                "folder": "scenarios/lookup",
+            },
+        },
+    )
+    draft = _tree(
+        {},
+        **{
+            "scenarios.json": [
+                entry,
+                {
+                    **case,
+                    "name": "lookup",
+                    "tests": "looks up",
+                    "steps": 1,
+                    "folder": "scenarios/lookup",
+                },
+            ],
+            "scenarios/refund/scenario.json": case,
+            "scenarios/lookup/scenario.json": {
+                **case,
+                "name": "lookup",
+                "tests": "looks up",
+            },
+        },
+    )
+
+    [change] = compute_changes(default, draft)
+
+    assert (change["id"], change["fields"]) == ("scenario:lookup", ["_index", "tests"])
+
+
 def _pair():
     default = _tree(
         {"tools": TOOLS, "persona": "calm"},
