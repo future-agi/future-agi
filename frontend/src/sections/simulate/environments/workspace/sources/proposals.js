@@ -200,6 +200,7 @@ export const PROPOSALS_COPY = {
     choose: "Choose how to handle personal data first",
     blocked: "Blocked items stay out",
     saved: "Saved from Review changes",
+    savedAs: (label) => `Saved as ${label} from Review changes`,
   },
   reject: "Reject",
   done: "Done",
