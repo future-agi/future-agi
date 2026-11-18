@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import runpy
 from pathlib import Path
@@ -17,22 +18,46 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def asgi_module(monkeypatch):
-    """tfc/asgi.py executed with telemetry, the Django app and the URL warm-up
-    stubbed out, so the routing and lifespan code run without a full app."""
+    return _run_asgi(monkeypatch)
+
+
+def _run_asgi(monkeypatch):
+    """tfc/asgi.py executed with telemetry, the Django app, the URL warm-up and
+    the heap freeze stubbed out, so the routing and lifespan code run without a
+    full app."""
     django_calls = []
+    startup_calls = []
 
     async def django_app(scope, receive, send):
         django_calls.append(scope["path"])
 
     monkeypatch.setattr("tfc.telemetry.init_telemetry", lambda *, component: None)
     monkeypatch.setattr("django.core.asgi.get_asgi_application", lambda: django_app)
-    monkeypatch.setattr(asgi_startup, "warm_http_urlconf", lambda: 0)
+    monkeypatch.setattr(
+        asgi_startup,
+        "warm_http_urlconf",
+        lambda: startup_calls.append("urlconf_warm") or 0,
+    )
+    monkeypatch.setattr(
+        asgi_startup, "freeze_startup_heap", lambda: startup_calls.append("freeze")
+    )
     # run_path returns a copy; patch the namespace the functions really use.
     module = runpy.run_path(str(Path(__file__).parents[1] / "asgi.py"))
     namespace = module["http_router"].__globals__
     namespace["_get_mcp_starlette_app"] = lambda: None
     namespace["django_calls"] = django_calls
+    namespace["startup_calls"] = startup_calls
     return namespace
+
+
+def test_loading_the_module_freezes_the_heap_once_after_the_warm_up(monkeypatch):
+    frozen = gc.get_freeze_count()
+
+    module = _run_asgi(monkeypatch)
+
+    assert module["startup_calls"] == ["urlconf_warm", "freeze"]
+    # The freeze is stubbed, so the test process's own heap stays unfrozen.
+    assert gc.get_freeze_count() == frozen
 
 
 def _unhealthy_state():

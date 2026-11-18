@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -59,12 +60,15 @@ async def test_graph_consumer_foreign_project_frame_denied(
     _row, token = await sync_to_async(make_saml_token)(
         saml_tenants.ab, saml_tenants.org_a, idp_a
     )
+    frozen = gc.get_freeze_count()
     socket = await graph_socket(token)
     try:
         await socket.send_json_to({"projectId": str(project_b.id), "graph": ""})
         close_code = await receive_close_code(socket)
 
         assert close_code == 4003
+        # Loading the app leaves the test heap collectable.
+        assert gc.get_freeze_count() == frozen
     finally:
         await socket.disconnect()
 

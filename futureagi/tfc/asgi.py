@@ -38,7 +38,11 @@ from django.conf import settings  # noqa: E402
 from django.core.asgi import get_asgi_application  # noqa: E402
 
 from sockets.routing import websocket_urlpatterns  # noqa: E402
-from tfc.asgi_startup import warm_http_urlconf, warm_migration_modules  # noqa: E402
+from tfc.asgi_startup import (  # noqa: E402
+    freeze_startup_heap,
+    warm_http_urlconf,
+    warm_migration_modules,
+)
 from tfc.middleware.jwt_auth import JWTAuthMiddleware  # noqa: E402
 from tfc.temporal.embedded import get_embedded_worker  # noqa: E402
 from tfc.utils.api_errors import build_error_envelope  # noqa: E402
@@ -52,6 +56,8 @@ _django_app = get_asgi_application()
 warm_http_urlconf()
 if settings.STARTUP_SCHEMA_GUARD_ENABLED:
     warm_migration_modules()
+# Every request otherwise re-walks the whole start-up heap on a full collection.
+freeze_startup_heap()
 
 # MCP Streamable HTTP app - lazy loaded to avoid import errors if mcp not installed
 _mcp_app = None

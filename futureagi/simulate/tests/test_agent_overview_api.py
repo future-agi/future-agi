@@ -9,6 +9,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from accounts.models import Organization
+from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     AgentDefinition,
     CallExecution,
@@ -18,6 +19,7 @@ from simulate.models import (
     HostedHarnessScenario,
     RunTest,
     Scenarios,
+    SimulateEvalConfig,
     TestExecution,
 )
 from simulate.models.agent_definition import ProviderCredentials
@@ -107,6 +109,7 @@ def _execution(run_test, minutes, **fields):
 
 
 def _receipts(job, *statuses):
+    """A receipt and its graded call per status."""
     attempt = HostedHarnessAttempt.objects.create(
         job=job,
         attempt_number=1,
@@ -114,12 +117,27 @@ def _receipts(job, *statuses):
         fence_hash="f" * 64,
         expires_at=timezone.now() + timedelta(hours=1),
     )
+    scenario = Scenarios.objects.create(
+        name="Graded",
+        source="seed",
+        scenario_type=Scenarios.ScenarioTypes.DATASET,
+        organization=job.organization,
+        workspace=job.workspace,
+    )
     for index, receipt_status in enumerate(statuses):
         HostedHarnessReceipt.objects.create(
             job=job,
             attempt=attempt,
             scenario=HostedHarnessScenario.objects.create(
-                job=job, scenario_key=f"scenario-{index}"
+                job=job,
+                scenario_key=f"scenario-{index}",
+                call_execution=CallExecution.objects.create(
+                    test_execution=job.test_execution,
+                    scenario=scenario,
+                    status=CallExecution.CallStatus.COMPLETED,
+                    simulation_call_type=CallExecution.SimulationCallType.TEXT,
+                    call_metadata={"harness_outcome_status": receipt_status},
+                ),
             ),
             attempt_number=1,
             digest="sha256:" + str(index).zfill(64),
@@ -436,6 +454,7 @@ def test_environments_filter_by_agent_and_carry_their_last_run(
         2,
     )
     assert (last_run["outcome_passed"], last_run["outcome_failed"]) == (1, 1)
+    assert (last_run["trial_pass_rate"], last_run["trials_evaluated"]) == (50.0, 2)
     assert rows[str(untested.id)]["last_run"] is None
     everything = auth_client.get(ENVIRONMENTS, **headers).json()["results"]
     assert {row["id"] for row in everything} == {
@@ -444,6 +463,82 @@ def test_environments_filter_by_agent_and_carry_their_last_run(
         str(other.id),
     }
     assert all("last_run" in row for row in everything)
+
+
+def _graded_environment(agent, minutes, eval_outputs):
+    """An environment whose finished last run holds one call and one eval."""
+    environment = _environment(agent, minutes)
+    template = EvalTemplate.objects.create(
+        name=f"graded-{uuid.uuid4().hex[:8]}",
+        organization=agent.organization,
+        workspace=agent.workspace,
+        config={"output": "score"},
+        output_type_normalized="percentage",
+        pass_threshold=0.5,
+    )
+    config = SimulateEvalConfig.objects.create(
+        name="Graded eval",
+        eval_template=template,
+        run_test=environment.run_test,
+        mapping={},
+    )
+    execution = _execution(environment.run_test, minutes, completed_at=timezone.now())
+    _job(
+        environment.run_test,
+        minutes=minutes,
+        environment=environment,
+        execution=execution,
+    )
+    CallExecution.objects.create(
+        test_execution=execution,
+        scenario=Scenarios.objects.create(
+            name="Graded",
+            source="seed",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=agent.organization,
+            workspace=agent.workspace,
+        ),
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        call_metadata={"harness_outcome_status": "passed"},
+        eval_outputs=eval_outputs(str(config.id)),
+    )
+    return environment, str(config.id)
+
+
+@pytest.mark.django_db
+def test_an_environments_last_run_is_graded_by_its_own_evals_only(
+    auth_client, organization, workspace
+):
+    agent = _agent(organization, workspace, "Northwind")
+    passing, passing_eval = _graded_environment(
+        agent, 1, lambda eval_id: {eval_id: {"status": "completed", "output": 0.9}}
+    )
+    failing, failing_eval = _graded_environment(
+        agent, 2, lambda eval_id: {eval_id: {"status": "completed", "output": 0.1}}
+    )
+    # The passing run also stores a failing score under the other run test's eval.
+    call = CallExecution.objects.get(test_execution__run_test=passing.run_test)
+    call.eval_outputs[failing_eval] = {"status": "completed", "output": 0.1}
+    call.save(update_fields=["eval_outputs"])
+
+    response = auth_client.get(
+        ENVIRONMENTS,
+        {"agent_definition_id": agent.id},
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    rows = {row["id"]: row["last_run"] for row in response.json()["results"]}
+    passing_run, failing_run = rows[str(passing.id)], rows[str(failing.id)]
+    assert (passing_run["trial_pass_rate"], passing_run["trials_evaluated"]) == (
+        100.0,
+        1,
+    )
+    assert (failing_run["trial_pass_rate"], failing_run["trials_evaluated"]) == (
+        0.0,
+        1,
+    )
 
 
 @pytest.mark.django_db

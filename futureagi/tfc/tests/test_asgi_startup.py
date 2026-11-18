@@ -55,6 +55,18 @@ def test_wsgi_worker_warms_routes_after_application_setup(monkeypatch):
     assert events == ["application_ready", "urlconf_warm"]
 
 
+def test_freeze_startup_heap_collects_then_freezes(monkeypatch):
+    """Garbage is collected first, so only live start-up objects are frozen."""
+
+    events = []
+    monkeypatch.setattr(asgi_startup.gc, "collect", lambda: events.append("collect"))
+    monkeypatch.setattr(asgi_startup.gc, "freeze", lambda: events.append("freeze"))
+
+    asgi_startup.freeze_startup_heap()
+
+    assert events == ["collect", "freeze"]
+
+
 def test_warm_migration_modules_imports_them_without_the_database():
     # No django_db mark: pytest-django fails any database access here.
     assert asgi_startup.warm_migration_modules() > 0
@@ -81,8 +93,12 @@ def test_asgi_worker_warms_migrations_only_for_the_schema_guard(
         "warm_migration_modules",
         lambda: events.append("migrations") or 0,
     )
+    monkeypatch.setattr(
+        asgi_startup, "freeze_startup_heap", lambda: events.append("freeze")
+    )
 
     runpy.run_path(str(Path(__file__).parents[1] / "asgi.py"))
 
     expected = ["urlconf", "migrations"] if guard_enabled else ["urlconf"]
+    expected.append("freeze")
     assert events == expected

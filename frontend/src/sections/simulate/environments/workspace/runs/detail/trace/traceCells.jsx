@@ -74,7 +74,8 @@ MetricValue.propTypes = {
 
 // A single eval cell — a score heat-tint with the reason on hover. Choice evals
 // carry no numeric score, so they render their label plainly instead.
-export function Score({ result }) {
+// `adornment` (the compare table's change arrow) sits after the score.
+export function Score({ result, adornment = null }) {
   if (result?.score == null) {
     return (
       <Box sx={{ p: 2, typography: "s2", color: "text.secondary" }}>
@@ -95,11 +96,12 @@ export function Score({ result }) {
         <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", fontVariantNumeric: "tabular-nums" }}>
           {Math.round(result.score * 100)}%
         </Typography>
+        {adornment && <Box sx={{ ml: 0.75, display: "flex" }}>{adornment}</Box>}
       </Box>
     </CustomTooltip>
   );
 }
-Score.propTypes = { result: PropTypes.object };
+Score.propTypes = { result: PropTypes.object, adornment: PropTypes.node };
 
 // How a scoring state that ended without a value reads in a cell, and the tip
 // to fall back on when the server sent no reason.

@@ -492,20 +492,30 @@ def test_authored_scenarios_match(run, organization, workspace):
         environment,
         "shared",
         use_case="Environment",
-        persona={"accent": "Scottish"},
+        name="Environment shared",
+        persona={"accent": "Scottish", "name": "Older"},
         sub_goals=["older"],
     )
     authored(
         own,
         "shared",
         use_case="Own",
-        persona={"accent": "", "age_group": "adult"},
+        name="Own shared",
+        instruction="Ask for a refund",
+        persona={"accent": "", "age_group": "adult", "name": "Ana"},
         coverage={"overlay": "jailbreak", "task": "refund"},
         sub_goals=["book", {"name": "pay"}],
     )
-    authored(environment, "environment-only", use_case="", sub_goals=None)
-    authored(other, "sibling-only", use_case="Sibling")
-    authored(environment, "newest", use_case="Environment newest")
+    authored(
+        environment,
+        "environment-only",
+        use_case="",
+        name="",
+        persona={"name": 7},
+        sub_goals=None,
+    )
+    authored(other, "sibling-only", use_case="Sibling", name="Sibling")
+    authored(environment, "newest", use_case="Environment newest", instruction="Env")
     authored(own, "newest", use_case="Own", persona=["not", "object"])
     linked_call = call("shared")
     authored(
@@ -513,6 +523,9 @@ def test_authored_scenarios_match(run, organization, workspace):
         "linked",
         call_execution=linked_call,
         use_case="Linked",
+        name="Linked",
+        instruction="Linked situation",
+        persona={"name": ""},
         coverage={"task": "linked task"},
         sub_goals=[],
     )
@@ -654,6 +667,73 @@ def test_rows_keep_the_call_value_shape(run, organization):
         *SCORING_ROW_FIELDS,
     ]
     assert list(row["scores"]) == [eval_id]
+
+
+@pytest.mark.django_db
+def test_scoring_state_matches_the_scoring_projection(run, organization):
+    """The scan reads the scoring columns in its own query, as the ORM projects them."""
+    from simulate.services.scoring_status import scoring_counts
+
+    execution, scenario = run
+    eval_id = _config(
+        execution, organization, "scoring", output_type_normalized="percentage"
+    )
+    now = timezone.now()
+    shapes = [
+        {"call_metadata": {"eval_dispatch_failed": "boom", "csat_status": "pending"}},
+        {"eval_outputs": [{"status": "pending"}]},
+        {"eval_outputs": "text"},
+        {"eval_outputs": {eval_id: "not an object", "other": {"status": "pending"}}},
+        {
+            "eval_outputs": {
+                eval_id: {"status": "completed", "source": "harness", "error": None}
+            }
+        },
+        {"conversation_metrics_data": {"csat_score": "7.5"}},
+        {"conversation_metrics_data": {"csat_score": 8}},
+        {"conversation_metrics_data": {"csat_score": None}},
+        {"conversation_metrics_data": {}},
+        {"overall_score": 0.25, "completed_at": now - timedelta(hours=2)},
+        {"overall_score": None, "ended_at": now - timedelta(minutes=5)},
+        {"status": "analyzing", "call_metadata": {"eval_started": True}},
+        {"status": "failed", "eval_outputs": {eval_id: {"status": "pending"}}},
+    ]
+    for fields in shapes:
+        CallExecution.objects.create(
+            test_execution=execution,
+            scenario=scenario,
+            **{"status": "completed", **fields},
+        )
+    columns = [{"id": eval_id}]
+    _assert_parity(execution, columns)
+    scanned = scan_call_values(execution, columns)
+    for rows in (scanned, _orm_rows(execution, columns, "-started_at")):
+        assert {row["id"] for row in rows} == {row["id"] for row in scanned}
+    counts = [
+        scoring_counts(
+            rows,
+            visible_ids=[eval_id],
+            runnable_ids=[eval_id],
+            run_status=execution.status,
+            now=now,
+        )
+        for rows in (scanned, _orm_rows(execution, columns, "-started_at"))
+    ]
+    assert counts[0] == counts[1]
+    assert sum(counts[0].values()) == len(shapes)
+
+
+@pytest.mark.django_db
+def test_scan_reads_the_scoring_state_without_a_second_query(run, organization):
+    execution, scenario = run
+    CallExecution.objects.create(
+        test_execution=execution, scenario=scenario, status="completed"
+    )
+    with CaptureQueriesContext(connection) as scoring:
+        scan_call_values(execution, [])
+    with CaptureQueriesContext(connection) as without:
+        scan_call_values(execution, [], scoring=False)
+    assert len(scoring) == len(without)
 
 
 def _page(execution, query, monkeypatch=None, scan=True):

@@ -49,8 +49,9 @@ def _then(**fields):
     """Scenario fields as suite version "then" held them."""
     return {
         "use_case": "billing",
+        "instruction": "call about a bill",
         "sub_goals": ["greeted"],
-        "persona": {"accent": "scottish", "age_group": "adult"},
+        "persona": {"accent": "scottish", "age_group": "adult", "name": "Then"},
         "coverage": {"overlay": "none", "task": "pay"},
         **fields,
     }
@@ -60,8 +61,9 @@ def _now(**fields):
     """The same scenario as a later default holds it."""
     return {
         "use_case": "refunds",
+        "instruction": "call about a refund",
         "sub_goals": ["refunded"],
-        "persona": {"accent": "irish", "age_group": "senior"},
+        "persona": {"accent": "irish", "age_group": "senior", "name": "Now"},
         "coverage": {"overlay": "angry", "task": "refund"},
         **fields,
     }
@@ -97,6 +99,9 @@ def _read_model(execution):
             GROUP_FIELDS["attack"],
             GROUP_FIELDS["task"],
             GROUP_FIELDS["sub_goal"],
+            "result_persona_name",
+            "result_scenario_name",
+            "result_situation",
         )
     )
 
@@ -132,6 +137,9 @@ class TestPinnedRunHistory:
                 GROUP_FIELDS["attack"]: "none",
                 GROUP_FIELDS["task"]: "pay",
                 GROUP_FIELDS["sub_goal"]: ["greeted"],
+                "result_persona_name": "Then",
+                "result_scenario_name": NAMES[0],
+                "result_situation": "call about a bill",
             }
             for row in rows
         )
@@ -184,8 +192,21 @@ class TestPinnedRunHistory:
                 row["result_age"],
                 row["result_attack"],
                 row["result_task"],
+                row["result_persona_name"],
+                row["result_scenario_name"],
+                row["result_situation"],
             )
-            == ("billing", ["greeted"], "scottish", "adult", "none", "pay")
+            == (
+                "billing",
+                ["greeted"],
+                "scottish",
+                "adult",
+                "none",
+                "pay",
+                "Then",
+                NAMES[0],
+                "call about a bill",
+            )
             for row in rows
         )
 
