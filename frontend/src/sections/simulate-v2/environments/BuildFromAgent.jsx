@@ -2444,6 +2444,10 @@ function CopyChip({ replication }) {
   const meta = REPLICATION_MODES[replication.mode] || {};
   /* Sealed · Live · Prompt only — recorded with the build since the PRD's live model. */
   const proof = replication.proofLabel || replication.fidelityLabel;
+  /* Simulated is the default — no chip, the same as the environment page;
+     only Live or Prompt only changes what a run proves. */
+  if (/^(simulated|sealed)$/i.test(String(proof || replication.label || "")))
+    return null;
   /* The same "Runs: Live" chip the environment page shows; which copy it
      runs against is on hover. */
   const tip = replication.cloneName
