@@ -13,7 +13,10 @@ failure while persisting or scheduling becomes a typed 503
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def submit_hosted_harness_job(
@@ -122,6 +125,11 @@ def submit_hosted_harness_job(
     except HostedHarnessError:
         raise
     except Exception as exc:
+        logger.warning(
+            "harness_create_failed org=%s error=%s",
+            organization.id,
+            type(exc).__name__,
+        )
         raise HostedHarnessError(
             "scheduler_unavailable",
             "Hosted harness scheduler is unavailable",
