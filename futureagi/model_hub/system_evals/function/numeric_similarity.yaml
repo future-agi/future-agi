@@ -22,24 +22,42 @@ config:
   config_params_desc: {}
   code: |
     def evaluate(input, output, expected, context, **kwargs):
+        import math
         import re
         pred = kwargs.get("output", output)
         ref = kwargs.get("expected", expected)
         def _to_number(value, name):
             if value is None:
                 return None, f"{name} is None"
-            if isinstance(value, (int, float)):
-                return float(value), None
-            value_str = str(value).strip()
-            if not value_str:
-                return None, f"{name} is empty"
-            match = re.search(
-                r'[-+]?(?:\d{1,3}(?:,\d{3})+(?!\d)(?:\.\d+)?|\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?',
-                value_str,
-            )
-            if match:
-                return float(match.group().replace(",", "")), None
-            return None, f"No numeric value found in {name}"
+            if not isinstance(value, (int, float)):
+                text = str(value).strip()
+                if not text:
+                    return None, f"{name} is empty"
+                match = re.search(
+                    r'[-+]?(?:\d{1,3}(?:,\d{3})+(?!\d)(?:\.\d+)?|\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?',
+                    text,
+                )
+                if not match:
+                    return None, f"No numeric value found in {name}"
+                token = match.group()
+                # A dotted version is not a decimal; don't score just its prefix.
+                if (re.match(r'\.\d', text[match.end():])
+                        or re.search(r'\b(?:v|version\s*)$', text[:match.start()], re.I)):
+                    return None, f"Version identifier in {name}"
+                # Long ungrouped digit strings can be IDs, not measurements.
+                # Converting them to float can even equate two different IDs.
+                if re.fullmatch(r'[-+]?\d{16,}\.?', token):
+                    digits = token.strip('+-.')
+                    if digits.startswith('0') or float(digits) >= 2**53:
+                        return None, f"Long integer identifier in {name}"
+                value = token.replace(",", "")
+            try:
+                number = float(value)
+            except OverflowError:
+                return None, f"Non-finite number in {name}"
+            if not math.isfinite(number):
+                return None, f"Non-finite number in {name}"
+            return number, None
         pred_num, pred_error = _to_number(pred, "output")
         ref_num, ref_error = _to_number(ref, "expected")
         errors = []

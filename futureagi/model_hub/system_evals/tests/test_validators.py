@@ -436,3 +436,41 @@ def test_numeric_similarity_relative_difference():
     assert ev(None, 42, "42", None)["score"] == 1.0
     r = ev(None, "no digits here", "5", None)
     assert r["score"] == 0.0 and "No numeric value found" in r["reason"]
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        ("1e400", "Non-finite number"),
+        ("-3E+400", "Non-finite number"),
+        (10**400, "Non-finite number"),
+        (float("nan"), "Non-finite number"),
+        (float("inf"), "Non-finite number"),
+        ("order 9007199254740993", "Long integer identifier"),
+        ("ID 0000000000000000001", "Long integer identifier"),
+        ("release 1.2.3", "Version identifier"),
+        ("release v1.2", "Version identifier"),
+    ],
+)
+def test_numeric_similarity_reports_unscorable_operands(value, reason):
+    evaluate = _load_eval("numeric_similarity")
+    for output, expected, name in [(value, 1, "output"), (1, value, "expected")]:
+        assert evaluate(None, output, expected, None) == {
+            "score": 0.0,
+            "reason": f"Cannot calculate: {reason} in {name}",
+        }
+
+
+def test_numeric_similarity_preserves_first_number_and_scale():
+    evaluate = _load_eval("numeric_similarity")
+    for output, expected, score in [
+        ("was -12.5, now 400", -10, 0.8),
+        (0, 0, 1),
+        ("42.", 42, 1),
+        ("9007199254740991", 9007199254740991, 1),
+        ("loss: -.25", 0, 0.75),
+        ("first +1,250.5e-1 then 4", 125.05, 1),
+    ]:
+        result = evaluate(None, output, expected, None)
+        assert result["score"] == pytest.approx(score), (output, expected)
+        assert result["reason"] == f"Numeric Similarity: {score:.3f}"
