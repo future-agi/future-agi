@@ -1,22 +1,17 @@
 import React, { Suspense } from "react";
 import { Helmet } from "react-helmet-async";
 import { Outlet, useLocation, useMatch, useNavigate } from "react-router-dom";
-import { Box, IconButton, Stack, Tab } from "@mui/material";
+import { Box, IconButton, Tab } from "@mui/material";
 import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
-import ComingSoonChip from "src/sections/simulate/environments/components/ComingSoonChip";
 import { CONNECTED_AGENTS_PATH } from "../../agentsTabs";
 import AgentDetailHeader, {
   AgentDetailHeaderSkeleton,
 } from "./AgentDetailHeader";
 import AgentReadingState from "./AgentReadingState";
 import AgentVersionSelect from "./AgentVersionSelect";
-import {
-  COMING_SOON_TABS,
-  DETAIL_TABS,
-  agentDetailPath,
-} from "./agentDetailTabs";
+import { DETAIL_TABS, agentDetailPath } from "./agentDetailTabs";
 import useAgentRoute from "./useAgentRoute";
 import ContentSkeleton from "src/components/content-skeleton";
 
@@ -121,7 +116,7 @@ export default function AgentDetailLayout() {
             {DETAIL_TABS.map((t) => (
               <Tab key={t.id} value={t.id} label={tabLabel(t)} disableRipple />
             ))}
-            {COMING_SOON_TABS.map((label) => (
+            {/* {COMING_SOON_TABS.map((label) => (
               <Tab
                 key={label}
                 value={label}
@@ -134,7 +129,7 @@ export default function AgentDetailLayout() {
                   </Stack>
                 }
               />
-            ))}
+            ))} */}
           </CustomTabs>
         </Box>
         <Suspense

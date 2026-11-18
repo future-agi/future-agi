@@ -157,7 +157,9 @@ describe("AgentDetailLayout", () => {
     expect(
       await screen.findByRole("heading", { name: "Northwind Pharmacy" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Vapi")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("agent-source-badge")).getByLabelText("Vapi"),
+    ).toBeInTheDocument();
     const subline = screen.getByTestId("agent-detail-subline");
     expect(subline).toHaveTextContent(HOSTED.assistant_id);
     expect(subline).toHaveTextContent(/Connected \d+d ago/);
@@ -324,14 +326,14 @@ describe("AgentDetailLayout", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows Constraints, Improvements and Connections as disabled Coming soon tabs", async () => {
+  it("does not show the Constraints, Improvements and Connections tabs", async () => {
     serve(HOSTED);
     renderAt(`${base(HOSTED)}/overview`);
     await screen.findByRole("tab", { name: "Overview" });
     ["Constraints", "Improvements", "Connections"].forEach((name) => {
-      const tab = screen.getByRole("tab", { name: new RegExp(name) });
-      expect(tab).toBeDisabled();
-      expect(within(tab).getByLabelText("Coming soon")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("tab", { name: new RegExp(name) }),
+      ).not.toBeInTheDocument();
     });
   });
 
