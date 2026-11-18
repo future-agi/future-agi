@@ -9,6 +9,19 @@ Run the commands below from the `futureagi/` directory of the repository.
 git submodule update --init --recursive
 ```
 
+### Quick Start
+
+With `uv` and Python 3.11 installed, run these commands from `futureagi/`:
+
+```bash
+uv sync --frozen --extra dev
+. .venv/bin/activate
+pre-commit validate-config .pre-commit-config.yaml
+```
+
+The `dev` extra supplies `pre-commit`; `requirements.txt` alone does not.
+Validation checks the configuration without installing a Git hook.
+
 ### Type Checking with MyPy
 
 CI runs mypy on the whole backend in the "Python types (advisory)" workflow.
@@ -38,29 +51,23 @@ baseline. See the [baseline helper](../scripts/mypy_baseline.py) and the
 
 ### Pre-commit Hooks
 
-**This project uses pre-commit hooks to ensure code quality.** They run automatically before each commit.
-
-#### What do they check?
-
-- ✅ Code formatting and import sorting (Ruff)
-- ✅ Linting (Ruff)
-- ✅ Security (Bandit, detect-secrets)
-- ✅ Django checks (migrations, system checks)
-- ✅ File validation (YAML, JSON)
-
 #### First-time setup
 
-```bash
-# Install hooks (one-time)
-make pre-commit-install
+Choose one hook setup per clone. To check for a custom hook directory, run
+`git config --get core.hooksPath` from `futureagi/`. No output and exit status 1
+means it is unset.
 
-# Run on all files (first time)
-make pre-commit-all
-```
+- **Repository hooks (Husky):** `yarn install` at the repository root configures
+  Git to use Husky. Keep that hook path; do not run `make pre-commit-install`
+  in this clone. See the [repository hook reference](../TESTING.md#git-hooks).
+- **Standalone Python hook:** In a clone with no `core.hooksPath` set, complete
+  the [Quick Start](#quick-start), then run `make pre-commit-install` from
+  `futureagi/`. This installs the backend checks in Git's default hook directory.
 
 #### Daily usage
 
-Pre-commit runs automatically on `git commit`. You can also run manually:
+With the Quick Start environment active, you can run the backend checks manually
+in either setup:
 
 ```bash
 make pre-commit         # Run on staged files
@@ -72,8 +79,7 @@ make mypy               # Check types (baseline-driven)
 
 #### Having issues?
 
-- See the [git hooks setup guide](../CONTRIBUTING.md#3-install-git-hooks) and
-  [git hooks reference](../TESTING.md#git-hooks).
+- Check which [hook setup](#first-time-setup) this clone uses.
 - `pre-commit validate-config .pre-commit-config.yaml` checks the backend hook
   configuration. The [setup checker](bin/verify-team-setup.sh) also looks for
   `.git/hooks` in the current directory, so its hook-installation check is not
@@ -83,7 +89,7 @@ make mypy               # Check types (baseline-driven)
 
 ```bash
 # Code Quality
-make pre-commit-install   # Install pre-commit hooks
+make pre-commit-install  # Standalone Python hook only (no custom Git hook path)
 make pre-commit-all       # Run all pre-commit checks
 make format              # Auto-format code
 make lint                # Run linters
@@ -113,61 +119,17 @@ See [Contributing Guide](../CONTRIBUTING.md) for more details.
 
 ### Documentation
 
-- 📚 [Development setup](../CONTRIBUTING.md#development-setup)
-- 🔧 [Git hooks setup](../CONTRIBUTING.md#3-install-git-hooks)
+- 📚 [Backend Quick Start](#quick-start)
+- 🔧 [Git hooks setup](#first-time-setup)
 - 🔍 [Git hooks reference](../TESTING.md#git-hooks)
 - 📖 [Testing guide](../TESTING.md)
 
 ---
 
-## Alternative Minimal Version
-
-If you want a shorter version:
-
----
-
-## Development Setup
-
-### Quick Start
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Install pre-commit hooks (MANDATORY)
-make pre-commit-install
-
-# Validate the backend hook configuration
-pre-commit validate-config .pre-commit-config.yaml
-
-# Start developing!
-```
-
-### Pre-commit Hooks
-
-This project uses pre-commit hooks to ensure code quality. They run automatically on commit.
-
-**Setup (one-time):** `make pre-commit-install`
-
-**Documentation:** [Git hooks setup](../CONTRIBUTING.md#3-install-git-hooks)
-
----
-
-
 # Pre-commit Quick Reference
 
-Quick reference for pre-commit hooks usage.
-
-## One-Time Setup
-
-```bash
-# Recommended: Use the setup script
-make pre-commit-install
-
-# Or manually
-pip install pre-commit
-pre-commit install
-```
+For setup, follow the [Quick Start](#quick-start) and choose the
+[hook setup](#first-time-setup) for your clone.
 
 ## Daily Usage
 
@@ -187,7 +149,7 @@ make pre-commit-all
 
 | Command | Description |
 |---------|-------------|
-| `make pre-commit-install` | Install pre-commit hooks (one-time) |
+| `make pre-commit-install` | Install the standalone Python hook only (no custom Git hook path) |
 | `make pre-commit` | Run on staged files |
 | `make pre-commit-all` | Run on all files |
 | `make format` | Auto-fix and format code (`ruff check --fix`, `ruff format`) |
@@ -199,9 +161,7 @@ make pre-commit-all
 ## Quick Fixes
 
 ### "Command not found: pre-commit"
-```bash
-pip install pre-commit
-```
+Follow the [Quick Start](#quick-start) to install and activate the developer environment.
 
 ### "Hooks failed"
 1. Read the error message
@@ -234,22 +194,13 @@ SKIP=ruff-check,ruff-format git commit -m "Message"
 
 ## Installed Hooks
 
-### Auto-fixing Hooks
-✅ **ruff-check** - Linter and import sorter, with auto-fix
-✅ **ruff-format** - Python formatter
-✅ **django-upgrade** - Upgrade Django code
-✅ **djlint** - Django template formatter
-
-### Checking Hooks
-🔍 **bandit** - Security scan
-🔍 **detect-secrets** - Secret detection
-🔍 **django-check** - Django system checks
-🔍 **check-yaml/json** - File validation
+For the standalone Python hook, see the [backend hook configuration](.pre-commit-config.yaml)
+for the enabled Ruff and file checks. Husky runs the [repository hooks](../TESTING.md#git-hooks) instead.
 
 ## Troubleshooting
 
 ```bash
-# Clear cache and reinstall
+# Standalone Python hook only (no custom Git hook path): clear cache and reinstall
 pre-commit clean
 pre-commit install --install-hooks
 
@@ -262,6 +213,6 @@ pre-commit run --all-files --verbose
 
 ## Help
 
-- 📚 [Git hooks setup](../CONTRIBUTING.md#3-install-git-hooks)
+- 📚 [Git hooks setup](#first-time-setup)
 - 🔧 [Configuration](.pre-commit-config.yaml)
 - 💬 Ask in team Slack channel
