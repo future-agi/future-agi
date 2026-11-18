@@ -339,16 +339,29 @@ test('OBS-E2E-008: native and custom voice filters select only the current proje
     await test.step('native/custom catalog identity, types and role eligibility', async () => {
       // Readiness polling is only for the newly ingested custom keys. HTTP
       // contract errors are thrown immediately; they are not retried as empty.
-      let ready: Value[] = [];
+      // Custom values come from the observed property catalog, which the
+      // collector fills asynchronously one spool/Kafka record per OTLP flush
+      // (fi-collector observedcatalog spool -> consumer). A, B and S are four
+      // separate exports, so "spans FINAL is complete" does not mean the catalog
+      // is, and one root's value can be indexed before another's. Readiness is
+      // therefore EVERY custom value this step later reads, not the first one.
+      const typed = (rows: Value[]) => sorted(rows.map(v => ({ value: v.value, type: v.type })));
+      const string = (...names: string[]) => sorted(names.map(value => ({ value, type: 'string' })));
+      const indexed = async () => ({
+        primaryRoute: typed(await values(primary, `custom_attribute:${routeKey}`, 'traces')),
+        primaryChild: typed(await values(primary, `custom_attribute:${childKey}`, 'traces')),
+        siblingRoute: typed(await values(sibling, `custom_attribute:${routeKey}`, 'traces')),
+      });
+      const complete = { primaryRoute: string('alpha', 'beta'), primaryChild: string(childValue),
+        siblingRoute: string(`${prefix}-sibling-only`) };
+      let ready = await indexed();
       const until = Date.now() + POLL.ASYNC_JOB.timeout;
-      do {
-        ready = await values(primary, `custom_attribute:${routeKey}`, 'traces');
-        if (ready.length) break;
+      while (!(ready.primaryRoute.length >= 2 && ready.primaryChild.length && ready.siblingRoute.length)) {
         expect(Date.now()).toBeLessThan(until);
         await new Promise(resolve => setTimeout(resolve, 500));
-      } while (true);
-      expect(sorted(ready.map(v => ({ value: v.value, type: v.type })))).toStrictEqual([
-        { value: 'alpha', type: 'string' }, { value: 'beta', type: 'string' }]);
+        ready = await indexed();
+      }
+      expect(ready).toStrictEqual(complete);
       for (const role of ['', 'metric', 'dimension']) {
         const rows = await catalog(primary, 'system_metric', role), voice = rows.filter(m => m.property_id.startsWith(VOICE_ID));
         const expected = [...(role !== 'metric' ? DIMENSIONS.map(name => ({ property_id: VOICE_ID + name, type: 'string', role: 'dimension' })) : []),
