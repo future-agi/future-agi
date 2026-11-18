@@ -108227,6 +108227,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "voice_sim_minutes",
         "ai_credits",
         "sandbox_seconds",
+        "sandbox_minutes",
       ],
       type: "object",
       properties: {
@@ -108248,6 +108249,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         sandbox_seconds: {
           title: "Sandbox seconds",
+          type: "number",
+          minimum: 0,
+        },
+        sandbox_minutes: {
+          title: "Sandbox minutes",
           type: "number",
           minimum: 0,
         },

@@ -1874,6 +1874,15 @@ class HostedHarnessProvider:
                     },
                     status=status.HTTP_409_CONFLICT,
                 )
+            from simulate.services.harness_usage import require_sandbox_usage
+
+            try:
+                require_sandbox_usage(str(job.organization_id))
+            except Exception as exc:
+                response = _usage_limit_response(exc)
+                if response is not None:
+                    return response
+                raise
         data = request.validated_data
         if job.state in terminal_states and data["kind"] == "user_message":
             # After the build, a message starts a builder turn of its own, billed as authoring, so
@@ -1978,6 +1987,10 @@ class HostedHarnessProvider:
                 f"hosted harness job cannot be rerun while it is {job.state}",
                 status_code=409,
             )
+        from simulate.services.harness_usage import require_sandbox_start
+
+        # Every caller (run page, chat, add-scenarios) starts a new hosted sandbox here.
+        require_sandbox_start(str(job.organization_id))
 
         environment = job.environment or job
         prior_metadata = (job.payload or {}).get("metadata") or {}
@@ -2848,10 +2861,14 @@ class HostedHarnessProvider:
                         "end-to-end run; its follow-ups can then add scenarios.",
                         status_code=409,
                     )
-                from simulate.services.harness_usage import require_harness_authoring
+                from simulate.services.harness_usage import (
+                    require_harness_authoring,
+                    require_sandbox_usage,
+                )
                 from simulate.services.harness_versioning.drafts import drafts_apply
 
                 require_harness_authoring(str(organization.id))
+                require_sandbox_usage(str(organization.id))
                 if drafts_apply(job):
                     return self._extend_in_chat(
                         request, job, count, guidance, client_request_id

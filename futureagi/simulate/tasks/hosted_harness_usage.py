@@ -31,7 +31,7 @@ def seal_hosted_harness_usage(attempt_id: str) -> dict:
                 attempt_id=attempt.id
             )
         )
-        replay_harness_usage(attempt)
+        replay_harness_usage(attempt, seal=True)
         details = dict(receipt.details)
         details["usage_sealed_at"] = timezone.now().isoformat()
         receipt.details = details
@@ -75,4 +75,42 @@ def seal_unsealed_hosted_harness_usage() -> dict[str, int]:
     counts = {"scanned": len(attempt_ids), "scheduled": scheduled}
     if attempt_ids:
         logger.info("hosted_harness_usage_seal_sweep", **counts)
+    return counts
+
+
+@temporal_activity(time_limit=300, max_retries=10, retry_delay=30, queue="default")
+def seal_hosted_sandbox_lifetime(lifetime_id: str) -> dict:
+    """Bill one chat, rebuild or fix-engine sandbox whose end is known."""
+    from simulate.services.sandbox_usage import seal_sandbox_lifetime
+
+    return {"lifetime_id": lifetime_id, "outcome": seal_sandbox_lifetime(lifetime_id)}
+
+
+def schedule_sandbox_lifetime_seal(lifetime_id: str) -> bool:
+    """Enqueue the seal for one sandbox; a seal already queued for it is reused."""
+    try:
+        seal_hosted_sandbox_lifetime.apply_async(
+            args=[lifetime_id],
+            task_id=f"hosted-sandbox-lifetime-seal-{lifetime_id}",
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            dispatch_timeout_seconds=30,
+        )
+    except Exception:  # noqa: BLE001 - never raised into a delete
+        # The sweep seals an unsettled sandbox.
+        logger.error(
+            "hosted_sandbox_lifetime_seal_not_scheduled", lifetime_id=lifetime_id
+        )
+        return False
+    return True
+
+
+@temporal_activity(time_limit=300, max_retries=0, queue="default")
+def sweep_hosted_sandbox_lifetimes() -> dict[str, int]:
+    """Close sandboxes nobody confirmed deleted once their lifetime limit has passed,
+    and bill every ended sandbox whose seal never ran or did not finish."""
+    from simulate.services.sandbox_usage import sweep_sandbox_lifetimes
+
+    counts = sweep_sandbox_lifetimes()
+    if any(counts.values()):
+        logger.info("hosted_sandbox_lifetime_sweep", **counts)
     return counts
