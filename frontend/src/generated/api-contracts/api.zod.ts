@@ -44547,15 +44547,23 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         "untested",
         "stale",
       ]),
-      evidence: zod.array(
-        zod.object({
-          check: zod.string().min(1),
-          result: zod
-            .string()
-            .min(1)
-            .describe("A check status, or a ratio such as 3/4."),
-        }),
-      ),
+      evidence: zod
+        .array(
+          zod
+            .object({
+              check: zod.string().min(1),
+              result: zod
+                .string()
+                .min(1)
+                .describe("A check status, or a ratio such as 3/4."),
+            })
+            .describe(
+              "What the row read, one line each. The children row lists its seven checklist items (stable_ids, delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item.",
+            ),
+        )
+        .describe(
+          "What the row read, one line each. The children row lists its seven checklist items (stable_ids, delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item.",
+        ),
       checked_at: zod.string().min(1),
       fix: zod.object({
         type: zod.string().min(1),
@@ -45070,15 +45078,23 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
           "untested",
           "stale",
         ]),
-        evidence: zod.array(
-          zod.object({
-            check: zod.string().min(1),
-            result: zod
-              .string()
-              .min(1)
-              .describe("A check status, or a ratio such as 3/4."),
-          }),
-        ),
+        evidence: zod
+          .array(
+            zod
+              .object({
+                check: zod.string().min(1),
+                result: zod
+                  .string()
+                  .min(1)
+                  .describe("A check status, or a ratio such as 3/4."),
+              })
+              .describe(
+                "What the row read, one line each. The children row lists its seven checklist items (stable_ids, delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item.",
+              ),
+          )
+          .describe(
+            "What the row read, one line each. The children row lists its seven checklist items (stable_ids, delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item.",
+          ),
         checked_at: zod.string().min(1),
         fix: zod.object({
           type: zod.string().min(1),
@@ -65248,15 +65264,23 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
               "untested",
               "stale",
             ]),
-            evidence: zod.array(
-              zod.object({
-                check: zod.string().min(1),
-                result: zod
-                  .string()
-                  .min(1)
-                  .describe("A check status, or a ratio such as 3/4."),
-              }),
-            ),
+            evidence: zod
+              .array(
+                zod
+                  .object({
+                    check: zod.string().min(1),
+                    result: zod
+                      .string()
+                      .min(1)
+                      .describe("A check status, or a ratio such as 3/4."),
+                  })
+                  .describe(
+                    "What the row read, one line each. The children row lists its seven checklist items (stable_ids, delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item.",
+                  ),
+              )
+              .describe(
+                "What the row read, one line each. The children row lists its seven checklist items (stable_ids, delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item.",
+              ),
             checked_at: zod.string().min(1),
             fix: zod.object({
               type: zod.string().min(1),
