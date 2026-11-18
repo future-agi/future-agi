@@ -41,7 +41,6 @@ from simulate.services.harness_readiness.catalogue import (
 )
 from simulate.services.harness_readiness.children import children
 from simulate.services.harness_versioning import archives, assembly
-from simulate.services.hosted_harness import HostedHarnessError
 
 logger = structlog.get_logger(__name__)
 
@@ -54,10 +53,9 @@ _MAX_CERTIFICATION_BYTES = 8 * 1024 * 1024
 # again soon.
 _FILES_TTL_SECONDS = 7 * 24 * 3600
 _UNREADABLE_TTL_SECONDS = 300
-# One reader per archive at a time, for as long as a read may take; the others are told
-# to try again, never held in the request.
+# One reader per archive at a time, for as long as a read may take; the others read it as
+# unreadable just now, never held in the request.
 _READING_TTL_SECONDS = 300
-_RETRY_AFTER_SECONDS = 10
 _SANDBOX_SOURCES = frozenset(
     {
         HarnessAgentVersionRuntime.SourceKind.GITHUB,
@@ -219,8 +217,8 @@ def keep_certification_files(
 def _read_once(object_key: str) -> _Read:
     """The archive's certification files and whether it could be read, by one reader
     per archive: archives are content-addressed, so a key never changes what it holds.
-    A request that finds another reading is told to try again; it never waits. An
-    archive that cannot be read reads as holding neither, for a few minutes."""
+    A request that finds another reading reads it as unreadable just now; it never
+    waits. An archive that cannot be read reads as holding neither, for a few minutes."""
     cache_key = (
         f"harness-readiness-certification:v{_FILES_VERSION}:"
         + hashlib.sha256(object_key.encode()).hexdigest()
@@ -230,14 +228,9 @@ def _read_once(object_key: str) -> _Read:
         return cached
     reading = cache_key + ":reading"
     if not cache.add(reading, 1, timeout=_READING_TTL_SECONDS):
-        raise HostedHarnessError(
-            "certification_reading",
-            "This pairing's certification is still being read. Try again in a few "
-            "seconds.",
-            status_code=503,
-            retryable=True,
-            details={"retry_after": _RETRY_AFTER_SECONDS},
-        )
+        # Another request is reading it: this one reads as unreadable just now, which is
+        # neither remembered nor waited for, so the next read has the archive's files.
+        return _files_of({}), False
     try:
         return _read_certification_files(object_key, cache_key)
     finally:

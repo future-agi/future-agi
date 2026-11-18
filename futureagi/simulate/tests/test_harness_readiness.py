@@ -1790,33 +1790,41 @@ class TestReviewFollowUps:
         streamed.assert_not_called()
         assert _rows(second) == _rows(first)
 
-    def test_a_second_reader_is_told_to_retry_at_once_not_held_or_downloading(
-        self, storage
+    def test_a_second_reader_reads_unreadable_at_once_never_held_or_refused(
+        self, user, workspace, storage, auth_client
     ):
+        """While another request reads the archive, the readiness GET answers 200 with the
+        pairing marked unreadable just now, which the Run dialog already shows."""
         import hashlib
 
         from simulate.services.harness_readiness import evidence
 
-        key = "harness-sealed/stream/slow.tar.gz"
+        environment = _environment(user, workspace, storage, "rd-busy-reader")
+        _certify(environment, storage)
+        bundle = _bundle(environment)
+        HarnessAssembledBundle._base_manager.filter(id=bundle.id).update(
+            certification_files=None
+        )
+        cache.clear()
         reading = (
             f"harness-readiness-certification:v{evidence._FILES_VERSION}:"
-            + hashlib.sha256(key.encode()).hexdigest()
+            + hashlib.sha256(bundle.object_key.encode()).hexdigest()
             + ":reading"
         )
         cache.add(reading, 1)
         try:
-            with (
-                patch.object(evidence.archives, "stream_members") as streamed,
-                pytest.raises(HostedHarnessError) as refused,
-            ):
-                evidence._read_once(key)
+            with patch.object(evidence.archives, "stream_members") as streamed:
+                response = auth_client.get(
+                    f"/simulate/api/harness-environments/{environment.id}/capabilities/"
+                )
         finally:
             cache.delete(reading)
 
         streamed.assert_not_called()
-        assert refused.value.status_code == 503
-        assert refused.value.retryable is True
-        assert refused.value.as_dict()["retry_after"] > 0
+        assert response.status_code == 200, response.content
+        body = response.json()
+        body = body.get("result", body)
+        assert body["pairing"]["evidence_unreadable"] is True
 
     def test_recheck_needs_build_usage_unless_already_certified(
         self, user, workspace, storage, auth_client
