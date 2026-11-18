@@ -23,7 +23,8 @@ export default function ValidateScenariosButton({
   const start = useValidateScenarios(jobId);
   const status = useScenarioValidation(jobId, validationJobId);
   const state = status.data?.state;
-  const running = start.isPending || (validationJobId && (!state || state === "validating"));
+  const running =
+    start.isPending || (validationJobId && (!state || state === "validating"));
 
   const onClick = async () => {
     setMessage(null);
@@ -60,7 +61,10 @@ export default function ValidateScenariosButton({
         {running ? SCENARIOS_COPY.validating : label}
       </Button>
       {(message || ended) && (
-        <Typography role="status" sx={{ typography: "s3", color: "text.subtitle" }}>
+        <Typography
+          role="status"
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >
           {message || ended}
         </Typography>
       )}

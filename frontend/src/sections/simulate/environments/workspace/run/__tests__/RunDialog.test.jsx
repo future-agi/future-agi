@@ -1019,7 +1019,12 @@ describe("RunDialog lifecycle refusals", () => {
 
     expect(again).toBeEnabled();
     await user.click(again);
-    expect(onSubmit).toHaveBeenCalledWith({}, ["k1", "k2"], expect.anything());
+    expect(onSubmit).toHaveBeenCalledWith(
+      {},
+      ["k1", "k2"],
+      expect.anything(),
+      null,
+    );
     vi.useRealTimers();
   });
 
