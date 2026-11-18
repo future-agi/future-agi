@@ -273,7 +273,9 @@ class TestRows:
         report = _report(environment)
 
         statuses = {row["id"]: row["status"] for row in report["rows"]}
-        measured = [row["id"] for row in report["rows"] if row["measured"]]
+        from simulate.services.harness_readiness.rules import PAIR_CHECKED
+
+        measured = [row["id"] for row in report["rows"] if row["id"] in PAIR_CHECKED]
         assert measured == [
             "start",
             "message",
@@ -3949,3 +3951,28 @@ def test_one_rule_tells_a_validation_job_apart_in_queries_and_in_memory(
     assert jobs.filter(validation_jobs()).exists() is validation_job
     assert jobs.filter(~validation_jobs()).exists() is not validation_job
     assert jobs.filter(user_runs()).exists() is not validation_job
+
+
+def test_a_row_reads_supported_only_from_a_passed_finding(user, workspace, storage):
+    """A pairing check, or the agent's own runs for a row no check measures (a voice agent's recorded call for
+    audio): Supported always comes with a passed finding, never from metadata."""
+    from simulate.services.harness_readiness.catalogue import CATALOGUE, Reading
+    from simulate.services.harness_readiness.rules import _row, _status
+
+    audio = next(one for one in CATALOGUE if one.id == "audio")
+    recorded = Reading(
+        "passed", evidence=[{"check": "recording", "result": "recording_assistant"}]
+    )
+    row = _row(audio, _status(recorded)[0], reading=recorded)
+    assert (row["status"], row["measured"], row["finding"]) == (
+        "supported",
+        False,
+        "passed",
+    )
+    assert _status(Reading("not_run", "no_recording", "none yet"))[0] == "untested"
+
+    environment = _environment(user, workspace, storage, "rd-supported-from-passed")
+    _certify(environment, storage)
+    for one in _report(environment)["rows"]:
+        if one["status"] == "supported":
+            assert one["finding"] == "passed", one["id"]
