@@ -230,14 +230,22 @@ def test_a_scenario_uses_what_alks_schema_names_and_nothing_else():
 
     scenario = {
         "solution": [{"tool": "lookup"}, {"name": "not_a_tool_key"}],
-        "faults": [{"action": "refund", "approval": "approve_refund"}, {"tool": "ignored"}],
+        "faults": [
+            {"action": "refund", "approval": "approve_refund"},
+            {"tool": "ignored"},
+        ],
         "sub_goals": ["paid", {"name": "not_alks_shape"}],
         "actors": [
-            {"id": "manager", "actions": [{"trigger": {"kind": "on_tool", "tool": "escalate"}}]},
+            {
+                "id": "manager",
+                "actions": [{"trigger": {"kind": "on_tool", "tool": "escalate"}}],
+            },
             {"id": "auditor"},
         ],
     }
-    actors = {"auditor": {"activation": {"trigger": {"kind": "on_tool", "tool": "audit"}}}}
+    actors = {
+        "auditor": {"activation": {"trigger": {"kind": "on_tool", "tool": "audit"}}}
+    }
 
     uses = scenario_uses(scenario, actors)
 
