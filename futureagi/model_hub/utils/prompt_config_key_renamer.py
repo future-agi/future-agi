@@ -61,4 +61,3 @@ def rename_legacy_camelcase_keys(obj: Any) -> tuple[Any, bool]:
         return (new_dict, True) if changed else (obj, False)
 
     return obj, False
-

@@ -20,6 +20,21 @@ class Observation(StrEnum):
     ENGINE_GONE = "engine_gone"
 
 
+class VariationsStep(StrEnum):
+    """Where a fix's first step is, on a run with too few failing cases."""
+
+    # The fix goes on to its engine: the step is over, or it never had one.
+    DONE = "done"
+    # Held back by the running-fix caps.
+    WAITING = "waiting"
+    # The environment's builder writes the variations.
+    WRITING = "writing"
+    # The base version runs on the failing cases and their variations.
+    CHECKING = "checking"
+    ENDED = "ended"
+    STOPPING = "stopping"
+
+
 @dataclass(frozen=True)
 class AgentFixInput:
     fix_run_id: str
@@ -42,6 +57,13 @@ class AgentFixWatchInput:
 @dataclass(frozen=True)
 class AgentFixWatch:
     observation: Observation
+
+
+@dataclass(frozen=True)
+class AgentFixVariations:
+    step: VariationsStep
+    # While the step writes or checks: how long it may have taken by now, in minutes.
+    minutes: int = 0
 
 
 @dataclass(frozen=True)

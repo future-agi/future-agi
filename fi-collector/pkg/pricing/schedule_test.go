@@ -241,3 +241,32 @@ func TestMustParseSchedulePanicsOnABadFile(t *testing.T) {
 	}()
 	mustParseSchedule([]byte(`{}`))
 }
+
+func TestOverlay_RecountsTheDatedKeysTheTableLacks(t *testing.T) {
+	base, err := parseTable([]byte(`{}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(base.MissingDated) == 0 {
+		t.Fatal("an empty table should lack every dated key")
+	}
+	key := base.MissingDated[0]
+	fetched, err := parseTable(
+		[]byte(`{"`+key+`": {"input_cost_per_token": 1e-7, "output_cost_per_token": 4e-7}}`),
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	merged := base.overlay(fetched)
+
+	for _, missing := range merged.MissingDated {
+		if missing == key {
+			t.Fatalf("%s came with the fetched table but is still listed as missing", key)
+		}
+	}
+	if len(merged.MissingDated) != len(base.MissingDated)-1 {
+		t.Fatalf("missing %d, want %d", len(merged.MissingDated), len(base.MissingDated)-1)
+	}
+}

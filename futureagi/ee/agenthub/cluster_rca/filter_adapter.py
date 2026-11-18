@@ -82,7 +82,7 @@ def _resolve_col_type(key: str) -> tuple[str, str]:
     """Strip a column-family prefix and return (col_type, column_id)."""
     for prefix, col_type in _PREFIX_MAP.items():
         if key.startswith(prefix):
-            return col_type, key[len(prefix):]
+            return col_type, key[len(prefix) :]
     return "NORMAL", key
 
 
@@ -120,15 +120,15 @@ def _infer_filter_type(column_id: str, col_type: str, value: Any) -> str:
 def _normalize_op_and_value(value: Any) -> tuple[str, Any]:
     """Translate the agent's operator dict into (canonical_op, raw_value).
 
-      None         → ('is_null', None)
-      scalar       → ('equals', scalar)
-      {op: v}      → (mapped_op, v)
-      {known: ..., unknown: ...}  → ('equals', value)  # falls back, agent error
+    None         → ('is_null', None)
+    scalar       → ('equals', scalar)
+    {op: v}      → (mapped_op, v)
+    {known: ..., unknown: ...}  → ('equals', value)  # falls back, agent error
     """
     if value is None:
         return "is_null", None
     if isinstance(value, dict) and len(value) == 1:
-        (op_key, op_val), = value.items()
+        ((op_key, op_val),) = value.items()
         if op_key in _OP_MAP:
             return _OP_MAP[op_key], op_val
     return "equals", value

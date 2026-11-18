@@ -16,6 +16,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -57,6 +58,8 @@ type Table struct {
 	// this table's file does not hold. Their dated prices are not billed:
 	// an operator's file may omit a model. main logs them.
 	MissingDated []string
+
+	usable int // entries that state a token price; the count a fetch is checked against
 }
 
 // LoadTable parses the price file at path, or the embedded snapshot when
@@ -79,6 +82,14 @@ func LoadTable(path string) (*Table, error) {
 		}
 		raw = b
 	}
+	return parseTable(raw, false)
+}
+
+// parseTable decodes a price file as LoadTable describes. With strict, an
+// entry that states no usable token price is skipped instead of kept as a
+// zero price: a download of the wrong shape must not price models at zero. An
+// explicit 0 is a usable price (a free model); a missing or negative field is not.
+func parseTable(raw []byte, strict bool) (*Table, error) {
 	var rawEntries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &rawEntries); err != nil {
 		return nil, fmt.Errorf("pricing: parse price table: %w", err)
@@ -87,12 +98,20 @@ func LoadTable(path string) (*Table, error) {
 
 	m := make(map[string]modelPrice, len(rawEntries))
 	providers := make(map[string]string, len(rawEntries))
-	skipped := 0
+	skipped, usable := 0, 0
 	for name, entry := range rawEntries {
 		var p modelPrice
 		if err := json.Unmarshal(entry, &p); err != nil {
 			skipped++
 			continue
+		}
+		stated := statesTokenPrice(entry)
+		if strict && !stated {
+			skipped++
+			continue
+		}
+		if stated {
+			usable++
 		}
 		m[name] = p
 		// Decoded on its own so an odd litellm_provider value only turns off
@@ -104,15 +123,81 @@ func LoadTable(path string) (*Table, error) {
 			providers[name] = meta.Provider
 		}
 	}
+	return &Table{
+		prices:       m,
+		providers:    providers,
+		Skipped:      skipped,
+		MissingDated: missingDated(m),
+		usable:       usable,
+	}, nil
+}
+
+// missingDated lists, sorted, the dated schedule's keys that prices does not hold.
+func missingDated(prices map[string]modelPrice) []string {
 	var missing []string
 	for key := range schedule {
-		if _, ok := m[key]; !ok {
+		if _, ok := prices[key]; !ok {
 			missing = append(missing, key)
 		}
 	}
 	sort.Strings(missing)
-	return &Table{prices: m, providers: providers, Skipped: skipped, MissingDated: missing}, nil
+	return missing
 }
+
+// statesTokenPrice reports whether an entry can be priced from a download:
+// it states input_cost_per_token or output_cost_per_token, and every rate Cost
+// reads, the long-context tier rates included, is a finite number of 0 or
+// more when supplied. One bad rate makes the entry unusable. An absent rate is
+// fine, and an explicit 0 is a free price.
+func statesTokenPrice(entry json.RawMessage) bool {
+	var f struct {
+		In      *float64 `json:"input_cost_per_token"`
+		Out     *float64 `json:"output_cost_per_token"`
+		InTier  *float64 `json:"input_cost_per_token_above_128k_tokens"`
+		OutTier *float64 `json:"output_cost_per_token_above_128k_tokens"`
+	}
+	if json.Unmarshal(entry, &f) != nil {
+		return false
+	}
+	for _, r := range []*float64{f.In, f.Out, f.InTier, f.OutTier} {
+		if r != nil && (*r < 0 || math.IsNaN(*r) || math.IsInf(*r, 0)) {
+			return false
+		}
+	}
+	return f.In != nil || f.Out != nil
+}
+
+// overlay returns a table of t's entries with other's laid over them: other
+// wins on a matching key and t's other entries stay. An entry from other
+// replaces t's whole entry, provider included: a fetched entry with no
+// litellm_provider leaves no provider, so ProviderPrefixedCost cannot pair the
+// new price with the old provider.
+func (t *Table) overlay(other *Table) *Table {
+	merged := &Table{
+		prices:    make(map[string]modelPrice, len(t.prices)+len(other.prices)),
+		providers: make(map[string]string, len(t.providers)+len(other.providers)),
+		Skipped:   other.Skipped,
+	}
+	for k, v := range t.prices {
+		merged.prices[k] = v
+	}
+	for k, v := range t.providers {
+		merged.providers[k] = v
+	}
+	for k, v := range other.prices {
+		merged.prices[k] = v
+		if p, ok := other.providers[k]; ok {
+			merged.providers[k] = p
+		} else {
+			delete(merged.providers, k)
+		}
+	}
+	merged.MissingDated = missingDated(merged.prices)
+	return merged
+}
+
+// Len is the number of entries.
+func (t *Table) Len() int { return len(t.prices) }
 
 // Cost prices a call by exact model-key lookup — the same gate Django used
 // (`model_cost.get(model)`), so provider-prefixed names ("azure/gpt-4o") only

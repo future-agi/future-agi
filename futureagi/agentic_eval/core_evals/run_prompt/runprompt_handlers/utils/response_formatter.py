@@ -26,6 +26,7 @@ from agentic_eval.core_evals.fi_utils.token_count_helper import (
 
 logger = structlog.get_logger(__name__)
 
+
 @dataclass
 class UsageInfo:
     """
@@ -266,9 +267,7 @@ class ResponseFormatter:
             try:
                 return ast.literal_eval(unfenced)
             except (ValueError, SyntaxError):
-                logger.warning(
-                    "response_format_parse_failed", preview=unfenced[:200]
-                )
+                logger.warning("response_format_parse_failed", preview=unfenced[:200])
                 return content
 
     @staticmethod
