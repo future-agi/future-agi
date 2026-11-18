@@ -279,3 +279,71 @@ func TestCachedPriceThroughGeminiStream(t *testing.T) {
 		t.Fatalf("streamed cost = %v, want 0.002575 (not the uncached 0.004)", got)
 	}
 }
+
+// The cached rate follows the provider instance that served the request, as
+// the provider type and the price table do. org-2 has its own "openai" (not
+// OpenAI's official API, so its usage is not trusted to count cached tokens
+// inside the prompt); the operator's "openai" is the official API.
+// gpt-4o, 1M prompt tokens of which 400k cached, 100k completion.
+func TestCachedPriceFollowsTheInstanceThatServed(t *testing.T) {
+	srv := cachedProvidersServer(t)
+	db := testModelDBPtr()
+	cost := costplugin.New(true, db.Load, nil, nil)
+	cost.SetPriceTables(srv.ServedPriceTableName)
+	cost.SetProviderTypes(srv.ProviderType)
+	cost.SetCachedTokensInPrompt(srv.CachedTokensInPrompt)
+
+	operator, ok := srv.registry.GetProvider("openai")
+	if !ok {
+		t.Fatal("operator openai not registered")
+	}
+	own := srv.OrgProviderCache.Get("org-2", "openai")
+	if own == nil {
+		t.Fatal("org-2's own openai not created")
+	}
+
+	for _, tc := range []struct {
+		name   string
+		org    string
+		served providers.Provider
+		orgRan bool
+		want   string
+	}{
+		// No org instance: the operator's official API, cached share discounted.
+		{"operator, no org instance", "", operator, false, "3.000000"},
+		// The org's own instance served: its usage is not trusted, full price.
+		{"org's own instance served", "org-2", own, true, "3.500000"},
+		// The operator's instance served an org that has its own (an internal
+		// key, or a fallback): the cached share is discounted.
+		{"operator served an org with its own", "org-2", operator, false, "3.000000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			details := json.RawMessage(`{"cached_tokens":400000}`)
+			rc := &models.RequestContext{
+				EndpointType: "chat",
+				Model:        "gpt-4o",
+				Provider:     "openai",
+				ServedBy:     tc.served,
+				Response: &models.ChatCompletionResponse{Usage: &models.Usage{
+					PromptTokens:        1_000_000,
+					CompletionTokens:    100_000,
+					TotalTokens:         1_100_000,
+					PromptTokensDetails: &details,
+				}},
+				Metadata: map[string]string{},
+			}
+			if tc.org != "" {
+				rc.Metadata["org_id"] = tc.org
+			}
+			if tc.orgRan {
+				rc.Metadata["org_provider"] = "true"
+			}
+			if res := cost.ProcessResponse(context.Background(), rc); res.Error != nil {
+				t.Fatalf("cost step failed: %v", res.Error)
+			}
+			if got := rc.Metadata["cost"]; got != tc.want {
+				t.Errorf("cost = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
