@@ -234,6 +234,12 @@ import {
   REPLAY_TYPES,
 } from "../SessionsView/ReplaySessions/constants";
 import { withoutReplayForRestrictedOrgs } from "../SessionsView/ReplaySessions/replayAccess";
+import CreateEnvironmentTestDialog from "src/sections/simulate/environments/evidence/CreateEnvironmentTestDialog";
+import {
+  EVIDENCE_ACTION_ID,
+  EVIDENCE_COPY,
+} from "src/sections/simulate/environments/evidence/evidence.constants";
+import { MAX_EVIDENCE_SOURCES } from "src/api/simulate-environments/evidenceImports";
 import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { dateFilterEqual, filtersContentEqual } from "../saved-view-utils";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
@@ -288,7 +294,7 @@ const AgentVisualizationProjectScopePrompt = () => (
       color: "text.disabled",
     }}
   >
-    <Typography role="status" variant="body2" sx={{ fontSize: 13 }}>
+    <Typography role="status" variant="body2" sx={{ fontSize: 12 }}>
       Select a project filter to use agent visualizations
     </Typography>
   </Box>
@@ -400,7 +406,7 @@ const COMPARE_DATE_OPTIONS = [
 const comparePillSx = {
   textTransform: "none",
   fontWeight: 500,
-  fontSize: 13,
+  fontSize: 12,
   fontFamily: "'IBM Plex Sans', sans-serif",
   height: 26,
   border: "1px solid",
@@ -471,7 +477,7 @@ export const CompareGraphHeader = ({
       >
         {compareType === "primary" ? "A" : "B"}
       </Box>
-      <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{label}</Typography>
+      <Typography sx={{ fontSize: 12, fontWeight: 600 }}>{label}</Typography>
       <Button
         ref={dateButtonRef}
         variant="outlined"
@@ -782,6 +788,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // In user mode there is no project context — observeId is null and all
   // grids/queries omit project_id so the backend scopes by org.
   const observeId = isUserMode ? null : routeObserveId;
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const {
     primaryProjectId: primaryAgentGraphProjectId,
     compareProjectId: compareAgentGraphProjectId,
@@ -4247,6 +4254,27 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         disabledReason:
                           "Selected calls are still in progress. Wait for traces to finish before adding them to an annotation queue.",
                       },
+                      // Shown to every organization, environment-only ones
+                      // included; calls are named one by one.
+                      (() => {
+                        const picked = (selectedCallIds || []).filter(
+                          Boolean,
+                        ).length;
+                        const reason = !observeId
+                          ? EVIDENCE_COPY.actionNoProject
+                          : simCallFilterSelectionMode
+                            ? EVIDENCE_COPY.actionAll
+                            : picked > MAX_EVIDENCE_SOURCES
+                              ? EVIDENCE_COPY.actionTooMany
+                              : null;
+                        return {
+                          id: EVIDENCE_ACTION_ID,
+                          label: EVIDENCE_COPY.action,
+                          icon: "solar:test-tube-linear",
+                          disabled: Boolean(reason),
+                          disabledReason: reason,
+                        };
+                      })(),
                     ],
                     restrictSimulateToEnvironments,
                   );
@@ -4327,7 +4355,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 const isSimulator = projectSource === PROJECT_SOURCE.SIMULATOR;
                 // Voice/calls path: route only its own actions.
                 if (isSimulator) {
-                  if (actionId === "annotation-queue") {
+                  if (actionId === EVIDENCE_ACTION_ID) {
+                    setEvidenceOpen(true);
+                  } else if (actionId === "annotation-queue") {
                     setQueueAnchorEl(anchor);
                   } else if (actionId === "dataset") {
                     setOpenAddDataset(true);
@@ -4824,6 +4854,15 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 bulkItems={tagsBulkItems}
               />
             </Suspense>
+            {evidenceOpen ? (
+              <CreateEnvironmentTestDialog
+                open
+                onClose={() => setEvidenceOpen(false)}
+                projectId={observeId}
+                sourceKind="call"
+                ids={(selectedCallIds || []).filter(Boolean)}
+              />
+            ) : null}
             <Suspense fallback={null}>
               <AddToQueueDialog
                 anchorEl={queueAnchorEl}

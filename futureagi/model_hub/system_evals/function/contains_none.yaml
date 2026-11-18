@@ -36,6 +36,11 @@ config:
             keywords = [k.strip() for k in keywords.split(",")]
         else:
             keywords = [str(k).strip() for k in keywords]
+        # Drop blank entries. "" is a substring of every string, so a single blank
+        # keyword -- the trailing comma in "foo," produces one -- made the verdict
+        # independent of the text. The emptiness guard below did not catch it,
+        # because [""] is truthy.
+        keywords = [k for k in keywords if k]
         if not keywords:
             return {"score": 1.0, "reason": "No keywords provided, vacuously true"}
         if not case_sensitive:

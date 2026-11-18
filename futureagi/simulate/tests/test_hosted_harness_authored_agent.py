@@ -48,8 +48,12 @@ def _not_stored(logs):
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("kind", ["github", "archive"])
-def test_a_repository_run_stores_the_agent_on_the_version_the_prompt_created(definition, kind):
-    version = definition.create_version(description="You help.", commit_message="prompt", status="active")
+def test_a_repository_run_stores_the_agent_on_the_version_the_prompt_created(
+    definition, kind
+):
+    version = definition.create_version(
+        description="You help.", commit_message="prompt", status="active"
+    )
 
     with capture_logs() as logs:
         hosted_harness._store_authored_agent(_job(kind), definition, _sent())
@@ -60,7 +64,9 @@ def test_a_repository_run_stores_the_agent_on_the_version_the_prompt_created(def
 
 
 @pytest.mark.django_db
-def test_a_run_with_no_prompt_gets_one_active_version_with_an_empty_description(definition):
+def test_a_run_with_no_prompt_gets_one_active_version_with_an_empty_description(
+    definition,
+):
     hosted_harness._store_authored_agent(_job("github"), definition, _sent())
 
     version = AgentVersion.objects.get(agent_definition=definition)
@@ -81,7 +87,9 @@ def test_a_run_with_no_prompt_gets_one_active_version_with_an_empty_description(
     ],
     ids=["remote_source", "provider_source", "no_agent_sent", "run_bound_to_an_agent"],
 )
-def test_nothing_is_stored_or_logged_outside_a_repository_run_with_an_agent(definition, kind, payload):
+def test_nothing_is_stored_or_logged_outside_a_repository_run_with_an_agent(
+    definition, kind, payload
+):
     with capture_logs() as logs:
         hosted_harness._store_authored_agent(_job(kind), definition, payload)
 
@@ -93,7 +101,11 @@ def test_nothing_is_stored_or_logged_outside_a_repository_run_with_an_agent(defi
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "payload",
-    [{"agent": []}, {"agent": {"sdk_version": "0.2.3", "agent": "x"}}, {"agent": {"agent": source_agent()}}],
+    [
+        {"agent": []},
+        {"agent": {"sdk_version": "0.2.3", "agent": "x"}},
+        {"agent": {"agent": source_agent()}},
+    ],
     ids=["agent_a_list", "agent_not_an_object", "sdk_version_missing"],
 )
 def test_a_malformed_agent_field_is_logged_and_leaves_no_version(definition, payload):
@@ -116,7 +128,9 @@ def test_a_refused_agent_is_logged_by_code(definition):
 
 
 @pytest.mark.django_db
-def test_any_other_error_is_logged_by_class_and_the_outer_transaction_survives(definition, monkeypatch):
+def test_any_other_error_is_logged_by_class_and_the_outer_transaction_survives(
+    definition, monkeypatch
+):
     def broken(**kwargs):
         raise RuntimeError("database went away")
 
@@ -141,10 +155,14 @@ GITHUB = {
 
 
 @pytest.mark.django_db
-def test_a_provision_posted_with_an_agent_stores_it_through_the_url(organization, workspace):
+def test_a_provision_posted_with_an_agent_stores_it_through_the_url(
+    organization, workspace
+):
     job, _ = create_hosted_job(
         organization,
-        _payload(source=GITHUB, agent={"connector": "auto", "config": {}, "secret_refs": {}}),
+        _payload(
+            source=GITHUB, agent={"connector": "auto", "config": {}, "secret_refs": {}}
+        ),
         idempotency_key="authored-url",
         workspace=workspace,
     )

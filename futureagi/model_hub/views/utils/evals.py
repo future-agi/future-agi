@@ -9,18 +9,30 @@ from django.db import close_old_connections
 
 from accounts.models.organization import Organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from agentic_eval.core_evals.run_prompt.litellm_models import (
+    MissingProviderKeyError,
+    UnavailableModelError,
+)
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
-from model_hub.models.develop_dataset import Column
 from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from model_hub.services.ground_truth_service import GroundTruthService
+from model_hub.utils.eval_input_validation import (
+    EvalConfigError,
+    validate_eval_configuration,
+)
+from model_hub.utils.eval_metadata import (
+    EvaluationMetadataUnavailable,
+    read_evaluation_column_types,
+    read_evaluation_workspace,
+)
 from model_hub.views.eval_runner import (
     EvaluationRunner,
     _extract_column_id_and_path,
     process_mapping,
 )
 from sdk.utils.helpers import (
-    _emit_jev_usage,
+    _emit_jev_usage_billed,
     _get_api_call_type,
     _get_billing_event_type,
 )
@@ -28,6 +40,7 @@ from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_specific_error_message
+from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_rate_limited
 
 logger = structlog.get_logger(__name__)
 
@@ -104,6 +117,8 @@ def run_eval_func(
         workspace = kwargs.get("workspace", None)
         input_data_types = kwargs.get("input_data_types", {})
         error_localizer = kwargs.get("error_localizer", False)
+        # Called with the credits this eval billed, once it billed them.
+        on_billed = kwargs.get("on_billed")
         kb_id = kwargs.get("kb_id", None)
         # Auto-context payloads — forwarded untouched to the evaluator's
         # run() so `{{row.X}}` / `{{span.X}}` / `{{trace.X}}` /
@@ -324,6 +339,8 @@ def run_eval_func(
                     "API call not allowed : Error validating the api call."
                 )
 
+            raise_if_rate_limited(api_call_log_row)
+
             if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                 raise ValueError("API call not allowed : ", api_call_log_row.status)
         else:
@@ -375,6 +392,7 @@ def run_eval_func(
         from model_hub.utils.eval_input_validation import validate_eval_inputs
 
         partial_input_warning, _run_kwargs = validate_eval_inputs(template, _run_kwargs)
+        validate_eval_configuration(eval_id, eval_instance)
 
         eval_result = eval_instance.run(**_run_kwargs)
         end_time = time.time()
@@ -526,32 +544,37 @@ def run_eval_func(
                 else 0
             )
 
+            billed = 0
             if (
                 emit is not None
                 and UsageEvent is not None
                 and BillingEventType is not None
-                and not _emit_jev_usage(
+            ):
+                billed = _emit_jev_usage_billed(
                     eval_instance,
                     org_id=str(org.id),
                     run_id=str(api_call_log_row.log_id),
                 )
-            ):
-                emit(
-                    UsageEvent(
-                        org_id=str(org.id),
-                        event_type=_get_billing_event_type(
-                            api_call_type, model, evaluator=eval_instance
-                        ),
-                        amount=credits,
-                        properties={
-                            "source": source,
-                            "source_id": str(template.id),
-                            "raw_cost_usd": str(actual_cost),
-                            **cost_properties,
-                            **token_usage_properties(_token_usage),
-                        },
+                if billed is None:
+                    billed = credits
+                    emit(
+                        UsageEvent(
+                            org_id=str(org.id),
+                            event_type=_get_billing_event_type(
+                                api_call_type, model, evaluator=eval_instance
+                            ),
+                            amount=credits,
+                            properties={
+                                "source": source,
+                                "source_id": str(template.id),
+                                "raw_cost_usd": str(actual_cost),
+                                **cost_properties,
+                                **token_usage_properties(_token_usage),
+                            },
+                        )
                     )
-                )
+            if on_billed is not None:
+                on_billed(billed)
         except Exception:
             pass  # Metering failure must not break the action
 
@@ -582,6 +605,9 @@ def run_eval_func(
 
         return output
 
+    except EvaluationDenied:
+        # The ledger already records RATE_LIMITED with no charge.
+        raise
     except Exception as e:
         try:
             if api_call_log_row:
@@ -605,7 +631,20 @@ def run_eval_func(
             logger.exception(f"Error updating api call log row status: {str(exc)}")
             pass
 
-        logger.exception(f"Error running evaluation: {str(e)}")
+        if isinstance(e, UnavailableModelError):
+            # A saved model retired from the catalog is the user's to replace,
+            # not a fault; name it, since nothing else in the log does.
+            logger.warning(
+                "evaluation_configuration_invalid",
+                error_type=type(e).__name__,
+                model=e.model_name,
+            )
+        elif isinstance(e, (EvalConfigError, MissingProviderKeyError)):
+            logger.warning(
+                "evaluation_configuration_invalid", error_type=type(e).__name__
+            )
+        else:
+            logger.exception(f"Error running evaluation: {str(e)}")
         raise e
 
 
@@ -644,8 +683,10 @@ def process_eval_for_single_row(
                 if base_col_id:
                     mapping_uids.append(base_col_id)
 
-        cols = Column.objects.filter(id__in=mapping_uids).values("id", "data_type")
-        col_map = {str(col["id"]): col["data_type"] for col in cols}
+        col_map = read_evaluation_column_types(mapping_uids)
+        # process_mapping reads the row's dataset and workspace. Load them
+        # inside the retry boundary first so those checks use the cache.
+        read_evaluation_workspace(row)
         required_field, mapping = process_mapping(
             mappings, row, run_prompt_column=run_prompt_column, runner=runner
         )
@@ -757,6 +798,13 @@ def process_eval_for_single_row(
         #     return response
         # else:
         return output
+    except EvaluationMetadataUnavailable as error:
+        logger.warning("evaluation_metadata_unavailable", error_code=error.code)
+        return {
+            "reason": str(error),
+            "output_type": "reason",
+            "error_code": error.code,
+        }
     except Exception as e:
         try:
             api_call_log_row.status = APICallStatusChoices.ERROR.value
@@ -816,5 +864,8 @@ def run_eval_func_task(
         )
 
         logger.info(f"Evaluation for feedback completed for {log_id}")
+    except EvaluationDenied as denial:
+        logger.warning("feedback_evaluation_denied", code=denial.code)
+        return {"status": "denied", "denial": denial.as_dict(), "output": None}
     except Exception as e:
         logger.exception(f"Error running evaluation for feedback: {str(e)}")

@@ -5,8 +5,12 @@ Utility functions for generating dynamic prompts for SimulatorAgent based on age
 import re
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
+import structlog
 from django.db import connection, models
+from django.db.models import F
+from django.db.models.functions import Cast
 
 from model_hub.models.develop_dataset import Column, Row
 from simulate.models.agent_definition import AgentDefinition
@@ -20,13 +24,40 @@ from simulate.utils.persona_filtering import (
 from simulate.utils.sql_query import get_grouped_call_execution_metrics_query
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 
+logger = structlog.get_logger(__name__)
+
+
+def is_fix_check_run(test_execution_id: uuid.UUID) -> bool:
+    """Whether a fix started this run to check one of its versions. A check run is graded
+    only once its fix has a winner, and never by the error localizer. A deleted job is still
+    its fix's check run, as accrue_check_run_eval_cost counts it."""
+    return HostedHarnessJob.all_objects.filter(
+        test_execution_id=test_execution_id, fix_run__isnull=False
+    ).exists()
+
 
 def eval_source(test_execution_id: uuid.UUID, default: str = "simulate") -> str:
     """Where a call's evals are logged from: a fix's check runs have a source of their own."""
-    is_check_run = HostedHarnessJob.no_workspace_objects.filter(
-        test_execution_id=test_execution_id, fix_run__isnull=False
-    ).exists()
-    return FIX_CHECK_RUN_EVAL_SOURCE if is_check_run else default
+    return FIX_CHECK_RUN_EVAL_SOURCE if is_fix_check_run(test_execution_id) else default
+
+
+def accrue_check_run_eval_cost(test_execution_id, credits) -> None:
+    """Add what one platform eval of a fix's check run billed to that run, in billed US
+    dollars (a credit is $0.01). The eval has billed the organization already, so a failure
+    here is logged and the eval goes on."""
+    usd = (Decimal(str(credits or 0)) * Decimal("0.01")).quantize(Decimal("0.0001"))
+    if usd <= 0:
+        return
+    try:
+        HostedHarnessJob.all_objects.filter(
+            test_execution_id=test_execution_id, fix_run__isnull=False
+        ).update(fix_eval_cost_usd=F("fix_eval_cost_usd") + usd)
+    except Exception:
+        logger.exception(
+            "agent_fix_eval_cost_not_counted",
+            test_execution_id=str(test_execution_id),
+            usd=str(usd),
+        )
 
 
 class TestExecutionUtils:
@@ -789,37 +820,37 @@ class TestExecutionUtils:
                 avg_response_time=models.Avg("response_time_ms"),
                 # Chat metrics from conversation_metrics_data JSONField
                 total_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__total_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 input_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__input_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 output_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__output_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 avg_latency_ms=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__avg_latency_ms"),
                         models.IntegerField(),
                     )
                 ),
                 turn_count=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__turn_count"),
                         models.IntegerField(),
                     )
                 ),
                 csat_score=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__csat_score"),
                         models.FloatField(),
                     )

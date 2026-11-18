@@ -204,7 +204,9 @@ class ObservationSpanSerializer(serializers.ModelSerializer):
     project = serializers.PrimaryKeyRelatedField(
         queryset=Project.objects.all(), many=False
     )
-    trace = serializers.PrimaryKeyRelatedField(queryset=Trace.objects.all(), many=False)
+    trace = serializers.PrimaryKeyRelatedField(
+        queryset=Trace.objects.using("default").all(), many=False
+    )
     project_version = serializers.PrimaryKeyRelatedField(
         queryset=ProjectVersion.objects.all(), many=False, required=False
     )
@@ -299,7 +301,7 @@ class ObservationSpanSerializer(serializers.ModelSerializer):
         self.fields["project"].queryset = project_manager.filter(
             project_scope, deleted=False
         )
-        self.fields["trace"].queryset = trace_manager.filter(
+        self.fields["trace"].queryset = trace_manager.using("default").filter(
             related_project_scope, deleted=False
         )
         self.fields["project_version"].queryset = version_manager.filter(
@@ -310,7 +312,16 @@ class ObservationSpanSerializer(serializers.ModelSerializer):
         attrs = super().validate(attrs)
         instance = getattr(self, "instance", None)
         project = attrs.get("project") or getattr(instance, "project", None)
-        trace = attrs.get("trace") or getattr(instance, "trace", None)
+        trace = attrs.get("trace")
+        if trace is None and instance is not None and instance.trace_id:
+            # The relation may have changed since the replica's last applied
+            # write. The base manager, like ``instance.trace``, also finds a
+            # soft-deleted parent, so that span still validates as before.
+            trace = (
+                Trace._base_manager.using("default")
+                .filter(pk=instance.trace_id)
+                .first()
+            )
         project_version = attrs.get("project_version") or getattr(
             instance, "project_version", None
         )

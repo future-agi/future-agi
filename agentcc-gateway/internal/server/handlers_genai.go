@@ -61,7 +61,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		rc.IsStream = false
 	}
 
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 
 	// Extract auth from query param, header, or Authorization header.
 	if key := r.URL.Query().Get("key"); key != "" {
@@ -80,6 +80,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
 		parseMetadataHeader(meta, rc)
 	}
+	applyCacheHeaders(rc, r)
 
 	// Read request body.
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))
@@ -211,6 +212,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = action == "streamGenerateContent"
+	canonicalReq.TranslatedFrom = "google"
 
 	switch action {
 	case "generateContent":
@@ -232,6 +234,7 @@ func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWrit
 		if callErr != nil {
 			return callErr
 		}
+		recordServedBy(rc, gp)
 		if statusCode < 400 {
 			applyGenAIUsage(rc, respBody)
 			rc.GuardrailResponse = assistantText(genaiResponseText(respBody))
@@ -272,6 +275,9 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		stream, statusCode, callErr = gp.StreamGenerateContent(ctx, model, reqBody, headers)
+		if callErr == nil {
+			recordServedBy(rc, gp)
+		}
 		return callErr
 	}); err != nil {
 		writeGenAIErrorFromError(w, err)
@@ -533,10 +539,11 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
-		canonicalResp, callErr = translatedChatCompletion(ctx, provider, canonicalReq)
+		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
 		if callErr != nil {
 			return callErr
 		}
+		recordServedBy(rc, provider)
 		rc.Response = canonicalResp
 		return nil
 	})
@@ -629,7 +636,10 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	var errCh <-chan error
 
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
-		rawChunkCh, errCh = translatedStreamChatCompletion(ctx, provider, canonicalReq)
+		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
+		if rawChunkCh != nil {
+			recordServedBy(rc, provider)
+		}
 		return nil
 	}); err != nil {
 		writeGenAIErrorFromError(w, err)
