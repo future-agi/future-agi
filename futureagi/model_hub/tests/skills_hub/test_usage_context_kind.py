@@ -62,7 +62,9 @@ def test_context_fetches_are_read_with_its_kind(user, organization, workspace, c
     assert response.status_code == 200, response.data
     body = response.data["result"]
     assert body["total"] == 6
-    assert body["consumers"][0]["channel"] == "sdk"
+    assert body["by_channel"]["sdk"] == 6
+    consumer = body["consumers"][0]
+    assert (consumer["channel"], consumer["sdk_version"], consumer["tracing_mode"]) == ("sdk", "0.8.0", "off")
     assert [(row["version"], row["count"]) for row in body["by_version"]] == [(version.number, 6)]
     assert body["consumers"][0]["can_record"] is False  # tracing off: a fetch, not a load
     assert body["first_fetched_on"] == timezone.now().date().isoformat()

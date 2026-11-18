@@ -52954,6 +52954,7 @@ export const ModelHubSkillsUsageListResponse = zod.object({
       api: zod.number(),
       download: zod.number(),
       mcp: zod.number(),
+      sdk: zod.number().optional(),
     }),
     by_version: zod.array(
       zod.object({
@@ -52965,9 +52966,12 @@ export const ModelHubSkillsUsageListResponse = zod.object({
     consumers: zod.array(
       zod.object({
         label: zod.string(),
-        channel: zod.enum(["api", "download", "mcp"]),
+        channel: zod.enum(["api", "download", "mcp", "sdk"]),
         count: zod.number(),
         last_at: zod.string().datetime({ offset: true }),
+        sdk_version: zod.string().min(1).nullish(),
+        tracing_mode: zod.enum(["on", "load_only", "off", "no_otel"]).nullish(),
+        can_record: zod.boolean().optional(),
       }),
     ),
     last_fetched_at: zod.string().datetime({ offset: true }).nullable(),

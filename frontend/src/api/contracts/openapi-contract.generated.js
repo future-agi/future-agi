@@ -154079,6 +154079,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Mcp",
           type: "integer",
         },
+        sdk: {
+          title: "Sdk",
+          type: "integer",
+        },
       },
     },
     SkillsHubConsumer: {
@@ -154092,7 +154096,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         channel: {
           title: "Channel",
           type: "string",
-          enum: ["api", "download", "mcp"],
+          enum: ["api", "download", "mcp", "sdk"],
         },
         count: {
           title: "Count",
@@ -154102,6 +154106,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Last at",
           type: "string",
           format: "date-time",
+        },
+        sdk_version: {
+          title: "Sdk version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        tracing_mode: {
+          title: "Tracing mode",
+          type: "string",
+          enum: ["on", "load_only", "off", "no_otel"],
+          "x-nullable": true,
+        },
+        can_record: {
+          title: "Can record",
+          type: "boolean",
         },
       },
     },

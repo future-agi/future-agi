@@ -23604,6 +23604,7 @@ export interface SkillsHubChannelsApi {
   api: number;
   download: number;
   mcp: number;
+  sdk?: number;
 }
 
 export interface SkillsHubUsageVersionApi {
@@ -23619,6 +23620,18 @@ export const SkillsHubConsumerApiChannel = {
   api: "api",
   download: "download",
   mcp: "mcp",
+  sdk: "sdk",
+} as const;
+
+export type SkillsHubConsumerApiTracingMode =
+  | (typeof SkillsHubConsumerApiTracingMode)[keyof typeof SkillsHubConsumerApiTracingMode]
+  | null;
+
+export const SkillsHubConsumerApiTracingMode = {
+  on: "on",
+  load_only: "load_only",
+  off: "off",
+  no_otel: "no_otel",
 } as const;
 
 export interface SkillsHubConsumerApi {
@@ -23626,6 +23639,10 @@ export interface SkillsHubConsumerApi {
   channel: SkillsHubConsumerApiChannel;
   count: number;
   last_at: string;
+  /** @minLength 1 */
+  sdk_version?: string | null;
+  tracing_mode?: SkillsHubConsumerApiTracingMode;
+  can_record?: boolean;
 }
 
 export interface SkillsHubUsageApi {
