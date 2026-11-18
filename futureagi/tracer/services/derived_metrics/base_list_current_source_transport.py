@@ -6,6 +6,7 @@ body. Neither behavior is terminal source evidence. Do not mutate its shared
 client/pool: this lane leases a private pool using the SAME existing config.
 No new endpoint, credentials, background worker or source writer is introduced.
 """
+
 from contextlib import contextmanager
 
 import clickhouse_connect
@@ -45,11 +46,17 @@ class _OneShotPool(PoolManager):
         response = super().request(method, url, **kwargs)
         try:
             body = response.read(4097)
-            if (response.status != 200 or body
-                    or response.headers.get("X-ClickHouse-Exception-Code")
-                    or response.headers.get("X-ClickHouse-Query-Id") != self.expected_query_id
-                    or response.length_remaining not in (None, 0)):
-                raise SourceUnavailable("source insert response is not exact terminal success")
+            if (
+                response.status != 200
+                or body
+                or response.headers.get("X-ClickHouse-Exception-Code")
+                or response.headers.get("X-ClickHouse-Query-Id")
+                != self.expected_query_id
+                or response.length_remaining not in (None, 0)
+            ):
+                raise SourceUnavailable(
+                    "source insert response is not exact terminal success"
+                )
             self.terminal_query_id = self.expected_query_id
             return response
         finally:
@@ -65,9 +72,14 @@ def lease_trace_source_client():
     try:
         cfg = get_v2_config()
         client = clickhouse_connect.get_client(
-            host=cfg["host"], port=cfg["http_port"], username=cfg["user"],
-            password=cfg["password"] or "", database=cfg["database"],
-            send_receive_timeout=15, connect_timeout=10, pool_mgr=pool,
+            host=cfg["host"],
+            port=cfg["http_port"],
+            username=cfg["user"],
+            password=cfg["password"] or "",
+            database=cfg["database"],
+            send_receive_timeout=15,
+            connect_timeout=10,
+            pool_mgr=pool,
         )
         yield client, pool
     finally:

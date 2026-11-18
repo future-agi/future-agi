@@ -15,6 +15,7 @@ uncertainty; callers need an exact terminal receipt from the original send.
 Acknowledgements are trusted internal transport evidence, NOT client input or
 proof that all producers are enrolled. No PG response revision is certified.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -29,8 +30,14 @@ from django.db import DEFAULT_DB_ALIAS, connections, transaction
 
 from tracer.models.metric_source_intent import (
     MetricSourceDelivery as Delivery,
+)
+from tracer.models.metric_source_intent import (
     MetricSourceIntent as Intent,
+)
+from tracer.models.metric_source_intent import (
     MetricSourcePage as Page,
+)
+from tracer.models.metric_source_intent import (
     MetricSourceScope as Scope,
 )
 
@@ -163,12 +170,20 @@ class SourceProgress:
 
 def canonical_bytes(value) -> bytes:
     """Canonical metadata encoding; no truncation or arbitrary object coercion."""
+
     def encode(item):
         if isinstance(item, UUID):
             return str(item)
         raise TypeError("unsupported source metadata type")
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-                      allow_nan=False, default=encode).encode("utf-8")
+
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+        default=encode,
+    ).encode("utf-8")
 
 
 def sha256(value: bytes) -> str:
@@ -212,30 +227,52 @@ def _freeze(scope, pages, targets):
     stores = {t.store for t in targets}
     page_bytes, count, size = [], 0, 0
     for page in pages:
-        if type(page) is not MembershipPage or type(page.changes) is not tuple or not page.changes:
+        if (
+            type(page) is not MembershipPage
+            or type(page.changes) is not tuple
+            or not page.changes
+        ):
             raise SourceConflict("nonempty immutable membership page required")
         count += len(page.changes)
         if count > MAX_ROWS:
             raise SourceConflict("source operation row bound exceeded")
         for change in page.changes:
-            if type(change) is not MembershipChange or (change.old is None and change.new is None):
+            if type(change) is not MembershipChange or (
+                change.old is None and change.new is None
+            ):
                 raise SourceConflict("old or new membership required")
             for image in (change.old, change.new):
                 if image is None:
                     continue
-                if type(image) is not MemberImage or type(image.physical) is not PhysicalIdentity:
+                if (
+                    type(image) is not MemberImage
+                    or type(image.physical) is not PhysicalIdentity
+                ):
                     raise SourceConflict("physical member image required")
                 key, store = image.physical.key, image.physical.store
-                if type(store) is not Store or store not in stores or type(key) is not tuple:
+                if (
+                    type(store) is not Store
+                    or store not in stores
+                    or type(key) is not tuple
+                ):
                     raise SourceConflict("member store not selected")
-                if len(key) != (6 if store is Store.SPANS else 3 if store is Store.TRACES else 2):
+                if len(key) != (
+                    6 if store is Store.SPANS else 3 if store is Store.TRACES else 2
+                ):
                     raise SourceConflict("complete physical key required")
-                if any(type(v) is not str or len(v.encode("utf-8")) > 4096 for v in key):
+                if any(
+                    type(v) is not str or len(v.encode("utf-8")) > 4096 for v in key
+                ):
                     raise SourceConflict("invalid physical key")
                 if key[0] != str(scope.project_id):
                     raise SourceConflict("cross-scope physical key")
-                if type(image.canonical) is not CanonicalMembership or type(image.state) is not MemberState:
-                    raise SourceConflict("canonical membership and explicit member state required")
+                if (
+                    type(image.canonical) is not CanonicalMembership
+                    or type(image.state) is not MemberState
+                ):
+                    raise SourceConflict(
+                        "canonical membership and explicit member state required"
+                    )
                 for value in (image.canonical.session_id, image.canonical.user_id):
                     if value is not None:
                         _uuid(value)
@@ -245,11 +282,19 @@ def _freeze(scope, pages, targets):
             raise SourceConflict("source operation byte bound exceeded")
         page_bytes.append(data)
     # Target order is not part of identity. Page order IS part of the manifest.
-    targets = tuple(sorted(targets, key=lambda t: (str(t.server_id), t.database, t.store.value)))
-    manifest = sha256(canonical_bytes({
-        "format": 1, "scope": asdict(scope), "pages": [sha256(p) for p in page_bytes],
-        "targets": [asdict(t) for t in targets],
-    }))
+    targets = tuple(
+        sorted(targets, key=lambda t: (str(t.server_id), t.database, t.store.value))
+    )
+    manifest = sha256(
+        canonical_bytes(
+            {
+                "format": 1,
+                "scope": asdict(scope),
+                "pages": [sha256(p) for p in page_bytes],
+                "targets": [asdict(t) for t in targets],
+            }
+        )
+    )
     return page_bytes, targets, manifest
 
 
@@ -261,6 +306,7 @@ def _locked(scope):
         raise SourceUnavailable("source adapter requires an owned primary transaction")
     # Reuse the real lock, including its key; no competing deletion/publication protocol.
     from tracer.services.derived_metrics.deletion_protocol import project_lock
+
     with transaction.atomic(using=DEFAULT_DB_ALIAS, durable=True):
         with db.cursor() as cursor:
             cursor.execute("SHOW transaction_isolation")
@@ -275,13 +321,23 @@ def _rows(Model):
 
 
 def _state(scope):
-    return _rows(Scope).select_for_update().filter(
-        organization_id=scope.organization_id, project_id=scope.project_id).first()
+    return (
+        _rows(Scope)
+        .select_for_update()
+        .filter(organization_id=scope.organization_id, project_id=scope.project_id)
+        .first()
+    )
 
 
 def _token(state, intent):
-    return SourceIntentToken(SourceScope(state.organization_id, state.project_id), state.epoch,
-                             intent.id, intent.operation_key, intent.revision, intent.manifest_sha256)
+    return SourceIntentToken(
+        SourceScope(state.organization_id, state.project_id),
+        state.epoch,
+        intent.id,
+        intent.operation_key,
+        intent.revision,
+        intent.manifest_sha256,
+    )
 
 
 def _intent(token):
@@ -290,21 +346,34 @@ def _intent(token):
     _scope(token.scope)
     for value in (token.epoch, token.intent_id, token.operation_key):
         _uuid(value)
-    if (type(token.revision) is not int or not 1 <= token.revision <= MAX_REVISION
-            or type(token.manifest_sha256) is not str or not _HASH.fullmatch(token.manifest_sha256)):
+    if (
+        type(token.revision) is not int
+        or not 1 <= token.revision <= MAX_REVISION
+        or type(token.manifest_sha256) is not str
+        or not _HASH.fullmatch(token.manifest_sha256)
+    ):
         raise SourceConflict("invalid source token revision or digest")
     state = _state(token.scope)
     if state is None or state.epoch != token.epoch:
         raise SourceConflict("stale source epoch")
-    intent = _rows(Intent).select_for_update().filter(scope=state, id=token.intent_id).first()
+    intent = (
+        _rows(Intent)
+        .select_for_update()
+        .filter(scope=state, id=token.intent_id)
+        .first()
+    )
     if intent is None or _token(state, intent) != token:
         raise SourceConflict("source intent identity mismatch")
     return state, intent
 
 
-def begin_source_intent(scope: SourceScope, operation_key: UUID,
-                        bounded_old_new_pages: tuple[MembershipPage, ...], *,
-                        expected_stores: tuple[SelectedStore, ...]) -> SourceIntentToken:
+def begin_source_intent(
+    scope: SourceScope,
+    operation_key: UUID,
+    bounded_old_new_pages: tuple[MembershipPage, ...],
+    *,
+    expected_stores: tuple[SelectedStore, ...],
+) -> SourceIntentToken:
     """Commit invalidation before dispatch; identical operation retries reuse identity.
 
     Only complete producer-supplied old/new images are accepted. Validating their
@@ -317,7 +386,9 @@ def begin_source_intent(scope: SourceScope, operation_key: UUID,
     with _locked(scope):
         state = _state(scope)
         if state is None:
-            state = _rows(Scope).create(organization_id=scope.organization_id, project_id=scope.project_id)
+            state = _rows(Scope).create(
+                organization_id=scope.organization_id, project_id=scope.project_id
+            )
         prior = _rows(Intent).filter(scope=state, operation_key=operation_key).first()
         if prior is not None:
             if prior.manifest_sha256 != manifest:
@@ -327,20 +398,44 @@ def begin_source_intent(scope: SourceScope, operation_key: UUID,
             raise SourceUnavailable("source revision exhausted")
         state.revision += 1
         state.save(using=DEFAULT_DB_ALIAS, update_fields=("revision",))
-        intent = _rows(Intent).create(scope=state, operation_key=operation_key,
-                                     revision=state.revision, manifest_sha256=manifest,
-                                     page_count=len(pages), target_count=len(targets))
-        _rows(Page).bulk_create([Page(intent=intent, ordinal=i, sha256=sha256(p), payload=p)
-                                for i, p in enumerate(pages)])
-        _rows(Delivery).bulk_create([
-            Delivery(intent=intent, server_id=t.server_id, database=t.database, store=t.store.value,
-                     schema_sha256=t.schema_sha256, payload_sha256=t.payload_sha256) for t in targets
-        ])
+        intent = _rows(Intent).create(
+            scope=state,
+            operation_key=operation_key,
+            revision=state.revision,
+            manifest_sha256=manifest,
+            page_count=len(pages),
+            target_count=len(targets),
+        )
+        _rows(Page).bulk_create(
+            [
+                Page(intent=intent, ordinal=i, sha256=sha256(p), payload=p)
+                for i, p in enumerate(pages)
+            ]
+        )
+        _rows(Delivery).bulk_create(
+            [
+                Delivery(
+                    intent=intent,
+                    server_id=t.server_id,
+                    database=t.database,
+                    store=t.store.value,
+                    schema_sha256=t.schema_sha256,
+                    payload_sha256=t.payload_sha256,
+                )
+                for t in targets
+            ]
+        )
         return _token(state, intent)
 
 
 def _delivery_target(row):
-    return SelectedStore(row.server_id, row.database, Store(row.store), row.schema_sha256, row.payload_sha256)
+    return SelectedStore(
+        row.server_id,
+        row.database,
+        Store(row.store),
+        row.schema_sha256,
+        row.payload_sha256,
+    )
 
 
 def claim_dispatch(token: SourceIntentToken, target: SelectedStore) -> DispatchTicket:
@@ -352,19 +447,31 @@ def claim_dispatch(token: SourceIntentToken, target: SelectedStore) -> DispatchT
     _target(target)
     with _locked(token.scope):
         _, intent = _intent(token)
-        row = _rows(Delivery).select_for_update().filter(
-            intent=intent, server_id=target.server_id, database=target.database, store=target.store.value).first()
+        row = (
+            _rows(Delivery)
+            .select_for_update()
+            .filter(
+                intent=intent,
+                server_id=target.server_id,
+                database=target.database,
+                store=target.store.value,
+            )
+            .first()
+        )
         if row is None or _delivery_target(row) != target:
             raise SourceConflict("unregistered delivery target")
         if row.state != Delivery.State.PREPARED or intent.complete:
-            raise SourceUnavailable("delivery already claimed; exact terminal acknowledgement required")
+            raise SourceUnavailable(
+                "delivery already claimed; exact terminal acknowledgement required"
+            )
         row.state = Delivery.State.UNCERTAIN
         row.save(using=DEFAULT_DB_ALIAS, update_fields=("state",))
         return DispatchTicket(token, row.receipt_id, target)
 
 
-def acknowledge_selected_server(token: SourceIntentToken,
-                                receipts: tuple[SelectedServerReceipt, ...]) -> SourceProgress:
+def acknowledge_selected_server(
+    token: SourceIntentToken, receipts: tuple[SelectedServerReceipt, ...]
+) -> SourceProgress:
     """Record exact terminal local receipts, then close only a bounded contiguous prefix.
 
     The caller is a trusted internal delivery adapter. A receipt is never a
@@ -376,25 +483,42 @@ def acknowledge_selected_server(token: SourceIntentToken,
     with _locked(token.scope):
         state, intent = _intent(token)
         for receipt in receipts:
-            if (type(receipt) is not SelectedServerReceipt
-                    or type(receipt.ticket) is not DispatchTicket
-                    or receipt.ticket.token != token
-                    or receipt.kind is not ReceiptKind.LOCAL_SYNCHRONOUS_INSERT
-                    or type(receipt.query_id) is not str
-                    or receipt.query_id != str(receipt.ticket.receipt_id)):
+            if (
+                type(receipt) is not SelectedServerReceipt
+                or type(receipt.ticket) is not DispatchTicket
+                or receipt.ticket.token != token
+                or receipt.kind is not ReceiptKind.LOCAL_SYNCHRONOUS_INSERT
+                or type(receipt.query_id) is not str
+                or receipt.query_id != str(receipt.ticket.receipt_id)
+            ):
                 raise SourceConflict("malformed or unrelated terminal receipt")
-            row = _rows(Delivery).select_for_update().filter(
-                intent=intent, receipt_id=receipt.ticket.receipt_id).first()
+            row = (
+                _rows(Delivery)
+                .select_for_update()
+                .filter(intent=intent, receipt_id=receipt.ticket.receipt_id)
+                .first()
+            )
             if row is None or _delivery_target(row) != receipt.ticket.target:
                 raise SourceConflict("receipt does not match selected store")
             digest = sha256(canonical_bytes(asdict(receipt)))
             if row.state == Delivery.State.PREPARED:
                 raise SourceConflict("acknowledgement before dispatch")
-            if row.state == Delivery.State.ACKNOWLEDGED and row.acknowledgement_sha256 != digest:
+            if (
+                row.state == Delivery.State.ACKNOWLEDGED
+                and row.acknowledgement_sha256 != digest
+            ):
                 raise SourceConflict("conflicting terminal receipt")
             row.state, row.acknowledgement_sha256 = Delivery.State.ACKNOWLEDGED, digest
-            row.save(using=DEFAULT_DB_ALIAS, update_fields=("state", "acknowledgement_sha256"))
-        if _rows(Delivery).filter(intent=intent, state=Delivery.State.ACKNOWLEDGED).count() == intent.target_count:
+            row.save(
+                using=DEFAULT_DB_ALIAS,
+                update_fields=("state", "acknowledgement_sha256"),
+            )
+        if (
+            _rows(Delivery)
+            .filter(intent=intent, state=Delivery.State.ACKNOWLEDGED)
+            .count()
+            == intent.target_count
+        ):
             intent.complete = True
             intent.save(using=DEFAULT_DB_ALIAS, update_fields=("complete",))
         _advance(state)
@@ -404,7 +528,11 @@ def acknowledge_selected_server(token: SourceIntentToken,
 def _advance(state):
     # Never MAX(revision). Missing/uncertain operations stop the prefix, including
     # a reserved sequence whose creating transaction has not committed.
-    rows = _rows(Intent).filter(scope=state, revision__gt=state.closed_revision).order_by("revision")[:MAX_CLOSE]
+    rows = (
+        _rows(Intent)
+        .filter(scope=state, revision__gt=state.closed_revision)
+        .order_by("revision")[:MAX_CLOSE]
+    )
     for row in rows:
         if row.revision != state.closed_revision + 1 or not row.complete:
             break
@@ -413,9 +541,15 @@ def _advance(state):
 
 
 def _progress(state):
-    return SourceProgress(SourceScope(state.organization_id, state.project_id), state.epoch,
-                          state.revision, state.closed_revision,
-                          ProgressState.SETTLED if state.revision == state.closed_revision else ProgressState.PENDING)
+    return SourceProgress(
+        SourceScope(state.organization_id, state.project_id),
+        state.epoch,
+        state.revision,
+        state.closed_revision,
+        ProgressState.SETTLED
+        if state.revision == state.closed_revision
+        else ProgressState.PENDING,
+    )
 
 
 def source_progress(scope: SourceScope) -> SourceProgress | None:

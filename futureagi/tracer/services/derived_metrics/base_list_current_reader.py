@@ -21,17 +21,24 @@ class PinnedStoreCount:
         from tracer.services.derived_metrics.reader_lifetime import IncapableReadLane
         from tracer.services.derived_metrics.storage import TABLES
 
-        if (str(manifest.project_id) != self.project_id
-                or manifest.revoked_at is not None
-                or manifest.visibility_receipts.get("shard") != list(self.shard)
-                or "batches" not in manifest.visibility_receipts
-                or not Project.no_workspace_objects.using("default").filter(
-                    pk=self.project_id, organization_id=self.organization_id,
-                    deleted=False,
-                ).exists()):
+        if (
+            str(manifest.project_id) != self.project_id
+            or manifest.revoked_at is not None
+            or manifest.visibility_receipts.get("shard") != list(self.shard)
+            or "batches" not in manifest.visibility_receipts
+            or not Project.no_workspace_objects.using("default")
+            .filter(
+                pk=self.project_id,
+                organization_id=self.organization_id,
+                deleted=False,
+            )
+            .exists()
+        ):
             raise IncapableReadLane("pinned local manifest unavailable")
         sql, params = committed_rows_select(
-            TABLES[self.table_name], manifest,
-            org_id=self.organization_id, project_id=self.project_id,
+            TABLES[self.table_name],
+            manifest,
+            org_id=self.organization_id,
+            project_id=self.project_id,
         )
         return f"SELECT count() FROM ({sql})", params

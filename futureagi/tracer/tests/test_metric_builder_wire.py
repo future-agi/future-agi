@@ -1,4 +1,5 @@
 """Consume payloads produced by F05's JS builder in the cloud qualification run."""
+
 import json
 import os
 from pathlib import Path
@@ -29,4 +30,7 @@ def test_actual_sentence_builder_wire(index):
             # representation, not Python's internal type, without dropping keys.
             actual_value = str(actual[key]) if key == "config_id" else actual[key]
             assert actual_value == value
-    assert definition["field_spec"]["conditions"] == wires[index]["field_spec"]["conditions"]
+    assert (
+        definition["field_spec"]["conditions"]
+        == wires[index]["field_spec"]["conditions"]
+    )

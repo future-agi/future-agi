@@ -36,7 +36,9 @@ def test_lexer_ignores_layout_but_preserves_quoted_whitespace():
     )
     for altered in ("SELECT 'a b' AS value", "SELECT 'a  b' AS other"):
         with pytest.raises(AssertionError, match="SQL token drift"):
-            assert_sql_and_parameters_equal((altered, {}), ("SELECT 'a  b' AS value", {}))
+            assert_sql_and_parameters_equal(
+                (altered, {}), ("SELECT 'a  b' AS value", {})
+            )
 
 
 @pytest.mark.parametrize(
@@ -63,23 +65,32 @@ def test_comparator_rejects_real_operator_alias_and_aggregation_drift(before, af
 def test_legacy_parity_entry_point_uses_explicit_native_dev_contract():
     from tracer.tests._base_list_parity import old_session_builder
 
-    assert baseline_statements(old_session_builder()) == baseline_statements(native_session_builder())
+    assert baseline_statements(old_session_builder()) == baseline_statements(
+        native_session_builder()
+    )
 
 
 def test_comparator_preserves_bound_parameter_types():
     with pytest.raises(AssertionError, match="SQL parameter drift"):
-        assert_sql_and_parameters_equal(("SELECT %(x)s", {"x": True}), ("SELECT %(x)s", {"x": 1}))
+        assert_sql_and_parameters_equal(
+            ("SELECT %(x)s", {"x": True}), ("SELECT %(x)s", {"x": 1})
+        )
 
 
 def test_comparator_rejects_parameter_and_placeholder_drift():
     row = baseline_statements(native_session_builder())["build_candidate_page_query"]
     changed = {**row["params"], "project_id": str(UUID(int=99))}
     with pytest.raises(AssertionError, match="SQL parameter drift"):
-        assert_sql_and_parameters_equal((row["sql"], changed), (row["sql"], row["params"]))
+        assert_sql_and_parameters_equal(
+            (row["sql"], changed), (row["sql"], row["params"])
+        )
     assert "%(project_id)s" in row["sql"]
     with pytest.raises(AssertionError, match="SQL token drift"):
         assert_sql_and_parameters_equal(
-            (row["sql"].replace("%(project_id)s", "%(foreign_project)s"), row["params"]),
+            (
+                row["sql"].replace("%(project_id)s", "%(foreign_project)s"),
+                row["params"],
+            ),
             (row["sql"], row["params"]),
         )
 
@@ -92,7 +103,10 @@ def test_frozen_oracles_do_not_import_installed_usage_helpers(monkeypatch):
 
     for name in ("usage_aggregate_sql", "usage_coverage_sql", "source_summary_sql"):
         monkeypatch.setattr(trace_usage, name, reject)
-    assert baseline_statements(historical_session_builder()) == baseline_fixture()["statements"]
+    assert (
+        baseline_statements(historical_session_builder())
+        == baseline_fixture()["statements"]
+    )
     assert baseline_statements(native_session_builder())["build_page_hydration_query"]
 
 
@@ -104,27 +118,54 @@ def test_historical_helper_drift_is_detected_without_snapshot_refresh():
     changed["modules"][helper] = fixture["native_dev_closure"]["modules"][helper]
     actual = baseline_statements(_load_frozen_session_builder(changed))
     expected = fixture["statements"]
-    assert actual["build_candidate_page_query"] == expected["build_candidate_page_query"]
+    assert (
+        actual["build_candidate_page_query"] == expected["build_candidate_page_query"]
+    )
     with pytest.raises(AssertionError, match="SQL token drift"):
         assert_sql_and_parameters_equal(
-            (actual["build_page_hydration_query"]["sql"], actual["build_page_hydration_query"]["params"]),
-            (expected["build_page_hydration_query"]["sql"], expected["build_page_hydration_query"]["params"]),
+            (
+                actual["build_page_hydration_query"]["sql"],
+                actual["build_page_hydration_query"]["params"],
+            ),
+            (
+                expected["build_page_hydration_query"]["sql"],
+                expected["build_page_hydration_query"]["params"],
+            ),
         )
 
 
-@pytest.mark.parametrize("project,page_size,offset", [(1, 1, 0), (917, 25, 1), (339, 100, 100)])
+@pytest.mark.parametrize(
+    "project,page_size,offset", [(1, 1, 0), (917, 25, 1), (339, 100, 100)]
+)
 def test_native_dev_parity_is_not_one_self_snapshot(project, page_size, offset):
     start = datetime(2026, 10, 20, 12, 0, 0, 999999, tzinfo=UTC)
-    kwargs = dict(project_id=str(UUID(int=project)), page_size=page_size, page_number=offset,
-                  filters=filters(start, start + timedelta(days=2)))
-    current, native = SessionListQueryBuilderV2(**kwargs), native_session_builder()(**kwargs)
+    kwargs = {
+        "project_id": str(UUID(int=project)),
+        "page_size": page_size,
+        "page_number": offset,
+        "filters": filters(start, start + timedelta(days=2)),
+    }
+    current, native = (
+        SessionListQueryBuilderV2(**kwargs),
+        native_session_builder()(**kwargs),
+    )
     for method, args, options in (
         ("build_candidate_page_query", (), {}),
         ("build_candidate_count_query", (), {}),
-        ("build_candidate_cursor_page_query", (), {"before_start_time": start + timedelta(hours=1), "before_session_id": str(UUID(int=56))}),
+        (
+            "build_candidate_cursor_page_query",
+            (),
+            {
+                "before_start_time": start + timedelta(hours=1),
+                "before_session_id": str(UUID(int=56)),
+            },
+        ),
         ("build_page_hydration_query", ([str(UUID(int=101)), str(UUID(int=202))],), {}),
     ):
-        assert_sql_and_parameters_equal(getattr(current, method)(*args, **options), getattr(native, method)(*args, **options))
+        assert_sql_and_parameters_equal(
+            getattr(current, method)(*args, **options),
+            getattr(native, method)(*args, **options),
+        )
 
 
 def _density_reader(builder_type, narrower_result):

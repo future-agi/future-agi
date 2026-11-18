@@ -290,7 +290,9 @@ def test_sampling_stale_retirement_uses_bounded_fenced_pages(
     assert TraceErrorGroup.all_objects.get(pk=issue.pk).deleted
 
 
-def test_sampling_retirement_advances_past_a_busy_recalculation(issue_with_three, monkeypatch):
+def test_sampling_retirement_advances_past_a_busy_recalculation(
+    issue_with_three, monkeypatch
+):
     from django.db import transaction
 
     from tracer.models.observation_span import EvalEntryStatus

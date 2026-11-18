@@ -5,6 +5,7 @@ NOT producer enrollment, retained bootstrap, PG revision or serving authority.
 Pending records have no TTL. Privacy cleanup must join the existing PERF2
 protocol; deleting a source Project cannot silently delete this history.
 """
+
 import uuid
 
 from django.db import models
@@ -20,8 +21,13 @@ class MetricSourceScope(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=("organization_id", "project_id"), name="metric_src_scope"),
-            models.CheckConstraint(condition=Q(closed_revision__lte=F("revision")), name="metric_src_cut_order"),
+            models.UniqueConstraint(
+                fields=("organization_id", "project_id"), name="metric_src_scope"
+            ),
+            models.CheckConstraint(
+                condition=Q(closed_revision__lte=F("revision")),
+                name="metric_src_cut_order",
+            ),
         ]
 
 
@@ -37,9 +43,15 @@ class MetricSourceIntent(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=("scope", "operation_key"), name="metric_src_operation"),
-            models.UniqueConstraint(fields=("scope", "revision"), name="metric_src_revision"),
-            models.CheckConstraint(condition=Q(revision__gt=0), name="metric_src_revision_positive"),
+            models.UniqueConstraint(
+                fields=("scope", "operation_key"), name="metric_src_operation"
+            ),
+            models.UniqueConstraint(
+                fields=("scope", "revision"), name="metric_src_revision"
+            ),
+            models.CheckConstraint(
+                condition=Q(revision__gt=0), name="metric_src_revision_positive"
+            ),
         ]
 
 
@@ -52,7 +64,9 @@ class MetricSourcePage(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=("intent", "ordinal"), name="metric_src_page"),
+            models.UniqueConstraint(
+                fields=("intent", "ordinal"), name="metric_src_page"
+            ),
         ]
 
 
@@ -69,15 +83,23 @@ class MetricSourceDelivery(models.Model):
     store = models.CharField(max_length=64)
     schema_sha256 = models.CharField(max_length=64)
     payload_sha256 = models.CharField(max_length=64)
-    state = models.CharField(max_length=16, choices=State.choices, default=State.PREPARED)
+    state = models.CharField(
+        max_length=16, choices=State.choices, default=State.PREPARED
+    )
     acknowledgement_sha256 = models.CharField(max_length=64, blank=True)
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=("intent", "server_id", "database", "store"), name="metric_src_target"),
+            models.UniqueConstraint(
+                fields=("intent", "server_id", "database", "store"),
+                name="metric_src_target",
+            ),
             models.CheckConstraint(
                 condition=(Q(state="acknowledged") & ~Q(acknowledgement_sha256=""))
-                | (Q(state__in=("prepared", "uncertain")) & Q(acknowledgement_sha256="")),
+                | (
+                    Q(state__in=("prepared", "uncertain"))
+                    & Q(acknowledgement_sha256="")
+                ),
                 name="metric_src_ack_state",
             ),
         ]

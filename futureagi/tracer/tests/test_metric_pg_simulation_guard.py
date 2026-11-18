@@ -3,13 +3,13 @@
 from uuid import uuid4
 
 import pytest
-from accounts.models.user import User
 from django.db import models, transaction
 from django.test import override_settings
+
+from accounts.models.user import User
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
 from simulate.models.agent_definition import AgentDefinition
-
 from tracer.models.metric_pg_revision import MetricPgResponseRevision
 from tracer.models.project import Project
 from tracer.models.trace_session import TraceSessionOverlay

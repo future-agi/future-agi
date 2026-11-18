@@ -37,8 +37,13 @@ def one_day_policy(organization_id):
 @pytest.mark.parametrize("rollout", [0, 1])
 @pytest.mark.parametrize("already_paused", [False, True])
 def test_no_head_privacy_priority_then_source_cap_remains_enforced(
-    live_writer, workspace, observe_project, settings, monkeypatch,
-    rollout, already_paused,
+    live_writer,
+    workspace,
+    observe_project,
+    settings,
+    monkeypatch,
+    rollout,
+    already_paused,
 ):
     """Real dispatch/execution drains first-publication debt, never admits a head."""
     from tracer.services.clickhouse import v2
@@ -52,8 +57,13 @@ def test_no_head_privacy_priority_then_source_cap_remains_enforced(
     scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
     for index in range(3):
         seed_span(
-            writer.store.client, scope, f"source-{index}", uuid4(), uuid4(),
-            now - timedelta(hours=1), resolved=1,
+            writer.store.client,
+            scope,
+            f"source-{index}",
+            uuid4(),
+            uuid4(),
+            now - timedelta(hours=1),
+            resolved=1,
         )
     settings.METRICS_MAX_CHECKPOINT_ROWS = 2
     settings.METRICS_MAX_CONCURRENT_PROJECTS = 1
@@ -66,7 +76,9 @@ def test_no_head_privacy_priority_then_source_cap_remains_enforced(
     # This staged copy was prepared under the old policy but cannot publish
     # after shortening. Its actual native submission receipts must drain.
     attempt, _ = prepare_field(
-        writer, metric=definition.metric_id, unit_id="unpublished-private",
+        writer,
+        metric=definition.metric_id,
+        unit_id="unpublished-private",
         start=now - timedelta(days=3),
     )
     writer.retention_days = lambda: 1
@@ -83,8 +95,10 @@ def test_no_head_privacy_priority_then_source_cap_remains_enforced(
     # Only route the production runner to this owned native fixture database.
     connection = writer.store.client.connection
     config = {
-        "host": connection.host, "tcp_port": connection.port,
-        "user": connection.user, "password": connection.password,
+        "host": connection.host,
+        "tcp_port": connection.port,
+        "user": connection.user,
+        "password": connection.password,
         "database": connection.database,
     }
     monkeypatch.setattr(v2, "get_v2_config", lambda: config)
@@ -99,7 +113,10 @@ def test_no_head_privacy_priority_then_source_cap_remains_enforced(
     assert not state.pending_expiry and state.pending_repair
     assert state.head_manifest_id is None
     assert not MetricReadManifest.objects.filter(project=observe_project).exists()
-    assert MetricRefreshAttempt.objects.filter(project=observe_project).count() == attempts_before
+    assert (
+        MetricRefreshAttempt.objects.filter(project=observe_project).count()
+        == attempts_before
+    )
     assert writer.store.execute(
         "SELECT count() FROM metric_field_values WHERE project_id = %(project)s",
         {"project": observe_project.id},
@@ -118,4 +135,7 @@ def test_no_head_privacy_priority_then_source_cap_remains_enforced(
     assert (state.paused_reason, state.paused_rows) == ("too_large", 3)
     assert state.head_manifest_id is None
     assert not MetricReadManifest.objects.filter(project=observe_project).exists()
-    assert MetricRefreshAttempt.objects.filter(project=observe_project).count() == attempts_before
+    assert (
+        MetricRefreshAttempt.objects.filter(project=observe_project).count()
+        == attempts_before
+    )

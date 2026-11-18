@@ -17,6 +17,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+
 from tracer.services.clickhouse.application_read_transport import (
     create_metrics_bounded_read_transport,
 )

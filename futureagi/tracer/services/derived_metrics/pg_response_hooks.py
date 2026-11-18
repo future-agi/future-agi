@@ -19,6 +19,7 @@ from uuid import UUID
 from django.apps import apps
 from django.conf import settings
 from django.db import models, router
+
 from tfc.utils.base_model import (
     AllObjectsManager,
     BaseModelManager,

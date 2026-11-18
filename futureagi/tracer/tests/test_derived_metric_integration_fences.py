@@ -252,9 +252,11 @@ def test_snapshot_read_revalidates_after_unlocked_native_io(
             assert_lifecycle_available(snapshot_metric.project_id)
             if change == "metric_deleted":
                 on_other_connection(
-                    lambda: type(snapshot_metric)
-                    ._base_manager.filter(pk=snapshot_metric.id)
-                    .update(deleted=True)
+                    lambda: (
+                        type(snapshot_metric)
+                        ._base_manager.filter(pk=snapshot_metric.id)
+                        .update(deleted=True)
+                    )
                 )
             else:
                 updates = (

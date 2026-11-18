@@ -354,7 +354,9 @@ def test_source_ceiling_keeps_microseconds_and_rejects_unbounded_key_input():
 def test_native_hydration_source_seam_preserves_baseline_sql_and_parameters():
     ids = [str(UUID(int=101))]
     sql, params = builder().build_page_hydration_query(ids)
-    old_sql, old_params = builder(native_session_builder()).build_page_hydration_query(ids)
+    old_sql, old_params = builder(native_session_builder()).build_page_hydration_query(
+        ids
+    )
     # CTE extraction changes only lexer whitespace relative to pinned native dev.
     assert_sql_and_parameters_equal((sql, params), (old_sql, old_params))
 

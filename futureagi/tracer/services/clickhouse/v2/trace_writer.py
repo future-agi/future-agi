@@ -29,7 +29,7 @@ import json
 import os
 import threading
 import time
-from datetime import timezone
+from datetime import UTC, timezone
 from typing import Any, Iterable
 
 import structlog
@@ -137,7 +137,7 @@ def _trace_to_row(t, *, version_from_updated_at: bool = False) -> list[Any]:
     """
     updated = t.updated_at
     if updated.tzinfo is None:
-        updated = updated.replace(tzinfo=timezone.utc)
+        updated = updated.replace(tzinfo=UTC)
     version_ns = (
         int(updated.timestamp() * 1_000_000_000)
         if version_from_updated_at
@@ -167,9 +167,15 @@ def _trace_to_row(t, *, version_from_updated_at: bool = False) -> list[Any]:
 
 def _freeze_intent_trace_rows(rows):
     from datetime import datetime
+
     from tracer.services.derived_metrics.base_list_current_source import (
-        MAX_BYTES, MAX_ROWS, SourceConflict, canonical_bytes, sha256,
+        MAX_BYTES,
+        MAX_ROWS,
+        SourceConflict,
+        canonical_bytes,
+        sha256,
     )
+
     if not isinstance(rows, (list, tuple)) or not 1 <= len(rows) <= MAX_ROWS:
         raise SourceConflict("bounded trace batch required")
     frozen = tuple(tuple(row) for row in rows)
@@ -182,7 +188,7 @@ def _freeze_intent_trace_rows(rows):
             if isinstance(value, datetime):
                 if value.tzinfo is None:
                     raise SourceConflict("aware trace timestamp required")
-                value = value.astimezone(timezone.utc).isoformat()
+                value = value.astimezone(UTC).isoformat()
             elif value is not None and type(value) not in (str, int):
                 raise SourceConflict("immutable trace scalar required")
             values.append(value)
@@ -201,9 +207,16 @@ def trace_rows_sha256(rows) -> str:
 
 def _source_intent_lane():
     from django.conf import settings
-    from tracer.services.derived_metrics.base_list_current_source import SourceUnavailable
-    if (getattr(settings, "FI_SESSIONS_SOURCE_INTENTS_ENABLED", False) is not True
-            or getattr(settings, "FI_SESSIONS_SOURCE_INTENT_LANE", "") != "direct-local-mergetree-v1"):
+
+    from tracer.services.derived_metrics.base_list_current_source import (
+        SourceUnavailable,
+    )
+
+    if (
+        getattr(settings, "FI_SESSIONS_SOURCE_INTENTS_ENABLED", False) is not True
+        or getattr(settings, "FI_SESSIONS_SOURCE_INTENT_LANE", "")
+        != "direct-local-mergetree-v1"
+    ):
         raise SourceUnavailable("source delivery lane disabled or unsupported")
 
 
@@ -215,25 +228,43 @@ def inspect_trace_source_store(payload_sha256):
     The default-OFF lane requires that separately reviewed routing prerequisite.
     """
     _source_intent_lane()
-    from tracer.services.derived_metrics.base_list_current_source_transport import lease_trace_source_client
+    from tracer.services.derived_metrics.base_list_current_source_transport import (
+        lease_trace_source_client,
+    )
+
     with lease_trace_source_client() as (client, _):
         return _inspect_trace_source_store(client, payload_sha256)
 
 
 def _inspect_trace_source_store(client, payload_sha256):
     from uuid import UUID
+
     from tracer.services.derived_metrics.base_list_current_source import (
-        SelectedStore, SourceUnavailable, Store, canonical_bytes, sha256,
+        SelectedStore,
+        SourceUnavailable,
+        Store,
+        canonical_bytes,
+        sha256,
     )
-    server, database = client.query("SELECT toString(serverUUID()), currentDatabase()").result_rows[0]
+
+    server, database = client.query(
+        "SELECT toString(serverUUID()), currentDatabase()"
+    ).result_rows[0]
     tables = client.query(
         "SELECT engine, toString(uuid), create_table_query FROM system.tables "
         "WHERE database = currentDatabase() AND name = 'traces'"
     ).result_rows
     if len(tables) != 1 or tables[0][0] not in ("MergeTree", "ReplacingMergeTree"):
-        raise SourceUnavailable("only direct local synchronous trace stores are supported")
-    return SelectedStore(UUID(server), database, Store.TRACES,
-                         sha256(canonical_bytes(tables[0])), payload_sha256)
+        raise SourceUnavailable(
+            "only direct local synchronous trace stores are supported"
+        )
+    return SelectedStore(
+        UUID(server),
+        database,
+        Store.TRACES,
+        sha256(canonical_bytes(tables[0])),
+        payload_sha256,
+    )
 
 
 def insert_trace_rows(rows, *, source_intent=None, selected_store=None):
@@ -247,10 +278,17 @@ def insert_trace_rows(rows, *, source_intent=None, selected_store=None):
     No retry on uncertainty. No insert receipt certifies dictionary reloads.
     """
     from django.conf import settings
+
     from tracer.services.derived_metrics.base_list_current_source import (
-        ReceiptKind, SelectedServerReceipt, SourceConflict, SourceUnavailable,
-        acknowledge_selected_server, claim_dispatch, read_source_page,
+        ReceiptKind,
+        SelectedServerReceipt,
+        SourceConflict,
+        SourceUnavailable,
+        acknowledge_selected_server,
+        claim_dispatch,
+        read_source_page,
     )
+
     enabled = getattr(settings, "FI_SESSIONS_SOURCE_INTENTS_ENABLED", False) is True
     if not enabled and source_intent is None and selected_store is None:
         return _get_client().insert("traces", rows, column_names=list(_TRACE_COLUMNS))
@@ -263,28 +301,52 @@ def insert_trace_rows(rows, *, source_intent=None, selected_store=None):
     # Validate bounded new physical/canonical membership against dispatched rows.
     # Old preimages still require the producer's independent completeness proof.
     from tracer.models.metric_source_intent import MetricSourceIntent
+
     intent = MetricSourceIntent.objects.using("default").get(id=source_intent.intent_id)
     images = []
     for ordinal in range(intent.page_count):
-        images.extend(c["new"] for c in json.loads(read_source_page(source_intent, ordinal))["changes"]
-                      if c["new"] is not None and c["new"]["physical"]["store"] == "traces")
-    expected = sorted((tuple(i["physical"]["key"]), i["canonical"]["session_id"], i["state"]) for i in images)
+        images.extend(
+            c["new"]
+            for c in json.loads(read_source_page(source_intent, ordinal))["changes"]
+            if c["new"] is not None and c["new"]["physical"]["store"] == "traces"
+        )
+    expected = sorted(
+        (tuple(i["physical"]["key"]), i["canonical"]["session_id"], i["state"])
+        for i in images
+    )
     if any(r[14] not in (0, 1) for r in frozen):
         raise SourceConflict("invalid trace tombstone state")
-    actual = sorted(((str(r[1]), r[12].astimezone(timezone.utc).strftime("%Y%m"), str(r[0])),
-                     str(r[4]) if r[4] else None, "tombstone" if r[14] == 1 else "live") for r in frozen)
-    if expected != actual or any(str(r[1]) != str(source_intent.scope.project_id) for r in frozen):
+    actual = sorted(
+        (
+            (str(r[1]), r[12].astimezone(UTC).strftime("%Y%m"), str(r[0])),
+            str(r[4]) if r[4] else None,
+            "tombstone" if r[14] == 1 else "live",
+        )
+        for r in frozen
+    )
+    if expected != actual or any(
+        str(r[1]) != str(source_intent.scope.project_id) for r in frozen
+    ):
         raise SourceConflict("trace rows disagree with registered membership")
-    from tracer.services.derived_metrics.base_list_current_source_transport import lease_trace_source_client
+    from tracer.services.derived_metrics.base_list_current_source_transport import (
+        lease_trace_source_client,
+    )
+
     with lease_trace_source_client() as (client, pool):
         if _inspect_trace_source_store(client, digest) != selected_store:
             raise SourceConflict("selected trace store changed")
         # Resolve driver schema BEFORE arming the one-shot request, never
         # accidentally treat its DESCRIBE as the source mutation.
-        context = client.create_insert_context("traces", column_names=list(_TRACE_COLUMNS), data=frozen)
+        context = client.create_insert_context(
+            "traces", column_names=list(_TRACE_COLUMNS), data=frozen
+        )
         ticket = claim_dispatch(source_intent, selected_store)  # commits BEFORE INSERT
-        context.settings = {"async_insert": 0, "wait_for_async_insert": 1,
-                            "wait_end_of_query": 1, "query_id": str(ticket.receipt_id)}
+        context.settings = {
+            "async_insert": 0,
+            "wait_for_async_insert": 1,
+            "wait_end_of_query": 1,
+            "query_id": str(ticket.receipt_id),
+        }
         pool.arm(str(ticket.receipt_id))
         summary = client.insert(context=context)
         # 1.1.1 exposes query_id as a METHOD. The owned pool additionally proves
@@ -294,7 +356,9 @@ def insert_trace_rows(rows, *, source_intent=None, selected_store=None):
         pool.disarm()
         if _inspect_trace_source_store(client, digest) != selected_store:
             raise SourceUnavailable("selected trace store changed during delivery")
-        receipt = SelectedServerReceipt(ticket, ReceiptKind.LOCAL_SYNCHRONOUS_INSERT, str(ticket.receipt_id))
+        receipt = SelectedServerReceipt(
+            ticket, ReceiptKind.LOCAL_SYNCHRONOUS_INSERT, str(ticket.receipt_id)
+        )
         acknowledge_selected_server(source_intent, (receipt,))
         return receipt
 

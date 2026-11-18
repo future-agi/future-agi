@@ -56,7 +56,9 @@ class PgResponseCapture:
         # This MUST precede Project/session_config and every dependency read.
         self.vector: PgResponseVector = read_pg_response_vector(self._scopes)
         with connection.cursor() as cursor:
-            cursor.execute("SELECT pg_is_in_recovery(), current_setting('transaction_read_only')")
+            cursor.execute(
+                "SELECT pg_is_in_recovery(), current_setting('transaction_read_only')"
+            )
             recovery, read_only = cursor.fetchone()
         if recovery or read_only != "off":
             raise PgRevisionUnavailable("PG capture requires the writable primary")
@@ -86,27 +88,40 @@ class PgResponseCapture:
             )
 
             with force_primary():
-                labels = list(AnnotationsLabels.objects.using("default").filter(
-                    project_id=self.project.pk, deleted=False,
-                ))
+                labels = list(
+                    AnnotationsLabels.objects.using("default").filter(
+                        project_id=self.project.pk,
+                        deleted=False,
+                    )
+                )
                 # These native helpers eagerly consume all related User fields.
                 columns = TraceSessionView._build_score_column_config(labels)
                 scores = TraceSessionView._fetch_session_scores(key, labels)
-                overlays = list(TraceSessionOverlay.objects.using("default").filter(
-                    project_id=self.project.pk, trace_session_id__in=key,
-                    deleted=False,
-                ).values_list("trace_session_id", "display_name"))
+                overlays = list(
+                    TraceSessionOverlay.objects.using("default")
+                    .filter(
+                        project_id=self.project.pk,
+                        trace_session_id__in=key,
+                        deleted=False,
+                    )
+                    .values_list("trace_session_id", "display_name")
+                )
                 config = ensure_project_session_property_identities(
                     self.project.session_config or get_default_project_session_config()
                 )
                 for column in columns:
                     if not any(item["id"] == column["id"] for item in config):
                         config.append(column)
-                self._dependencies[key] = PgDependencies(JSONRenderer().render({
-                    "config": config, "scores": scores,
-                    "label_ids": [str(label.pk) for label in labels],
-                    "overlays": {str(sid): name for sid, name in overlays},
-                }))
+                self._dependencies[key] = PgDependencies(
+                    JSONRenderer().render(
+                        {
+                            "config": config,
+                            "scores": scores,
+                            "label_ids": [str(label.pk) for label in labels],
+                            "overlays": {str(sid): name for sid, name in overlays},
+                        }
+                    )
+                )
         return self._dependencies[key]
 
     def finish(self, response):
@@ -124,8 +139,10 @@ class PgResponseCapture:
                 project = _project(self._request, self.project.pk)
                 if (project.organization_id, project.workspace_id) != self._ownership:
                     raise PgRevisionUnavailable("project ownership changed")
-                if (read_pg_response_vector(self._scopes) != self.vector
-                        or connection.connection is not self._connection):
+                if (
+                    read_pg_response_vector(self._scopes) != self.vector
+                    or connection.connection is not self._connection
+                ):
                     raise PgRevisionUnavailable("PG response changed during assembly")
                 return payload
         finally:
@@ -133,8 +150,16 @@ class PgResponseCapture:
             self._dependencies.clear()
 
 
-def assemble_pg_response(request, project_id, *, assemble, retry_native,
-                         deadline, privacy_safe, drain_and_release):
+def assemble_pg_response(
+    request,
+    project_id,
+    *,
+    assemble,
+    retry_native,
+    deadline,
+    privacy_safe,
+    drain_and_release,
+):
     """Integration seam; not installed on HTTP until the reader lane qualifies.
 
     `assemble(capture, deadline)` performs a whole synchronous response. The

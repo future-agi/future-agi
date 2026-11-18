@@ -40,10 +40,17 @@ def baseline_fixture():
         closure = fixture[key]
         assert closure["source_commit"] == commit
         for entry in (*closure["modules"].values(), *closure["data_files"].values()):
-            assert hashlib.sha256(entry["source"].encode()).hexdigest() == entry["sha256"]
+            assert (
+                hashlib.sha256(entry["source"].encode()).hexdigest() == entry["sha256"]
+            )
     for path in BASELINE_PATHS:
-        name = "tracer.services.clickhouse." + path.removesuffix(".py").replace("/", ".")
-        assert fixture["builders"][path]["source"] == fixture["historical_closure"]["modules"][name]["source"]
+        name = "tracer.services.clickhouse." + path.removesuffix(".py").replace(
+            "/", "."
+        )
+        assert (
+            fixture["builders"][path]["source"]
+            == fixture["historical_closure"]["modules"][name]["source"]
+        )
     return fixture
 
 
@@ -90,7 +97,9 @@ def _load_frozen_session_builder(closure):
     modules = closure["modules"]
     loaded = {}
     identity = hashlib.sha256(json.dumps(closure, sort_keys=True).encode()).hexdigest()
-    prefix = "_session_parity_" + identity + "_" + Path(root.name).name.replace("-", "_")
+    prefix = (
+        "_session_parity_" + identity + "_" + Path(root.name).name.replace("-", "_")
+    )
     for path, entry in closure["data_files"].items():
         destination = Path(root.name) / path
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -103,7 +112,9 @@ def _load_frozen_session_builder(closure):
             return load(name)
         children = {item: name + "." + item for item in (fromlist or ())}
         if children and all(child in modules for child in children.values()):
-            return SimpleNamespace(**{item: load(child) for item, child in children.items()})
+            return SimpleNamespace(
+                **{item: load(child) for item, child in children.items()}
+            )
         if name.startswith(("tracer.", "model_hub.")):
             assert name in closure["external_application_interfaces"], name
         return builtins.__import__(name, globals, locals, fromlist, level)
@@ -111,10 +122,15 @@ def _load_frozen_session_builder(closure):
     def load(name):
         if name not in loaded:
             entry = modules[name]
-            assert hashlib.sha256(entry["source"].encode()).hexdigest() == entry["sha256"]
+            assert (
+                hashlib.sha256(entry["source"].encode()).hexdigest() == entry["sha256"]
+            )
             module = ModuleType(prefix + "." + name)
             module.__file__ = str(Path(root.name) / entry["path"])
-            module.__dict__["__builtins__"] = {**vars(builtins), "__import__": frozen_import}
+            module.__dict__["__builtins__"] = {
+                **vars(builtins),
+                "__import__": frozen_import,
+            }
             loaded[name] = module
             # Dataclasses consult their defining module; production names stay untouched.
             sys.modules[module.__name__] = module
@@ -125,7 +141,9 @@ def _load_frozen_session_builder(closure):
                 module.EMPTY_DENSITY_ESTIMATE = EMPTY_DENSITY_ESTIMATE
         return loaded[name]
 
-    builder = load("tracer.services.clickhouse.v2.query_builders.session_list").SessionListQueryBuilderV2
+    builder = load(
+        "tracer.services.clickhouse.v2.query_builders.session_list"
+    ).SessionListQueryBuilderV2
     builder._parity_fixture_root = root
     return builder
 
@@ -140,18 +158,24 @@ def assert_sql_and_parameters_equal(actual, expected):
     from sqlparse import lexer, tokens
 
     def significant(sql):
-        return tuple((kind, value) for kind, value in lexer.tokenize(sql) if kind not in tokens.Whitespace)
+        return tuple(
+            (kind, value)
+            for kind, value in lexer.tokenize(sql)
+            if kind not in tokens.Whitespace
+        )
 
     def parameter_types(value):
         if isinstance(value, dict):
-            return (type(value), {key: parameter_types(item) for key, item in value.items()})
+            return (
+                type(value),
+                {key: parameter_types(item) for key, item in value.items()},
+            )
         if isinstance(value, list | tuple):
             return (type(value), tuple(parameter_types(item) for item in value))
         return type(value)
 
-    assert (
-        actual[1] == expected[1]
-        and parameter_types(actual[1]) == parameter_types(expected[1])
+    assert actual[1] == expected[1] and parameter_types(actual[1]) == parameter_types(
+        expected[1]
     ), "SQL parameter drift"
     assert significant(actual[0]) == significant(expected[0]), "SQL token drift"
 
