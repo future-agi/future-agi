@@ -21,7 +21,7 @@ const MEASURED = {
   reset: 'supported',
   cancel: 'untested',
 };
-const COUNTS = { blocked: 1, stale: 0, untested: 10, partial: 0, unavailable: 0, supported: 5 };
+const COUNTS = { blocked: 1, stale: 0, untested: 9, partial: 0, unavailable: 1, supported: 5 };
 
 interface Ref { id: string; label: string }
 interface Row { id: string; status: string; measured: boolean; reason_code: string | null;
@@ -41,10 +41,10 @@ interface Report {
   counts: Record<string, number>;
 }
 
-test('SIM-E2E-003: a pairing reads its readiness, a re-check validates it, and a run waits for the check', {
+test('SIM-E2E-030: a pairing reads its readiness, a re-check validates it, and a run waits for the check', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-003', area: 'simulate',
+    id: 'SIM-E2E-030', area: 'simulate',
     userGoal: 'A developer reads whether an agent, environment and suite pairing can run and why, '
       + 'asks for an unchecked pairing to be checked, and is told to wait rather than run it while the check runs',
     steps: ['seed a built, certified Environment whose contract routes issue_refund to production, '
@@ -81,6 +81,9 @@ test('SIM-E2E-003: a pairing reads its readiness, a re-check validates it, and a
       environment_version: expect.objectContaining({ id: certified.environmentVersionId }),
       suite_version: expect.objectContaining({ id: certified.suiteVersionId }),
       evidence: 'pair_certificate',
+      // The seed stores no reading of the agent version's tools.
+      agent_tools: { read: false, count: 0 },
+      evidence_unreadable: false,
     });
     expect(report.validation.state).toBe('ready');
     expect(Object.fromEntries(report.rows.filter((row) => row.measured).map((row) => [row.id, row.status])))
@@ -144,10 +147,10 @@ test('SIM-E2E-003: a pairing reads its readiness, a re-check validates it, and a
   });
 });
 
-test('SIM-E2E-006: a pairing whose check failed refuses runs with a plain reason, and a re-check starts afresh', {
+test('SIM-E2E-032: a pairing whose check failed refuses runs with a plain reason, and a re-check starts afresh', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-006', area: 'simulate',
+    id: 'SIM-E2E-032', area: 'simulate',
     userGoal: 'A developer whose agent failed its check with an environment is told why when a run is refused, '
       + 'without internal detail, and can check the pairing again',
     steps: ['seed a built Environment whose pairing\'s last check failed on issue_refund '

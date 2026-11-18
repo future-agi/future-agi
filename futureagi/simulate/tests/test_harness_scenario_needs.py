@@ -110,6 +110,24 @@ class TestNeeds:
             assert not needs[key].unknown
             assert not {"tool_discovery", "tool_routing"} & needs[key].rows
 
+    def test_a_judged_sub_goal_marks_the_case_judged(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "as-judged")
+        both = {**SUB_GOALS[1], "judged": "The agent explained the order status"}
+
+        needs = _needs(
+            environment,
+            [
+                _doc("judged", sub_goals=("polite",)),
+                _doc("both", sub_goals=("looked_up_and_judged",)),
+                _doc("coded", sub_goals=("looked_up",)),
+            ],
+            sub_goals=[*SUB_GOALS, {**both, "name": "looked_up_and_judged"}],
+        )
+
+        assert needs["judged"].judged
+        assert needs["both"].judged
+        assert not needs["coded"].judged
+
     def test_connect_only_tools_come_from_checks(self, user, workspace, storage):
         environment = _environment(user, workspace, storage, "as-connect-only")
         _connect_only(environment)

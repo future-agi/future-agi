@@ -2947,7 +2947,32 @@
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
 
-### SIM-E2E-003 — a pairing reads its readiness, a re-check validates it, and a run waits for the check
+### SIM-E2E-024 — a run started with a case held back says so in its header, and a run from before says nothing
+
+**Goal:** A developer who starts a run on a pairing that holds a case back reads, on the run itself, the readiness it started under and the cases it held back; a run started before runs kept readiness shows no tag
+
+**Spec:** `flows/simulate/run-readiness-header.spec.ts:12`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, certified Environment of 1 refund and 1 lookup whose contract routes issue_refund to production, with one finished run from before readiness was kept (e2e/lib/harness_environment_seed.py)
+2. open the Environment and click Run simulation
+3. run both scenarios from the run dialog
+4. land on the new run and open its readiness tag
+5. open the finished run from before
+
+**Backend state verified:**
+
+- the new run job keeps the readiness it was created with: answer blocked, and its selection holds back exactly the refund, by tool_routing
+
+**Browser observations:**
+
+- the new run's header reads "Started with 1 limit" and its popover "1 of 2 cases held back"
+- the run from before has no readiness tag
+
+### SIM-E2E-030 — a pairing reads its readiness, a re-check validates it, and a run waits for the check
 
 **Goal:** A developer reads whether an agent, environment and suite pairing can run and why, asks for an unchecked pairing to be checked, and is told to wait rather than run it while the check runs
 
@@ -2972,7 +2997,7 @@
 - the validation is a queued certify-only job of this Environment pinned to its pending bundle, and the default agent did not move
 - the run answers 409 pair_validating, retryable, with when to retry and the check it waits on, and creates no run job
 
-### SIM-E2E-004 — the cases a pairing holds back are bucketed and paged by scenario number
+### SIM-E2E-031 — the cases a pairing holds back are bucketed and paged by scenario number
 
 **Goal:** A developer selecting scenarios to run sees how many of them the pairing can run, how many it holds back and why, and pages through the held-back cases
 
@@ -2995,11 +3020,11 @@
 - the eligible page is the two lookups, held by nothing
 - the page numbers are the stored suite members' numbers
 
-### SIM-E2E-006 — a pairing whose check failed refuses runs with a plain reason, and a re-check starts afresh
+### SIM-E2E-032 — a pairing whose check failed refuses runs with a plain reason, and a re-check starts afresh
 
 **Goal:** A developer whose agent failed its check with an environment is told why when a run is refused, without internal detail, and can check the pairing again
 
-**Spec:** `flows/simulate/pairing-readiness.spec.ts:147`
+**Spec:** `flows/simulate/pairing-readiness.spec.ts:150`
 
 **Tags:** —
 

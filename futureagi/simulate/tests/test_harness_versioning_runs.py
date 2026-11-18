@@ -446,11 +446,12 @@ class TestPins:
 
         assert run.agent_version_id is None
         assert run.suite_version_id == environment.suite_version_id
-        assert [
+        # Read once for readiness before the lock and once for the pins under it.
+        assert {
             (log["environment_id"], log["agent_version_id"])
             for log in logs
             if log["event"] == "harness_run_agent_pin_missing"
-        ] == [(str(environment.id), str(environment.agent_version_id))]
+        } == {(str(environment.id), str(environment.agent_version_id))}
 
 
 class TestManifest:

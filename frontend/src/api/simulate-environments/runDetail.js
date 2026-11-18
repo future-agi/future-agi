@@ -231,6 +231,9 @@ export function useRunDetail(
       environmentVersion: execution.environment_version ?? null,
       suiteVersion: execution.suite_version ?? null,
       agentDiffers: Boolean(execution.agent_differs),
+      // The run readiness the run started under, and the cases it held back.
+      capabilitySnapshot: execution.capability_snapshot ?? null,
+      readinessSelection: execution.readiness_selection ?? null,
       // A fix's check run: `{ id, label }` of the fix that started it, else null.
       fixRun: execution.fix_run ?? null,
       // How far an interrupted run got and whether it can resume; null when the

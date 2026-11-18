@@ -130,6 +130,8 @@ def platform_failure(failure: Any, failed_actions: Any = None) -> str | None:
     anything else, is the agent's."""
     if failed_actions or not failure:
         return None
+    # ALK's ``harness_failure`` record is never read here: the tested agent can write
+    # the file it comes from, so it is shown as a diagnostic only.
     ending = _ending(str((failure.get("details") or {}).get("guest_log_tail") or ""))
     if ending is None:
         return None
@@ -272,6 +274,46 @@ def certify_only(job: HostedHarnessJob) -> bool:
     return ((job.payload or {}).get("metadata") or {}).get("certify_only") is True
 
 
+def reads_agent(job: HostedHarnessJob) -> bool:
+    """Whether a validation job first reads its agent version's tools."""
+    return ((job.payload or {}).get("metadata") or {}).get("agent_reading") in (
+        "before_certify",
+        "only",
+    )
+
+
+def reading_only(job: HostedHarnessJob) -> bool:
+    """Whether a validation job only reads its agent version's tools: the pairing is
+    certified already."""
+    return ((job.payload or {}).get("metadata") or {}).get("agent_reading") == "only"
+
+
+def unread(agent_version: AgentVersion, runtime: Any) -> bool:
+    """A version whose tools no build has read, started in our sandbox from source."""
+    from simulate.services.agent_setup import stored_agent
+    from simulate.services.harness_agent_versions import _payload_source
+
+    return (
+        runtime is not None
+        and _payload_source(runtime)["kind"] in ("github", "archive")
+        and stored_agent(agent_version.id) is None
+    )
+
+
+def needs_reading(
+    environment: HostedHarnessJob,
+    agent_version: AgentVersion,
+    environment_version: HarnessEnvironmentVersion,
+    runtime: Any,
+) -> bool:
+    """Whether a check of this pairing reads the agent version's tools: readiness
+    compares them only for an agent other than the one the environment version was
+    built with (whose tools are its contract's), and only an unread one."""
+    return not assembly.same_bundle_agent(
+        agent_version.id, environment_version.agent_version_id, environment
+    ) and unread(agent_version, runtime)
+
+
 def can_validate(environment: HostedHarnessJob, agent_version_id: Any) -> bool:
     """Whether a pairing of this agent version can be validated in ``environment``:
     certifying is on, the environment pins an agent and versions, and the version has a
@@ -387,7 +429,34 @@ def start_validation(
                 "state": HarnessAssembledBundle.State.PENDING,
             },
         )
-        if bundle.state == HarnessAssembledBundle.State.READY and bundle.object_key:
+        # Only an explicit Re-check reads the version's tools: it costs model calls.
+        read = purpose == "recheck" and needs_reading(
+            locked, agent_version, environment_version, runtime
+        )
+        certified = (
+            bundle.state == HarnessAssembledBundle.State.READY and bundle.object_key
+        )
+        if certified and purpose == "recheck" and recertifies(bundle):
+            # Made by an earlier harness than runs use now: certify it again.
+            assembly.reset_outdated(bundle)
+            certified = False
+        if certified and read and live_validation(bundle.id) is None:
+            job = _create_job(
+                locked,
+                runtime,
+                agent_version,
+                environment_version,
+                suite_version,
+                bundle,
+                purpose=purpose,
+                move=move,
+                reading="only",
+            )
+            job_id = job.id
+            transaction.on_commit(lambda: _dispatch(job_id))
+            logger.info("harness_pair_agent_reading_started", **_check_log(job))
+            return Validation("validating", bundle, purpose, job)
+        if certified:
             logger.info(
                 "harness_pair_validation_reused",
                 environment_id=str(locked.id),
@@ -413,9 +482,9 @@ def start_validation(
             return Validation(CHECK_UNAVAILABLE, bundle, purpose)
         if bundle.state == HarnessAssembledBundle.State.FAILED:
             assembly.reset_failed(bundle)
-        job = live_validation(bundle.id)
-        if job is not None and (move is None or _carry_move(job, move)):
-            return Validation("validating", bundle, purpose, job)
+        live = live_validation(bundle.id)
+        if live is not None and (move is None or _carry_move(live, move)):
+            return Validation("validating", bundle, purpose, live)
         job = _create_job(
             locked,
             runtime,
@@ -425,6 +494,7 @@ def start_validation(
             bundle,
             purpose=purpose,
             move=move,
+            reading="before_certify" if read else None,
         )
         job_id = job.id
         transaction.on_commit(lambda: _dispatch(job_id))
@@ -434,6 +504,18 @@ def start_validation(
         caller=move["caller"] if move else None,
     )
     return Validation("validating", bundle, purpose, job)
+
+
+def recertifies(bundle: HarnessAssembledBundle | None) -> bool:
+    """Whether a Re-check certifies ``bundle`` again: its certificate was made by an
+    earlier harness version than the organization's runs use now."""
+    from simulate.services.harness_readiness.release import harness_outdated
+
+    return (
+        bundle is not None
+        and bundle.state == HarnessAssembledBundle.State.READY
+        and harness_outdated(bundle.certificate, bundle.organization_id) is not None
+    )
 
 
 def _carry_move(job: HostedHarnessJob, move: AgentMove) -> bool:
@@ -519,8 +601,10 @@ def _create_job(
     *,
     purpose: Purpose,
     move: AgentMove | None,
+    reading: Literal["before_certify", "only"] | None = None,
 ) -> HostedHarnessJob:
-    """The environment's job, pinned to the pairing; certifying is all it does."""
+    """The environment's job, pinned to the pairing; certifying is all it does, after
+    reading the agent version's tools when ``reading`` says so."""
     from simulate.selectors.held_back import HELD_BACK_METADATA_KEY
     from simulate.services.harness_agent_versions import (
         apply_agent_version,
@@ -546,6 +630,8 @@ def _create_job(
     )
     if move is not None:
         metadata["validation_move"] = move
+    if reading is not None:
+        metadata["agent_reading"] = reading
     payload.pop("job_id", None)
     payload.pop("run_id", None)
     # One key per check of this bundle, so two requests for the same check make one job,
@@ -812,6 +898,9 @@ def _settle_bundle(job: HostedHarnessJob) -> str:
                 "run_id": str(job.id),
                 "source": FAILURE_SOURCE,
             }
+            excerpt = assembly.reported_excerpt(failure)
+            if excerpt:
+                bundle.error["excerpt"] = excerpt
             bundle.save(update_fields=["state", "error", "updated_at"])
         return "failed"
     if bundle.state == HarnessAssembledBundle.State.PENDING:
