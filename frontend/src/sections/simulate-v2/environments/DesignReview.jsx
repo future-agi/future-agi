@@ -124,7 +124,7 @@ export default function DesignReview({
   ));
   const sourcesValue = (
     <>
-      {readable.length && fileLinks}
+      {readable.length > 0 && fileLinks}
       {readable.length
         ? ` · adds ${
             [

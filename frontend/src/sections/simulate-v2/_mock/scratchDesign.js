@@ -227,7 +227,13 @@ export const scratchDesignOf = (flowText) => {
 const ACTIONS = ["triage", "label", "tag", "assign", "close", "reopen", "merge", "reply", "respond", "comment", "escalate", "route", "notify", "schedule", "approve", "reject", "review", "summarize", "summarise", "update", "create", "search", "flag", "prioritize", "prioritise", "archive", "dedupe"];
 const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
 /** The records and tools a description names outside the preset domains, or null. */
-export const genericDesignOf = (t) => {
+export const genericDesignOf = (raw) => {
+  /* Lines about changing the code (a CONTRIBUTING guide) say nothing about
+     what the agent does: "tests must pass before review" isn't a review tool. */
+  const t = String(raw)
+    .split(/(?<=[.!?\n])\s*/)
+    .filter((x) => !/\b(pull requests?|commits?|mypy|lint(er|ing)?|unit tests?|test suite|CI|branch(es)?|merge requests?|pre-commit|contributors?|maintainers?)\b/i.test(x))
+    .join(" ");
   const verbs = ACTIONS.filter((v) => new RegExp(`\\b${v}(s|es|d|ed|ing)?\\b`).test(t));
   if (!verbs.length) return null;
   const m =

@@ -35,3 +35,11 @@ describe("designFromSourcesPatch", () => {
     expect(res.envPatch.seed.tables.map((t) => t.name)).not.toContain("orders");
   });
 });
+
+describe("genericDesignOf ignores contributor lines", () => {
+  it("doesn't take 'before review' in a contributing guide as a review tool", () => {
+    const d = scratchDesignOf("Unit tests must pass before review. It triages new issues: labels and closes duplicates.");
+    expect(d.tools.map((t) => t.name)).not.toContain("review_issue");
+    expect(d.tools.map((t) => t.name)).toContain("label_issue");
+  });
+});
