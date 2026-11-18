@@ -54,7 +54,7 @@ spec:
               containerPort: 4318
               protocol: TCP
             - name: admin
-              containerPort: 9464
+              containerPort: {{ include "futureagi.collector.adminPort" . }}
               protocol: TCP
           {{- include "futureagi.block" (dict "text" (include "futureagi.preStop" (dict "root" . "seconds" $c.preStopSleepSeconds "native" true)) "indent" 10) }}
           env:

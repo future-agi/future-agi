@@ -28,6 +28,13 @@ import SlashCommandPicker from "./SlashCommandPicker";
 import AttachedFileChip from "./AttachedFileChip";
 import { paths } from "src/routes/paths";
 
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const FILE_TOO_LARGE_MESSAGE = "Files must be 10 MB or smaller.";
+
+function notifyFileTooLarge() {
+  enqueueSnackbar(FILE_TOO_LARGE_MESSAGE, { variant: "error" });
+}
+
 function notifyUploadError(error) {
   enqueueSnackbar(
     typeof error?.detail === "string" && error.detail
@@ -126,8 +133,8 @@ export default function ChatInput({ onSend, onStop }) {
       // Reset input so same file can be re-selected
       e.target.value = "";
 
-      if (file.size > 10 * 1024 * 1024) {
-        // Could show a snackbar; for now just alert
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        notifyFileTooLarge();
         return;
       }
 
@@ -208,8 +215,11 @@ export default function ChatInput({ onSend, onStop }) {
       setIsDragging(false);
       const files = Array.from(e.dataTransfer?.files || []);
       const validFiles = files
-        .filter((f) => f.size <= 10 * 1024 * 1024)
+        .filter((f) => f.size <= MAX_FILE_SIZE_BYTES)
         .slice(0, 5);
+      if (files.some((f) => f.size > MAX_FILE_SIZE_BYTES)) {
+        notifyFileTooLarge();
+      }
       if (validFiles.length === 0) return;
 
       setIsUploading(true);
