@@ -77,6 +77,7 @@ from agentcc.services.gateway_client import (
     GatewayClientError,
     get_gateway_client,
 )
+from agentcc.services.org_config_service import get_or_create_org_config
 from agentcc.services.url_safety import ensure_provider_base_url_allowed
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
@@ -220,6 +221,25 @@ def _guardrail_check_key(checks, name):
         rule for rule, registry in _RULE_TO_REGISTRY.items() if registry == name
     ]
     return next((alias for alias in aliases if alias in checks), name)
+
+
+def _invalid_threshold_field(guardrail_config):
+    """The threshold field of an update-guardrail payload outside 0..1, if any.
+
+    A guardrail's confidence threshold is a score from 0 to 1. A value such as
+    50 (meant as 50%) would never trigger, and the policy API refuses it.
+    """
+    for field in ("threshold", "confidence_threshold"):
+        if field not in guardrail_config or guardrail_config[field] is None:
+            continue
+        value = guardrail_config[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not 0 <= value <= 1
+        ):
+            return field
+    return None
 
 
 def _guardrail_check_fields(guardrail_config):
@@ -1003,6 +1023,9 @@ class AgentccGatewayViewSet(ViewSet):
             guardrail_config = request.validated_data.get("config")
             if not guardrail_name or not guardrail_config:
                 return self._gm.bad_request("name and config are required")
+            invalid = _invalid_threshold_field(guardrail_config)
+            if invalid:
+                return self._gm.bad_request(f"{invalid} must be a number from 0 to 1")
 
             def updater(cfg):
                 guardrails = cfg.guardrails or {}
@@ -1794,34 +1817,7 @@ class AgentccGatewayViewSet(ViewSet):
     # --- Per-org config helpers ---
 
     def _get_or_create_org_config(self, org):
-        with transaction.atomic():
-            config = (
-                AgentccOrgConfig.no_workspace_objects.select_for_update()
-                .filter(
-                    organization=org,
-                    is_active=True,
-                    deleted=False,
-                )
-                .first()
-            )
-            if config:
-                normalized = normalize_cost_tracking_config(config.cost_tracking)
-                if normalized != config.cost_tracking:
-                    config.cost_tracking = normalized
-                    config.save(update_fields=["cost_tracking", "updated_at"])
-                return config
-            config, _ = AgentccOrgConfig.no_workspace_objects.get_or_create(
-                organization=org,
-                version=1,
-                is_active=True,
-                deleted=False,
-                defaults={"cost_tracking": default_cost_tracking_config()},
-            )
-            normalized = normalize_cost_tracking_config(config.cost_tracking)
-            if normalized != config.cost_tracking:
-                config.cost_tracking = normalized
-                config.save(update_fields=["cost_tracking", "updated_at"])
-            return config
+        return get_or_create_org_config(org)
 
     def _update_org_config(self, org, updater_fn, user=None, desc=""):
         with transaction.atomic():

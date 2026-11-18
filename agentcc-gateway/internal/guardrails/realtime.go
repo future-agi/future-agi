@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
@@ -28,16 +29,30 @@ type RealtimePolicy struct {
 	model    string
 }
 
+// RealtimeText names the directions in which a realtime session carries text
+// the relay can read: index StagePre is the client's text before the vendor
+// (synthesis input), StagePost the vendor's text after it (transcripts).
+type RealtimeText [2]bool
+
+// RealtimeTextBoth reads text in both directions.
+var RealtimeTextBoth = RealtimeText{StagePre: true, StagePost: true}
+
 // BindRealtime uses the same authenticated org/key/request policy precedence as chat
-// and resolves configured checks before opening the speech session.
-func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext) (*RealtimePolicy, *models.APIError) {
+// and resolves configured checks before opening the speech session. readable
+// limits which key-policy checks are bound; org checks and static rules are
+// bound in both directions, and the caller refuses blocking ones it cannot read.
+func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext, readable RealtimeText) (*RealtimePolicy, *models.APIError) {
 	merged, requested, err := p.resolvePolicy(rc)
 	if err != nil {
 		return nil, err
 	}
 	bound := &RealtimePolicy{metadata: maps.Clone(rc.Metadata), model: rc.Model}
 	if requested == policy.RequestPolicyDisabled {
-		return bound, nil
+		// A request override never turns off the key's own policies, as on chat.
+		if err := p.bindRealtimeKeyPolicies(bound, rc, readable); err != nil {
+			return nil, err
+		}
+		return bound, validateRealtimeRules(bound)
 	}
 	add := func(stage Stage, rule resolvedRule) {
 		if merged != nil {
@@ -126,26 +141,98 @@ func (p *GuardrailPlugin) BindRealtime(rc *models.RequestContext) (*RealtimePoli
 			}
 		}
 	}
+	if err := p.bindRealtimeKeyPolicies(bound, rc, readable); err != nil {
+		return nil, err
+	}
+	if err := validateRealtimeRules(bound); err != nil {
+		return nil, err
+	}
+	return bound, nil
+}
+
+// bindRealtimeKeyPolicies adds the blocking checks of the key's Enforce
+// policies that apply to the session's key, after the org checks, in the
+// order chat runs them.
+//
+// Three kinds of key-policy check are left out instead of changing the session:
+//   - Monitor policies, and an Enforce policy's warn and log checks. Any bound
+//     rule installs the relay's hold/refuse filter, which holds text until a
+//     unit completes and closes the session on frames it cannot parse, while
+//     a non-blocking check could only write a log line. So only block checks
+//     run on speech relays.
+//   - Checks for a direction the session carries no readable text in (a
+//     pre-stage check on transcription, a post-stage check on synthesis).
+//     Org checks refuse such sessions; a key policy is skipped, so enforcing a
+//     chat check on a key does not stop that key's speech sessions.
+//
+// Neither the key's static overrides nor an X-Guardrail-Policy header change
+// the bound checks: on chat, too, key policies cannot be weakened.
+func (p *GuardrailPlugin) bindRealtimeKeyPolicies(bound *RealtimePolicy, rc *models.RequestContext, readable RealtimeText) *models.APIError {
+	if p.tenantStore == nil {
+		return nil
+	}
+	orgID := rc.Metadata["org_id"]
+	org := p.tenantStore.Get(orgID)
+	if org == nil || org.Guardrails == nil {
+		return nil
+	}
+	timeout := p.defaultTimeout
+	if org.Guardrails.TimeoutMs > 0 {
+		timeout = time.Duration(org.Guardrails.TimeoutMs) * time.Millisecond
+	}
+	for _, pol := range sortedKeyPolicies(org.Guardrails.KeyPoliciesFor(rc.Metadata["auth_key_id"])) {
+		if strings.EqualFold(pol.Mode, "monitor") {
+			continue
+		}
+		for _, name := range sortedCheckNames(pol.Checks) {
+			check := pol.Checks[name]
+			if check == nil || !check.Enabled {
+				continue
+			}
+			action := parseAction(check.Action)
+			if action != ActionBlock {
+				// On a relay a warn or log check could only emit a log line,
+				// yet any bound rule installs the hold/refuse filter.
+				continue
+			}
+			g := p.getKeyPolicyGuardrail(orgID, name, keyPolicyCacheKey(name, pol.ID, check), check)
+			if g == nil || (g.Stage() != StagePre && g.Stage() != StagePost) {
+				return realtimeUnsupported("configured guardrail implementation or stage is unavailable")
+			}
+			if !readable[g.Stage()] {
+				continue
+			}
+			bound.rules[g.Stage()] = append(bound.rules[g.Stage()], resolvedRule{
+				guardrail: g, mode: "sync", action: action, threshold: check.ConfidenceThreshold, timeout: timeout,
+			})
+		}
+	}
+	return nil
+}
+
+// validateRealtimeRules refuses a session whose blocking checks could not
+// decide: an invalid threshold, or a checker that is not ready.
+func validateRealtimeRules(bound *RealtimePolicy) *models.APIError {
 	for _, rules := range bound.rules {
 		for _, rule := range rules {
 			if rule.action != ActionBlock {
 				continue
 			}
 			if math.IsNaN(rule.threshold) || math.IsInf(rule.threshold, 0) || rule.threshold < 0 || rule.threshold > 1 {
-				return nil, realtimeUnsupported("configured guardrail threshold is invalid")
+				return realtimeUnsupported("configured guardrail threshold is invalid")
 			}
 			if ready, ok := rule.guardrail.(interface{ RealtimeReady() error }); ok {
 				if err := ready.RealtimeReady(); err != nil {
 					if errors.Is(err, ErrRealtimeUnavailable) {
-						return nil, &models.APIError{Status: 503, Type: models.ErrTypeGuardrail,
+						return &models.APIError{Status: 503, Type: models.ErrTypeGuardrail,
 							Code: "guardrail_unavailable", Message: "configured guardrail is unavailable for realtime checks"}
 					}
-					return nil, realtimeUnsupported("configured guardrail is unavailable for realtime checks")
+					return realtimeUnsupported("configured guardrail is unavailable for realtime checks")
 				}
 			}
 		}
 	}
-	return bound, nil
+	return nil
 }
 
 func realtimeUnsupported(detail string) *models.APIError {

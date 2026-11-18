@@ -6285,6 +6285,7 @@ export const AgentccGuardrailPoliciesListResponse = zod.object({
         .optional(),
       applied_keys: zod.object({}).passthrough().optional(),
       applied_projects: zod.object({}).passthrough().optional(),
+      runs_on_gateway: zod.boolean().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
     }),
@@ -6370,6 +6371,7 @@ export const AgentccGuardrailPoliciesReadResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6426,6 +6428,7 @@ export const AgentccGuardrailPoliciesUpdateResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6489,6 +6492,7 @@ export const AgentccGuardrailPoliciesPartialUpdateResponse = zod.object({
     .optional(),
   applied_keys: zod.object({}).passthrough().optional(),
   applied_projects: zod.object({}).passthrough().optional(),
+  runs_on_gateway: zod.boolean().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -6504,7 +6508,7 @@ export const AgentccGuardrailPoliciesDeleteParams = zod.object({
 });
 
 /**
- * Apply this policy to specific keys or projects.
+ * Apply to dashboard key UUIDs, or persist a project-only assignment.
  */
 export const AgentccGuardrailPoliciesApplyParams = zod.object({
   id: zod
@@ -68126,7 +68130,6 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
         "",
       ])
       .nullable(),
-    can_start: zod.boolean().optional(),
     filters_applied: zod
       .object({
         project_id: zod
@@ -71195,9 +71198,7 @@ export const TracerEvalTaskUnpauseEvalTaskQueryParams = zod.object({
   eval_task_id: zod.string().uuid(),
 });
 
-export const TracerEvalTaskUnpauseEvalTaskBody = zod.object({
-  start: zod.boolean().optional(),
-});
+export const TracerEvalTaskUnpauseEvalTaskBody = zod.object({});
 
 export const tracerEvalTaskUnpauseEvalTaskResponseStatusDefault = true;
 

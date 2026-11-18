@@ -3341,6 +3341,7 @@ export interface AgentccGuardrailPolicyApi {
   priority?: number;
   applied_keys?: AgentccGuardrailPolicyApiAppliedKeys;
   applied_projects?: AgentccGuardrailPolicyApiAppliedProjects;
+  readonly runs_on_gateway?: boolean;
   readonly created_at?: string;
   readonly updated_at?: string;
 }
@@ -31274,7 +31275,6 @@ export interface EvalTaskDetailsResultApi {
   project_id: string;
   project_name: string | null;
   status: EvalTaskDetailsResultApiStatus | null;
-  can_start?: boolean;
   filters_applied: EvalTaskDetailsResultApiFiltersApplied | null;
   created_at: string;
   evals_applied: EvalTaskDetailsEvalApi[];
@@ -31878,10 +31878,6 @@ export interface SamplingPreviewResultApi {
 export interface SamplingPreviewResponseApi {
   status: boolean;
   result: SamplingPreviewResultApi;
-}
-
-export interface EvalTaskUnpauseRequestApi {
-  start?: boolean;
 }
 
 /**
