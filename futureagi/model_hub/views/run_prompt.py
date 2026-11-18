@@ -5,6 +5,7 @@ import re
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC, datetime
 from typing import Any
 
 import chevron
@@ -23,6 +24,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from agentic_eval.core_evals.run_prompt.model_pricing import listed_pricing
 from model_hub.serializers.decision_models import (
     DecisionModelGroupSerializer,
     ModelListQuerySerializer,
@@ -1160,6 +1162,21 @@ class LitellmAPIView(CreateAPIView):
         return self._gm.success_response("success")
 
 
+def _utc_now():
+    return datetime.now(UTC)
+
+
+def _with_run_started_at(column_metadata, started_at):
+    """The cell's ``column_metadata`` with the instant its run started.
+
+    The price of a cell's tokens is the price in force at that instant (see
+    ``tfc.utils.functions.cell_token_cost``), so it is written wherever a run
+    writes tokens. Other keys (an audio duration) are kept.
+    """
+    kept = column_metadata if isinstance(column_metadata, dict) else {}
+    return {**kept, "run_started_at": started_at.isoformat()}
+
+
 class RunPrompts:
     def __init__(self, run_prompt_id):
         self.run_prompt_id = run_prompt_id
@@ -1333,6 +1350,9 @@ class RunPrompts:
 
     def process_row(self, row, column, edit_mode=False):
         row_id = str(row.id)
+        # Only the default for a row that fails before its call starts: the call
+        # takes its own start just before it is made (see below).
+        run_started_at = _utc_now()
         logger.info(
             "RunPrompts_process_row_started",
             run_prompt_id=str(self.run_prompt_id),
@@ -1492,6 +1512,10 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
+                # The run starts here, not at the top of the row: its tokens are
+                # priced at the instant the call starts, as the gateway prices a
+                # request, whatever the bookkeeping before it took.
+                run_started_at = _utc_now()
                 response, value_info = run_prompt.litellm_response()
                 logger.info(
                     "RunPrompts_process_row_litellm_response_received",
@@ -1582,6 +1606,9 @@ class RunPrompts:
                         cell.response_time = value_info.get("metadata", {}).get(
                             "response_time", None
                         )
+                        cell.column_metadata = _with_run_started_at(
+                            cell.column_metadata, run_started_at
+                        )
 
                     cell.save()
                     logger.info(
@@ -1628,6 +1655,7 @@ class RunPrompts:
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         response_time=response_time,
+                        column_metadata=_with_run_started_at({}, run_started_at),
                     )
                     logger.info(
                         "cell_created_in_edit_mode",
@@ -1642,9 +1670,9 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
-                prompt_tokens = (None,)
-                completion_tokens = (None,)
-                response_time = (None,)
+                prompt_tokens = None
+                completion_tokens = None
+                response_time = None
                 if value_info:
                     prompt_tokens = (
                         value_info.get("metadata", {})
@@ -1674,6 +1702,7 @@ class RunPrompts:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     response_time=response_time,
+                    column_metadata=_with_run_started_at({}, run_started_at),
                 )
                 logger.info(
                     "cell_created",
@@ -1949,7 +1978,7 @@ class PreviewRunPromptColumnView(APIView):
             )
 
             responses = []
-            value_infos = {"metadata": {"usage": {}, "cost": {}}}
+            value_infos: dict[str, Any] = {"metadata": {"usage": {}, "cost": {}}}
             for row in rows:
                 try:
                     output_format = config.get("output_format", "string")
@@ -2564,6 +2593,7 @@ class LiteLLMModelListView(APIView):
         # Cache provider logo URLs to avoid repeated lookups
         logo_cache = {}
         response_data = []
+        catalogue_rows = {}
 
         # Pre-compute provider checks
         json_provider_set = set(PROVIDERS_WITH_JSON)
@@ -2596,10 +2626,13 @@ class LiteLLMModelListView(APIView):
                 "cutoff": model.get("cutoff"),
                 "rate_limits": model.get("rate_limits"),
                 "latency": model.get("latency"),
-                "pricing": model.get("pricing"),
+                # Filled in below for the models on the page only: pricing a row
+                # looks up two tables, and the page shows a fraction of the list.
+                "pricing": None,
                 "type": key_type,
             }
             response_data.append(model_data)
+            catalogue_rows[id(model_data)] = model
 
         # Sort by isAvailable (available models first)
         response_data.sort(key=lambda x: not x["is_available"])
@@ -2607,6 +2640,8 @@ class LiteLLMModelListView(APIView):
         # Pagination
         paginator = ExtendedPageNumberPagination()
         paginated_models = paginator.paginate_queryset(response_data, request)
+        for model_data in paginated_models:
+            model_data["pricing"] = listed_pricing(catalogue_rows[id(model_data)])
 
         return paginator.get_paginated_response(paginated_models)
 

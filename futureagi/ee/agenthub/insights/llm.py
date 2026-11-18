@@ -17,6 +17,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import structlog
 
@@ -189,10 +190,16 @@ class Spend:
 
 
 def call_cost(
-    model: str, gateway_cost: float, prompt_tokens: int, completion_tokens: int
+    model: str,
+    gateway_cost: float,
+    prompt_tokens: int,
+    completion_tokens: int,
+    *,
+    at: datetime | None = None,
 ) -> float:
     """What one model call cost: the gateway's figure, else the model's token
-    price. The gateway prices only the models in its catalogue, not the Turing
+    price at ``at``, the instant the call started (aware, UTC; None means now).
+    The gateway prices only the models in its catalogue, not the Turing
     aliases, so a zero falls back to the platform's price list, as Falcon AI's
     billing does."""
     if gateway_cost and gateway_cost > 0:
@@ -207,6 +214,7 @@ def call_cost(
         priced = calculate_total_cost(
             model,
             {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+            at=at,
         )
         return float(priced["total_cost"])
     except Exception:
@@ -256,18 +264,20 @@ def usage_cost(
     output_tokens: int,
     *,
     image_parts: int = 0,
+    at: datetime | None = None,
 ) -> tuple[float, bool]:
     """What an agent's model calls cost, and whether anything knew the price:
-    the gateway's figure, else the price list's, else the ceiling price with
-    each image part as ``IMAGE_PART_TOKENS`` input tokens. An unknown cost is
-    never priced at $0."""
+    the gateway's figure, else the price list's at ``at`` (the instant the
+    agent request started; None means now), else the ceiling price with each
+    image part as ``IMAGE_PART_TOKENS`` input tokens. An unknown cost is never
+    priced at $0."""
     known = isinstance(cost_usd, int | float) and not isinstance(cost_usd, bool)
     if known and math.isfinite(cost_usd) and cost_usd > 0:
         return float(cost_usd), True
     if not (input_tokens or output_tokens or image_parts):
         return 0.0, True
     if _token_price(model) is not None:
-        return call_cost(model, 0.0, input_tokens, output_tokens), True
+        return call_cost(model, 0.0, input_tokens, output_tokens, at=at), True
     price_in, price_out = ceiling_price()
     tokens_in = input_tokens + image_parts * IMAGE_PART_TOKENS
     logger.warning("insight_call_priced_at_ceiling", model=model)
@@ -311,6 +321,7 @@ def _complete_managed(
         response_usage,
     )
 
+    started_at = datetime.now(UTC)
     response = chat_completion(
         {
             "model": model,
@@ -331,7 +342,7 @@ def _complete_managed(
     completion_tokens = usage["completion_tokens"]
     # The managed service returns only the body, without the gateway's cost
     # header, so the call is priced at the model's token price.
-    cost = call_cost(model, 0.0, prompt_tokens, completion_tokens)
+    cost = call_cost(model, 0.0, prompt_tokens, completion_tokens, at=started_at)
     return response_content(response), cost, prompt_tokens, completion_tokens
 
 
@@ -358,6 +369,7 @@ def _complete(messages: list[dict], model: str, max_tokens: int, temperature: fl
                 "The analysis model is unavailable right now.", unavailable=True
             )
         return content, 0.0, 0, 0
+    started_at = datetime.now(UTC)
     result = call_llm_raw(
         client,
         model=model,
@@ -373,7 +385,9 @@ def _complete(messages: list[dict], model: str, max_tokens: int, temperature: fl
     usage = getattr(result.response, "usage", None)
     prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
     completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-    cost = call_cost(model, result.cost_usd, prompt_tokens, completion_tokens)
+    cost = call_cost(
+        model, result.cost_usd, prompt_tokens, completion_tokens, at=started_at
+    )
     return content or "", cost, prompt_tokens, completion_tokens
 
 

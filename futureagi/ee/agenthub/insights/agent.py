@@ -33,6 +33,7 @@ import re
 import socket
 import threading
 import time
+from datetime import UTC, datetime
 
 import httpx
 import structlog
@@ -375,6 +376,8 @@ def _post(
     if pin:
         headers[ENGINE_HEADER] = pin
     for attempt in range(len(MISMATCH_RETRY_DELAYS) + 1):
+        # The agent's models are priced at the instant the request starts.
+        started_at = datetime.now(UTC)
         status_code, content = _send(path, payload, headers, spend, cancelled)
         try:
             body = json.loads(content)
@@ -382,7 +385,7 @@ def _post(
             body = None
         if spend is not None and isinstance(body, dict):
             if status_code < 400 or isinstance(body.get("usage"), dict):
-                _add_usage(spend, body.get("usage") or {})
+                _add_usage(spend, body.get("usage") or {}, started_at)
         if not (pin and status_code == 409 and _error_code(body) == "engine_mismatch"):
             break
         if attempt == len(MISMATCH_RETRY_DELAYS):
@@ -433,7 +436,7 @@ def _tokens(entry: dict) -> tuple[int, int]:
     )
 
 
-def _add_usage(spend: Spend, usage: dict) -> None:
+def _add_usage(spend: Spend, usage: dict, started_at: datetime | None = None) -> None:
     """Add what an agent request cost. The agent reports tokens per model
     (``by_model``) and a ``cost_usd`` that is null (or 0) for models the
     gateway doesn't price, so each model is priced on its own: its gateway
@@ -458,6 +461,7 @@ def _add_usage(spend: Spend, usage: dict) -> None:
             entry.get("cost_usd"),
             *_tokens(entry),
             image_parts=_count(entry.get("image_parts")),
+            at=started_at,
         )
         cost += part
         priced = priced and known

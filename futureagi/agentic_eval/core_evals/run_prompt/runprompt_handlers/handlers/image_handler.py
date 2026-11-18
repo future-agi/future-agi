@@ -21,7 +21,10 @@ from typing import Any, Dict, Optional, Tuple
 import litellm
 import structlog
 
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.fi_utils.token_count_helper import (
+    calculate_total_cost,
+    request_started_at,
+)
 from tfc.utils.storage import upload_image_to_s3
 
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
@@ -330,7 +333,9 @@ class ImageHandler(BaseModelHandler):
         # Use actual_model (parsed/stripped model name) for pricing lookup
         # since self.context.model may have prefixes like "hd/1024-x-1792/dall-e-3"
         try:
-            cost_payload = calculate_total_cost(actual_model, usage_payload)
+            cost_payload = calculate_total_cost(
+                actual_model, usage_payload, at=request_started_at(start_time)
+            )
         except Exception as e:
             self.logger.warning("Failed to calculate image cost", error=str(e))
             # Fallback cost estimation for image models

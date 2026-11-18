@@ -690,3 +690,20 @@ def _agent_replies(monkeypatch, agent, status_code, content):
     monkeypatch.setattr(
         agent.httpx, "stream", lambda *a, **k: contextlib.nullcontext(Reply())
     )
+
+
+def test_a_call_is_priced_at_the_instant_it_started():
+    from datetime import UTC, datetime
+    from unittest.mock import patch
+
+    from ee.agenthub.insights import llm
+
+    started = datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC)
+    with patch(
+        "agentic_eval.core_evals.fi_utils.token_count_helper.calculate_total_cost",
+        return_value={"total_cost": 1.0},
+    ) as price:
+        llm.call_cost("turing_flash", 0.0, 10, 10, at=started)
+        llm.usage_cost("turing_flash", None, 10, 10, at=started)
+
+    assert [c.kwargs["at"] for c in price.call_args_list] == [started, started]

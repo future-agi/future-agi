@@ -72,6 +72,7 @@ services:
       # Environment versions and drafts, as production runs them. Evidence imports and
       # the suite's unsaved changes exist only with versioning on.
       HARNESS_VERSIONING_ENABLED: "true"
+      HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
   worker:
@@ -88,6 +89,7 @@ services:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SLACK_API_URL: http://mock-slack:8080/api
+      HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
   # Keep explicit queue workers connected too when a profile selects them.
   # Their base YAML anchor is expanded before this overlay is merged.
   worker-default:

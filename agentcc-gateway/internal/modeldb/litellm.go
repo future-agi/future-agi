@@ -8,39 +8,40 @@ import (
 )
 
 type liteLLMEntry struct {
-	InputCostPerToken               float64  `json:"input_cost_per_token"`
-	OutputCostPerToken              float64  `json:"output_cost_per_token"`
-	CacheReadInputTokenCost         float64  `json:"cache_read_input_token_cost"`
-	InputCostPerTokenBatches        float64  `json:"input_cost_per_token_batches"`
-	OutputCostPerTokenBatches       float64  `json:"output_cost_per_token_batches"`
-	OutputCostPerImage              float64  `json:"output_cost_per_image"`
-	InputCostPerImage               float64  `json:"input_cost_per_image"`
-	InputCostPerSecond              float64  `json:"input_cost_per_second"`
-	InputCostPerCharacter           float64  `json:"input_cost_per_character"`
-	InputCostPerQuery               float64  `json:"input_cost_per_query"`
-	OCRCostPerPage                  float64  `json:"ocr_cost_per_page"`
-	OutputCostPerSecond             float64  `json:"output_cost_per_second"`
-	InputCostPerPixel               float64  `json:"input_cost_per_pixel"`
-	OutputCostPerPixel              float64  `json:"output_cost_per_pixel"`
-	InputCostPerImageToken          float64  `json:"input_cost_per_image_token"`
-	OutputCostPerImageToken         float64  `json:"output_cost_per_image_token"`
-	Provider                        string   `json:"litellm_provider"`
-	Mode                            string   `json:"mode"`
-	MaxInputTokens                  float64  `json:"max_input_tokens"`
-	MaxOutputTokens                 float64  `json:"max_output_tokens"`
-	MaxTokens                       float64  `json:"max_tokens"`
-	DeprecationDate                 string   `json:"deprecation_date"`
-	SupportedRegions                []string `json:"supported_regions"`
-	SupportsFunctionCalling         *bool    `json:"supports_function_calling"`
-	SupportsParallelFunctionCalling bool     `json:"supports_parallel_function_calling"`
-	SupportsVision                  *bool    `json:"supports_vision"`
-	SupportsAudioInput              bool     `json:"supports_audio_input"`
-	SupportsAudioOutput             bool     `json:"supports_audio_output"`
-	SupportsPDFInput                bool     `json:"supports_pdf_input"`
-	SupportsResponseSchema          *bool    `json:"supports_response_schema"`
-	SupportsSystemMessages          bool     `json:"supports_system_messages"`
-	SupportsPromptCaching           bool     `json:"supports_prompt_caching"`
-	SupportsReasoning               bool     `json:"supports_reasoning"`
+	InputCostPerToken                float64  `json:"input_cost_per_token"`
+	OutputCostPerToken               float64  `json:"output_cost_per_token"`
+	CacheReadInputTokenCost          float64  `json:"cache_read_input_token_cost"`
+	InputCostPerTokenBatches         float64  `json:"input_cost_per_token_batches"`
+	OutputCostPerTokenBatches        float64  `json:"output_cost_per_token_batches"`
+	OutputCostPerImage               float64  `json:"output_cost_per_image"`
+	InputCostPerImage                float64  `json:"input_cost_per_image"`
+	InputCostPerSecond               float64  `json:"input_cost_per_second"`
+	InputCostPerCharacter            float64  `json:"input_cost_per_character"`
+	InputCostPerQuery                float64  `json:"input_cost_per_query"`
+	OCRCostPerPage                   float64  `json:"ocr_cost_per_page"`
+	OutputCostPerSecond              float64  `json:"output_cost_per_second"`
+	InputCostPerPixel                float64  `json:"input_cost_per_pixel"`
+	OutputCostPerPixel               float64  `json:"output_cost_per_pixel"`
+	InputCostPerImageToken           float64  `json:"input_cost_per_image_token"`
+	OutputCostPerImageToken          float64  `json:"output_cost_per_image_token"`
+	RegionalEndpointUpliftMultiplier float64  `json:"regional_endpoint_uplift_multiplier"`
+	Provider                         string   `json:"litellm_provider"`
+	Mode                             string   `json:"mode"`
+	MaxInputTokens                   float64  `json:"max_input_tokens"`
+	MaxOutputTokens                  float64  `json:"max_output_tokens"`
+	MaxTokens                        float64  `json:"max_tokens"`
+	DeprecationDate                  string   `json:"deprecation_date"`
+	SupportedRegions                 []string `json:"supported_regions"`
+	SupportsFunctionCalling          *bool    `json:"supports_function_calling"`
+	SupportsParallelFunctionCalling  bool     `json:"supports_parallel_function_calling"`
+	SupportsVision                   *bool    `json:"supports_vision"`
+	SupportsAudioInput               bool     `json:"supports_audio_input"`
+	SupportsAudioOutput              bool     `json:"supports_audio_output"`
+	SupportsPDFInput                 bool     `json:"supports_pdf_input"`
+	SupportsResponseSchema           *bool    `json:"supports_response_schema"`
+	SupportsSystemMessages           bool     `json:"supports_system_messages"`
+	SupportsPromptCaching            bool     `json:"supports_prompt_caching"`
+	SupportsReasoning                bool     `json:"supports_reasoning"`
 }
 
 // parseLiteLLM parses a LiteLLM-format catalogue. With strict, as for a
@@ -134,6 +135,7 @@ func parseLiteLLM(data []byte, strict bool) (map[string]*ModelInfo, error) {
 			},
 			DeprecationDate: entry.DeprecationDate,
 			Regions:         entry.SupportedRegions,
+			RegionalUplift:  entry.RegionalEndpointUpliftMultiplier,
 		}
 
 		models[key] = m

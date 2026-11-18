@@ -320,24 +320,67 @@ func TestPricingInfo_Calculate_Cached(t *testing.T) {
 		OutputPerToken:      10e-6,
 		CachedInputPerToken: 1.25e-6,
 	}
-	cost := p.Calculate(1000, 500, CostOptions{Cached: true})
-	expected := 1000*1.25e-6 + 500*10e-6
+	cost := p.Calculate(1000, 500, CostOptions{CachedTokens: 400})
+	expected := 600*2.5e-6 + 400*1.25e-6 + 500*10e-6
 	if math.Abs(cost-expected) > 1e-12 {
 		t.Errorf("cost = %g, want %g", cost, expected)
+	}
+
+	cost = p.Calculate(1000, 500, CostOptions{CachedTokens: 0})
+	expected = 1000*2.5e-6 + 500*10e-6
+	if math.Abs(cost-expected) > 1e-12 {
+		t.Errorf("no cached tokens: cost = %g, want %g", cost, expected)
 	}
 }
 
 func TestPricingInfo_Calculate_Cached_FallbackWhenZero(t *testing.T) {
-	// When CachedInputPerToken is 0, should fall back to standard rate.
+	// A cached rate that is missing or not positive prices every token at the input rate.
+	for _, rate := range []float64{0, -1e-7} {
+		p := PricingInfo{
+			InputPerToken:       2.5e-6,
+			OutputPerToken:      10e-6,
+			CachedInputPerToken: rate,
+		}
+		got := p.Calculate(1000, 500, CostOptions{CachedTokens: 400})
+		want := p.Calculate(1000, 500, CostOptions{})
+		if got != want {
+			t.Errorf("cached rate %g: cost = %g, want %g", rate, got, want)
+		}
+	}
+}
+
+func TestPricingInfo_Calculate_CachedRateNeverAboveInput(t *testing.T) {
+	for _, rate := range []float64{3e-6, 2.5e-6} {
+		p := PricingInfo{
+			InputPerToken:       2.5e-6,
+			OutputPerToken:      10e-6,
+			CachedInputPerToken: rate,
+		}
+		got := p.Calculate(1000, 500, CostOptions{CachedTokens: 400})
+		want := p.Calculate(1000, 500, CostOptions{})
+		if got != want {
+			t.Errorf("cached rate %g: cost = %g, want %g", rate, got, want)
+		}
+	}
+}
+
+func TestPricingInfo_Calculate_CachedBeyondInputIsNotDiscounted(t *testing.T) {
 	p := PricingInfo{
 		InputPerToken:       2.5e-6,
 		OutputPerToken:      10e-6,
-		CachedInputPerToken: 0,
+		CachedInputPerToken: 1.25e-6,
 	}
-	cost := p.Calculate(1000, 500, CostOptions{Cached: true})
-	expected := 1000*2.5e-6 + 500*10e-6
-	if math.Abs(cost-expected) > 1e-12 {
-		t.Errorf("cost = %g, want %g (should use standard rate when cached=0)", cost, expected)
+	full := p.Calculate(1000, 500, CostOptions{})
+	for _, cached := range []int{1001, -5} {
+		if got := p.Calculate(1000, 500, CostOptions{CachedTokens: cached}); got != full {
+			t.Errorf("cached %d: cost = %g, want %g", cached, got, full)
+		}
+	}
+
+	got := p.Calculate(1000, 500, CostOptions{CachedTokens: 1000})
+	want := 1000*1.25e-6 + 500*10e-6
+	if math.Abs(got-want) > 1e-12 {
+		t.Errorf("all input cached: cost = %g, want %g", got, want)
 	}
 }
 

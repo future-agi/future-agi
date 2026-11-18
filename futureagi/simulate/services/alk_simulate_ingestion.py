@@ -37,6 +37,7 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.chat import ChatRole
 from simulate.semantics import SupportedProviders
+from simulate.services.call_transcripts import SpokenTurn, store_transcript
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.scoring_status import (
     CSAT_STAMP_KEY,
@@ -57,6 +58,7 @@ from simulate.utils.processing_outcomes import (
     is_silent_agent_skip,
     set_processing_skip_metadata,
 )
+from simulate.utils.eval_summary import INCONCLUSIVE_OUTPUT, NOT_APPLICABLE_OUTPUT
 from simulate.utils.test_execution_utils import (
     generate_simulator_agent_prompt,
     is_fix_check_run,
@@ -124,6 +126,13 @@ _TRANSCRIPT_ROLE_TO_METRIC_ROLE = {
 # assertion. Platform-backed checks use their real SimulateEvalConfig ID; only
 # execution-native checks use this namespace.
 _HARNESS_EVAL_NAMESPACE = uuid.UUID("754ea237-3306-4c91-a718-c3e1c304689c")
+# Not applicable and inconclusive are neither a pass nor a fail: no pass rate counts them.
+_HARNESS_OUTPUTS = {
+    "pass": "Passed",
+    "fail": "Failed",
+    "not_applicable": NOT_APPLICABLE_OUTPUT,
+    "inconclusive": INCONCLUSIVE_OUTPUT,
+}
 
 
 @dataclass(frozen=True)
@@ -1514,18 +1523,25 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
                 call_execution=call_execution
             ).exists()
         ):
-            CallTranscript.objects.bulk_create(
+            store_transcript(
                 [
-                    CallTranscript(
-                        call_execution=call_execution,
-                        speaker_role=seg["speaker_role"],
-                        content=seg["content"],
-                        start_time_ms=seg.get("start_time_ms") or 0,
-                        end_time_ms=seg.get("end_time_ms") or 0,
-                        confidence_score=(
-                            seg["confidence_score"]
-                            if seg.get("confidence_score") is not None
-                            else 1.0
+                    SpokenTurn(
+                        row=CallTranscript(
+                            call_execution=call_execution,
+                            speaker_role=seg["speaker_role"],
+                            content=seg["content"],
+                            start_time_ms=seg.get("start_time_ms") or 0,
+                            end_time_ms=seg.get("end_time_ms") or 0,
+                            confidence_score=(
+                                seg["confidence_score"]
+                                if seg.get("confidence_score") is not None
+                                else 1.0
+                            ),
+                        ),
+                        speaker_name=(
+                            seg.get("speaker_name") or ""
+                            if seg["speaker_role"] == CallTranscript.SpeakerRole.ACTOR
+                            else ""
                         ),
                     )
                     for seg in segments
@@ -1564,6 +1580,7 @@ def _store_alk_chat_messages(
     supplied one; transcripts without timing leave it null, as native does.
     """
     from simulate.utils.chat_simulation import estimate_tokens_text
+    from simulate.utils.stored_transcript_roles import call_actor_label
 
     run_test = call_execution.test_execution.run_test
     base = call_execution.started_at or timezone.now()
@@ -1581,7 +1598,8 @@ def _store_alk_chat_messages(
         # answered: its tool-call segment is a turn.
         if not (seg.get("content") or "").strip() and not seg.get("tool_calls"):
             continue
-        if role in {"user", "customer"}:
+        if role in {"user", "customer", "actor", "task"}:
+            # Someone else in the conversation (an actor) writes on the person's side, as their own turn.
             current = {"user": seg, "agent": []}
             exchanges.append(current)
         elif role in _CHAT_AGENT_SPEAKER_ROLES:
@@ -1590,14 +1608,27 @@ def _store_alk_chat_messages(
                 exchanges.append(current)
             current["agent"].append(seg)
 
+    def _text(seg: dict) -> str:
+        if (seg.get("speaker_role") or "").lower() == "actor":
+            return f"{call_actor_label(seg.get('name'))}: {seg.get('content') or ''}"
+        return seg.get("content") or ""
+
     def _row(role, role_str, segs, created_at, latency_ms=None) -> ChatMessageModel:
-        texts = [seg.get("content") or "" for seg in segs]
+        texts = [_text(seg) for seg in segs]
         content_items: list[dict] = []
         for seg in segs:
-            item = {"role": role_str, "content": seg.get("content") or ""}
+            speaker = (seg.get("speaker_role") or "").lower()
+            # The task's turn keeps its own role, so it is never read as the person's.
+            item = {
+                "role": "task" if speaker == "task" else role_str,
+                "content": _text(seg),
+            }
+            if seg.get("actor"):
+                item["actor"] = seg["actor"]
+                if seg.get("name"):
+                    item["name"] = seg["name"]
             if seg.get("tool_calls"):
                 item["tool_calls"] = seg["tool_calls"]
-            speaker = (seg.get("speaker_role") or "").lower()
             if speaker in {"tool_calls", "tool_call_result"}:
                 item["kind"] = speaker
             if isinstance(seg.get("start_time_ms"), int):
@@ -2006,13 +2037,21 @@ def _apply_harness_evaluation_outputs(
                 output = evaluation["score"]
             output_type = "score"
         else:
-            output = "Passed" if bool(evaluation.get("passed")) else "Failed"
+            result = evaluation.get("result") or (
+                "pass" if evaluation.get("passed") else "fail"
+            )
+            verdict = _HARNESS_OUTPUTS.get(str(result))
+            if verdict is None:
+                # A verdict this platform does not know is not a failure: it is left out, as an unmeasured one is.
+                continue
+            output = verdict
             output_type = "Pass/Fail"
 
         outputs[output_id] = {
             "name": name,
             "output": output,
             "output_type": output_type,
+            **({"result": evaluation["result"]} if evaluation.get("result") else {}),
             "reason": str(evaluation.get("reason") or "")[:10000],
             "status": "completed",
             "source": "harness",

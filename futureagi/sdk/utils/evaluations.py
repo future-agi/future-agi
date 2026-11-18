@@ -1,5 +1,6 @@
 import json
 import uuid
+from typing import Any
 
 import structlog
 
@@ -464,7 +465,7 @@ def _run_batched_standalone_eval(
     custom_eval_name,
     span_id,
 ):
-    results = []
+    results: list[Any] = []
     if not inputs or not isinstance(list(inputs.values())[0], list):
         raise ValueError("Inputs must be a list")
 
@@ -522,6 +523,10 @@ def _run_protect(
         )
 
         try:
+            # The request starts here; its tokens are priced at this instant.
+            from datetime import UTC, datetime
+
+            protect_started_at = datetime.now(UTC)
             result = run_eval(
                 EvalRequest(
                     eval_template=eval_template,
@@ -616,7 +621,9 @@ def _run_protect(
                         )
                     except ImportError:
                         protect_model = f"protect_{eval_template.name}"
-                cost_info = calculate_total_cost(protect_model, token_usage)
+                cost_info = calculate_total_cost(
+                    protect_model, token_usage, at=protect_started_at
+                )
                 llm_cost = cost_info.get("total_cost", 0)
                 per_run_fee = billing_config.get_eval_per_run_fee()
                 actual_cost = llm_cost + per_run_fee

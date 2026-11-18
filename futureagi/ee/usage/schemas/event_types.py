@@ -51,6 +51,7 @@ class BillingEventType(str, Enum):  # noqa: UP042 - StrEnum changes str() of eve
     # ── Simulation ──
     VOICE_CALL = "voice_call"
     TEXT_CALL = "text_call"
+    SANDBOX_RUNTIME = "sandbox_runtime"
 
     # ── Tracing ──
     TRACING_EVENT = "tracing_event"

@@ -156,6 +156,10 @@ func (p *Provider) ID() string { return p.id }
 // ConfiguredType is the type the provider's config records, or "".
 func (p *Provider) ConfiguredType() string { return p.configType }
 
+// CachedTokensInPrompt is true on the official API only. Other upstreams of
+// this format do not all count cached tokens inside prompt_tokens.
+func (p *Provider) CachedTokensInPrompt() bool { return p.openAIAPI }
+
 // BaseURLHost is the hostname of the provider's base_url, lower-cased.
 func (p *Provider) BaseURLHost() string { return p.baseURLHost }
 

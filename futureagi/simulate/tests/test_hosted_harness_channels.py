@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -469,7 +470,7 @@ def test_receipt_coverage_distinguishes_missing_grading_from_agent_failure():
             ],
             "evaluations": [],
         }
-    ) == {"expected": 2, "executed": 1, "failed": 1, "complete": False}
+    ) == {"expected": 2, "executed": 1, "failed": 1, "unmeasured": 0, "complete": False}
 
 
 def test_errored_scenario_with_completed_call_keeps_completed_lifecycle():
@@ -756,6 +757,13 @@ def test_hosted_text_transcript_is_materialized_for_chat_ui(organization, worksp
             "messages": [
                 {"role": "user", "content": "Where is my invoice?"},
                 {"role": "assistant", "content": "I can look that up."},
+                {
+                    "role": "actor",
+                    "actor": "partner",
+                    "name": "Sam",
+                    "content": "It is invoice 1046.",
+                },
+                {"role": "assistant", "content": "Looking up invoice 1046."},
             ]
         }
     ).encode()
@@ -772,7 +780,12 @@ def test_hosted_text_transcript_is_materialized_for_chat_ui(organization, worksp
         ChatMessageModel.objects.filter(call_execution=call)
         .order_by("created_at", "role")
         .values_list("role", flat=True)
-    ) == ["user", "assistant"]
+    ) == ["user", "assistant", "user", "assistant"]
+    # What someone else in the conversation wrote reaches the chat view and every judge, named as not the person.
+    assert ChatMessageModel.objects.filter(
+        call_execution=call,
+        messages=["Sam (not the person being served): It is invoice 1046."],
+    ).exists()
     response.close.assert_called_once_with()
     response.release_conn.assert_called_once_with()
 
@@ -1048,6 +1061,7 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
         "expected": 1,
         "executed": 1,
         "failed": 0,
+        "unmeasured": 0,
         "complete": True,
     }
 
@@ -1891,6 +1905,78 @@ def test_artifact_upload_is_content_addressed_and_manifest_is_acked(organization
     assert capability.attempt.manifest_acked is True
     job.refresh_from_db()
     assert job.state == HostedHarnessJob.State.CLEANING_UP
+
+
+@pytest.mark.django_db
+def test_a_trial_s_end_state_is_kept_as_a_world_state_artifact(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="world-state-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    content = json.dumps(
+        {
+            "schema": "futureagi.world-state.v1",
+            "tables": {"orders": []},
+            "skipped": [],
+            "action_log": [],
+        }
+    ).encode()
+    digest = hashlib.sha256(content).hexdigest()
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=MagicMock(),
+    ):
+        response = APIClient().generic(
+            "PUT",
+            f"{BASE}/{capability.attempt.id}/artifacts/{digest}/",
+            content,
+            content_type="application/json",
+            HTTP_X_ARTIFACT_KIND="world_state",
+            HTTP_X_ARTIFACT_SIZE=str(len(content)),
+            HTTP_X_SCENARIO_KEY="refund-1",
+            **_headers(capability),
+        )
+    assert response.status_code == 201, response.content
+
+    # The trial's World changes name it by digest, so the result links the end state of that trial, not another's.
+    from simulate.selectors.call_detail import trial_state as _trial_state
+    from simulate.services.hosted_harness_ingestion import _world_change_fields
+
+    sealed = _world_change_fields(
+        {"end_state_artifact": f"sha256:{digest}", "start": {"state": "seeded"}}
+    )
+    assert sealed["end_state_artifact"] == f"sha256:{digest}"
+    assert (
+        _world_change_fields({"end_state_artifact": "not-a-digest"}).get(
+            "end_state_artifact"
+        )
+        is None
+    )
+    # The job names no platform run; the trial finds its end state by the job that sent its receipt.
+    assert "platform_run_id" not in (job.payload.get("metadata") or {})
+
+    def trial(organization_id, workspace_id, job_id=job.id):
+        run_test = SimpleNamespace(
+            organization_id=organization_id, workspace_id=workspace_id
+        )
+        return SimpleNamespace(
+            call_metadata={
+                "harness_trial_state": {"state_changes": [], **sealed},
+                "hosted_harness_receipt": {"job_id": str(job_id)},
+            },
+            test_execution=SimpleNamespace(run_test=run_test),
+        )
+
+    linked = _trial_state(trial(job.organization_id, job.workspace_id))
+    assert linked["end_state_url"] and digest in linked["end_state_url"]
+    # The same digest named by another organisation's, workspace's or job's trial links nothing.
+    for other in (
+        trial(uuid.uuid4(), job.workspace_id),
+        trial(job.organization_id, uuid.uuid4()),
+        trial(job.organization_id, job.workspace_id, uuid.uuid4()),
+        trial(job.organization_id, job.workspace_id, "not-a-job"),
+    ):
+        assert "end_state_url" not in _trial_state(other)
 
 
 @pytest.mark.django_db

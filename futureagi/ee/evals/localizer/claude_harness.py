@@ -6,6 +6,7 @@ import asyncio
 import json
 import tempfile
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ee.evals.localizer.agentcc_transport import (
@@ -128,7 +129,7 @@ class LocalizationCase:
     # of "missing findings" if the agent cannot finish without it.
     media_tool_error: MediaToolUnavailable | None = None
 
-    def __init__(self, localizer: ErrorLocalizer, media: MediaRegistry):
+    def __init__(self, localizer: ClaudeAgentLocalizer, media: MediaRegistry):
         self.localizer = localizer
         self.media = media
         self.inputs: dict[str, tuple] = {}
@@ -158,6 +159,7 @@ class LocalizationCase:
             return self.media_tool_error
         if (
             key not in self.inputs
+            and key is not None
             and (self.localizer.input_type or {}).get(key) == "audio"
         ):
             return self.media_tool_error
@@ -504,6 +506,9 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
             },
             ensure_ascii=False,
         )
+        # The harness's first request starts at the query below; its tokens are
+        # priced at that instant. None (never reached) means now.
+        started_at = None
         try:
             async with asyncio.timeout(config.timeout):
                 with tempfile.TemporaryDirectory(
@@ -532,6 +537,7 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
                         )
                         terminal = None
                         async with ClaudeSDKClient(options=options) as client:
+                            started_at = datetime.now(UTC)
                             await client.query(prompt)
                             async for message in client.receive_response():
                                 if isinstance(message, ResultMessage):
@@ -560,7 +566,7 @@ class ClaudeAgentLocalizer(ErrorLocalizer):
             )
 
             self.cost = {
-                **calculate_total_cost(MODEL, transport.usage),
+                **calculate_total_cost(MODEL, transport.usage, at=started_at),
                 "model": MODEL,
                 "token_usage": transport.usage,
                 "requests": transport.request_count,

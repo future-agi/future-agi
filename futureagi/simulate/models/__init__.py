@@ -48,6 +48,7 @@ from .hosted_harness import (
     HostedHarnessScenario,
     HostedHarnessSecret,
     HostedHarnessStageOutput,
+    HostedSandboxLifetime,
 )
 from .persona import Persona
 from .prompt_trial import PromptTrial
@@ -60,6 +61,7 @@ from .test_execution import (
     CallExecution,
     CallExecutionSnapshot,
     CallTranscript,
+    CallTranscriptActor,
     TestExecution,
 )
 from .trial_item_result import TrialItemResult
@@ -98,6 +100,7 @@ __all__ = [
     "TestExecution",
     "CallExecution",
     "CallTranscript",
+    "CallTranscriptActor",
     "CallExecutionSnapshot",
     "CallLogEntry",
     "ScenarioGraph",
@@ -125,4 +128,5 @@ __all__ = [
     "HostedHarnessSecret",
     "HostedHarnessScenario",
     "HostedHarnessStageOutput",
+    "HostedSandboxLifetime",
 ]

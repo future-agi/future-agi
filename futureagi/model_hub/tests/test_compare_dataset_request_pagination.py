@@ -6,7 +6,7 @@ import threading
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 from rest_framework import status
@@ -259,6 +259,149 @@ def test_fresh_and_cached_requests_use_the_same_physical_slice(
     cached = _post(auth_client, pair, page_size, page_index, compare_id)
     _assert_page(cached, page_store, compare_id, rows, page_size, page_index)
     assert page_store.writes == []
+
+
+@pytest.mark.parametrize("initial_processed", [0, 1, None])
+def test_cached_request_waits_until_all_requested_pages_are_written(
+    auth_client, make_pair, page_store, monkeypatch, initial_processed
+):
+    pair = make_pair(35)
+    compare_id, rows = _store_completed_comparison(pair, page_store)
+    metadata_path = get_compare_metadata_path(compare_id)
+    metadata = json.loads(Path(metadata_path).read_text())
+    metadata["status"] = "processing"
+    pending_pages = {
+        page: page_store.pages.pop(_page_key(compare_id, page)) for page in range(1, 5)
+    }
+    progress = iter([initial_processed, 2, 3])
+
+    def read_metadata(_path):
+        processed = next(progress)
+        # Publish a page only when the writer's metadata read makes it ready.
+        for page, contents in pending_pages.items():
+            if page <= (processed or 0):
+                page_store.pages[_page_key(compare_id, page)] = contents
+        return {**metadata, "total_processed": processed}
+
+    read = Mock(side_effect=read_metadata)
+    sleep = Mock()
+    monkeypatch.setattr(
+        develop_dataset.CompareDatasetsView, "read_metadata_safely", read
+    )
+    monkeypatch.setattr(develop_dataset.time, "sleep", sleep)
+
+    # Rows 15:30 need pages 2 AND 3. Page 4 is not needed or available.
+    response = _post(auth_client, pair, 15, 1, compare_id)
+
+    _assert_page(response, page_store, compare_id, rows, 15, 1)
+    assert read.call_args_list == [call(metadata_path)] * 3
+    assert sleep.call_args_list == [call(0.1)] * 2
+    assert _page_key(compare_id, 4) not in page_store.pages
+
+
+@pytest.mark.parametrize("ready_status", ["processing", "completed"])
+def test_cached_request_waits_for_last_page_bounded_by_total_pages(
+    auth_client, make_pair, page_store, monkeypatch, ready_status
+):
+    pair = make_pair(25)
+    compare_id, rows = _store_completed_comparison(pair, page_store)
+    metadata_path = get_compare_metadata_path(compare_id)
+    metadata = json.loads(Path(metadata_path).read_text())
+    initial = {**metadata, "status": "processing", "total_processed": 2}
+    ready = {
+        **metadata,
+        "status": ready_status,
+        # The writer marks completion with floor(total_rows / 10), which
+        # excludes the short last page even though it has been uploaded.
+        "total_processed": 2 if ready_status == "completed" else 3,
+    }
+    last_page_key = _page_key(compare_id, 3)
+    last_page = page_store.pages.pop(last_page_key)
+    snapshots = iter([initial, ready])
+
+    def read_metadata(_path):
+        snapshot = next(snapshots)
+        if snapshot is ready:
+            page_store.pages[last_page_key] = last_page
+        return snapshot
+
+    read = Mock(side_effect=read_metadata)
+    sleep = Mock()
+    monkeypatch.setattr(
+        develop_dataset.CompareDatasetsView, "read_metadata_safely", read
+    )
+    monkeypatch.setattr(develop_dataset.time, "sleep", sleep)
+
+    # Rows 20:40 would cover pages 3 and 4, but this comparison ends at 3.
+    response = _post(auth_client, pair, 20, 1, compare_id)
+
+    _assert_page(response, page_store, compare_id, rows, 20, 1)
+    assert read.call_args_list == [call(metadata_path)] * 2
+    sleep.assert_called_once_with(0.1)
+
+
+@pytest.mark.parametrize(
+    ("page_size", "page_index", "metadata_status", "total_processed"),
+    [
+        pytest.param(15, 1, "processing", 3, id="requested-pages-ready"),
+        pytest.param(10, 4, "processing", None, id="empty-range"),
+        pytest.param(40, 0, "completed", 3, id="completed-short-last-page"),
+        pytest.param(10, 2, "completed", None, id="completed-without-progress"),
+        pytest.param(10, 2, "failed", None, id="failed-does-not-poll"),
+    ],
+)
+def test_cached_request_does_not_wait_without_pending_requested_pages(
+    auth_client,
+    make_pair,
+    page_store,
+    monkeypatch,
+    page_size,
+    page_index,
+    metadata_status,
+    total_processed,
+):
+    pair = make_pair(35)
+    compare_id, rows = _store_completed_comparison(pair, page_store)
+    metadata_path = get_compare_metadata_path(compare_id)
+    metadata = json.loads(Path(metadata_path).read_text())
+    metadata.update(status=metadata_status, total_processed=total_processed)
+    # An unexpected poll fails immediately, rather than spinning for 300s.
+    read = Mock(side_effect=[metadata])
+    sleep = Mock()
+    monkeypatch.setattr(
+        develop_dataset.CompareDatasetsView, "read_metadata_safely", read
+    )
+    monkeypatch.setattr(develop_dataset.time, "sleep", sleep)
+
+    response = _post(auth_client, pair, page_size, page_index, compare_id)
+
+    _assert_page(response, page_store, compare_id, rows, page_size, page_index)
+    read.assert_called_once_with(metadata_path)
+    sleep.assert_not_called()
+
+
+def test_cached_request_times_out_while_requested_pages_are_missing(
+    auth_client, make_pair, page_store, monkeypatch
+):
+    pair = make_pair(25)
+    compare_id, _rows = _store_completed_comparison(pair, page_store)
+    metadata_path = get_compare_metadata_path(compare_id)
+    metadata = json.loads(Path(metadata_path).read_text())
+    metadata.update(status="processing", total_processed=0)
+    page_store.pages.clear()
+    read = Mock(return_value=metadata)
+    clock = SimpleNamespace(time=Mock(side_effect=[0, 0, 301]), sleep=Mock())
+    monkeypatch.setattr(
+        develop_dataset.CompareDatasetsView, "read_metadata_safely", read
+    )
+    monkeypatch.setattr(develop_dataset, "time", clock)
+
+    response = _post(auth_client, pair, 10, 1, compare_id)
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert read.call_args_list == [call(metadata_path)] * 2
+    assert page_store.reads == []
+    clock.sleep.assert_not_called()
 
 
 def test_physical_page_completion_order_does_not_reorder_rows(

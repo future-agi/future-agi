@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
@@ -35,6 +36,15 @@ type openAIUpstream struct {
 	bodies map[string][]byte // the last request body per path
 	// failResponses answers /v1/responses with a 503, as an outage would.
 	failResponses bool
+	// responsesThinks holds a /v1/responses stream this long after
+	// response.created, as a model reasoning before its first output.
+	responsesThinks time.Duration
+	// responsesFailAfterThinking ends that stream with response.failed right
+	// after the thinking pause, before any output.
+	responsesFailAfterThinking bool
+	// failChatModel answers /v1/chat/completions for this model with a 502,
+	// so the gateway's failover or model fallback takes over.
+	failChatModel string
 }
 
 func (u *openAIUpstream) count(path string) int {
@@ -58,6 +68,9 @@ func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	u.bodies[r.URL.Path] = raw
 	failResponses := u.failResponses
+	thinks := u.responsesThinks
+	failAfterThinking := u.responsesFailAfterThinking
+	failChatModel := u.failChatModel
 	u.mu.Unlock()
 
 	var req struct {
@@ -72,6 +85,11 @@ func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch r.URL.Path {
 	case "/v1/chat/completions":
+		if failChatModel != "" && req.Model == failChatModel {
+			w.WriteHeader(http.StatusBadGateway)
+			io.WriteString(w, `{"error":{"message":"Bad gateway.","type":"server_error","param":null,"code":null}}`)
+			return
+		}
 		reasons := req.ReasoningEffort == nil || *req.ReasoningEffort != "none"
 		functionTools := false
 		for _, tool := range req.Tools {
@@ -130,6 +148,14 @@ func (u *openAIUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			json.Unmarshal([]byte(data), &ev)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, data)
+			if ev.Type == "response.created" && thinks > 0 {
+				w.(http.Flusher).Flush()
+				time.Sleep(thinks)
+				if failAfterThinking {
+					fmt.Fprint(w, "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"synthetic failure\"}}}\n\n")
+					return
+				}
+			}
 		}
 	default:
 		http.NotFound(w, r)
@@ -252,6 +278,9 @@ type bridgeServerOptions struct {
 	plain     bool
 	configure func(*config.Config)
 	plugins   []pipeline.Plugin
+	// alsoAs registers more providers on the same upstream under these ids,
+	// so failover has another provider to move to.
+	alsoAs []string
 }
 
 // bridgeProviderConfig points an OpenAI provider at the fake upstream. Only the
@@ -301,6 +330,13 @@ func newResponsesBridgeServerWith(t *testing.T, opts bridgeServerOptions) (*Serv
 		t.Fatalf("creating provider: %v", err)
 	}
 	registry.RegisterProvider("openai", provider, bridgeModels)
+	for _, id := range opts.alsoAs {
+		other, err := openaiprov.New(id, bridgeProviderConfig(ts, opts.plain))
+		if err != nil {
+			t.Fatalf("creating provider %s: %v", id, err)
+		}
+		registry.RegisterProvider(id, other, nil)
+	}
 
 	srv := New(cfg, "", registry, pipeline.NewEngine(opts.plugins...), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
 	srv.ready.Store(true)

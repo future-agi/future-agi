@@ -5,6 +5,9 @@ import { VERSIONS_COPY } from "../workspace.constants";
 const { diff: COPY } = VERSIONS_COPY;
 
 const list = (value) => (Array.isArray(value) ? value : []);
+// A changed actor comes as {id, name}; everything else as its name.
+const label = (one) =>
+  one && typeof one === "object" ? String(one.name || one.id) : String(one);
 
 // One labelled group of names, e.g. "Added: lookup_order, refund".
 function NameLine({ label, names, tone }) {
@@ -34,9 +37,9 @@ NameLine.propTypes = {
 
 // A section of added / removed / changed names; renders nothing when all are empty.
 function ChangeGroup({ title, change, children }) {
-  const added = list(change?.added).map(String);
-  const removed = list(change?.removed).map(String);
-  const changed = list(change?.changed).map(String);
+  const added = list(change?.added).map(label);
+  const removed = list(change?.removed).map(label);
+  const changed = list(change?.changed).map(label);
   if (!added.length && !removed.length && !changed.length && !children)
     return null;
   return (
@@ -80,6 +83,13 @@ function EnvironmentDiff({ diff }) {
         </Stack>
       )}
       <ChangeGroup title={COPY.subGoals} change={diff?.sub_goals} />
+      {diff?.actors === null ? (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {COPY.actorsUnknown}
+        </Typography>
+      ) : (
+        <ChangeGroup title={COPY.actors} change={diff?.actors} />
+      )}
       {diff?.files === null ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {COPY.filesUnknown}

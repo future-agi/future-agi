@@ -124,19 +124,34 @@ func (s *Server) ReportedCostVendor(rc *models.RequestContext) string {
 // rc records ("deepinfra"), or "" when it records none. The instance is
 // found as ReportedCostVendor finds it.
 func (s *Server) ProviderType(rc *models.RequestContext) string {
-	p, ok := rc.ServedBy.(providers.Provider)
-	if !ok || p == nil {
-		if s.handlers == nil {
-			return ""
-		}
-		if p, ok = s.handlers.servingProvider(rc); !ok {
-			return ""
-		}
-	}
+	p := s.servedProvider(rc)
 	if t, ok := p.(interface{ ConfiguredType() string }); ok {
 		return t.ConfiguredType()
 	}
 	return ""
+}
+
+// CachedTokensInPrompt says whether the provider instance that served rc
+// counts its cached prompt tokens inside prompt_tokens. The instance is found
+// as ProviderType finds it.
+func (s *Server) CachedTokensInPrompt(rc *models.RequestContext) bool {
+	return providers.CachedTokensInPrompt(s.servedProvider(rc))
+}
+
+// servedProvider is the provider instance that served rc: the one the chat
+// handlers recorded (rc.ServedBy), else the one the handlers resolve rc to,
+// else nil.
+func (s *Server) servedProvider(rc *models.RequestContext) providers.Provider {
+	if p, ok := rc.ServedBy.(providers.Provider); ok && p != nil {
+		return p
+	}
+	if s.handlers == nil {
+		return nil
+	}
+	if p, ok := s.handlers.servingProvider(rc); ok {
+		return p
+	}
+	return nil
 }
 
 // SetKeyRevocationPublisher attaches a pub/sub broadcaster for multi-replica
@@ -347,6 +362,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err
@@ -442,6 +458,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			rc.Provider = provider.ID()
 
 			providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+				noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
 				resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 				if err != nil {
 					return err
@@ -640,6 +657,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err

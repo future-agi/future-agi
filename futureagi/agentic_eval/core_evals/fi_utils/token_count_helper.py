@@ -1,11 +1,13 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 import tiktoken
 
-# Loaded with this module so a missing dated price file fails this import,
-# not a later one inside a caller that turns errors into a zero cost.
+# Loaded with this module so a missing price file (the gateway's copy or the
+# dated prices) fails this import, not a later one inside a caller that turns
+# errors into a zero cost.
+import agentic_eval.core_evals.run_prompt.gateway_prices  # noqa: F401
 import agentic_eval.core_evals.run_prompt.price_schedule  # noqa: F401
 
 logger = structlog.get_logger(__name__)
@@ -185,6 +187,72 @@ DEFAULT_TTS_FALLBACK_PRICING = {"input_per_1M_characters": 15.0}
 DEFAULT_STT_FALLBACK_PRICING = {"input_per_minute": 0.006}
 
 
+def request_started_at(start_time: float) -> datetime:
+    """The aware UTC instant of a ``time.time()`` reading taken as a request starts.
+
+    A call is priced at the instant its request starts, as the gateway prices it,
+    so a call that starts before a price change and is handled after it keeps the
+    old price. Pass this as ``at`` to ``calculate_total_cost``.
+    """
+    return datetime.fromtimestamp(start_time, tz=UTC)
+
+
+def _usage_field(usage: Any, name: str) -> Any:
+    """A field of a usage given as a dict or as a provider's usage object."""
+    if usage is None:
+        return None
+    if isinstance(usage, dict):
+        return usage.get(name)
+    return getattr(usage, name, None)
+
+
+def _count(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return 0
+    return max(int(value), 0)
+
+
+def _positive(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int | float) and value > 0
+
+
+def cached_input_tokens_from(usage: Any) -> int:
+    """The input tokens a call read from the provider's cache, from any usage shape.
+
+    The shapes one call can report: ``cached_input_tokens`` (ours), Anthropic's
+    ``cache_read_input_tokens``, OpenAI's ``prompt_tokens_details.cached_tokens``
+    (chat completions) and ``input_tokens_details.cached_tokens`` (responses), and a
+    bare ``cached_tokens``. Each states the same count, and a provider response
+    routed through litellm carries several of them, so the result is the largest of
+    them, never their sum. ``usage`` is a dict or a usage object.
+    """
+    counts = [
+        _count(_usage_field(usage, "cached_input_tokens")),
+        _count(_usage_field(usage, "cache_read_input_tokens")),
+        _count(_usage_field(usage, "cached_tokens")),
+    ]
+    for details in ("prompt_tokens_details", "input_tokens_details"):
+        counts.append(
+            _count(_usage_field(_usage_field(usage, details), "cached_tokens"))
+        )
+    return max(counts)
+
+
+def _modality(token_usage: dict) -> str:
+    """What a usage is billed by, read from its values: "image", "tts", "stt" or "token".
+
+    Log ingestion always sends the character and audio keys, often as 0, so a key
+    names nothing; its value does. Lookup and defaults both use this.
+    """
+    if _positive(token_usage.get("images_generated")):
+        return "image"
+    if _positive(token_usage.get("input_characters")):
+        return "tts"
+    if _positive(token_usage.get("audio_seconds")):
+        return "stt"
+    return "token"
+
+
 def calculate_total_cost(
     model_name: str,
     token_usage: dict,
@@ -193,7 +261,11 @@ def calculate_total_cost(
     at: datetime | None = None,
 ) -> dict:
     """
-    Calculate total cost for a model inference using pricing from AVAILABLE_MODELS.
+    Calculate total cost for a model inference.
+
+    The price comes from the caller's ``fallback_pricing`` if it has an input
+    rate, else from the gateway's price table, else from AVAILABLE_MODELS, else
+    from a default.
 
     Supports multiple pricing models:
     - LLM/Chat: Token-based pricing (input/output tokens)
@@ -215,9 +287,13 @@ def calculate_total_cost(
             - total_cost (float): Total cost in USD (rounded to 6 decimals)
             - prompt_cost (float): Input cost in USD (rounded to 6 decimals)
             - completion_cost (float): Output cost in USD (rounded to 6 decimals)
-            - pricing_source (str): "available_models", "fallback", or "default"
+            - pricing_source (str): "gateway_table", "available_models",
+              "fallback" or "default"
     """
-    from agentic_eval.core_evals.run_prompt.model_pricing import get_model_pricing
+    from agentic_eval.core_evals.run_prompt.model_pricing import (
+        _check_at,
+        lookup_pricing,
+    )
     from evaluations.decision_models import is_decision_model
 
     if is_decision_model(model_name):
@@ -225,56 +301,68 @@ def calculate_total_cost(
 
         return calculate_decision_cost(model_name, token_usage)
 
-    # Try to get pricing from available_models.py
-    pricing = get_model_pricing(model_name, at=at)
-    pricing_source = "available_models"
+    _check_at(at)
+    # A token call: no speech characters, no audio and no images, each read by
+    # value (log ingestion always sends the keys, often as 0). Any other call skips
+    # the gateway's per-token table.
+    modality = _modality(token_usage)
+    is_token_call = modality == "token"
 
-    # Fallback chain
+    pricing = None
+    pricing_source = "default"
+
+    # The caller's own price comes before both tables. A per-token price with no
+    # rate at all is no price (a custom model that sets none arrives as 0.0/0.0), so
+    # the tables are tried; one with an output rate and a zero input is a price (an
+    # input that is free). A price by characters, time or image is used as given.
+    if fallback_pricing and (
+        fallback_pricing.get("input_per_1M_tokens")
+        or fallback_pricing.get("output_per_1M_tokens")
+        or not any(key.endswith("_per_1M_tokens") for key in fallback_pricing)
+    ):
+        pricing, pricing_source = fallback_pricing, "fallback"
+    else:
+        found = lookup_pricing(model_name, at=at, non_token_call=not is_token_call)
+        if found is not None:
+            pricing, pricing_source = found.pricing, found.source
+            # A table price with no input rate is no price for a token call.
+            if is_token_call and not pricing.get("input_per_1M_tokens"):
+                pricing = None
+
+    # Fallback chain: the default of what the usage is billed by, read by value as
+    # the lookup read it. Token usage that no table prices is billed at the token
+    # default, and flagged by pricing_source "default" (callers that must not bill
+    # an unpriced model check it), never at a speech or image default of 0 units.
     if pricing is None:
-        # Determine appropriate fallback based on token_usage fields
-        if fallback_pricing:
-            pricing = fallback_pricing
-            fallback_type = "custom"
-        elif "images_generated" in token_usage:
-            # Image generation model
-            pricing = DEFAULT_IMAGE_FALLBACK_PRICING
-            fallback_type = "default_image"
-        elif "input_characters" in token_usage:
-            # TTS model
-            pricing = DEFAULT_TTS_FALLBACK_PRICING
-            fallback_type = "default_tts"
-        elif "audio_seconds" in token_usage:
-            # STT model
-            pricing = DEFAULT_STT_FALLBACK_PRICING
-            fallback_type = "default_stt"
-        else:
-            # Default to LLM token-based pricing
-            pricing = DEFAULT_FALLBACK_PRICING
-            fallback_type = "default"
+        pricing, fallback_type = {
+            "image": (DEFAULT_IMAGE_FALLBACK_PRICING, "default_image"),
+            "tts": (DEFAULT_TTS_FALLBACK_PRICING, "default_tts"),
+            "stt": (DEFAULT_STT_FALLBACK_PRICING, "default_stt"),
+            "token": (DEFAULT_FALLBACK_PRICING, "default"),
+        }[modality]
 
         logger.warning(
-            f"Model '{model_name}' not found in AVAILABLE_MODELS, using fallback pricing",
+            "model_not_priced_by_any_table_using_default_pricing",
             model=model_name,
             fallback_type=fallback_type,
         )
-        pricing_source = "fallback" if fallback_pricing else "default"
+        pricing_source = "default"
 
     # Detect pricing type and calculate accordingly
     prompt_cost = 0.0
     completion_cost = 0.0
 
     # Token-based pricing (LLM/Chat models)
-    if "input_per_1M_tokens" in pricing and "output_per_1M_tokens" in pricing:
-        input_cost_per_1M = pricing["input_per_1M_tokens"]
-        output_cost_per_1M = pricing["output_per_1M_tokens"]
+    if "input_per_1M_tokens" in pricing or "output_per_1M_tokens" in pricing:
+        input_cost_per_1M = pricing.get("input_per_1M_tokens") or 0
+        output_cost_per_1M = pricing.get("output_per_1M_tokens") or 0
 
         # Provider usage includes cache reads in prompt_tokens. Price that subset at
-        # the model's cache-read rate when the catalog declares one.
+        # the model's cache-read rate when the catalog declares one. The count is
+        # read from whichever shape the wrapper passed (see cached_input_tokens_from).
         prompt_tokens = token_usage.get("prompt_tokens") or 0
         completion_tokens = token_usage.get("completion_tokens") or 0
-        cached_input_tokens = min(
-            max(token_usage.get("cached_input_tokens") or 0, 0), prompt_tokens
-        )
+        cached_input_tokens = min(cached_input_tokens_from(token_usage), prompt_tokens)
         cached_input_rate = pricing.get("cached_input_per_1M_tokens")
         if cached_input_rate is None:
             prompt_cost = round((prompt_tokens / 1_000_000) * input_cost_per_1M, 6)

@@ -298,4 +298,18 @@ describe("RunCompare", () => {
       within(row("Left out there")).getByText("Not in the compared run"),
     ).toBeInTheDocument();
   });
+
+  it("says how many trials were left out for not starting clean", () => {
+    useCompareRuns.mockReturnValue({
+      data: {
+        ...comparison,
+        summary: { ...comparison.summary, excluded_not_comparable: 2 },
+      },
+      isPending: false,
+      isError: false,
+    });
+    renderCompare();
+
+    expect(within(section()).getByText(/^2 trials left out/)).toBeInTheDocument();
+  });
 });

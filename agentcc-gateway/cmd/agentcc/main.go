@@ -579,6 +579,7 @@ func main() {
 	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
 	costPlugin.SetPriceTables(srv.ServedPriceTableName)
 	costPlugin.SetProviderTypes(srv.ProviderType)
+	costPlugin.SetCachedTokensInPrompt(srv.CachedTokensInPrompt)
 	costPlugin.SetReportedCostVendors(srv.ReportedCostVendor)
 	srv.SetCatalogue(catalogue)
 

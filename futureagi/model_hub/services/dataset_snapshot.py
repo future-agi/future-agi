@@ -9,6 +9,27 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 logger = structlog.get_logger(__name__)
 
 
+def copied_column_metadata(cell):
+    """The ``column_metadata`` a copy of a cell carries.
+
+    A run-prompt cell is priced at ``column_metadata["run_started_at"]``, the start
+    of the run that wrote its tokens. A cell written before that stamp existed is
+    priced at its ``created_at``, and a copy's ``created_at`` is the copy time, so
+    the copy is given the source's creation time as its run start. Otherwise the
+    copy would be priced at the rate in force when it was copied.
+    """
+    metadata = cell.column_metadata
+    if (
+        cell.prompt_tokens is None
+        and cell.completion_tokens is None
+        or not (metadata is None or isinstance(metadata, dict))
+        or (metadata or {}).get("run_started_at") is not None
+        or cell.created_at is None
+    ):
+        return metadata
+    return {**(metadata or {}), "run_started_at": cell.created_at.isoformat()}
+
+
 def _copy_cells_raw_sql(source_dataset, snapshot_dataset, column_mapping, row_mapping):
     """Copy cells from source to snapshot entirely DB-side via INSERT ... SELECT.
 
@@ -44,7 +65,23 @@ def _copy_cells_raw_sql(source_dataset, snapshot_dataset, column_mapping, row_ma
             %s::uuid,
             cm.new_id,
             rm.new_id,
-            c.value, c.value_infos, c.feedback_info, c.status, c.column_metadata,
+            c.value, c.value_infos, c.feedback_info, c.status,
+            -- A run's tokens are priced at the run's start (column_metadata
+            -- run_started_at); a cell from before that stamp is priced at its
+            -- creation, so the copy keeps the source's creation as its run start.
+            CASE
+                WHEN (c.prompt_tokens IS NOT NULL OR c.completion_tokens IS NOT NULL)
+                    AND (c.column_metadata IS NULL
+                         OR jsonb_typeof(c.column_metadata) = 'object')
+                    AND (c.column_metadata -> 'run_started_at') IS NULL
+                    AND c.created_at IS NOT NULL
+                THEN COALESCE(c.column_metadata, '{}'::jsonb) || jsonb_build_object(
+                    'run_started_at',
+                    to_char(c.created_at AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS.US') || '+00:00'
+                )
+                ELSE c.column_metadata
+            END,
             c.prompt_tokens, c.completion_tokens, c.response_time,
             false, NULL, NOW(), NOW()
         FROM model_hub_cell c
@@ -212,7 +249,7 @@ def create_dataset_snapshot(
                     value_infos=cell.value_infos,
                     feedback_info=cell.feedback_info,
                     status=cell.status,
-                    column_metadata=cell.column_metadata,
+                    column_metadata=copied_column_metadata(cell),
                     prompt_tokens=cell.prompt_tokens,
                     completion_tokens=cell.completion_tokens,
                     response_time=cell.response_time,

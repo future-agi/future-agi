@@ -35,6 +35,12 @@ vi.mock("../WorkspaceBreakdown", () => ({
   default: () => null,
 }));
 
+// The card's title comes from the API, so the icon is what shows a dimension
+// is known to the page rather than falling back to the generic one.
+vi.mock("src/components/iconify", () => ({
+  default: ({ icon }) => <span data-testid="iconify" data-icon={icon} />,
+}));
+
 function renderWithQuery(ui) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
@@ -249,6 +255,37 @@ describe("UsageSummaryV2", () => {
     await userEvent.click(screen.getByRole("button", { name: "12M" }));
 
     expect(await screen.findByText("$76.80")).toBeInTheDocument();
+  });
+
+  it("shows the sandbox minutes card", async () => {
+    const { default: UsageSummaryV2 } = await import("../UsageSummaryV2");
+    mockUsageOverview({
+      ...BASE_OVERVIEW,
+      dimensions: [
+        {
+          key: "sandbox_minutes",
+          display_name: "Sandbox Minutes",
+          display_unit: "minutes",
+          current_usage: 12.5,
+          current_usage_raw: 12.5,
+          free_allowance: 0,
+          projected_usage: 12.5,
+          estimated_cost: 0,
+          tier_breakdown: [],
+        },
+      ],
+    });
+
+    renderWithQuery(<UsageSummaryV2 />);
+
+    expect(
+      (await screen.findAllByText("Sandbox Minutes")).length,
+    ).toBeGreaterThan(0);
+    const icons = screen
+      .getAllByTestId("iconify")
+      .map((icon) => icon.getAttribute("data-icon"));
+    expect(icons).toContain("solar:server-square-linear");
+    expect(icons).not.toContain("solar:pie-chart-2-linear");
   });
 });
 

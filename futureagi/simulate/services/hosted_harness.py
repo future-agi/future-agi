@@ -29,6 +29,7 @@ from simulate.models import (
     HostedHarnessScenario,
     TestExecution,
 )
+from simulate.models.hosted_harness import SEED_BITS
 from simulate.services.agent_setup import AgentStoreError, store_agent
 from simulate.services.alk_simulate_ingestion import (
     ALKSimulateIngestionError,
@@ -238,7 +239,7 @@ def create_hosted_job(
         run_id = payload.get("run_id") or uuid.uuid4()
         seed = payload.get("seed")
         if seed is None:
-            seed = secrets.randbits(63)
+            seed = secrets.randbits(SEED_BITS)
         normalized = _json_value(payload)
         # Deployment policy must not change the submitted request's idempotency digest.
         artifacts = normalized["artifacts"]
@@ -415,7 +416,12 @@ def create_selected_harness_run(
         if resolved is not None:
             # A repeated request is answered before anything is written.
             replayed = _replayed_run(
-                environment, child_idempotency_key, resolved, scenario_keys, trials
+                environment,
+                child_idempotency_key,
+                resolved,
+                scenario_keys,
+                trials,
+                seed=seed,
             )
             if replayed is not None:
                 return replayed, False
@@ -473,6 +479,9 @@ def create_selected_harness_run(
             )
         if pins is not None and pins.assembles:
             _refuse_ungradable(pins, scenario_keys)
+        from simulate.services.harness_tool_reach import refuse_production_only
+
+        refuse_production_only(environment, pins, scenario_keys)
 
         manifest: list[dict[str, Any]] = []
         for scenario_key in scenario_keys:
@@ -1148,11 +1157,10 @@ def _replayed_run(
     resolved: ResolvedPins,
     scenario_keys: list[str],
     trials: int,
+    seed: int | None = None,
 ) -> HostedHarnessJob | None:
-    """The run an earlier request with this key created, when this one repeats it.
-
-    A key reused for other versions, scenarios or trials is refused.
-    """
+    """The run an earlier request with this key created, when this one repeats it; a key reused for other versions,
+    scenarios, trials or another seed is refused."""
     existing = HostedHarnessJob.no_workspace_objects.filter(
         organization_id=environment.organization_id, idempotency_key=idempotency_key
     ).first()
@@ -1179,6 +1187,7 @@ def _replayed_run(
         existing.workspace_id != environment.workspace_id
         or metadata.get("selected_scenario_keys") != scenario_keys
         or metadata.get("trials") != trials
+        or (seed is not None and existing.seed != seed)
     ):
         raise HostedHarnessError(
             "idempotency_conflict",
@@ -1503,19 +1512,24 @@ def rerun_calls_in_run(
         raise HostedHarnessError(
             "call_selection_empty", "select at least one call", status_code=400
         )
-    job_id = (
+    found = (
         HostedHarnessJob.no_workspace_objects.filter(
             test_execution_id=test_execution.id
         )
-        .values_list("id", flat=True)
+        .values_list("id", "organization_id")
         .first()
     )
-    if job_id is None:
+    if found is None:
         raise HostedHarnessError(
             "run_not_rerunnable",
             "this run has no saved harness job to re-run",
             status_code=409,
         )
+    job_id, organization_id = found
+    from simulate.services.harness_usage import require_sandbox_start
+
+    # The re-run is a new attempt with a new hosted sandbox.
+    require_sandbox_start(str(organization_id))
     # The job and run turn terminal before the previous gateway workflow returns, and
     # starting its id again while it is still exiting would attach to it, not launch.
     try:
@@ -1566,6 +1580,25 @@ def rerun_calls_in_run(
                 allocation.call_execution,
                 keep_metadata_keys=PREALLOCATED_CALL_METADATA_KEYS,
             )
+        from simulate.services.harness_usage import freeze_run_sandbox_charge
+
+        ran = HostedHarnessAttempt.no_workspace_objects.filter(
+            job=job, attempt_number=job.current_attempt_number
+        ).first()
+        if ran is not None:
+            try:
+                # Its sandbox minutes are read from this job, which the reset rewrites.
+                freeze_run_sandbox_charge(ran, job)
+            except Exception as exc:
+                logger.exception(
+                    "sandbox_charge_not_frozen_before_rerun", attempt_id=str(ran.id)
+                )
+                raise HostedHarnessError(
+                    "rerun_unavailable",
+                    "Hosted rerun could not be started; try again",
+                    status_code=503,
+                    retryable=True,
+                ) from exc
         payload = dict(job.payload)
         payload["metadata"] = {
             **(payload.get("metadata") or {}),
@@ -2972,7 +3005,7 @@ def record_cleanup(
         from simulate.services.harness_usage import record_sandbox_runtime
         from simulate.tasks.hosted_harness_usage import schedule_usage_seal
 
-        record_sandbox_runtime(attempt, final=True)
+        record_sandbox_runtime(attempt, final=True, retried=retry_pending)
         # Sealed after commit on the backend queue: the sandbox runner has no billing config.
         sealed_attempt_id = str(attempt.id)
         transaction.on_commit(lambda: schedule_usage_seal(sealed_attempt_id))

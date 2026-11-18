@@ -6,7 +6,7 @@ Tests for /tracer/observation-span/ endpoints.
 
 import json
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -552,6 +552,92 @@ class TestObservationSpanBulkCreateAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
+
+    @pytest.mark.parametrize(
+        ("posted", "expected"),
+        [
+            pytest.param(
+                "2026-12-31T23:59:59.999999Z",
+                datetime(2026, 12, 31, 23, 59, 59, 999999, tzinfo=UTC),
+                id="utc",
+            ),
+            pytest.param(
+                "2027-01-01T05:30:00+05:30",
+                datetime(2027, 1, 1, tzinfo=UTC),
+                id="offset-converted-to-utc",
+            ),
+            pytest.param(
+                "2026-12-31T23:59:59",
+                datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC),
+                id="naive-is-utc",
+            ),
+        ],
+    )
+    def test_bulk_create_prices_a_span_at_its_posted_start(
+        self, auth_client, project, trace, posted, expected
+    ):
+        """The cost is priced at the span's own start, not at ingestion."""
+        from tracer.utils.otel import calculate_cost_from_tokens as real_price
+
+        with patch(
+            "tracer.views.observation_span.calculate_cost_from_tokens",
+            wraps=real_price,
+        ) as price:
+            response = auth_client.post(
+                "/tracer/observation-span/bulk_create/",
+                {
+                    "spans": [
+                        {
+                            "project": str(project.id),
+                            "trace": str(trace.id),
+                            "name": "Dated Span",
+                            "observation_type": "llm",
+                            "model": "gemini-3.7-flash",
+                            "prompt_tokens": 2_000_000,
+                            "completion_tokens": 200_000,
+                            "start_time": posted,
+                        }
+                    ]
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert price.call_args.kwargs["at"] == expected
+
+    @pytest.mark.parametrize(
+        "posted", [None, "", "not a time", 12, "2026-13-45T99:99:99"]
+    )
+    def test_bulk_create_prices_a_span_with_no_readable_start_now(
+        self, auth_client, project, trace, posted
+    ):
+        from tracer.utils.otel import calculate_cost_from_tokens as real_price
+
+        span = {
+            "project": str(project.id),
+            "trace": str(trace.id),
+            "name": "Undated Span",
+            "observation_type": "llm",
+            "model": "gemini-3.7-flash",
+            "prompt_tokens": 10,
+            "completion_tokens": 10,
+        }
+        if posted is not None:
+            span["start_time"] = posted
+        before = datetime.now(UTC)
+        with patch(
+            "tracer.views.observation_span.calculate_cost_from_tokens",
+            wraps=real_price,
+        ) as price:
+            auth_client.post(
+                "/tracer/observation-span/bulk_create/",
+                {"spans": [span]},
+                format="json",
+            )
+
+        at = price.call_args.kwargs["at"]
+        assert at.utcoffset() is not None
+        assert before <= at <= datetime.now(UTC)
 
     def test_bulk_create_rejects_same_org_other_workspace_project(
         self, auth_client, organization, user

@@ -67,7 +67,7 @@ def metered_attempt(hosted_attempt, monkeypatch):
 
     events = []
     monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
-    monkeypatch.setattr(emitter, "emit", events.append)
+    monkeypatch.setattr(emitter, "emit", lambda event, **_: events.append(event))
     # Cleanup enqueues the seal after commit; run it inline so these tests see its events.
     monkeypatch.setattr(
         seal_hosted_harness_usage,
@@ -226,6 +226,29 @@ def test_live_authoring_estimate_prices_at_the_attempts_start(
 
     assert harness_usage.harness_consumption(job)["ai_credits"] == pytest.approx(cost)
     assert events == []
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_sealed_authoring_is_priced_at_the_attempts_start_not_the_seal(
+    metered_attempt, monkeypatch, django_capture_on_commit_callbacks
+):
+    # Authoring has no request start of its own: it is priced at the attempt's
+    # created_at. The attempt started before midnight and is sealed after it.
+    from agentic_eval.core_evals.run_prompt import model_pricing
+
+    capability, _ = metered_attempt
+    _start_attempt_at(capability.attempt, T26)
+    _ai_credits_equal_usd(monkeypatch)
+    monkeypatch.setattr(model_pricing, "_utc_now", lambda: T27 + timedelta(hours=1))
+    spend = {"stages": [_stage("gemini-3.7-flash")]}
+
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_authoring_usage(capability.attempt, spend)
+
+    capability.attempt.refresh_from_db()
+    record = capability.attempt.authoring_usage_report["records"][0]
+    assert record["cost_usd"] == pytest.approx(0.585)
 
 
 @pytest.mark.django_db
@@ -514,6 +537,7 @@ def test_receipt_replay_bills_platform_text_and_all_voice_minutes(
         "voice_sim_minutes": 2.25,
         "ai_credits": 0,
         "sandbox_seconds": 0,
+        "sandbox_minutes": 0,
     }
 
 
@@ -795,16 +819,28 @@ def required_actions(monkeypatch):
 @pytest.mark.parametrize(
     ("agent", "metadata", "expected"),
     [
-        ({"connector": "phone"}, {}, ["harness_authoring", "voice_call"]),
-        ({"connector": "livekit"}, {}, ["harness_authoring", "voice_call"]),
-        ({"connector": "retell_chat"}, {}, ["harness_authoring", "text_call"]),
+        (
+            {"connector": "phone"},
+            {},
+            ["harness_authoring", "sandbox_runtime", "voice_call"],
+        ),
+        (
+            {"connector": "livekit"},
+            {},
+            ["harness_authoring", "sandbox_runtime", "voice_call"],
+        ),
+        (
+            {"connector": "retell_chat"},
+            {},
+            ["harness_authoring", "sandbox_runtime", "text_call"],
+        ),
         (
             {"connector": "auto"},
             {"modality": "voice"},
-            ["harness_authoring", "voice_call"],
+            ["harness_authoring", "sandbox_runtime", "voice_call"],
         ),
-        ({"connector": "auto"}, {}, ["harness_authoring"]),
-        ({}, {}, ["harness_authoring"]),
+        ({"connector": "auto"}, {}, ["harness_authoring", "sandbox_runtime"]),
+        ({}, {}, ["harness_authoring", "sandbox_runtime"]),
     ],
 )
 def test_run_usage_checks_the_rail_the_connector_names(
@@ -848,14 +884,14 @@ def test_selected_run_checks_the_rail_of_the_authored_modality(
     job = hosted_attempt.attempt.job
 
     harness_usage.require_harness_call_usage(job)
-    assert required_actions == ["text_call"]
+    assert required_actions == ["text_call", "sandbox_runtime"]
 
     job.stage_outputs = [{"kind": "contract", "data": {"modality": "voice"}}]
     job.save(update_fields=["stage_outputs", "updated_at"])
     required_actions.clear()
 
     harness_usage.require_harness_call_usage(job)
-    assert required_actions == ["voice_call"]
+    assert required_actions == ["voice_call", "sandbox_runtime"]
 
 
 @pytest.mark.django_db
@@ -874,7 +910,7 @@ def test_selected_run_reads_the_modality_past_malformed_contract_outputs(
 
     harness_usage.require_harness_call_usage(job)
 
-    assert required_actions == ["voice_call"]
+    assert required_actions == ["voice_call", "sandbox_runtime"]
 
 
 @pytest.mark.django_db
@@ -896,6 +932,39 @@ def test_oss_call_and_source_usage_checks_never_refuse(hosted_attempt, monkeypat
     assert harness_usage.check_harness_action(organization_id, "voice_call") == {
         "allowed": True
     }
+
+
+def _stage(model):
+    return {
+        "stage": "build-environment",
+        "models": [model],
+        "tokens_in": 1_000_000,
+        "tokens_out": 100_000,
+        "tokens_cached": 800_000,
+    }
+
+
+@pytest.mark.requires_ee
+@pytest.mark.parametrize(("at", "cost"), AT_EACH_PRICE)
+def test_authoring_accepts_a_model_the_gateway_table_prices(monkeypatch, at, cost):
+    _ai_credits_equal_usd(monkeypatch)
+
+    record = harness_usage._authoring_stage_record(_stage("gemini-3.7-flash"), at=at)
+
+    assert record["pricing_source"] == "gateway_table"
+    assert record["cost_usd"] == pytest.approx(cost)
+
+
+@pytest.mark.requires_ee
+def test_authoring_refuses_a_model_no_table_prices(monkeypatch):
+    _ai_credits_equal_usd(monkeypatch)
+
+    with pytest.raises(HostedHarnessError) as refused:
+        harness_usage._authoring_stage_record(
+            _stage("gemini-3.7-flash-lite"), at=STARTED_IN_2026
+        )
+
+    assert refused.value.code == "authoring_model_unpriced"
 
 
 def test_a_post_build_turn_is_priced_at_the_time_its_billing_event_carries(monkeypatch):
