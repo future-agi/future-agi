@@ -1061,3 +1061,21 @@ def test_carried_proofs_read_proved_only_from_a_format_two_proof(
         suite_version=suite, environment_version=version
     )
     assert carried.status == HarnessSuiteValidation.Status.PARTIAL
+
+
+def test_a_decision_on_removing_an_item_holds_while_the_draft_still_leaves_it_out():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_versioning.review import held_decisions
+
+    default, draft, changes = _rule_and_tool()
+    files = draft
+    decided = {
+        # Removing an item: decided with no draft content.
+        "tool:old_tool": {"decision": "rejected", "draft_digest": None},
+        # An item the draft still has, decided on content that has since moved.
+        "tool:issue_refund": {"decision": "accepted", "draft_digest": "sha256:moved"},
+    }
+    record = SimpleNamespace(documents={"review": {"decisions": decided}})
+
+    assert held_decisions(record, files) == {"tool:old_tool": "rejected"}

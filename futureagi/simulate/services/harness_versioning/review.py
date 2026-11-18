@@ -102,12 +102,17 @@ def any_decision(environment: Any) -> bool:
 def held_decisions(
     draft: Any, files: Mapping[str, bytes]
 ) -> dict[str, Literal["accepted", "rejected"]]:
-    """The decisions on a draft that still hold, by item: each only while its item is as it was when decided."""
+    """The decisions on a draft that still hold, by item: each only while its item is as it was when decided. A
+    decision on removing an item (taken with no draft content) holds while the draft still leaves it out."""
     items = item_index(files)
     return {
         item_id: entry["decision"]
         for item_id, entry in _decisions(draft).items()
-        if item_id in items and entry.get("draft_digest") == items[item_id].digest
+        if (
+            entry.get("draft_digest") == items[item_id].digest
+            if item_id in items
+            else entry.get("draft_digest") is None
+        )
     }
 
 
