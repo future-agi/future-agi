@@ -178,7 +178,7 @@ export const sourceLink = (source = {}) => {
   return { kind: source.origin === "chat" ? "chat" : "tab" };
 };
 
-const nextVersion = (version) => {
+export const nextVersion = (version) => {
   const match = /^v(\d+)$/.exec(version?.label || "");
   return match ? `v${Number(match[1]) + 1}` : null;
 };
