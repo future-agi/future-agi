@@ -73,25 +73,26 @@ write_config_entry() {
 }
 
 # A read-only root filesystem needs CONFIG_PATH on a writable mount
-# (deploy/README.md, "Read-only root filesystem").
-if ! (: > "$CONFIG_PATH") 2>/dev/null; then
-  echo "[entrypoint] cannot write ${CONFIG_PATH}: mount it writable on a read-only root filesystem" >&2
-  exit 1
+# (deploy/README.md, "Read-only root filesystem"). Without one the container
+# still starts, as it always has, and serves the image's placeholder config.
+if (: > "$CONFIG_PATH") 2>/dev/null; then
+  {
+    printf '%s\n' 'window.__FUTURE_AGI_CONFIG__ = {'
+    for config_name in $CONFIG_NAMES; do
+      write_config_entry "$config_name"
+    done
+    printf '%s\n' '};'
+  } > "$CONFIG_PATH"
+  echo "[entrypoint] wrote ${CONFIG_PATH}"
+else
+  echo "[entrypoint] warning: cannot write ${CONFIG_PATH}; serving the image's placeholder config (mount it writable on a read-only root filesystem)" >&2
 fi
-{
-  printf '%s\n' 'window.__FUTURE_AGI_CONFIG__ = {'
-  for config_name in $CONFIG_NAMES; do
-    write_config_entry "$config_name"
-  done
-  printf '%s\n' '};'
-} > "$CONFIG_PATH"
-
-echo "[entrypoint] wrote ${CONFIG_PATH}"
 
 # futureagi/standalone runs its own nginx and needs only config.js: with this
 # set, the listener settings below, this image's own, are neither checked nor
-# written, and no command runs.
+# written, and no command runs. Not for the frontend image on its own.
 if [ "${FRONTEND_CONFIG_ONLY:-false}" = true ]; then
+  echo '[entrypoint] FRONTEND_CONFIG_ONLY is set: config only, not starting nginx'
   exit 0
 fi
 
@@ -183,7 +184,7 @@ warn_broad_key_mode() {
   key_mode=$(stat -L -c %a "$1" 2>/dev/null) || return 0
   case "$key_mode" in ''|*[!0-7]*) return 0 ;; esac
   if [ $((0$key_mode & 037)) -ne 0 ]; then
-    echo "$2 warning: TLS private key $1 has mode $key_mode, readable or writable beyond its owner and group; use 0400 or 0440" >&2
+    echo "$2 warning: TLS private key $1 has mode $key_mode, which grants group write or access to others; use 0400 or 0440" >&2
   fi
 }
 

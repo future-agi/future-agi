@@ -319,12 +319,25 @@ class ReadOnlyRoot(ImageTestCase):
             "[entrypoint] cannot write /tmp/futureagi-nginx/listen.conf", logs
         )
 
-    def test_a_read_only_config_fails_clearly(self):
-        code, logs = self.run_to_exit(options=READ_ONLY_ROOT)
-        self.assertEqual(code, 1, logs)
-        self.assertIn(
-            "[entrypoint] cannot write /usr/share/nginx/html/config.js", logs
+    def test_a_read_only_config_warns_and_serves_the_placeholder(self):
+        # As before: the container still starts, with the image's placeholder.
+        container = self.start(
+            {"VITE_HOST_API": "https://api.example.com"}, READ_ONLY_ROOT
         )
+        status, _ = self.wait_for(lambda: self.http_get(container), what="HTTP")
+        self.assertEqual(status, 200)
+        status, config = self.http_get(container, "/config.js")
+        self.assertEqual(status, 200)
+        self.assertIn("window.__FUTURE_AGI_CONFIG__ = {};", config)
+        self.assertNotIn("api.example.com", config)
+        logs = self.logs(container)
+        self.assertIn(
+            "[entrypoint] warning: cannot write /usr/share/nginx/html/config.js;"
+            " serving the image's placeholder config",
+            logs,
+        )
+        self.assertNotIn("[entrypoint] wrote", logs)
+        self.assert_running(container)
 
 
 class PrivateKeyMode(ImageTestCase):
@@ -516,6 +529,7 @@ class ConfigOnly(ImageTestCase):
         self.assertIn(b'VITE_HOST_API: "http://localhost:8000"', config)
         self.assertFalse((out / "tmp" / "futureagi-nginx").exists())
         self.assertNotIn("TLS", logs)
+        self.assertIn("[entrypoint] FRONTEND_CONFIG_ONLY is set: config only", logs)
 
     def test_the_config_is_the_same_as_a_normal_start(self):
         _, _, only, _ = self.generate(
