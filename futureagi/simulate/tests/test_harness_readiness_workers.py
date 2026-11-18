@@ -593,7 +593,8 @@ class TestSubAgentEvidence:
         )
 
         assert _checks(across)["stable_ids"] == "seen"
-        assert _checks(one_run)["stable_ids"] == "not_applicable"
+        # One run cannot show an id is stable: not seen yet, never not applicable.
+        assert _checks(one_run)["stable_ids"] == "not_seen"
 
     def test_a_single_agent_is_not_applicable_and_no_run_is_not_run(self, monkeypatch):
         single = _children(monkeypatch, [], contract={"workers": []}, runs=())
@@ -690,3 +691,30 @@ class TestSubAgentEvidence:
         assert reading.finding != "passed"
         if missing != "stable_ids":
             assert children_module.CHECK_LABELS[missing] in reading.reason
+
+    def test_one_run_never_shows_stable_ids_so_the_row_is_never_supported(
+        self, monkeypatch
+    ):
+        """Review round 1, SF3: stable ids need two runs; with one, the item is not seen and the row stays Partial."""
+        record, trial, receipt = self._every_item("r1", worker_state="deadline_passed")
+
+        reading = _children(monkeypatch, [_call("r1", record, trial, receipt)])
+
+        assert _checks(reading)["stable_ids"] == "not_seen"
+        assert reading.finding == "limited"
+
+    def test_workers_seen_but_not_declared_are_never_supported(self, monkeypatch):
+        """Review round 1, SF3: an agent declaring no workers whose runs record some reads Partial, not Supported."""
+        calls = [
+            _call(run, *self._every_item(run, worker_state=state))
+            for run, state in (("r1", "deadline_passed"), ("r2", "returned"))
+        ]
+
+        reading = _children(
+            monkeypatch, calls, contract={"workers": []}, runs=("r1", "r2")
+        )
+
+        assert (reading.finding, reading.reason_code) == (
+            "limited",
+            "workers_not_declared",
+        )
