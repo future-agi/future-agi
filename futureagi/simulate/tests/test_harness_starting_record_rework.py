@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, timedelta
+from decimal import Decimal
 
 import pytest
 from django.utils import timezone
@@ -872,6 +873,8 @@ def test_a_row_another_scenario_starts_from_is_offered_with_a_note_and_left_to_t
         ("10.00", 10, True),
         (10, "10", True),
         ("0.1", 0.1, True),
+        (Decimal("10"), 10, False),
+        (10, Decimal("10"), False),
         ("Priya", "Priyanka", False),
         ("02134", "2134", False),
         ("+15551234567", "15551234567", False),
@@ -888,6 +891,8 @@ def test_a_row_another_scenario_starts_from_is_offered_with_a_note_and_left_to_t
         "money text",
         "int text",
         "decimal",
+        "non-JSON fact with numeric spelling",
+        "non-JSON seed with numeric spelling",
         "text",
         "zip leading zero",
         "phone plus",

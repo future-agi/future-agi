@@ -450,6 +450,57 @@ jobs:
           for _ in $(seq 1 15); do pgrep -f 'granian --interface asgi' >/dev/null || exit 0; sleep 1; done
           pkill -KILL -f 'granian --interface asgi' || true
 
+  agentic-eval:
+    # This suite has its own pytest root and is excluded from the backend shards.
+    name: Evaluator test setup and offline suite
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      LITELLM_MODE: PRODUCTION
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      NLTK_DOWNLOAD_MISSING: "false"
+      PYTHONHASHSEED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+      - name: Install test system packages
+        run: bash .ci/install-test-packages.sh /tmp/futureagi-agentic-eval-apt
+      - name: Install frozen backend and test dependencies
+        run: uv sync --frozen --extra dev
+      - name: Start test dependencies
+        run: docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
+      - name: Run evaluator suite from the backend working directory
+        id: evaluator-suite
+        # The backend cwd is required by existing fixtures' relative paths.
+        # Keep the nested root: importing the parent conftest would hide a
+        # regression in agentic_eval's own Django setup.
+        run: |
+          uv run --no-sync python -m pytest \
+            -c agentic_eval/pytest.ini --confcutdir=agentic_eval agentic_eval \
+            -q -ra --color=no --junitxml=agentic-eval-junit.xml
+      - name: Retain evaluator results
+        if: ${{ !cancelled() && steps.evaluator-suite.conclusion != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentic-eval-junit
+          path: futureagi/agentic-eval-junit.xml
+          if-no-files-found: error
+      - name: Dump test service logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 100
+
   slim-smoke:
     # The only leg that exercises the slim (base-only) environment the OSS
     # image ships: every other job syncs --all-extras, so a MODULE-LEVEL
@@ -480,7 +531,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
-          version: "0.11.16"
+          version: "0.11.33"
           enable-cache: true
           cache-dependency-glob: futureagi/uv.lock
 
@@ -617,6 +668,7 @@ jobs:
         plan,
         test,
         saml-multiworker,
+        agentic-eval,
         slim-smoke,
         code-executor-base-pin,
       ]
