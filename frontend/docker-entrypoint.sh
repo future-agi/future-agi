@@ -88,6 +88,13 @@ fi
 
 echo "[entrypoint] wrote ${CONFIG_PATH}"
 
+# futureagi/standalone runs its own nginx and needs only config.js: with this
+# set, the listener settings below, this image's own, are neither checked nor
+# written, and no command runs.
+if [ "${FRONTEND_CONFIG_ONLY:-false}" = true ]; then
+  exit 0
+fi
+
 http_enabled=${FRONTEND_HTTP_ENABLED:-true}
 http_port=${FRONTEND_HTTP_PORT:-80}
 tls_enabled=${FRONTEND_TLS_ENABLED:-false}

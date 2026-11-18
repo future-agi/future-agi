@@ -485,3 +485,53 @@ class CertificateExpiry(ImageTestCase):
         self.assertEqual(
             docker("inspect", "-f", "{{.State.StartedAt}}", container).stdout, started
         )
+
+
+class ConfigOnly(ImageTestCase):
+    """futureagi/standalone runs this entrypoint for config.js only
+    (deploy/standalone/bin/start: FRONTEND_CONFIG_ONLY=true)."""
+
+    def generate(self, **env):
+        out = self.tmp / f"out-{time.monotonic_ns()}"
+        (out / "tmp").mkdir(parents=True)
+        out.chmod(0o777)
+        (out / "tmp").chmod(0o777)
+        env = {"CONFIG_PATH": "/out/config.js", **env}
+        code, logs = self.run_to_exit(
+            env, ["-v", f"{out}:/out", "-v", f"{out / 'tmp'}:/tmp"], command=["true"]
+        )
+        config = out / "config.js"
+        return code, logs, config.read_bytes() if config.exists() else None, out
+
+    def test_unsupported_tls_settings_are_not_checked(self):
+        code, logs, config, out = self.generate(
+            FRONTEND_CONFIG_ONLY="true",
+            FRONTEND_TLS_ENABLED="true",
+            FRONTEND_HTTP_ENABLED="false",
+            FRONTEND_TLS_CERT_FILE="/missing/tls.crt",
+            FRONTEND_TLS_RELOAD_INTERVAL="0",
+            VITE_HOST_API="http://localhost:8000",
+        )
+        self.assertEqual(code, 0, logs)
+        self.assertIn(b'VITE_HOST_API: "http://localhost:8000"', config)
+        self.assertFalse((out / "tmp" / "futureagi-nginx").exists())
+        self.assertNotIn("TLS", logs)
+
+    def test_the_config_is_the_same_as_a_normal_start(self):
+        _, _, only, _ = self.generate(
+            FRONTEND_CONFIG_ONLY="true", VITE_HOST_API="http://localhost:8000"
+        )
+        code, logs, normal, out = self.generate(VITE_HOST_API="http://localhost:8000")
+        self.assertEqual(code, 0, logs)
+        self.assertEqual(only, normal)
+        self.assertEqual(
+            (out / "tmp" / "futureagi-nginx" / "listen.conf").read_text(),
+            "listen 80;\nlisten [::]:80;\n",
+        )
+
+    def test_a_normal_start_still_checks_tls(self):
+        code, logs, _, _ = self.generate(
+            FRONTEND_TLS_ENABLED="true", FRONTEND_TLS_CERT_FILE="/missing/tls.crt"
+        )
+        self.assertEqual(code, 1, logs)
+        self.assertIn("[entrypoint] TLS file missing", logs)
