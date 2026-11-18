@@ -54,6 +54,27 @@ make test-shell          # Interactive test shell
 
 Under the hood, `make test` delegates to `bin/test`, which runs pytest with the local Python environment and starts dependencies in `docker-compose.test.yml` (Postgres, Redis, ClickHouse, and MinIO). See `bin/test --help` for lower-level options. The project name is fixed to `futureagi-test`; coordinate ownership before using it alongside another checkout.
 
+### Evaluator library (standalone pytest root)
+
+The backend shards exclude `agentic_eval`, which has its own settings bootstrap
+and pytest configuration. Run it from the **backend** working directory so that
+existing fixtures resolve their relative paths correctly:
+
+```bash
+cd futureagi
+uv sync --frozen --extra dev
+docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait
+uv run --no-sync python -m pytest \
+  -c agentic_eval/pytest.ini --confcutdir=agentic_eval agentic_eval -q -ra
+```
+
+The default selection excludes `live_llm`, `live_image`, `external`, and `network`
+tests; no provider credentials are needed. To inspect discovery without running
+tests, append `--collect-only`. Database cases use the test Postgres dependency,
+not a running application database. The `agentic-eval` job in `backend-ci.yml`
+runs this command with frozen dependencies, uploads its JUnit report, and feeds
+the required **Backend Tests Pass** gate. A collection error fails that job.
+
 ### Collector and deployment contracts
 
 Do **not** run the full collector suite on a shared host: it includes fixed-port
