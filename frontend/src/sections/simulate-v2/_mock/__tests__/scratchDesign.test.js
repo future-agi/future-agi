@@ -43,3 +43,11 @@ describe("genericDesignOf ignores contributor lines", () => {
     expect(d.tools.map((t) => t.name)).toContain("label_issue");
   });
 });
+
+describe("designDetailPatch keeps numbers whole", () => {
+  it("doesn't split $5,000 into two rules", () => {
+    const env = { name: "Bank copy", builtFrom: {}, seed: { tables: [] }, tools: [], rules: [] };
+    const res = designDetailPatch(env, "Add a credit limit increase flow; increases over $5,000 need the fraud team");
+    expect(res.envPatch.rules).toContain("Increases over $5,000 need the fraud team");
+  });
+});

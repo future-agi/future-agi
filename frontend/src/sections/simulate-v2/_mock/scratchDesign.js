@@ -380,7 +380,8 @@ export const designDetailPatch = (env, text, sources = []) => {
   /* A rule is a limit, not a capability: "it can look up an order, refund up
      to $200" gives "Refund up to $200", not the whole sentence. */
   const rules = String(text)
-    .split(/[.!?;\n,]\s*/)
+    /* Split at clause ends — never inside a number like $5,000 or 2.5. */
+    .split(/(?<!\d)[.,](?!\d)\s*|[!?;\n]\s*/)
     .map((x) => x.trim().replace(/^(and|but|so|it|they)\s+/i, "").replace(/^(can|may|will|should)\s+/i, "").trim())
     .filter((x) => x && x.split(/\s+/).length >= 3 && RULEISH.test(x))
     .map(cap)
