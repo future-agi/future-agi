@@ -193,6 +193,7 @@ export default function VoiceCallDrawer({
                       if (at != null) seekTo(at);
                       setChosenTab("transcript");
                     }}
+                    traceIds={callTraces.traces.map((trace) => trace.traceId)}
                     onOpenTrace={(traceId, spanId) => {
                       setOpenStep({ traceId, spanId });
                       setChosenTab("traces");

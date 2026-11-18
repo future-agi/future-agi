@@ -34,6 +34,7 @@ export default function SequenceDiagram({
   selected,
   onSelect,
   onOpenTrace,
+  canOpenTrace,
   onShowInTranscript,
   linkOf,
 }) {
@@ -968,6 +969,7 @@ export default function SequenceDiagram({
             seq={seq}
             step={sel}
             onOpenTrace={onOpenTrace}
+            canOpenTrace={canOpenTrace}
             onShowInTranscript={onShowInTranscript}
             linkOf={linkOf}
           />
@@ -986,6 +988,7 @@ SequenceDiagram.propTypes = {
   selected: PropTypes.number,
   onSelect: PropTypes.func.isRequired,
   onOpenTrace: PropTypes.func,
+  canOpenTrace: PropTypes.func,
   onShowInTranscript: PropTypes.func,
   linkOf: PropTypes.func,
 };

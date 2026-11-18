@@ -251,7 +251,11 @@ describe("CallWorkersPanel", () => {
       ).toBeNull();
     });
 
-    it("offers Open in trace only when the record names its trace project", () => {
+    it.each([
+      ["the record names no trace project", null, ["t1"], false],
+      ["the Traces tab doesn't list the trace", "p1", ["other"], false],
+      ["the Traces tab lists the trace", "p1", ["t1"], true],
+    ])("Open in trace when %s: %s", (_, projectId, traceIds, offered) => {
       const traced = { ...DELEGATED, span_id: "s1", trace_id: "t1" };
       const steps = [
         handOffStep(1, {
@@ -261,26 +265,25 @@ describe("CallWorkersPanel", () => {
         }),
       ];
       const onOpenTrace = vi.fn();
-      result = { data: timeline({ steps }), isLoading: false, isError: false };
-      const { unmount } = render(
-        <CallWorkersPanel callExecutionId="c1" onOpenTrace={onOpenTrace} />,
-      );
-      fireEvent.click(screen.getByTestId("participants-problem"));
-      expect(
-        screen.queryByRole("button", { name: /Open in trace/ }),
-      ).toBeNull();
-      unmount();
       result = {
-        data: timeline({ steps, project_id: "p1" }),
+        data: timeline({ steps, project_id: projectId }),
         isLoading: false,
         isError: false,
       };
       render(
-        <CallWorkersPanel callExecutionId="c1" onOpenTrace={onOpenTrace} />,
+        <CallWorkersPanel
+          callExecutionId="c1"
+          onOpenTrace={onOpenTrace}
+          traceIds={traceIds}
+        />,
       );
       fireEvent.click(screen.getByTestId("participants-problem"));
-      fireEvent.click(screen.getByRole("button", { name: /Open in trace/ }));
-      expect(onOpenTrace).toHaveBeenCalledWith("t1", "s1");
+      const button = screen.queryByRole("button", { name: /Open in trace/ });
+      expect(button !== null).toBe(offered);
+      if (offered) {
+        fireEvent.click(button);
+        expect(onOpenTrace).toHaveBeenCalledWith("t1", "s1");
+      }
     });
   });
 
