@@ -684,7 +684,7 @@ def _batched_span_system_retained_window_start(
                 ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
             ),
         ).retained_window_start(project_ids, window_end=window_end)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - best-effort lookup at the ClickHouse boundary; the full walk is correct
         # Class name only: ClickHouse errors can echo query text and values.
         logger.warning(
             "dashboard_filter_value_retained_window_lookup_failed",
