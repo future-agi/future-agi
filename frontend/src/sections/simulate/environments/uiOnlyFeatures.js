@@ -115,4 +115,9 @@ export const UI_ONLY_FEATURES = Object.freeze({
     label: "Environment settings",
     ask: "editing simulation defaults, egress, environment variables and the simulated user's model",
   },
+  environmentFiles: {
+    label: "Files and what to test on build forms",
+    ask: "build requests that accept attached files (with a personal-data choice) and a line saying what the environment should test, read into the design before the build",
+    note: "UI only: the files and the test line stay in this form. The build doesn't receive them yet.",
+  },
 });
