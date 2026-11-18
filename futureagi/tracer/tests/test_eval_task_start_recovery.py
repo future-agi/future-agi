@@ -499,11 +499,10 @@ def test_delayed_final_send_fenced_before_work(
 
     from tfc.temporal.eval_tasks import get_activities, workflows
     from tfc.temporal.eval_tasks.activities import admit_eval_task_start_activity
-    from tfc.temporal.eval_tasks.types import (
-        ContinuousDrainState,
-        EvalTaskWorkflowInput,
-    )
 
+    EvalTask.objects.filter(pk=intent.pk).update(
+        run_type="continuous" if continuous else "historical"
+    )
     start, _ = transport
     start.side_effect = ConnectionError()
     service.dispatch_start_request(intent.pk, initial_start=start)
@@ -520,13 +519,11 @@ def test_delayed_final_send_fenced_before_work(
         return await ActivityEnvironment().run(admit_eval_task_start_activity, data)
 
     monkeypatch.setattr(workflows.workflow, "execute_activity", execute)
-    args = {"task_id": str(intent.pk), "start_once": options["start_once"]}
-    if continuous:
-        run = workflows.ContinuousEvalTaskWorkflow().run
-        async_to_sync(run)(ContinuousDrainState(**args))
-    else:
-        run = workflows.HistoricalEvalTaskWorkflow().run
-        result = async_to_sync(run)(EvalTaskWorkflowInput(**args))
+    workflow_type, data = client._select(
+        start.call_args.args[0], "tasks_s", gated=options["start_once"]
+    )
+    result = async_to_sync(workflow_type().run)(data)
+    if not continuous:
         assert (result.status, result.processed) == ("start_fenced", 0)
     assert activities == ["admit_eval_task_start_activity"]
     assert EvalTask.objects.get(pk=intent.pk).status == "failed"
@@ -537,7 +534,6 @@ def test_delayed_first_send_wins_after_retry_reserved(
     intent, transport, monkeypatch, trace, custom_eval_config
 ):
     from tfc.temporal.eval_tasks import workflows
-    from tfc.temporal.eval_tasks.types import EvalTaskWorkflowInput
 
     start, describe = transport
     EvalTask.objects.filter(pk=intent.pk).update(run_type="historical")
@@ -565,8 +561,7 @@ def test_delayed_first_send_wins_after_retry_reserved(
     def send(task, **options):
         nonlocal first_input, active_run
         # Use the actual input delivered by each send (including any fence).
-        args = {k: v for k, v in options.items() if k != "workflow_confirmed_stopped"}
-        data = EvalTaskWorkflowInput(task_id=str(task.pk), **args)
+        run, data = client._select(task, "tasks_s", gated=options["start_once"])
         if first_input is None:
             first_input = data
             raise ConnectionError()  # First send queued, not yet visible to describe.
@@ -574,7 +569,6 @@ def test_delayed_first_send_wins_after_retry_reserved(
         observed.append((intent.state, intent.attempts))
         # First send arrives before the retry reaches Temporal. Its input, not
         # the coalescing retry's input, drives the one running workflow.
-        run = workflows.HistoricalEvalTaskWorkflow
         async_to_sync(run().run)(first_input)
         observed.append(service.admit_start(task.pk, run_id))  # lost activity reply
         active_run = str(uuid4())
@@ -866,6 +860,21 @@ def test_user_action_itself_voids_start(
     check(intent, "void", 0)
     assert tick() == {"candidates": 0}
     describe.assert_not_called()
+
+
+def test_detail_delete_locks_task_before_results(intent, auth_client):
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connections["default"]) as captured:
+        response = auth_client.delete(f"{_CREATE}{intent.pk}/")
+    assert response.status_code == 204
+    locks = [q["sql"] for q in captured if "FOR UPDATE" in q["sql"]]
+
+    def lock_index(model):
+        table = f'FROM "{model._meta.db_table}"'
+        return next(i for i, sql in enumerate(locks) if table in sql)
+
+    assert lock_index(EvalTask) < lock_index(EvalLogger)
 
 
 @pytest.mark.parametrize("run_type", ["historical", "continuous"])

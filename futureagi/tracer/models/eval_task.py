@@ -165,6 +165,25 @@ class EvalTaskStartRequest(models.Model):
         ]
 
 
+class InstantEvalResume(models.Model):
+    """One explicit Resume handoff per task; never selected by create recovery."""
+
+    task = models.OneToOneField(
+        EvalTask, primary_key=True, on_delete=models.CASCADE, related_name="+"
+    )
+    token = models.UUIDField()
+    admitted_run_id = models.UUIDField(null=True)
+
+    class Meta:
+        db_table = "tracer_instant_eval_resume"
+
+    @classmethod
+    def outstanding(cls, task_id):
+        return cls.objects.using("default").filter(
+            pk=task_id, admitted_run_id__isnull=True
+        )
+
+
 class EvalTaskLogger(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     eval_task = models.ForeignKey(

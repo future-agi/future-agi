@@ -246,20 +246,39 @@ def _workflow_gone(task) -> bool:
     from tfc.temporal.eval_tasks.client import (
         WF_ABSENT,
         WF_CLOSED,
+        WF_LEGACY_CLOSED,
         describe_eval_task_workflow_sync,
     )
 
+    from tracer.models.eval_task import EvalTaskStartRequest, InstantEvalResume
     from tracer.services.eval_tasks.start_requests import has_recorded_work
 
+    if InstantEvalResume.outstanding(task.pk).exists():
+        return False
+    requests = EvalTaskStartRequest.objects.using("default").filter(pk=task.pk)
+    unadmitted = (
+        requests.filter(admitted_run_id__isnull=True)
+        .values_list("state", flat=True)
+        .first()
+    )
+    if unadmitted is not None and not has_recorded_work(task):
+        if unadmitted != EvalTaskStartRequest.State.VOID:
+            return False  # the recorded create still owns this handoff
+        # A fenced close isn't a stall. Don't trust a cached generic CLOSED:
+        # only a later explicit drain could have run without create admission.
+        try:
+            return describe_eval_task_workflow_sync(
+                task.id, timeout=5, distinguish_legacy=True
+            ) == WF_LEGACY_CLOSED
+        except Exception:
+            return False
     if task.continuous_cursor is None and not (task.filters or {}).get(
         rows_service.RUN_MARKER
     ):
         # A summary read doesn't turn a plain create into a stranded Ask run.
         # Its own reconciler observes the first admission until there is work.
-        from tracer.models.eval_task import EvalTaskStartRequest
         from tracer.models.observation_span import EvalLogger
 
-        requests = EvalTaskStartRequest.objects.using("default").filter(pk=task.pk)
         entries = EvalLogger.all_objects.using("default").filter(
             eval_task_id=str(task.pk)
         )

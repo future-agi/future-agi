@@ -128,7 +128,7 @@ const renderTaskDetail = (taskId = "missing-task") => {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[`/dashboard/tasks/${taskId}`]}>
         <Routes>
@@ -137,6 +137,7 @@ const renderTaskDetail = (taskId = "missing-task") => {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, queryClient };
 };
 
 const loadedTask = (overrides = {}) => ({
@@ -391,7 +392,9 @@ describe("TaskDetailPage", () => {
       isError: false,
     });
 
-    renderTaskDetail("task-1");
+    const logsKey = ["eval-task-logs", "task-1"];
+    const { queryClient } = renderTaskDetail("task-1");
+    queryClient.setQueryData(logsKey, { status: "failed" });
     fireEvent.click(screen.getByRole("button", { name: /re-run/i }));
 
     await screen.findByText("Re-run Task");
@@ -402,6 +405,7 @@ describe("TaskDetailPage", () => {
     });
 
     await waitFor(() => {
+      expect(queryClient.getQueryState(logsKey).isInvalidated).toBe(true);
       expect(axiosPatchMock).toHaveBeenCalledWith(
         "/tracer/eval-task/update_eval_task/",
         expect.objectContaining({

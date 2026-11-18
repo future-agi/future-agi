@@ -672,12 +672,17 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
   // this group. It isn't an evaluator error; don't attach generic retry tips.
   const startReason =
     data.total_count === 0 && errorGroups.length === 1 && errorGroups[0].raw;
+  const showStartReason =
+    startReason &&
+    (startReason !== START_FAILED ||
+      (effectiveStatus?.toLowerCase() === "failed" &&
+        (!taskStatus || taskStatus.toLowerCase() === "failed") &&
+        !isError &&
+        !isFetching));
   const suggestRerun =
     startReason === START_FAILED &&
-    effectiveStatus === "failed" &&
-    canRerun &&
-    !isError &&
-    !isFetching;
+    taskStatus?.toLowerCase() === "failed" &&
+    canRerun;
   const hasWarnings = warningGroups.length > 0;
   // Groups sort by count, and a group with no key breakdown cannot expand, so
   // auto-expand the largest one that actually has something behind it.
@@ -945,7 +950,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
       )}
 
       {/* Error Log — grouped by category with actionable fixes */}
-      {startReason && (
+      {showStartReason && (
         <Alert severity={effectiveStatus === "failed" ? "error" : "info"}>
           {startReason}
           {suggestRerun && " Choose Re-run to try again."}

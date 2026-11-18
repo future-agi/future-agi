@@ -23,30 +23,47 @@ def _workflow_id(task_id: str) -> str:
     return f"eval-task-{task_id}"
 
 
-def _select(task, task_queue, *, workflow_confirmed_stopped: bool = False):
+def _select(
+    task,
+    task_queue,
+    *,
+    workflow_confirmed_stopped: bool = False,
+    gated: bool = False,
+    resume_token: str | None = None,
+):
     """Return (workflow_class, workflow_input) for the task's run_type."""
     from tfc.temporal.eval_tasks.types import (
         ContinuousDrainState,
         EvalTaskWorkflowInput,
+        RequestedContinuousInput,
+        RequestedHistoricalInput,
     )
     from tfc.temporal.eval_tasks.workflows import (
         ContinuousEvalTaskWorkflow,
         HistoricalEvalTaskWorkflow,
+        RequestedContinuousEvalTaskWorkflow,
+        RequestedHistoricalEvalTaskWorkflow,
     )
     from tracer.models.eval_task import RunType
 
-    if task.run_type == RunType.CONTINUOUS:
-        return ContinuousEvalTaskWorkflow, ContinuousDrainState(
-            task_id=str(task.id),
-            task_queue=task_queue,
-            workflow_confirmed_stopped=workflow_confirmed_stopped,
-        )
-    return HistoricalEvalTaskWorkflow, EvalTaskWorkflowInput(
+    args = dict(
         task_id=str(task.id),
         task_queue=task_queue,
         workflow_confirmed_stopped=workflow_confirmed_stopped,
-        **_instant_sizing(task),
     )
+    if task.run_type == RunType.CONTINUOUS:
+        state = ContinuousDrainState(**args)
+        if gated:
+            return RequestedContinuousEvalTaskWorkflow, RequestedContinuousInput(
+                state, resume_token
+            )
+        return ContinuousEvalTaskWorkflow, state
+    data = EvalTaskWorkflowInput(**args, **_instant_sizing(task))
+    if gated:
+        return RequestedHistoricalEvalTaskWorkflow, RequestedHistoricalInput(
+            data, resume_token
+        )
+    return HistoricalEvalTaskWorkflow, data
 
 
 # Instant eval: a person is watching the answers land, so a run drains in
@@ -95,6 +112,7 @@ def start_eval_task_workflow_sync(
     replace_existing: bool = False,
     workflow_confirmed_stopped: bool | None = None,
     start_once: bool = False,
+    resume_token: str | None = None,
 ) -> str:
     """Start the workflow for ``task`` from synchronous Django code.
 
@@ -132,9 +150,9 @@ def start_eval_task_workflow_sync(
         task,
         task_queue,
         workflow_confirmed_stopped=workflow_confirmed_stopped,
+        gated=start_once or resume_token is not None,
+        resume_token=resume_token,
     )
-    if start_once:
-        workflow_input.start_once = True
     conflict_policy = (
         WorkflowIDConflictPolicy.TERMINATE_EXISTING
         if replace_existing
@@ -162,10 +180,14 @@ WF_PROGRESSING = "progressing"
 WF_ABSENT = "absent"
 WF_CLOSED = "closed"
 WF_COMPLETED = "completed"
+# Positive type evidence for a later, explicit legacy Re-run on a task whose
+# fenced create was voided. A generic CLOSED might just mean start_fenced.
+WF_LEGACY_CLOSED = "legacy_closed"
+WF_LEGACY_PROGRESSING = "legacy_progressing"
 
 
 async def describe_eval_task_workflow_async(
-    task_id, *, distinguish_completion: bool = False
+    task_id, *, distinguish_completion: bool = False, distinguish_legacy: bool = False
 ) -> str:
     """Classify the task's workflow: progressing, closed, or never/no longer there.
 
@@ -191,11 +213,15 @@ async def describe_eval_task_workflow_async(
         if exc.status == RPCStatusCode.NOT_FOUND:
             return WF_ABSENT
         raise
+    legacy = distinguish_legacy and description.workflow_type in (
+        "HistoricalEvalTaskWorkflow",
+        "ContinuousEvalTaskWorkflow",
+    )
     if description.status in (
         WorkflowExecutionStatus.RUNNING,
         WorkflowExecutionStatus.CONTINUED_AS_NEW,
     ):
-        return WF_PROGRESSING
+        return WF_LEGACY_PROGRESSING if legacy else WF_PROGRESSING
     if (
         distinguish_completion
         and description.status == WorkflowExecutionStatus.COMPLETED
@@ -208,20 +234,26 @@ async def describe_eval_task_workflow_async(
         WorkflowExecutionStatus.TERMINATED,
         WorkflowExecutionStatus.TIMED_OUT,
     ):
-        return WF_CLOSED
+        return WF_LEGACY_CLOSED if legacy else WF_CLOSED
     # An absent/unknown status in a successful reply isn't a closed execution.
     raise RuntimeError("unconfirmed eval task workflow status")
 
 
 def describe_eval_task_workflow_sync(
-    task_id, *, timeout: float | None = None, distinguish_completion: bool = False
+    task_id,
+    *,
+    timeout: float | None = None,
+    distinguish_completion: bool = False,
+    distinguish_legacy: bool = False,
 ) -> str:
     from tfc.temporal.common.client import _run_async_in_sync_context
 
     return _run_async_in_sync_context(
         lambda: asyncio.wait_for(
             describe_eval_task_workflow_async(
-                task_id, distinguish_completion=distinguish_completion
+                task_id,
+                distinguish_completion=distinguish_completion,
+                distinguish_legacy=distinguish_legacy,
             ),
             timeout,
         )

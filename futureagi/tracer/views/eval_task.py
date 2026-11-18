@@ -1924,8 +1924,16 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
 
     @transaction.atomic(using="default")
     def perform_destroy(self, instance):
-        # Cascade soft-delete to the task's loggers and eval results so they
-        # don't outlive the deleted task (mirrors mark_eval_tasks_deleted).
+        # Match fresh Re-run and bulk delete: task first, then loggers/results.
+        # Use the locked row, not the snapshot DRF read before this transaction.
+        instance = (
+            self._scope_eval_task_queryset(EvalTask.objects.using("default"))
+            .select_for_update(of=("self",))
+            .filter(pk=instance.pk)
+            .first()
+        )
+        if instance is None:
+            return
         now = timezone.now()
         EvalTaskLogger.objects.filter(eval_task_id=instance.id).update(
             deleted=True, deleted_at=now

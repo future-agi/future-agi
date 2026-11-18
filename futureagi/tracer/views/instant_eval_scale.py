@@ -24,6 +24,7 @@ import hashlib
 import json
 import math
 import time
+from uuid import uuid4
 
 import structlog
 from django.conf import settings
@@ -52,6 +53,7 @@ from tracer.models.eval_task import (
     EvalTask,
     EvalTaskStartRequest,
     EvalTaskStatus,
+    InstantEvalResume,
     RunType,
 )
 from tracer.models.instant_eval import InstantEvalRow, InstantEvalRun
@@ -61,7 +63,10 @@ from tracer.serializers.filters import SessionFilterListField
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_summary as summary_service
 from tracer.services import instant_eval_users as users_service
-from tracer.services.eval_tasks.start_requests import resume_block_reason
+from tracer.services.eval_tasks.start_requests import (
+    RESUME_OUTSTANDING,
+    resume_block_reason,
+)
 from tracer.services.instant_eval_run import (
     ACTIVE,
     DEFAULT_SAMPLE,
@@ -854,15 +859,37 @@ def _jev_key_missing(gm, project, configs):
     return None
 
 
-def _start_workflow_on_commit(task, *, replace: bool) -> None:
+def _start_workflow_on_commit(task, *, replace: bool, resume_token=None) -> None:
+    from temporalio.service import RPCError, RPCStatusCode
+
     from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync
 
     def start():
         try:
-            start_eval_task_workflow_sync(task, replace_existing=replace)
-        except Exception:
+            options = {"resume_token": str(resume_token)} if resume_token else {}
+            start_eval_task_workflow_sync(task, replace_existing=replace, **options)
+        except Exception as exc:
             logger.exception("instant_eval_workflow_start_failed", task_id=str(task.id))
-            EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.FAILED)
+            if not resume_token:
+                EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.FAILED)
+                return
+            # A timeout/lost reply does not release the handoff: an accepted
+            # worker can still admit it. Only a definitive rejection releases it.
+            if isinstance(exc, RPCError) and exc.status in (
+                RPCStatusCode.INVALID_ARGUMENT,
+                RPCStatusCode.PERMISSION_DENIED,
+                RPCStatusCode.UNAUTHENTICATED,
+            ):
+                with transaction.atomic():
+                    locked = (
+                        EvalTask.objects.select_for_update().filter(pk=task.pk).first()
+                    )
+                    removed, _ = InstantEvalResume.outstanding(task.pk).filter(
+                        token=resume_token
+                    ).delete()
+                    if removed and locked and locked.status == EvalTaskStatus.PENDING:
+                        locked.status = EvalTaskStatus.FAILED
+                        locked.save(update_fields=["status"])
 
     transaction.on_commit(start)
 
@@ -1618,18 +1645,18 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             logger.warning("instant_eval_pause_signal_failed", task_id=str(task.id))
         return self._ok(task, "Paused. Answers already being read will still land.")
 
-    def _restart(self, task):
+    def _restart(self, task, *, resume_token=None):
         EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PENDING)
         task.status = EvalTaskStatus.PENDING
         EvalTaskStartRequest.void_for_tasks([task.pk])
-        _start_workflow_on_commit(task, replace=True)
+        _start_workflow_on_commit(task, replace=True, resume_token=resume_token)
 
     def _resume(self, request, task, run, data):
         if run is not None and run.cancelled_at:
             return self._cancelled()
+        if InstantEvalResume.outstanding(task.pk).exists():
+            return self._gm.bad_request(RESUME_OUTSTANDING)
         resumable = task.status in RESUMABLE_TASK_STATUSES
-        if resumable and (reason := resume_block_reason(task)):
-            return self._gm.bad_request(reason)
         if not resumable and run is not None:
             # A run that stopped before finishing: its workflow is gone while
             # the task says running, or it finished with rows unanswered.
@@ -1642,6 +1669,8 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             return self._gm.bad_request(
                 f"The run is {task.status}; only a paused or stopped run can be resumed."
             )
+        if task.status not in ACTIVE and (reason := resume_block_reason(task)):
+            return self._gm.bad_request(reason)
         if busy := self._busy(request, task):
             return busy
         # Checked again: the key may have gone since the run started.
@@ -1673,14 +1702,21 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
                 != getattr(run, "answers_version", None)
             ):
                 return self._gm.bad_request("The run changed. Refresh before resuming.")
+            if InstantEvalResume.outstanding(task.pk).exists():
+                return self._gm.bad_request(RESUME_OUTSTANDING)
             if run is not None:
                 InstantEvalRun.objects.filter(id=run.id).update(
                     answers_version=F("answers_version") + 1
                 )
-            # The fresh run reads only the rows still without an answer.
-            self._restart(task)
+            # A second request may read this new version *before* our on_commit
+            # reaches Temporal. Only the matching worker settles this handoff.
+            token = uuid4()
+            InstantEvalResume.objects.update_or_create(
+                task=task, defaults={"token": token, "admitted_run_id": None}
+            )
+            self._restart(task, resume_token=token)
         cache.delete(f"ie-wf-gone:{task.id}")
-        return self._restarted(task, "Resumed.")
+        return self._restarted(task, "Resume requested.")
 
     def _cancel(self, request, task, run, data):
         from tfc.temporal.eval_tasks.client import signal_pause_eval_task_workflow

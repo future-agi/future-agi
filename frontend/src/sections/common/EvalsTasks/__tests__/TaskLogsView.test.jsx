@@ -77,6 +77,24 @@ describe("TaskLogsView totals", () => {
       expect(screen.queryByText(/choose re-run/i)).not.toBeInTheDocument();
   });
 
+  it.each(["Pending", "Running", "Completed"])(
+    "hides cached start-failure advice when the replacement is %s",
+    async (taskStatus) => {
+      const reason =
+        "The run couldn't start after an automatic retry. Your task is saved.";
+      mocks.readEvalTaskLogs.mockResolvedValue(
+        summary({
+          status: "failed",
+          total_count: 0,
+          error_groups: [{ normalized: reason, sample: reason, count: 1 }],
+        }),
+      );
+      renderView(taskStatus, true);
+      await screen.findByText("Completed runs");
+      expect(screen.queryByText(/couldn't start|choose re-run/i)).toBeNull();
+    },
+  );
+
   it("does not suggest a replacement for an unconfirmed start", async () => {
     const reason =
       "We couldn't confirm this task started. We'll keep checking.";

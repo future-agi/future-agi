@@ -12,11 +12,18 @@ from tfc.temporal.eval_tasks.types import (
 from tfc.temporal.eval_tasks.workflows import (
     ContinuousEvalTaskWorkflow,
     HistoricalEvalTaskWorkflow,
+    RequestedContinuousEvalTaskWorkflow,
+    RequestedHistoricalEvalTaskWorkflow,
 )
 
 
 def get_workflows():
-    return [HistoricalEvalTaskWorkflow, ContinuousEvalTaskWorkflow]
+    return [
+        HistoricalEvalTaskWorkflow,
+        ContinuousEvalTaskWorkflow,
+        RequestedHistoricalEvalTaskWorkflow,
+        RequestedContinuousEvalTaskWorkflow,
+    ]
 
 
 def get_activities():

@@ -320,7 +320,7 @@ def test_initial_start_retry_never_creates_a_second_execution(
 
     def start(**kwargs):
         assert kwargs["workflow_id"] == "eval-task-task-id"
-        assert kwargs["workflow_input"].start_once is True
+        assert kwargs["workflow_input"].drain.task_id == "task-id"
         assert kwargs["cancel_existing"] is False
         assert kwargs["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
         assert kwargs["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
@@ -346,6 +346,37 @@ def test_initial_start_retry_never_creates_a_second_execution(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("run_type", ["historical", "continuous"])
+def test_recorded_starts_only_route_to_new_registered_types(monkeypatch, run_type):
+    from unittest.mock import Mock
+
+    from tfc.temporal.eval_tasks import client, get_workflows, workflows
+
+    start = Mock(return_value=SimpleNamespace(id="wf"))
+    hop = Mock()
+    monkeypatch.setattr(client, "start_workflow_sync", start)
+    monkeypatch.setattr(workflows.workflow, "continue_as_new", hop)
+    task = SimpleNamespace(id="task-id", run_type=run_type)
+    for gated in (False, True):
+        client.start_eval_task_workflow_sync(
+            task, start_once=gated, workflow_confirmed_stopped=True
+        )
+        args = start.call_args.kwargs
+        expected = f"{run_type.title()}EvalTaskWorkflow"
+        kind = args["workflow_class"]
+        assert kind.__name__ == ("Requested" if gated else "") + expected
+        assert kind in get_workflows()
+        if gated:
+            checkpoint = args["workflow_input"].drain
+            kind()._continue_as_new(checkpoint)
+            hop.assert_called_once_with(
+                checkpoint, workflow=getattr(workflows, expected).run
+            )
+        else:
+            assert not hasattr(args["workflow_input"], "drain")
+
+
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_start_probe_distinguishes_success_from_other_closed_runs(monkeypatch):
     from unittest.mock import AsyncMock, Mock
@@ -368,6 +399,15 @@ async def test_start_probe_distinguishes_success_from_other_closed_runs(monkeypa
         probe = client.describe_eval_task_workflow_async
         assert await probe("task") == client.WF_CLOSED
         assert await probe("task", distinguish_completion=True) == expected
+
+    for workflow_type, expected in (
+        ("RequestedHistoricalEvalTaskWorkflow", client.WF_CLOSED),
+        ("HistoricalEvalTaskWorkflow", client.WF_LEGACY_CLOSED),
+    ):
+        describe.return_value = SimpleNamespace(
+            status=WorkflowExecutionStatus.COMPLETED, workflow_type=workflow_type
+        )
+        assert await probe("task", distinguish_legacy=True) == expected
 
 
 @pytest.mark.unit

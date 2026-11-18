@@ -20,6 +20,7 @@ from tracer.models.eval_task import (
     EvalTaskLogger,
     EvalTaskStartRequest,
     EvalTaskStatus,
+    InstantEvalResume,
     RowType,
     RunType,
 )
@@ -341,9 +342,13 @@ def _bridge_retired_dispatcher(eval_task: EvalTask) -> bool:
         # An orphan can continue legacy work, never make the initial send.
         # A still-watched create has its own fenced sender and reconciler.
         requests = EvalTaskStartRequest.objects.using("default").filter(pk=eval_task.pk)
-        if not has_recorded_work(eval_task) or requests.exclude(
-            state=EvalTaskStartRequest.State.VOID
-        ).exclude(last_outcome="execution_progress").exists():
+        if (
+            InstantEvalResume.outstanding(eval_task.pk).exists()
+            or not has_recorded_work(eval_task)
+            or requests.exclude(state=EvalTaskStartRequest.State.VOID)
+            .exclude(last_outcome="execution_progress")
+            .exists()
+        ):
             logger.info("legacy_eval_dispatch_skipped", eval_task_id=str(eval_task.pk))
             return True
         start_eval_task_workflow_sync(eval_task)

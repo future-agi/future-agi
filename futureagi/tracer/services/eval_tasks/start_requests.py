@@ -22,8 +22,10 @@ from tracer.models.eval_task import (
     EvalTaskLogger,
     EvalTaskStartRequest,
     EvalTaskStatus,
+    InstantEvalResume,
     RunType,
 )
+from tracer.models.instant_eval import InstantEvalRun
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 from tracer.services.eval_tasks.configuration import continuous_coverage_floor
@@ -37,6 +39,7 @@ UNCONFIRMED_AFTER = timedelta(minutes=30)
 # missed start from an accepted execution whose history expired.
 HISTORY_WINDOW = timedelta(days=1)
 MAX_ATTEMPTS = 2
+RESUME_OUTSTANDING = "A Resume is already awaiting confirmation."
 START_FAILURE_MESSAGE = (
     "The run couldn't start after an automatic retry. Your task is saved."
 )
@@ -78,23 +81,43 @@ def has_recorded_work(task):
         .exists()
         or EvalTaskLogger.objects.using("default").filter(eval_task_id=task.pk).exists()
         or _requests().filter(pk=task.pk, admitted_run_id__isnull=False).exists()
+        or InstantEvalRun.objects.using("default")
+        .filter(eval_task_id=task.pk)
+        .exclude(hash_cursor="")
+        .exists()
+        or InstantEvalResume.objects.using("default")
+        .filter(pk=task.pk, admitted_run_id__isnull=False)
+        .exists()
     )
 
 
 def resume_block_reason(task):
+    if InstantEvalResume.outstanding(task.pk).exists():
+        return RESUME_OUTSTANDING
     state = _requests().filter(pk=task.pk).values_list("state", flat=True).first()
     if state == State.START_FAILED:
         return START_FAILURE_MESSAGE
     if state == State.EXHAUSTED or has_recorded_work(task):
         return None
-    # A real run can be paused before writing its first entry. Require positive
-    # workflow history in that case; NOT_FOUND or an outage isn't permission.
+    if state not in (None, State.VOID):
+        return "No previous run could be confirmed for this task."
+    # A void create can be RUNNING at its gate, or COMPLETED with start_fenced.
+    # Only an independently started drain (e.g. a later explicit Re-run) can
+    # prove prior execution here. Pre-intent tasks retain the legacy check.
+    void = state == State.VOID
     try:
-        history = _call(client.describe_eval_task_workflow_sync, task.pk, timeout=5)
+        history = _call(
+            client.describe_eval_task_workflow_sync,
+            task.pk,
+            timeout=5,
+            **({"distinguish_legacy": True} if void else {}),
+        )
     except _TransportUnavailable:
         history = None
-    if history == client.WF_CLOSED or (
-        history == client.WF_PROGRESSING and task.status == EvalTaskStatus.PAUSED
+    closed = client.WF_LEGACY_CLOSED if void else client.WF_CLOSED
+    active = client.WF_LEGACY_PROGRESSING if void else client.WF_PROGRESSING
+    if history == closed or (
+        history == active and task.status == EvalTaskStatus.PAUSED
     ):
         return None
     return "No previous run could be confirmed for this task."
@@ -177,6 +200,27 @@ def start_request_error(task):
     if outcome is None or not _waiting_for_work(task.pk).exists():
         return None
     return _MESSAGES.get(outcome, _MESSAGES["start_unconfirmed"])
+
+
+@transaction.atomic(using="default")
+def admit_instant_resume(task_id, token, run_id):
+    """Only the worker for this handoff can settle it, even after a lost reply."""
+    task = _live_tasks(task_id).select_for_update(of=("self",)).first()
+    rows = InstantEvalResume.objects.using("default").filter(pk=task_id, token=token)
+    resume = rows.select_for_update().first()
+    if resume is None:
+        return False
+    if resume.admitted_run_id:
+        return (
+            str(resume.admitted_run_id) == run_id
+            and task is not None
+            and task.status in (EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING)
+        )
+    if task is None or task.status != EvalTaskStatus.PENDING:
+        rows.delete()  # Pause/delete won before this replacement reached its gate.
+        return False
+    rows.update(admitted_run_id=run_id)
+    return True
 
 
 @transaction.atomic(using="default")

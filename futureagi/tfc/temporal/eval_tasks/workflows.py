@@ -50,8 +50,11 @@ from tfc.temporal.eval_tasks.types import (
     ReapInput,
     ReconcileActivityInput,
     RequeueEntriesInput,
+    RequestedContinuousInput,
+    RequestedHistoricalInput,
     RunEntryInput,
     SetStatusInput,
+    StartAdmissionInput,
     TaskStateInput,
     WorkflowLabelsInput,
 )
@@ -236,10 +239,10 @@ def _is_claim_outcome_unknown(exc: BaseException) -> bool:
     return exc.cause.type == "EvalTaskClaimOutcomeUnknown" and exc.cause.non_retryable
 
 
-async def _admit_start(task_id: str) -> bool:
+async def _admit_start(task_id: str, resume_token: str | None) -> bool:
     return await workflow.execute_activity(
         "admit_eval_task_start_activity",
-        TaskStateInput(task_id=task_id),
+        StartAdmissionInput(task_id, resume_token),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
@@ -563,6 +566,9 @@ class _ObservableEvalWorkflow:
         self._paused = True
         self._recheck = True
 
+    def _continue_as_new(self, checkpoint) -> None:
+        workflow.continue_as_new(checkpoint)
+
     async def _sleep_or_recheck(self, seconds: int) -> None:
         try:
             await workflow.wait_condition(
@@ -579,11 +585,6 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
 
     @workflow.run
     async def run(self, input: EvalTaskWorkflowInput) -> EvalTaskWorkflowOutput:
-        # A rejected (or unavailable) gate does not own this task. Never run
-        # its fail handler, labels, reconcile, or any billable activity.
-        if input.start_once and not await _admit_start(input.task_id):
-            self._phase = PHASE_DONE
-            return EvalTaskWorkflowOutput(input.task_id, "start_fenced", 0)
         try:
             return await self._run(input)
         except Exception:
@@ -712,7 +713,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
             if not self._paused and _should_continue_as_new(
                 batches, input.continue_as_new_after_batches
             ):
-                workflow.continue_as_new(
+                self._continue_as_new(
                     EvalTaskWorkflowInput(
                         task_id=input.task_id,
                         task_queue=input.task_queue,
@@ -739,10 +740,6 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
 
     @workflow.run
     async def run(self, state: ContinuousDrainState) -> None:
-        if state.start_once and not await _admit_start(state.task_id):
-            self._phase = PHASE_DONE
-            return
-        state.start_once = False  # continue-as-new is not a new create
         try:
             if workflow.patched(_CONTINUOUS_DATABASE_BACKOFF_PATCH):
                 await self._run_with_database_backoff(state)
@@ -854,7 +851,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 state.workflow_confirmed_stopped = False
                 state.lost_entry_ids = _carried_lost(self._lost)
                 state.pause_requested = self._paused
-                workflow.continue_as_new(state)
+                self._continue_as_new(state)
 
     async def _run(self, state: ContinuousDrainState) -> None:
         self._lost.update(state.lost_entry_ids or ())
@@ -952,7 +949,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 # the next hop reaps again, and by then the execution draining
                 # this task is this one, so the describe taken before the
                 # original start no longer says anything about a live claim.
-                workflow.continue_as_new(
+                self._continue_as_new(
                     ContinuousDrainState(
                         task_id=state.task_id,
                         task_queue=state.task_queue,
@@ -967,7 +964,39 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 )
 
 
+# Rollout: migrate first, deploy workers registering BOTH generations (and the
+# admission activity), then enable the API and sweep senders. An old worker
+# cannot dispatch these names to an ungated drain. Keep the legacy types for
+# their open histories. An admitted run's next CAN is an ordinary drain.
+@workflow.defn
+class RequestedHistoricalEvalTaskWorkflow(HistoricalEvalTaskWorkflow):
+    def _continue_as_new(self, checkpoint) -> None:
+        workflow.continue_as_new(checkpoint, workflow=HistoricalEvalTaskWorkflow.run)
+
+    @workflow.run
+    async def run(self, input: RequestedHistoricalInput) -> EvalTaskWorkflowOutput:
+        if not await _admit_start(input.drain.task_id, input.resume_token):
+            self._phase = PHASE_DONE
+            return EvalTaskWorkflowOutput(input.drain.task_id, "start_fenced", 0)
+        return await super().run(input.drain)
+
+
+@workflow.defn
+class RequestedContinuousEvalTaskWorkflow(ContinuousEvalTaskWorkflow):
+    def _continue_as_new(self, checkpoint) -> None:
+        workflow.continue_as_new(checkpoint, workflow=ContinuousEvalTaskWorkflow.run)
+
+    @workflow.run
+    async def run(self, input: RequestedContinuousInput) -> None:
+        if not await _admit_start(input.drain.task_id, input.resume_token):
+            self._phase = PHASE_DONE
+            return
+        await super().run(input.drain)
+
+
 __all__ = [
+    "RequestedHistoricalEvalTaskWorkflow",
+    "RequestedContinuousEvalTaskWorkflow",
     "HistoricalEvalTaskWorkflow",
     "ContinuousEvalTaskWorkflow",
 ]

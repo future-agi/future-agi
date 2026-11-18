@@ -36,6 +36,7 @@ from tfc.temporal.eval_tasks.types import (
     RunEntryOutput,
     SetStatusInput,
     SetStatusOutput,
+    StartAdmissionInput,
     TaskStateInput,
     TaskStateOutput,
     WorkflowLabelsInput,
@@ -748,11 +749,16 @@ async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
     return ReapOutput(requeued=result["requeued"], failed=result["failed"])
 
 
-def _admit_start_sync(input: TaskStateInput, run_id: str) -> bool:
-    from tracer.services.eval_tasks.start_requests import admit_start
+def _admit_start_sync(input: StartAdmissionInput, run_id: str) -> bool:
+    from tracer.services.eval_tasks.start_requests import (
+        admit_instant_resume,
+        admit_start,
+    )
 
     close_old_connections()
     try:
+        if input.resume_token:
+            return admit_instant_resume(input.task_id, input.resume_token, run_id)
         return admit_start(input.task_id, run_id)
     finally:
         close_old_connections()
@@ -760,7 +766,7 @@ def _admit_start_sync(input: TaskStateInput, run_id: str) -> bool:
 
 @activity.defn
 @database_control_activity()
-async def admit_eval_task_start_activity(input: TaskStateInput) -> bool:
+async def admit_eval_task_start_activity(input: StartAdmissionInput) -> bool:
     async with Heartbeater():
         admitted = await otel_sync_to_async(_admit_start_sync, thread_sensitive=False)(
             input, activity.info().workflow_run_id
