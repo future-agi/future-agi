@@ -1,5 +1,7 @@
 """Attribute a simulation call to its target agent, not its recording transport."""
 
+from typing import cast
+
 from django.db.models import Case, F, Func, JSONField, TextField, Value, When
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Coalesce, NullIf
@@ -49,10 +51,10 @@ def execution_agent_provider(execution: TestExecution) -> str | None:
 
 def call_agent_provider(call: CallExecution) -> str | None:
     if hasattr(call, "result_provider"):
-        return call.result_provider
+        return cast("str | None", call.result_provider)
     metadata = call.call_metadata
     if isinstance(metadata, dict) and metadata.get(HOSTED_TARGET_PROVIDER):
-        return metadata[HOSTED_TARGET_PROVIDER]
+        return cast("str", metadata[HOSTED_TARGET_PROVIDER])
     return _configured_provider(
         call.test_execution, getattr(call, "agent_version", None)
     )
