@@ -2110,7 +2110,9 @@ function Header({
                               ? `Writing scenarios · ${scenarioProgress.shown} of ${scenarioProgress.total}`
                               : awaitingApproval
                                 ? "Awaiting approval"
-                                : "Building"}
+                                : !(done || []).includes("understand")
+                                  ? "Reading the agent"
+                                  : "Building"}
                           </Typography>
                         </Stack>
                       );
@@ -2375,7 +2377,10 @@ function Header({
           startIcon={<Iconify icon="solar:stop-circle-linear" width={16} />}
           sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
         >
-          Cancel build
+          {/* Nothing is built until the design is approved. */}
+          {awaitingApproval || !(done || []).includes("understand")
+            ? "Cancel"
+            : "Cancel build"}
         </Button>
       )}
       {source &&

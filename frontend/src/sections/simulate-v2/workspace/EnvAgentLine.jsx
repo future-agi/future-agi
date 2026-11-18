@@ -133,8 +133,7 @@ export default function EnvAgentLine({
      ?check=fail on the page makes the check fail. */
   const checkable = checksConnection(record || agent);
   const needsCheck = (label) =>
-    checkable &&
-    !isCredentialsVersion(versions.find((x) => x.label === label));
+    checkable && !isCredentialsVersion(versions.find((x) => x.label === label));
   const [pendingDefault, setPendingDefault] = useState(null);
   const [failedDefault, setFailedDefault] = useState(null);
   const makeDefault = (label) => {
@@ -148,11 +147,17 @@ export default function EnvAgentLine({
           label,
           reason: "it didn't reply to the test message",
         });
-        enqueueSnackbar(`${nm(label)} didn't pass its check here — the default stays ${nm(active)}.`, { variant: "error" });
+        enqueueSnackbar(
+          `${nm(label)} didn't pass its check here — the default stays ${nm(active)}.`,
+          { variant: "error" },
+        );
         return;
       }
       testHere(label);
-      enqueueSnackbar(`${nm(label)} passed its check here — it's now the default.`, { variant: "success" });
+      enqueueSnackbar(
+        `${nm(label)} passed its check here — it's now the default.`,
+        { variant: "success" },
+      );
     }, 6000);
   };
   const [syncOpen, setSyncOpen] = useState(false);
@@ -475,49 +480,52 @@ export default function EnvAgentLine({
           </Button>
         </Stack>
       )}
-      {compat && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1}
-          sx={{
-            px: 2,
-            py: 0.75,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <StatusDot
-            status={COMPAT_STATUS[compat.worst].dot}
-            size={6}
-            live={false}
-          />
-          <Typography
-            noWrap
+      {/* Ready to run means something exists to run — not while the agent is
+          still being read or the design waits for approval. */}
+      {compat &&
+        !["building", "awaiting_approval"].includes(env?.buildStatus) && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
             sx={{
-              typography: "s2",
-              color: "text.secondary",
-              flex: 1,
-              minWidth: 0,
+              px: 2,
+              py: 0.75,
+              borderTop: "1px solid",
+              borderColor: "divider",
             }}
           >
-            {`Ready to run · ${
-              compat.scope.blocked.length
-                ? `${compat.scope.blocked.length} of ${compat.scope.requested} scenarios blocked for this agent`
-                : "no scenario blocked for this agent"
-            }`}
-          </Typography>
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={viewCompat}
-            endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
-            sx={{ color: "text.primary", flexShrink: 0 }}
-          >
-            Review in Run setup
-          </Button>
-        </Stack>
-      )}
+            <StatusDot
+              status={COMPAT_STATUS[compat.worst].dot}
+              size={6}
+              live={false}
+            />
+            <Typography
+              noWrap
+              sx={{
+                typography: "s2",
+                color: "text.secondary",
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {`Ready to run · ${
+                compat.scope.blocked.length
+                  ? `${compat.scope.blocked.length} of ${compat.scope.requested} scenarios blocked for this agent`
+                  : "no scenario blocked for this agent"
+              }`}
+            </Typography>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={viewCompat}
+              endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
+              sx={{ color: "text.primary", flexShrink: 0 }}
+            >
+              Review in Run setup
+            </Button>
+          </Stack>
+        )}
       {agentNeedsRuntime(agent) && !locked && (
         <Box sx={{ px: 2, pb: 1.5 }}>
           <AgentRuntimeEditor agent={{ ...agent, key }} variant="embedded" />

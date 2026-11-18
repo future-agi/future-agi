@@ -665,7 +665,11 @@ export default function DesignReview({
       [
         "Description",
         flow ||
-          (files.length ? "None — the design is read from your files" : "—"),
+          (files.length
+            ? "None — the design is read from your files"
+            : testIsOptional(bf.kind)
+              ? "Proposed from the agent's prompt, code and tools"
+              : "—"),
       ],
       ["Sources", sourcesValue],
       ...(unusable.length

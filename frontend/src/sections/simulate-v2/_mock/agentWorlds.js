@@ -211,6 +211,9 @@ const MATCHERS = [
   [DISPATCH, /\b(pickups?|dispatch\w*|couriers?|rides?|taxi|book pickup|quote fare)\b/],
   [BILLING, /\b(bank\w*|billing|bills?|invoices?|disputes?|chargebacks?|raise dispute)\b/],
   [BOOKINGS, /\b(appointments?|clinic|medical|patients?|dental|hotel|guests?|reservations?|front desk|salon)\b/],
+  /* Orders and returns: the storefront line — named, so it wins over a
+     repository's name when the agent's own name says orders. */
+  [SUPPORT, /\b(orders?|returns?|refunds?|shipping|shipments?|lookup order)\b/],
 ];
 
 const toolNames = (list) => (Array.isArray(list) ? list.map((t) => (typeof t === "string" ? t : t?.name)) : []);
@@ -228,6 +231,15 @@ const namesOf = (source) => {
     ...toolNames(source?.tools), ...toolNames(agent?.definition?.tools),
   ]);
 };
+/* The agent's own name and tools — read before its repository or project,
+   whose names describe a whole team's code, not this agent. */
+const ownNamesOf = (source) => {
+  const agent = source?.connectedAgent || null;
+  return flat([
+    source?.agentName, agent?.name,
+    ...toolNames(source?.tools), ...toolNames(agent?.definition?.tools),
+  ]);
+};
 const promptOf = (source) => flat([source?.systemPrompt, source?.prompt, source?.connectedAgent?.definition?.prompt]);
 
 const match = (text) => MATCHERS.find(([, re]) => re.test(text))?.[0] || null;
@@ -239,7 +251,11 @@ const match = (text) => MATCHERS.find(([, re]) => re.test(text))?.[0] || null;
  */
 export const worldFor = (source) => {
   if (Array.isArray(source?.worldSource?.world?.tools)) return source.worldSource.world;
-  const read = match(namesOf(source)) || match(promptOf(source)) || SUPPORT;
+  const read =
+    match(ownNamesOf(source)) ||
+    match(namesOf(source)) ||
+    match(promptOf(source)) ||
+    SUPPORT;
   /* An MCP server as the world: its tools are what the agent acts on, one
      to one; the tables they answer from are still the agent's domain. */
   if (source?.worldSource?.kind === "mcp") {

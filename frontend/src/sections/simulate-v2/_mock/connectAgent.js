@@ -846,14 +846,17 @@ const TOOL_POOLS = {
   ],
   research: ["web_search", "fetch_page", "find_company", "cite"],
 };
-const poolFor = (text) => {
+const poolMatch = (text) => {
   const t = String(text || "").toLowerCase();
   if (/pickup|dispatch/.test(t)) return TOOL_POOLS.dispatch;
-  if (/bill|disput|card|payment/.test(t)) return TOOL_POOLS.billing;
+  if (/bill|disput|card|payment|invoice/.test(t)) return TOOL_POOLS.billing;
   if (/travel|rebook|flight/.test(t)) return TOOL_POOLS.travel;
   if (/research|notebook/.test(t)) return TOOL_POOLS.research;
-  return TOOL_POOLS.returns;
+  if (/order|return|refund|ship|cancel|warrant|address/.test(t))
+    return TOOL_POOLS.returns;
+  return null;
 };
+const poolFor = (text) => poolMatch(text) || TOOL_POOLS.returns;
 
 const entryFile = (entry) => String(entry).split(":")[0];
 const pyOrTs = (entry) =>
@@ -889,7 +892,13 @@ export const readAgentFolder = ({ repo, folder, branch, entryId }) => {
   /* A folder the scan found no framework in: the generic path — code that
      calls the model API directly, started where the person says. */
   const framework = agent?.framework || "Direct API calls";
-  const tools = poolFor(`${repo?.name || ""} ${folder}`).slice(
+  /* The agent's own name decides its tools; the repository's name only when
+     the agent's says nothing (an "Order status helper" in billing-copilot
+     still looks up orders). */
+  const tools = (
+    poolMatch(agent ? `${agent.id} ${agent.name}` : "") ||
+    poolFor(`${repo?.name || ""} ${folder}`)
+  ).slice(
     0,
     agent?.tools || 3 + (seed % 2),
   );
