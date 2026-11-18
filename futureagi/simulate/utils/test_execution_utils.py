@@ -60,6 +60,27 @@ def accrue_check_run_eval_cost(test_execution_id, credits) -> None:
         )
 
 
+def _unique_matching_calls(call_executions):
+    """Return each matching call once, read from the same database and order.
+
+    Search joins transcripts, so a call can repeat once rows are grouped. The
+    ids are read by running the incoming query as it is, not nested inside
+    another query, because the search adds raw SQL that names the table.
+    """
+    database = call_executions.db
+    call_ids = list(call_executions.order_by().values_list("pk", flat=True).distinct())
+    unique_calls = call_executions.model._base_manager.db_manager(database).filter(
+        pk__in=call_ids
+    )
+    query = call_executions.query
+    if query.order_by:
+        # The display fallback groups by the incoming created_at order too.
+        return unique_calls.order_by(*query.order_by)
+    if not query.default_ordering:
+        return unique_calls.order_by()
+    return unique_calls
+
+
 class TestExecutionUtils:
     def _apply_filters(
         self,
@@ -768,6 +789,7 @@ class TestExecutionUtils:
         self, call_executions, row_groups, group_keys, default_columns=None
     ):
         """Apply basic grouping using Django ORM"""
+        call_executions = _unique_matching_calls(call_executions)
         basic_fields = {
             "timestamp": "created_at__date",
             "status": "status",
@@ -779,12 +801,16 @@ class TestExecutionUtils:
             "response_time": "response_time_ms",
             "responseTime": "response_time_ms",
         }
-        if row_groups and all(field in basic_fields for field in row_groups):
-            group_by_fields = [basic_fields[field] for field in row_groups]
+        # Unrecognised ids in a mixed request are not grouping dimensions.
+        requested_fields = [
+            basic_fields[field] for field in row_groups if field in basic_fields
+        ]
+        if requested_fields:
+            group_by_fields = requested_fields
             # Ordering by individual calls' created_at also groups by that timestamp.
             call_executions = call_executions.order_by(*group_by_fields)
         elif default_columns:
-            # Keep the display-based fallback for mixed or unrecognized groups.
+            # Keep the display-based fallback when no requested group is recognised.
             group_by_fields = []
             for column in default_columns:
                 column_id = column.get("id")
@@ -866,7 +892,13 @@ class TestExecutionUtils:
                     if i < len(row_groups):
                         group_field = row_groups[i]
 
-                        if group_field == "timestamp":
+                        if group_key is None:
+                            # A null key names the bucket of calls without a value.
+                            if group_field in basic_fields:
+                                group_filter_conditions &= models.Q(
+                                    **{f"{basic_fields[group_field]}__isnull": True}
+                                )
+                        elif group_field == "timestamp":
                             group_filter_conditions &= models.Q(
                                 created_at__date=group_key
                             )

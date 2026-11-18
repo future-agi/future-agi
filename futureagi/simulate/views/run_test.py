@@ -2893,15 +2893,28 @@ class TestExecutionDetailView(APIView):
                 start = (page - 1) * page_size
                 end = start + page_size
                 paginated_calls = call_executions[start:end]
+                # Mirrors the dispatch in _apply_grouping. Basic groups keep the
+                # request in their links; scenario dataset groups keep bare links.
+                basic_grouping = not any(
+                    field.startswith("scenario_") and "dataset" in field
+                    for field in row_groups
+                )
+
+                def page_link(number):
+                    if not basic_grouping:
+                        return f"?page={number}"
+                    params = request.query_params.copy()
+                    params["page"] = str(number)
+                    return f"?{params.urlencode()}"
 
                 # Create a custom paginated response for grouped results
                 return Response(
                     {
                         "count": len(call_executions),
                         "next": (
-                            f"?page={page + 1}" if end < len(call_executions) else None
+                            page_link(page + 1) if end < len(call_executions) else None
                         ),
-                        "previous": f"?page={page - 1}" if page > 1 else None,
+                        "previous": page_link(page - 1) if page > 1 else None,
                         "results": paginated_calls,
                         "total_pages": (len(call_executions) + page_size - 1)
                         // page_size,
