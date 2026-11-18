@@ -61,6 +61,81 @@ const normalizeTraceListPayload = (payload) => {
   };
 };
 
+const EMPTY_AGGREGATES = {
+  total_traces: 0,
+  total_cost: 0,
+  avg_cost: 0,
+  avg_tokens: 0,
+  avg_latency: 0,
+};
+
+function TraceAggregates({ aggregates }) {
+  const items = [
+    {
+      label: "Traces",
+      value: Math.round(aggregates.total_traces).toLocaleString(),
+    },
+    { label: "Total cost", value: `$${aggregates.total_cost.toFixed(4)}` },
+    {
+      label: "Avg cost / trace",
+      value: `$${aggregates.avg_cost.toFixed(4)}`,
+    },
+    {
+      label: "Avg tokens / trace",
+      value: Math.round(aggregates.avg_tokens).toLocaleString(),
+    },
+    {
+      label: "Avg latency",
+      value: `${Math.round(aggregates.avg_latency).toLocaleString()}ms`,
+    },
+  ];
+
+  return (
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: {
+          xs: "repeat(2, minmax(0, 1fr))",
+          md: "repeat(5, minmax(0, 1fr))",
+        },
+        gap: 1,
+        mb: 1.5,
+      }}
+    >
+      {items.map((item) => (
+        <Box
+          key={item.label}
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 1,
+            px: 1.25,
+            py: 1,
+            minWidth: 0,
+          }}
+        >
+          <Typography noWrap variant="subtitle2">
+            {item.value}
+          </Typography>
+          <Typography noWrap variant="caption" color="text.secondary">
+            {item.label}
+          </Typography>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+TraceAggregates.propTypes = {
+  aggregates: PropTypes.shape({
+    total_traces: PropTypes.number.isRequired,
+    total_cost: PropTypes.number.isRequired,
+    avg_cost: PropTypes.number.isRequired,
+    avg_tokens: PropTypes.number.isRequired,
+    avg_latency: PropTypes.number.isRequired,
+  }).isRequired,
+};
+
 const TraceTab = React.forwardRef(
   (
     {
@@ -78,6 +153,7 @@ const TraceTab = React.forwardRef(
     const { projectId, runId } = useParams();
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [readError, setReadError] = useState(null);
+    const [aggregates, setAggregates] = useState(EMPTY_AGGREGATES);
 
     const [filters, setFilters] = useState([
       { ...defaultFilter, id: getRandomId() },
@@ -268,6 +344,7 @@ const TraceTab = React.forwardRef(
                 }),
             );
             const res = normalizeTraceListPayload(results.data);
+            setAggregates(res.aggregates ?? EMPTY_AGGREGATES);
             const columns = res.columnConfig.map((o) => ({
               ...o,
               id: o.id,
@@ -322,6 +399,7 @@ const TraceTab = React.forwardRef(
             flex: 1,
           }}
         >
+          <TraceAggregates aggregates={aggregates} />
           {readError && (
             <Box
               role="alert"
