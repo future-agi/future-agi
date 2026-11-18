@@ -15,6 +15,7 @@ export const WORKSPACE_TABS = [
     label: "Contract",
     icon: "solar:document-text-linear",
   },
+  { id: "actors", label: "Actors", icon: "solar:users-group-rounded-linear" },
   {
     id: "scenarios",
     label: "Scenarios",
@@ -249,6 +250,9 @@ export const VERSIONS_COPY = {
     fields: "Contract fields changed",
     modality: "Modality",
     subGoals: "Sub-goals",
+    actors: "Actors",
+    actorsUnknown:
+      "Actors of one of these versions aren't known, so actor changes aren't shown.",
     files: "World files",
     filesUnknown:
       "World files of the earlier version aren't known, so file changes aren't shown.",
@@ -421,6 +425,12 @@ export const AGENT_VERSIONS_COPY = {
 
 export const RUN_DIALOG_COPY = {
   title: "Run simulation",
+  seed: "Seed (optional)",
+  seedLine: "Seed",
+  seedNew: "New seed",
+  edit: "Edit",
+  done: "Done",
+  seedHelp: "The same seed draws the same personas and variations again",
   pieces: {
     agent: "Agent version",
     environment: "Environment version",
@@ -432,8 +442,10 @@ export const RUN_DIALOG_COPY = {
   loading: "Loading versions…",
   loadError: "Couldn't load the versions. The run uses the current defaults.",
   disabled: "Versioning is switched off, so the run uses the current versions.",
-  checking: "Checking these versions…",
-  planError: "Couldn't check these versions for warnings.",
+  checking: "Checking these versions and what the run would block…",
+  planError:
+    "Couldn't check these versions and what the run would block. The run can still start; a blocked one is refused.",
+  retryPlan: "Try again",
   refused: "These versions can't run.",
   rerunFallback:
     "That run's versions can't run now; using the current defaults.",
@@ -450,6 +462,17 @@ export const RUN_DIALOG_COPY = {
   notInSuite: (keys, suite) =>
     `${keys.length} selected scenario${keys.length === 1 ? " isn't" : "s aren't"} in ${suite} and will be skipped: ${keys.join(", ")}`,
   trials: (n) => `${n} repeat${n === 1 ? "" : "s"} each.`,
+  heldBack: (n, tools) =>
+    n
+      ? `${n} scenario${n === 1 ? "" : "s"} held back: ${tools.join(", ")} ${tools.length === 1 ? "reaches" : "reach"} production`
+      : `${tools.join(", ")} ${tools.length === 1 ? "reaches" : "reach"} production, so this test blocks ${tools.length === 1 ? "its" : "their"} calls`,
+  details: "Details",
+  hideDetails: "Hide details",
+  blockedTool: (tool) =>
+    `Blocked: ${tool} reaches production, so this test blocks its calls. Serve it from the agent's tools service or remove it.`,
+  usedBy: (names) => `Scenarios that use it: ${names.join(", ")}.`,
+  allBlocked: (tools) =>
+    `Every selected scenario needs ${tools.join(", ")}, which this test blocks. Serve it from the agent's tools service or remove it, then run again.`,
   cancel: "Cancel",
   run: "Run",
   runAnyway: "Run anyway",
@@ -563,6 +586,8 @@ export const COMPARE_COPY = {
     not_applicable: "n/a",
     criteria_changed: "criteria changed",
   },
+  notComparable: (count) =>
+    `${count} trial${count === 1 ? "" : "s"} left out: ${count === 1 ? "it" : "they"} did not start from the seeded records, so ${count === 1 ? "it" : "they"} cannot show whether results repeat.`,
 };
 
 // The run's agent is not the one its environment version was built with.

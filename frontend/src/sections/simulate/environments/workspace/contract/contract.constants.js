@@ -79,34 +79,6 @@ export const CONTRACT_COPY = {
   gapsSubtitle: "What compiling could not settle on its own",
   gapsFixGrading: "Fix in Evaluations",
   gapsReviewHere: "Review below",
-
-  actors: {
-    heading: "Actors",
-    headingBlurb:
-      "Other parties in the world, each with a goal that is not the task. They pull the episode off-course, which is what makes them part of the environment's dynamics rather than part of the task.",
-    calloutLead: "Not the same as a persona.",
-    calloutBody:
-      "The persona is who your agent is serving, the one whose goal the task is. An actor is someone else: you are trying to book a cab, and your colleague is saying let's get pizza instead.",
-    calloutLink: "See scenarios",
-    create: "Create actor",
-    castTitle: (n) => `In this environment (${n})`,
-    castSubtitle: "Injected into every run, at the version pinned here",
-    emptyIcon: "solar:users-group-two-rounded-linear",
-    emptyTitle: "No actors yet",
-    emptyBody:
-      "Without one, every run is a clean two-party conversation, which is rarely what happens in the wild.",
-    wants: "Wants:",
-    builtIn: "built in",
-    usedBy: (n) => `used by ${n}`,
-    detail: {
-      does: "What they do",
-      tests: "What it tests",
-      entry: "When they enter",
-      modalities: "Modalities",
-      traits: "Traits",
-      versions: "Versions",
-    },
-  },
 };
 
 export const GAP_LEGEND_ORDER = ["blocking", "assumed", "resolved"];
