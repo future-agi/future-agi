@@ -26,6 +26,7 @@ from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 from agent_playground.models import (
     GraphExecution,
     NodeExecution,
+    Port,
 )
 from agent_playground.models.choices import (
     GraphExecutionStatus,
@@ -302,6 +303,39 @@ class TestParallelExecution:
 @pytest.mark.django_db(transaction=True)
 class TestFailurePropagation:
     """Tests for failure and skip propagation."""
+
+    @pytest.mark.parametrize("has_output", [False, True], ids=["missing", "invalid"])
+    async def test_default_after_unusable_output(
+        self, workflow_environment, graph_builder, has_output
+    ):
+        # With no inputs the echo runner returns {}; otherwise it echoes a string
+        # into an integer output port. Both executions of the producer succeed.
+        producer = graph_builder.add_node(
+            "Producer", inputs=["seed"] if has_output else [], outputs=["upstream"]
+        )
+        required = graph_builder.add_node(
+            "Required", inputs=["needs"], outputs=["middle"]
+        )
+        later = graph_builder.add_node("Later", inputs=["fallback"], outputs=["result"])
+        graph_builder.add_edge(producer, "upstream", required, "needs")
+        graph_builder.add_edge(required, "middle", later, "fallback")
+        version = await sync_to_async(graph_builder.build)()
+        ports = Port.no_workspace_objects.filter(node__graph_version=version)
+        await ports.filter(display_name="upstream").aupdate(
+            data_schema={"type": "integer"}
+        )
+        await ports.filter(display_name="fallback").aupdate(default_value="recovered")
+
+        result, execution = await run_workflow(
+            workflow_environment, version, {"seed": "text"} if has_output else {}
+        )
+
+        nodes = await _get_node_executions(execution)
+        assert result.status == "FAILED"
+        assert nodes["Producer"].status == NodeExecutionStatus.SUCCESS
+        assert nodes["Required"].status == NodeExecutionStatus.SKIPPED
+        assert nodes["Later"].status == NodeExecutionStatus.SUCCESS
+        assert result.output_payload == {"result": "recovered"}
 
     async def test_first_node_fails_downstream_skipped(
         self, workflow_environment, graph_builder
