@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -38,6 +39,7 @@ from django.db import models, transaction
 from django.db.models import Exists, F, OuterRef, Q, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
+from django.utils.crypto import salted_hmac
 
 from tfc.utils.base_model import BaseModel
 
@@ -69,6 +71,10 @@ ATTEMPT_LEDGER_RETENTION = timedelta(days=7)
 ATTEMPT_LEDGER_MAX_RETENTION = timedelta(days=30)
 ERASURE_MAX_SUBJECT_IDS = 10_000
 ERASURE_MAX_CLAIM_TTL = timedelta(hours=1)
+# A completed erasure keeps a count and a keyed, salted one-way digest of its
+# subjects, never the identifiers themselves (store_payload["subject_scrub"]).
+ERASURE_SUBJECT_DIGEST = "hmac-sha256-salted-v1"
+_ERASURE_DIGEST_NAMESPACE = "tracer.metric_erasure.subject_digest"
 
 _CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
@@ -2491,6 +2497,9 @@ class MetricErasureRequest(models.Model):
     ``subject_ids`` is private: it is never logged, never shown in ``repr`` and
     never quoted in error text. Work resumes after an interruption: a failed or
     abandoned request can be claimed again and keeps its per-store receipts.
+    Completion (``finish``) scrubs ``subject_ids`` and ``store_payload["subjects"]``
+    to a count plus a keyed one-way digest in ``store_payload["subject_scrub"]``;
+    ``subject_sha256`` then holds that digest, not a plain hash of the IDs.
     """
 
     class Scope(models.TextChoices):
@@ -2822,26 +2831,139 @@ class MetricErasureRequest(models.Model):
             **{f"count_{key}": value for key, value in counts.items()},
         )
 
+    @staticmethod
+    def _subject_digest(values, salt: str) -> str:
+        """Keyed (SECRET_KEY, domain-separated) HMAC over a salted, sorted set.
+
+        The per-request random salt keeps digests uncorrelatable across
+        records even where SECRET_KEY is a public self-host default.
+        """
+
+        body = json.dumps(
+            sorted({str(value) for value in values}), separators=(",", ":")
+        )
+        return salted_hmac(
+            _ERASURE_DIGEST_NAMESPACE, f"{salt}:{body}", algorithm="sha256"
+        ).hexdigest()
+
+    @classmethod
+    def _scrubbed_fields(cls, row) -> dict:
+        """Field updates that replace a finished request's subjects by digests.
+
+        Returns {} when nothing identifying remains, so a scrub is idempotent.
+        The digest is computed from the stored row, never from an in-memory
+        (alias-expanded) copy. ``subject_count`` stays: it is a count.
+        """
+
+        ids = list(row.subject_ids or [])
+        payload = dict(row.store_payload or {})
+        if not ids and "subjects" not in payload:
+            return {}
+        salt = secrets.token_hex(16)
+        scrub = {"algorithm": ERASURE_SUBJECT_DIGEST, "salt": salt}
+        fields = {}
+        if ids:
+            digest = cls._subject_digest(ids, salt)
+            scrub["subject_ids"] = {"count": len(set(ids)), "sha256": digest}
+            # record() stored a plain sha256 of the IDs: reversible for short
+            # IDs, so it is replaced by the keyed digest as well.
+            fields["subject_sha256"] = digest
+        if "subjects" in payload:
+            subjects = payload.pop("subjects") or []
+            scrub["subjects"] = {
+                "count": len({str(value) for value in subjects}),
+                "sha256": cls._subject_digest(subjects, salt),
+            }
+        payload["subject_scrub"] = scrub
+        fields.update(subject_ids=[], store_payload=payload)
+        return fields
+
     @classmethod
     def finish(cls, request_id, *, token, now: datetime | None = None) -> None:
+        """Mark DONE once every store has its receipt, scrubbing subjects.
+
+        The same UPDATE that records completion replaces ``subject_ids`` and
+        ``store_payload["subjects"]`` by a count and a keyed one-way digest.
+        Queued, running and failed requests keep their IDs: they still need them.
+        """
+
         now = _now(now)
-        moved = cls.objects.filter(
-            id=request_id,
-            status=cls.Status.RUNNING,
-            claim_token=token,
-            receipts__has_keys=list(cls.Store.values),
-        ).update(
-            status=cls.Status.DONE,
-            completed_at=now,
-            claim_token=None,
-            claim_expires_at=None,
-            updated_at=now,
-        )
-        if moved != 1:
-            raise MetricStateConflict(
-                "the erasure claim is not held or a store has no receipt"
+        with transaction.atomic():
+            row = (
+                cls.objects.select_for_update()
+                .only(
+                    "id",
+                    "status",
+                    "claim_token",
+                    "receipts",
+                    "subject_ids",
+                    "store_payload",
+                )
+                .filter(id=request_id)
+                .first()
             )
+            if (
+                row is None
+                or row.status != cls.Status.RUNNING
+                or row.claim_token != token
+                or any(store not in (row.receipts or {}) for store in cls.Store.values)
+            ):
+                raise MetricStateConflict(
+                    "the erasure claim is not held or a store has no receipt"
+                )
+            moved = cls.objects.filter(
+                id=request_id,
+                status=cls.Status.RUNNING,
+                claim_token=token,
+                receipts__has_keys=list(cls.Store.values),
+            ).update(
+                status=cls.Status.DONE,
+                completed_at=now,
+                claim_token=None,
+                claim_expires_at=None,
+                updated_at=now,
+                **cls._scrubbed_fields(row),
+            )
+            if moved != 1:
+                raise MetricStateConflict(
+                    "the erasure claim is not held or a store has no receipt"
+                )
         logger.info("metric_erasure_done", erasure_request_id=str(request_id))
+
+    @classmethod
+    def scrub_completed(cls, *, limit: int = 500) -> int:
+        """Bounded, idempotent backfill for requests finished before scrubbing.
+
+        Selects exactly the DONE rows that still hold an identifier, so already
+        scrubbed rows never fill the window. Rows that are not DONE (queued,
+        running, failed) are never touched. Returns the number scrubbed.
+        """
+
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        candidates = list(
+            cls.objects.filter(status=cls.Status.DONE)
+            .filter(~Q(subject_ids=[]) | Q(store_payload__has_key="subjects"))
+            .order_by("completed_at", "id")
+            .values_list("id", flat=True)[:limit]
+        )
+        scrubbed = 0
+        for request_id in candidates:
+            with transaction.atomic():
+                row = (
+                    cls.objects.select_for_update()
+                    .only("id", "status", "subject_ids", "store_payload")
+                    .filter(id=request_id, status=cls.Status.DONE)
+                    .first()
+                )
+                fields = cls._scrubbed_fields(row) if row is not None else {}
+                if fields:
+                    scrubbed += cls.objects.filter(
+                        id=request_id, status=cls.Status.DONE
+                    ).update(**fields)
+        if scrubbed:
+            logger.info("metric_erasure_subjects_scrubbed", count=scrubbed)
+        return scrubbed
 
     @classmethod
     def fail(

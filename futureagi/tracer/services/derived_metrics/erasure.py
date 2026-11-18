@@ -4,6 +4,8 @@ Live retention uses the writer cleanup protocol; frozen-copy expiry uses this
 outbox. Ordinary conversation deletion is not an explicit metric erasure.
 Private subjects never appear in exceptions, logs or receipts. A receipt means
 physical deletion, including historical result versions, not just PG deletion.
+Once a request is DONE its subjects are scrubbed to a count and a keyed digest
+(MetricErasureRequest.finish); sweep() backfills requests finished earlier.
 """
 
 import hashlib
@@ -821,6 +823,12 @@ def sweep(limit=10):
         ).values_list("id", flat=True)[:1000]
     )
     MetricErasureRequest.objects.filter(id__in=terminal).delete()
+    try:
+        # Backfill: requests finished before completion scrubbed their subjects.
+        # A failure here must never stop pending (authorized) erasure work.
+        MetricErasureRequest.scrub_completed(limit=500)
+    except Exception as exc:
+        private_logger.exception("metric_erasure_scrub_pending", exc)
     ids = list(
         pending_requests()
         .order_by("updated_at", "requested_at")
