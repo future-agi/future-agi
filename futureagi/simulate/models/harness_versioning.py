@@ -178,7 +178,9 @@ class HarnessSuiteVersion(_HarnessPieceVersion):
     )
     scenario_count = models.PositiveSmallIntegerField(default=0)
     # Active or candidate at the lifecycle's deploy: its cases validated before proofs were recorded.
-    lifecycle_legacy = models.BooleanField(default=False)
+    # True for a version validated, if at all, before proofs were recorded. The database default is true, for rows an
+    # older release writes without the column; this release always writes the value itself (false for a new one).
+    lifecycle_legacy = models.BooleanField(default=False, db_default=True)
     authored_against = models.ForeignKey(
         HarnessEnvironmentVersion,
         on_delete=models.SET_NULL,

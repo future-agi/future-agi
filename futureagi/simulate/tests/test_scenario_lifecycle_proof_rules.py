@@ -303,3 +303,56 @@ def test_one_legacy_rule_decides_what_a_legacy_pair_says_about_a_key(
 
     assert legacy_verdict(entry, certified) == verdict
     assert _legacy_validated(entry, certified) is (verdict in ("entry", "certified"))
+
+
+def test_an_older_pods_insert_reads_legacy_and_our_save_writes_false(
+    user, workspace, storage
+):
+    """During a rolling deploy an older pod writes a suite version without the column: the database default marks it
+    legacy, so its cases keep running. This release writes the value itself: false for a new version."""
+    from django.db import connection
+
+    from simulate.models import HarnessSuiteVersion
+
+    environment = _environment(user, workspace, storage, "rv-db-default")
+    _suite(environment, _ten(), proved=False)
+    environment.refresh_from_db()
+    source = environment.suite_version
+    fields = {
+        field.name: getattr(source, field.name)
+        for field in HarnessSuiteVersion._meta.concrete_fields
+        if field.name not in ("id", "created_at", "updated_at", "lifecycle_legacy")
+    }
+    fields.update(
+        version_number=(source.version_number or 0) + 100,
+        hash=source.hash[:-4] + "ours",
+    )
+    # Saved through our model without naming the field: this release writes false.
+    ours = HarnessSuiteVersion._base_manager.create(**fields)
+    assert HarnessSuiteVersion._base_manager.get(id=ours.id).lifecycle_legacy is False
+
+    table = HarnessSuiteVersion._meta.db_table
+    columns = [
+        field.column
+        for field in HarnessSuiteVersion._meta.concrete_fields
+        if field.column != "lifecycle_legacy"
+    ]
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"INSERT INTO {table} ({', '.join(columns)}) "  # noqa: S608 - the model's own columns
+            "SELECT "
+            + ", ".join(
+                {
+                    "id": "gen_random_uuid()",
+                    "version_number": "version_number + 1",
+                    "hash": "left(hash, 67) || 'olds'",
+                }.get(one, one)
+                for one in columns
+            )
+            + " "
+            f"FROM {table} WHERE id = %s RETURNING id",  # noqa: S608 - the model's own table
+            [str(ours.id)],
+        )
+        older = cursor.fetchone()[0]
+
+    assert HarnessSuiteVersion._base_manager.get(id=older).lifecycle_legacy is True

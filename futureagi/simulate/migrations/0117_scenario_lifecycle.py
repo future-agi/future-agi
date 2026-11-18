@@ -48,15 +48,11 @@ class Migration(migrations.Migration):
             ),
         ),
         # Every suite version that exists at upgrade was validated, if at all, before proofs were
-        # recorded: the column is added true for those rows, then defaults false for new ones.
+        # recorded, and so is one an older pod still writes during a rolling deploy: the database
+        # default is true. This release always writes the value itself, false for a new version.
         migrations.AddField(
             model_name="harnesssuiteversion",
             name="lifecycle_legacy",
-            field=models.BooleanField(default=True),
-        ),
-        migrations.AlterField(
-            model_name="harnesssuiteversion",
-            name="lifecycle_legacy",
-            field=models.BooleanField(default=False),
+            field=models.BooleanField(db_default=True, default=False),
         ),
     ]
