@@ -70,15 +70,33 @@ def _requests():
     return EvalTaskStartRequest.objects.using("default")
 
 
-def has_recorded_work(task):
+def has_recorded_work(task, *, intent):
     """Positive evidence only; neither a coverage floor nor a summary is a run."""
     return (
-        task.continuous_cursor is not None
-        or EvalLogger.objects.using("default")
+        task.end_time is not None
+        or (intent is not None and intent["admitted_run_id"] is not None)
+        # _mark_running commits both fields before the first reconcile. With
+        # a create row, don't mistake its coverage floor for a later worker:
+        # a historical drain stamps its own start time, a continuous one needn't.
+        or (
+            task.status == EvalTaskStatus.RUNNING
+            and task.start_time is not None
+            and (
+                intent is None
+                or (
+                    task.run_type == RunType.HISTORICAL
+                    and task.start_time > intent["updated_at"]
+                )
+            )
+        )
+        or task.continuous_cursor is not None
+        # A fresh Re-run retires entries. They still prove this is not a first start.
+        or EvalLogger.all_objects.using("default")
         .filter(eval_task_id=str(task.pk))
         .exists()
-        or EvalTaskLogger.objects.using("default").filter(eval_task_id=task.pk).exists()
-        or _requests().filter(pk=task.pk, admitted_run_id__isnull=False).exists()
+        or EvalTaskLogger.all_objects.using("default")
+        .filter(eval_task_id=task.pk)
+        .exists()
         or InstantEvalRun.objects.using("default")
         .filter(eval_task_id=task.pk)
         .exclude(hash_cursor="")
@@ -86,46 +104,71 @@ def has_recorded_work(task):
     )
 
 
-def resume_block_reason(task, *, instant=False):
-    intent = (
-        _requests()
-        .filter(pk=task.pk)
-        .annotate(watched=EvalTaskStartRequest.live_condition())
-        .values("state", "watched")
-        .first()
-    )
-    state = intent["state"] if intent else None
-    # A failed create has no end_time. A later explicit Re-run that itself
-    # ran and failed has its own end_time; judge that run on its evidence.
-    failed_create = task.status == EvalTaskStatus.FAILED and not task.end_time
-    if failed_create and state == State.START_FAILED:
-        return START_FAILURE_MESSAGE
-    if has_recorded_work(task):
-        return None
-    if failed_create and state == State.EXHAUSTED:
-        if instant:
-            # Ask has Retry / Run again, not the standard task page's Re-run.
-            return _MESSAGES["execution_closed_without_progress"]
-        return "This start request is closed. Use Re-run to make a new start request."
-    if intent and intent["watched"]:
-        return "No previous run could be confirmed for this task."
-    # Preserve terminal create history after Re-run. A generic CLOSED might
-    # describe the old gated execution; require an independent drain type.
+def _has_drain_history(task, *, has_create):
+    # A create can close at its admission fence without ever running the drain.
+    # On those tasks only the independent workflow type proves a later start.
     try:
         history = _call(
             client.describe_eval_task_workflow_sync,
             task.pk,
             timeout=5,
-            **({"distinguish_legacy": True} if intent else {}),
+            **({"distinguish_legacy": True} if has_create else {}),
         )
     except _TransportUnavailable:
-        history = None
-    closed = client.WF_LEGACY_CLOSED if intent else client.WF_CLOSED
-    active = client.WF_LEGACY_PROGRESSING if intent else client.WF_PROGRESSING
-    if history == closed or (
+        return False
+    closed = client.WF_LEGACY_CLOSED if has_create else client.WF_CLOSED
+    active = client.WF_LEGACY_PROGRESSING if has_create else client.WF_PROGRESSING
+    return history == closed or (
         history == active and task.status == EvalTaskStatus.PAUSED
+    )
+
+
+def control_intent(task):
+    return (
+        _requests()
+        .filter(pk=task.pk)
+        .annotate(watched=EvalTaskStartRequest.live_condition())
+        .values("state", "watched", "admitted_run_id", "updated_at")
+        .first()
+    )
+
+
+def can_bridge_legacy_task(task):
+    """Continue a prior run, never bypass the sender of a still-watched create."""
+    intent = control_intent(task)
+    if intent and intent["watched"]:
+        return False
+    return has_recorded_work(task, intent=intent) or _has_drain_history(
+        task, has_create=intent is not None
+    )
+
+
+def _later_submission(task, intent):
+    # Save & Re-run stamps last_run; a rename doesn't. This writable timestamp
+    # only suppresses an obsolete explanation. It NEVER authorizes a start.
+    return task.last_run is not None and task.last_run > intent["updated_at"]
+
+
+def resume_block_reason(task, *, instant=False):
+    intent = control_intent(task)
+    if has_recorded_work(task, intent=intent):
+        return None
+    if not (intent and intent["watched"]) and _has_drain_history(
+        task, has_create=intent is not None
     ):
         return None
+    if (
+        task.status == EvalTaskStatus.FAILED
+        and intent
+        and not _later_submission(task, intent)
+    ):
+        if intent["state"] == State.START_FAILED:
+            return START_FAILURE_MESSAGE
+        if intent["state"] == State.EXHAUSTED:
+            if instant:
+                # Ask has Retry / Run again, not the standard task page's Re-run.
+                return _MESSAGES["execution_closed_without_progress"]
+            return "This start request is closed. Use Re-run to make a new start request."
     return "No previous run could be confirmed for this task."
 
 
@@ -187,10 +230,18 @@ def start_request_error(task):
         return None
     rows = _requests().filter(pk=task.pk)
     if task.status == EvalTaskStatus.FAILED:
-        row = rows.values_list("state", "last_outcome").first()
-        if row and row[0] == State.START_FAILED:
+        row = (
+            rows.filter(state__in=(State.START_FAILED, State.EXHAUSTED))
+            .values("state", "last_outcome", "admitted_run_id", "updated_at")
+            .first()
+        )
+        if not row or _later_submission(task, row):
+            return None
+        if not row["admitted_run_id"] and has_recorded_work(task, intent=row):
+            return None  # a later run, not the create that failed before admission
+        if row["state"] == State.START_FAILED:
             return START_FAILURE_MESSAGE
-        return _MESSAGES.get(row[1]) if row and row[0] == State.EXHAUSTED else None
+        return _MESSAGES.get(row["last_outcome"])
     # The same Temporal outage that lost the reply may prevent every scheduled
     # check. Reading Logs must explain an aged request without dispatching it.
     outcome = (

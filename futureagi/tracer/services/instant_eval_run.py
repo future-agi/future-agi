@@ -250,17 +250,13 @@ def _workflow_gone(task) -> bool:
         describe_eval_task_workflow_sync,
     )
 
-    from tracer.models.eval_task import EvalTaskStartRequest
-    from tracer.services.eval_tasks.start_requests import has_recorded_work
-
-    intent = (
-        EvalTaskStartRequest.objects.using("default")
-        .filter(pk=task.pk)
-        .annotate(watched=EvalTaskStartRequest.live_condition())
-        .values("admitted_run_id", "watched")
-        .first()
+    from tracer.services.eval_tasks.start_requests import (
+        control_intent,
+        has_recorded_work,
     )
-    if intent and not intent["admitted_run_id"] and not has_recorded_work(task):
+
+    intent = control_intent(task)
+    if intent and not has_recorded_work(task, intent=intent):
         if intent["watched"]:
             return False  # create alone owns this handoff
         # A gated execution may have closed without ever being admitted.
@@ -294,7 +290,7 @@ def _workflow_gone(task) -> bool:
     try:
         history = describe_eval_task_workflow_sync(task.id)
         gone = history == WF_CLOSED or (
-            history == WF_ABSENT and has_recorded_work(task)
+            history == WF_ABSENT and has_recorded_work(task, intent=intent)
         )
     except Exception:
         logger.warning("instant_eval_describe_failed", task_id=str(task.id))

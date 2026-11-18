@@ -2180,7 +2180,7 @@ def _redirect_retired_eval_task_activity(eval_task_id) -> bool:
     if eval_task_id in (None, ""):
         return False
     try:
-        eval_task = EvalTask.objects.get(id=eval_task_id)
+        eval_task = EvalTask.objects.using("default").get(id=eval_task_id)
     except EvalTask.DoesNotExist:
         logger.warning(
             "legacy_eval_activity_task_missing",

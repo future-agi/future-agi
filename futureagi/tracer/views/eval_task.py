@@ -2152,6 +2152,8 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 .only(
                     "id",
                     "project_id",
+                    "last_run",
+                    "continuous_cursor",
                     "start_time",
                     "end_time",
                     "status",

@@ -18,14 +18,13 @@ from tfc.temporal import temporal_activity
 from tracer.models.eval_task import (
     EvalTask,
     EvalTaskLogger,
-    EvalTaskStartRequest,
     EvalTaskStatus,
     RowType,
     RunType,
 )
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
-from tracer.services.eval_tasks.start_requests import has_recorded_work
+from tracer.services.eval_tasks.start_requests import can_bridge_legacy_task
 from tracer.services.filter_principal_context import bound_my_annotations_principal
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.eval import (
@@ -340,13 +339,7 @@ def _bridge_retired_dispatcher(eval_task: EvalTask) -> bool:
     try:
         # An orphan can continue legacy work, never make the initial send.
         # A still-watched create has its own fenced sender and reconciler.
-        requests = EvalTaskStartRequest.objects.using("default").filter(pk=eval_task.pk)
-        if (
-            not has_recorded_work(eval_task)
-            or requests.exclude(state=EvalTaskStartRequest.State.VOID)
-            .exclude(last_outcome="execution_progress")
-            .exists()
-        ):
+        if not can_bridge_legacy_task(eval_task):
             logger.info("legacy_eval_dispatch_skipped", eval_task_id=str(eval_task.pk))
             return True
         start_eval_task_workflow_sync(eval_task)
@@ -383,7 +376,7 @@ def eval_task_cron():
         EvalTask.objects.using("default")
         .filter(status__in=[EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING])
         .order_by("created_at")
-        .only("id", "continuous_cursor")
+        .only("id", "status", "run_type", "start_time", "end_time", "continuous_cursor")
     )
     cnt = eval_tasks.count()
 
@@ -392,7 +385,7 @@ def eval_task_cron():
 
     eval_tasks = eval_tasks[offset : offset + 5]
     for task in eval_tasks:
-        if has_recorded_work(task):
+        if can_bridge_legacy_task(task):
             process_eval_task.delay(task.pk)
         else:
             logger.info("legacy_eval_dispatch_skipped", eval_task_id=str(task.pk))
@@ -407,7 +400,7 @@ def eval_task_cron():
 def process_eval_task(eval_task_id: str):
     try:
         try:
-            eval_task = EvalTask.objects.get(id=eval_task_id)
+            eval_task = EvalTask.objects.using("default").get(id=eval_task_id)
         except EvalTask.DoesNotExist:
             logger.error(f"Eval task with id {eval_task_id} not found")
             return
@@ -771,7 +764,7 @@ def run_for_processed_spans(span_ids: list, eval_ids: list, eval_task_id: str):
     the authoritative desired set from the persisted task configuration.
     """
     try:
-        eval_task = EvalTask.objects.get(id=eval_task_id)
+        eval_task = EvalTask.objects.using("default").get(id=eval_task_id)
     except EvalTask.DoesNotExist:
         logger.error(
             "legacy_eval_batch_task_missing",
