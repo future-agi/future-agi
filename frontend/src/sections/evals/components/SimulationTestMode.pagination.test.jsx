@@ -22,13 +22,10 @@ vi.mock("src/utils/axios", async () => {
   };
 });
 
-vi.mock("./useMapToVariable", () => ({
-  useMapToVariable: () => ({
-    renderRowMapAction: () => null,
-    mapMenu: null,
-    rowHoverSx: {},
-  }),
+vi.mock("src/components/tooltip", () => ({
+  default: ({ children }) => children,
 }));
+vi.mock("src/components/snackbar", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock("../hooks/useCompositeEval", () => ({
   useExecuteCompositeEval: () => ({ mutateAsync: vi.fn() }),
   useExecuteCompositeEvalAdhoc: () => ({ mutateAsync: vi.fn() }),
@@ -311,8 +308,9 @@ describe("SimulationTestMode exact snapshot pagination", () => {
     expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
   });
 
-  it("does not reuse a dotted column's UUID for a new nested field selection on the next call", async () => {
-    const path = "scenario.columns.profile.name";
+  const dottedPath = "scenario.columns.profile.name";
+
+  function mockDottedScenarioColumns() {
     const columnsByCall = {
       "call-1": {
         "profile.name": {
@@ -340,6 +338,10 @@ describe("SimulationTestMode exact snapshot pagination", () => {
       }
       return original(url, config);
     });
+  }
+
+  it("does not reuse a dotted column's UUID for a new nested field selection on the next call", async () => {
+    mockDottedScenarioColumns();
     const ready = vi.fn();
     render(
       <SimulationTestMode
@@ -351,19 +353,82 @@ describe("SimulationTestMode exact snapshot pagination", () => {
 
     await screen.findByText('"Literal name"');
     fireEvent.mouseDown(screen.getAllByPlaceholderText("Search field...")[0]);
-    fireEvent.click(await screen.findByRole("option", { name: path }));
+    fireEvent.click(await screen.findByRole("option", { name: dottedPath }));
     expect(ready).toHaveBeenLastCalledWith(false, { first: selectedId });
 
     await goToSecondCall();
     await screen.findByText('"Nested name"');
     fireEvent.mouseDown(screen.getAllByPlaceholderText("Search field...")[1]);
-    fireEvent.click(await screen.findByRole("option", { name: path }));
+    fireEvent.click(await screen.findByRole("option", { name: dottedPath }));
     expect(ready).toHaveBeenLastCalledWith(
       true,
       expect.objectContaining({
         second: "scenario_columns.profile.value.name",
       }),
     );
+  });
+
+  it.each(["row action", "dropdown"])(
+    "saves the nested field after a same-path reassignment through the %s",
+    async (control) => {
+      mockDottedScenarioColumns();
+      const ready = vi.fn();
+      render(
+        <SimulationTestMode
+          initialRunTestId="run-1"
+          variables={["first"]}
+          onReadyChange={ready}
+        />,
+      );
+
+      await screen.findByText('"Literal name"');
+      fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
+      fireEvent.click(await screen.findByRole("option", { name: dottedPath }));
+      expect(ready).toHaveBeenLastCalledWith(true, { first: selectedId });
+
+      await goToSecondCall();
+      const nestedName = await screen.findByText('"Nested name"');
+      if (control === "row action") {
+        const row = nestedName.parentElement.parentElement;
+        fireEvent.click(
+          within(row).getByRole("button", { name: "Map to first" }),
+        );
+      } else {
+        fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
+        fireEvent.click(
+          await screen.findByRole("option", { name: dottedPath }),
+        );
+      }
+      expect(ready).toHaveBeenLastCalledWith(true, {
+        first: "scenario_columns.profile.value.name",
+      });
+    },
+  );
+
+  it("keeps the nested save key when navigating back to a literal column with the same path", async () => {
+    mockDottedScenarioColumns();
+    const ready = vi.fn();
+    render(
+      <SimulationTestMode
+        initialRunTestId="run-1"
+        variables={["first"]}
+        onReadyChange={ready}
+      />,
+    );
+
+    await screen.findByText('"Literal name"');
+    await goToSecondCall();
+    await screen.findByText('"Nested name"');
+    fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
+    fireEvent.click(await screen.findByRole("option", { name: dottedPath }));
+    const nestedMapping = { first: "scenario_columns.profile.value.name" };
+    expect(ready).toHaveBeenLastCalledWith(true, nestedMapping);
+
+    const counter = screen.getByText("Call 2 · 2 of 2 loaded");
+    const [previousCall] = within(counter.parentElement).getAllByRole("button");
+    fireEvent.click(previousCall);
+    await screen.findByText('"Literal name"');
+    expect(ready).toHaveBeenLastCalledWith(true, nestedMapping);
   });
 
   function mockEmptyFirstExecution(scenarioColumns = {}) {

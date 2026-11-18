@@ -29,7 +29,7 @@ export const mapRowHoverSx = {
   },
 };
 
-export function useMapToVariable({ variables, mapping, setMapping }) {
+export function useMapToVariable({ variables, mapping, setMapping, onAssign }) {
   const vars = useMemo(
     () => (Array.isArray(variables) ? variables : []),
     [variables],
@@ -39,10 +39,11 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
 
   const assignPathToVariable = useCallback(
     (variable, path) => {
-      setMapping((prev) => ({ ...prev, [variable]: path }));
+      if (onAssign) onAssign(variable, path);
+      else setMapping((prev) => ({ ...prev, [variable]: path }));
       enqueueSnackbar(`Mapped to ${variable}`, { variant: "success" });
     },
-    [setMapping],
+    [onAssign, setMapping],
   );
 
   const handleRowMapClick = useCallback(

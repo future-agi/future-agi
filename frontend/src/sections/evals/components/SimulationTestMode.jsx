@@ -302,20 +302,48 @@ const SimulationTestMode = React.forwardRef(
     const [tableSearch, setTableSearch] = useState("");
     const [expandedCols, setExpandedCols] = useState({});
 
-    // Variable mapping (stores display keys internally; scenario fields are
-    // translated to their UUID when emitted to the parent).
-    // Seeded from `initialMapping` when editing an existing eval (TH-4302).
-    const [mapping, setMapping] = useState(
+    // A displayed path can refer to different fields on different calls.
+    // Keep each selection's saved identity separate from its display path.
+    const [selections, setSelections] = useState(() =>
       initialMapping && typeof initialMapping === "object"
-        ? { ...initialMapping }
+        ? Object.fromEntries(
+            Object.entries(initialMapping).map(([variable, field]) => [
+              variable,
+              { field },
+            ]),
+          )
         : {},
+    );
+    const mapping = useMemo(
+      () =>
+        Object.fromEntries(
+          Object.entries(selections).map(([variable, { field }]) => [
+            variable,
+            field,
+          ]),
+        ),
+      [selections],
+    );
+    const resolveSaveKey = useCallback(
+      (field) =>
+        preview?.scenarioIdsByPath.get(field) ??
+        (preview && translateDeepScenarioColumn(field)) ??
+        field,
+      [preview],
+    );
+    const assignField = useCallback(
+      (variable, field) => {
+        const saveKey = resolveSaveKey(field);
+        setSelections((prev) => ({ ...prev, [variable]: { field, saveKey } }));
+      },
+      [resolveSaveKey],
     );
 
     // Shared click-to-map behaviour for the Columns/Value table rows.
     const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
       variables,
       mapping,
-      setMapping,
+      onAssign: assignField,
     });
     // Eval result
     const [, setIsRunning] = useState(false);
@@ -1136,27 +1164,39 @@ const SimulationTestMode = React.forwardRef(
       }
     }, [fieldNames.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Auto-map variables to fields when names match
+    const fieldOptions = useMemo(
+      () => fieldNames.map((field) => ({ field })),
+      [fieldNames],
+    );
+
+    // Resolve seeded paths once a preview is available, and auto-map variables
+    // when names match. Navigation must not replace an already bound save key.
     useEffect(() => {
-      if (!fieldNames.length || !variables.length) return;
-      setMapping((prev) => {
+      setSelections((prev) => {
         const next = { ...prev };
         let changed = false;
+        if (preview) {
+          for (const [variable, { field, saveKey }] of Object.entries(prev)) {
+            if (saveKey !== undefined || !field) continue;
+            next[variable] = { field, saveKey: resolveSaveKey(field) };
+            changed = true;
+          }
+        }
         variables.forEach((v) => {
-          if (next[v]) return;
+          if (next[v]?.field) return;
           const exact = fieldNames.find((f) => f === v);
           const ci =
             !exact &&
             fieldNames.find((f) => f.toLowerCase() === v.toLowerCase());
-          const match = exact || ci;
-          if (match) {
-            next[v] = match;
+          const field = exact || ci;
+          if (field) {
+            next[v] = { field, saveKey: resolveSaveKey(field) };
             changed = true;
           }
         });
         return changed ? next : prev;
       });
-    }, [variables, fieldNames]);
+    }, [variables, fieldNames, preview, resolveSaveKey]);
 
     // Notify parent EvalPickerConfigFull when the mapping is complete so the
     // "Add Evaluation" button can enable. Without this bridge, sourceReady
@@ -1169,25 +1209,16 @@ const SimulationTestMode = React.forwardRef(
       [selectedRunTestId, variables, mapping],
     );
 
-    // A literal column and a nested field can share a display path across calls.
-    // Reuse a save key only for the variable that kept that selection.
-    const savedSelections = useRef(new Map());
     useEffect(() => {
-      const persistedMapping = {};
-      const nextSelections = new Map();
-      for (const [variable, field] of Object.entries(mapping)) {
-        const previous = savedSelections.current.get(variable);
-        const saveKey =
-          preview?.scenarioIdsByPath.get(field) ??
-          (previous && previous.field === field ? previous.saveKey : null) ??
-          (preview && translateDeepScenarioColumn(field));
-        if (saveKey) nextSelections.set(variable, { field, saveKey });
-        persistedMapping[variable] = saveKey ?? field;
-      }
-      savedSelections.current = nextSelections;
+      const persistedMapping = Object.fromEntries(
+        Object.entries(selections).map(([variable, { field, saveKey }]) => [
+          variable,
+          saveKey ?? field,
+        ]),
+      );
       onReadyChange?.(isReady, persistedMapping);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isReady, mapping, preview]);
+    }, [isReady, selections]);
 
     // Run test
     const handleRunTest = useCallback(async () => {
@@ -1413,7 +1444,7 @@ const SimulationTestMode = React.forwardRef(
               setSelectedRunTestId(val?.id || "");
               setLoadingMoreExecutions(false);
               setLoadingMoreCalls(false);
-              setMapping({});
+              setSelections({});
               setRunTestContext(null);
               setExecutions([]);
               setExecutionsTotal(0);
@@ -2141,7 +2172,8 @@ const SimulationTestMode = React.forwardRef(
             </Typography>
             <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
               {variables.map((variable) => {
-                const currentValue = mapping[variable];
+                const selection = selections[variable];
+                const currentValue = selection?.field;
                 // Fail-closed on null callDetail (loading): treat as text-call.
                 const isTextCallSafe = callDetail
                   ? isTextCallDetail(callDetail)
@@ -2159,22 +2191,21 @@ const SimulationTestMode = React.forwardRef(
                     size="small"
                     disabled={isMappingPending}
                     options={
-                      showCurrent ? [currentValue, ...fieldNames] : fieldNames
+                      showCurrent ? [selection, ...fieldOptions] : fieldOptions
                     }
-                    getOptionLabel={fieldLabel}
-                    getOptionKey={(key) => key}
-                    value={mapping[variable] || null}
+                    getOptionLabel={({ field }) => fieldLabel(field)}
+                    getOptionKey={({ field }) => field}
+                    // Distinct option objects let MUI emit onChange when the
+                    // user picks a live field with the same displayed path.
+                    value={currentValue ? selection : null}
                     onChange={(_, val) =>
-                      setMapping((prev) => ({
-                        ...prev,
-                        [variable]: val || "",
-                      }))
+                      assignField(variable, val?.field || "")
                     }
                     openOnFocus
                     autoHighlight
                     selectOnFocus
                     handleHomeEndKeys
-                    isOptionEqualToValue={(opt, val) => opt === val}
+                    isOptionEqualToValue={(opt, val) => opt.field === val.field}
                     sx={{ flex: 1 }}
                     ListboxProps={{ style: { maxHeight: 260 } }}
                     renderInput={(params) => (
@@ -2204,7 +2235,7 @@ const SimulationTestMode = React.forwardRef(
                         }}
                       />
                     )}
-                    renderOption={(props, col) => {
+                    renderOption={(props, { field: col }) => {
                       const { key, ...rest } = props;
                       return (
                         <Box
