@@ -89,7 +89,7 @@ func TestOpenRouterTokenCostPrecedence(t *testing.T) {
 	db := &fakeDB{row: fakeRow{in: 100, out: 100}}
 	p = newOpenRouterTestPricer(t, db)
 	c, ok = p.OpenRouterTokenCost(ctx, "org", "anthropic/claude-haiku-4.5", 1000, 0)
-	if !ok || c != 1000*(100.0/1000) {
+	if !ok || c != 0.10 {
 		t.Fatalf("custom price expected: %v ok=%v", c, ok)
 	}
 
