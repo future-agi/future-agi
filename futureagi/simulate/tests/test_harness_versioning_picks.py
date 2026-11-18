@@ -1523,7 +1523,9 @@ class TestProductionOnly:
 
         assert response.status_code == 409, response.content
         body = response.json()
-        assert body["error"] == "production_only"
+        # Readiness holds back every case needing the production-only tool, naming it and the fix.
+        assert body["error"] == "all_cases_blocked"
+        assert body["selection"]["held_back"]["by"] == {"tool_routing": 1}
         assert "issue_refund" in body["message"]
         assert "serve it from the agent's tools service or remove it" in body["message"]
         assert not HostedHarnessJob.no_workspace_objects.filter(
