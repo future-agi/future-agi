@@ -16,6 +16,7 @@ import {
   oneTurn,
   prose,
   timeline,
+  WORKERS,
 } from "../__fixtures__/workerRecord";
 
 const seqOf = (record) =>
@@ -36,9 +37,24 @@ describe("sequenceOf over the worker record", () => {
     expect(seq.lanes.map((lane) => lane.id)).toEqual([
       USER_LANE,
       "coordinator",
-      "order_lookup",
+      "worker:order_lookup",
     ]);
     expect(seq.lanes[1].name).toBe("Returns coordinator");
+  });
+
+  it("keeps a participant whose id reads like the coordinator's on its own lane", () => {
+    const seq = seqOf(
+      timeline({
+        workers: WORKERS.map((one) =>
+          one.id === "order_lookup" ? { ...one, id: "coordinator" } : one,
+        ),
+      }),
+    );
+    expect(seq.lanes.map((lane) => lane.name)).toEqual([
+      "Isabela",
+      "Returns coordinator",
+      "Order-lookup worker",
+    ]);
   });
 
   it("numbers requests in start order and ties each reply to its request", () => {
@@ -56,7 +72,7 @@ describe("sequenceOf over the worker record", () => {
 
   it("puts a tool call on the lane of the worker that made it", () => {
     const tool = seqOf(timeline()).steps.find((s) => s.tool === "get_order");
-    expect(tool.from).toBe("order_lookup");
+    expect(tool.from).toBe("worker:order_lookup");
     expect(tool.bad).toBe(true);
   });
 
@@ -343,7 +359,7 @@ describe("sequenceOf over the worker record", () => {
       turns: oneTurn(undefined, undefined, [1, loose.seq]),
     });
     const tool = seqOf(record).steps.find((s) => s.tool === "send_reply");
-    expect(tool.from).toBe("order_lookup");
+    expect(tool.from).toBe("worker:order_lookup");
     expect(tool.parent).toBeNull();
   });
 
@@ -406,6 +422,6 @@ describe("sequenceOf over the worker record", () => {
       ),
     });
     const [loop] = seqOf(record).loops;
-    expect(loop).toMatchObject({ per: 2, times: 3, with: ["audit"] });
+    expect(loop).toMatchObject({ per: 2, times: 3, with: ["worker:audit"] });
   });
 });

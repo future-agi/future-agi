@@ -55,7 +55,8 @@ export function participantsFromRecord(record) {
     const at = seconds(iso);
     return at == null || zero == null ? null : Math.max(0, at - zero);
   };
-  const laneOf = (workerId) => workerOf[workerId]?.id ?? workerId;
+  // Prefixed, so a participant called "user" or "coordinator" keeps a lane of its own.
+  const laneOf = (workerId) => `worker:${workerOf[workerId]?.id ?? workerId}`;
 
   const toCall = (step) => {
     const call = step.call || {};
