@@ -1,9 +1,8 @@
 """Source-only EvalTask relation-coverage fixture (not a task backfill).
 
-Reviewed source objects: v1.56.1 6840e44914cf7c85cd0ae65d98761f7728b8afcc,
-v1.58.0 28e729aab169d75a2ca856fb4ed67fd1dda5901a. Task, Project,
-CustomEvalConfig, EvalTemplate and BaseModel declarations are identical there.
-The source inventory deliberately excludes target-only analysis_source_generation.
+The reviewed source releases and their exact field contracts are listed below.
+Select the contract from the authenticated source release, and keep that same
+contract for replay and target preservation reads. Never add target-only fields.
 
 Per 100k actual tasks: 50k completed historical, 20k failed historical, 20k
 paused continuous, 10k soft-deleted/delete-status historical. No entries, run
@@ -39,9 +38,15 @@ def eval_task_reference_plan(scale):
         memberships=150000 * scale)
 
 
+SOURCE_REVISIONS = {
+    'v1.56.1': '6840e44914cf7c85cd0ae65d98761f7728b8afcc',
+    'v1.58.0': '28e729aab169d75a2ca856fb4ed67fd1dda5901a',
+    'v1.59.0': '08de8321155538f1a9295982dfd55dd93a1cfc98',
+}
+
 # Reviewed source-field contracts: type, nullability, max_length, FK label.
 # Kept literal, not derived from the running (possibly drifted) model.
-SOURCE_FIELDS = {'EvalTask': {'created_at': ('DateTimeField', False, None, None),
+LEGACY_SOURCE_FIELDS = {'EvalTask': {'created_at': ('DateTimeField', False, None, None),
               'updated_at': ('DateTimeField', False, None, None),
               'deleted': ('BooleanField', False, None, None),
               'deleted_at': ('DateTimeField', True, None, None),
@@ -128,7 +133,17 @@ SOURCE_FIELDS = {'EvalTask': {'created_at': ('DateTimeField', False, None, None)
                     'evaltask': ('ForeignKey', False, None, 'tracer.EvalTask'),
                     'customevalconfig': ('ForeignKey', False, None, 'tracer.CustomEvalConfig')}}
 
-ROWS = '\nSOURCE_FIELDS = ' + repr(SOURCE_FIELDS) + '\n' + """
+SOURCE_FIELDS_BY_VERSION = {
+    'v1.56.1': LEGACY_SOURCE_FIELDS,
+    'v1.58.0': LEGACY_SOURCE_FIELDS,
+    'v1.59.0': dict(LEGACY_SOURCE_FIELDS,
+        EvalTask=dict(LEGACY_SOURCE_FIELDS['EvalTask'], sampling_policy=('JSONField', True, None, None)),
+        Project=dict(LEGACY_SOURCE_FIELDS['Project'],
+            analysis_source_generation=('PositiveBigIntegerField', False, None, None),
+            sampling_contact_attribute=('CharField', False, 200, None))),
+}
+
+ROWS = '\nSOURCE_FIELDS = ' + repr(SOURCE_FIELDS_BY_VERSION) + "[a['source_version']]\n" + """
 import uuid
 from datetime import datetime, timedelta
 NAMESPACE=uuid.uuid5(uuid.NAMESPACE_URL,'futureagi-qualification-eval-task-reference:'+a['namespace'])
@@ -149,6 +164,10 @@ def support_payloads(context):
         metadata={'qualification_eval_task_reference':1,'namespace':a['namespace'],'requested_rows':a['rows']},
         config=[],session_config=[],tags=['qualification-task-reference'],simulation_agent_id=None)
         for row_type in ROW_TYPES]
+    if 'analysis_source_generation' in SOURCE_FIELDS['Project']:
+        for project in projects:
+            project['analysis_source_generation']=0
+            project['sampling_contact_attribute']=''
     templates=[dict(history(when),id=identity('template',index),
         name='qualification-task-'+NAMESPACE.hex[:12]+'-'+str(index),
         description='Qualification task history; never dispatched.',
@@ -194,6 +213,8 @@ def payloads(context,start,stop):
             last_run=created+timedelta(hours=1) if ordinal%4 else None,
             created_at=created,updated_at=created+timedelta(hours=2),deleted=status=='deleted',
             deleted_at=created+timedelta(hours=2) if status=='deleted' else None))
+        if 'sampling_policy' in SOURCE_FIELDS['EvalTask']:
+            tasks[-1]['sampling_policy']=None
         for index in range(1+ordinal%2):
             members.append(dict(evaltask_id=task,customevalconfig_id=identity('config',row_type+str(index))))
     return tasks,members
@@ -256,7 +277,7 @@ unique={Project:[models.UniqueConstraint(fields=['name','trace_type','organizati
 for model in (Project,Template,Config,Task,Membership):
     specs=SOURCE_FIELDS[model._meta.object_name]
     assert model._meta.managed and model._meta.db_table==expected_tables[model], 'eval_task_reference: table/managed drift'
-    assert {f.name for f in model._meta.concrete_fields}==set(specs), 'eval_task_reference: field inventory drift'
+    assert {f.name for f in model._meta.concrete_fields}==set(specs), 'eval_task_reference: field inventory drift '+model.__name__
     assert model._meta.constraints==unique.get(model,[]), 'eval_task_reference: constraints drift'
     expected_unique={('evaltask','customevalconfig')} if model==Membership else set()
     assert {tuple(fields) for fields in model._meta.unique_together}==expected_unique, 'eval_task_reference: membership uniqueness drift'
@@ -279,7 +300,10 @@ for model in (Project,Template,Config,Task,Membership):
     if model==Project: allowed_unique.add(('simulation_agent_id',))
     if model==Membership: allowed_unique.add(('evaltask_id','customevalconfig_id'))
     assert {tuple(c['columns']) for c in actual.values() if c.get('unique') and not c.get('primary_key')}==allowed_unique, 'eval_task_reference: physical uniqueness drift'
-    assert not any(c.get('check') for c in actual.values()), 'eval_task_reference: unexpected physical check'
+    # PostgreSQL's Django-generated nonnegative CHECK for PositiveBigIntegerField.
+    expected_checks={'tracer_project_analysis_source_generation_check': ['analysis_source_generation']} if (
+        model==Project and 'analysis_source_generation' in specs) else {}
+    assert {name:c['columns'] for name,c in actual.items() if c.get('check')}==expected_checks, 'eval_task_reference: physical check drift'
     for constraint in unique.get(model,[]):
         assert actual.get(constraint.name,{}).get('unique'), 'eval_task_reference: named unique missing'
     expected_fk={}
@@ -424,7 +448,9 @@ def seed_eval_task_reference(driver, rows, *, prefix, producer):
     arguments = dict(namespace=source.get('namespace'), email=account.get('email'),
         organization_id=headers.get('X-Organization-Id'), workspace_id=headers.get('X-Workspace-Id'))
     require(all(isinstance(value, str) and bool(value) for value in arguments.values()))
-    arguments['rows'] = rows
+    source_version = driver.row.release.version
+    require(source_version in SOURCE_FIELDS_BY_VERSION)
+    arguments.update(rows=rows, source_version=source_version)
     complete = getattr(driver, '_eval_task_reference', None)
     state = complete or getattr(driver, '_eval_task_reference_pending', None)
     if state is not None:
