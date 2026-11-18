@@ -29,7 +29,9 @@ ORACLE = Path(__file__).parent / "fixtures/base_list_parity/users_old_builder.js
 
 def old_user_builder():
     fixture = json.loads(ORACLE.read_text())
-    assert fixture["header"]["source_commit"].startswith("9fc537515")
+    assert (
+        fixture["header"]["source_commit"] == "8ddeb72ab0fa8d2f46dc38c212252f9ebb0d35ca"
+    )
     sources = fixture["builders"]
     for entry in sources.values():
         assert hashlib.sha256(entry["source"].encode()).hexdigest() == entry["sha256"]

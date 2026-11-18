@@ -35,7 +35,7 @@ def baseline_fixture():
         assert hashlib.sha256(entry["source"].encode()).hexdigest() == entry["sha256"]
     for key, commit in (
         ("historical_closure", "9fc537515f48ae3b2da48d9084892de987a84028"),
-        ("native_dev_closure", "13b60b8954e784ce9444903bf3e88cdb868a2012"),
+        ("native_dev_closure", "8ddeb72ab0fa8d2f46dc38c212252f9ebb0d35ca"),
     ):
         closure = fixture[key]
         assert closure["source_commit"] == commit
@@ -65,10 +65,12 @@ def historical_session_builder():
 
 
 def native_session_builder():
-    """Independent native oracle from the exact dev parent merged into B1.
+    """Independent native oracle from the exact dev base of the Metrics merge.
 
-    13b60b895 predates the Metrics source seam and owns the approved native
-    semantic changes. Its source and SQL helper closure are not current snapshots.
+    8ddeb72ab0 is dev without the Metrics source seam and owns the approved
+    native semantic changes (re-pinned from 13b60b895 to take dev's #3762
+    hydration usage SQL). It is exported from dev, never from the merged
+    candidate, so its source and SQL helper closure are not current snapshots.
     """
     return _load_frozen_session_builder(baseline_fixture()["native_dev_closure"])
 
@@ -76,7 +78,7 @@ def native_session_builder():
 def old_session_builder():
     """Compatibility entry point for native-vs-Metrics integration comparisons.
 
-    'Old' now explicitly means the pre-seam native dev parent (13b60b895), not
+    'Old' now explicitly means the pre-seam native dev base (8ddeb72ab0), not
     9fc537515 plus today's helpers. Historical replay uses the separately named
     historical_session_builder and unchanged recorded statements. This keeps
     existing hydration/application parity consumers on the intended native

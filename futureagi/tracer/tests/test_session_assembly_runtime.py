@@ -45,6 +45,46 @@ from tracer.tests.test_derived_metric_publication_clickhouse import (  # noqa: F
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
+# ReadReceipt.gid in reader_lifetime.py.
+READER_GID_PREFIX = "metrics-reader:"
+
+
+@pytest.fixture(autouse=True)
+def prepared_transaction_capable_pg(transactional_db):
+    """Fail, never skip, on a PG that cannot PREPARE; fail on leaked reader GIDs.
+
+    The pinned reader lane PREPAREs its guard transaction, so these tests need
+    max_prepared_transactions > 0 (docker-compose.test.yml sets it for test-db).
+    A leaked metrics-reader GID keeps holding the advisory lock and blocks
+    dropping or reusing the test database, so teardown rolls it back and fails.
+    """
+    import psycopg
+    from psycopg import sql
+
+    with connection.cursor() as cursor:
+        cursor.execute("SHOW max_prepared_transactions")
+        capacity = int(cursor.fetchone()[0])
+    if capacity <= 0:
+        pytest.fail(
+            "test_session_assembly_runtime needs a Postgres with "
+            "max_prepared_transactions > 0 (found 0). Start the test database "
+            "from futureagi/docker-compose.test.yml, which runs test-db with "
+            "-c max_prepared_transactions=16."
+        )
+    yield
+    with psycopg.connect(**connection_options(), autocommit=True) as pg:
+        leaked = [
+            gid
+            for (gid,) in pg.execute(
+                "SELECT gid FROM pg_prepared_xacts "
+                "WHERE database = current_database() AND starts_with(gid, %s)",
+                [READER_GID_PREFIX],
+            ).fetchall()
+        ]
+        for gid in leaked:
+            pg.execute(sql.SQL("ROLLBACK PREPARED {}").format(sql.Literal(gid)))
+    assert not leaked, f"metrics reader leaked prepared transactions: {leaked}"
+
 
 @pytest.fixture
 def trace_source(live_writer, settings, monkeypatch):
