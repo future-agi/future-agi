@@ -247,7 +247,7 @@ def test_second_failure_needs_negative_describe_before_exhaustion(
         format="json",
     )
     assert rerun.status_code == 200, rerun.content
-    check(intent, "void", 2)
+    check(intent, "start_failed", 2)  # The original request retains its final outcome.
     start.assert_called_once_with(intent.task, replace_existing=True)
     assert tick() == {"candidates": 0}
     logs = auth_client.get(f"{_CREATE}get_eval_task_logs/", {"eval_task_id": intent.pk})
@@ -887,6 +887,81 @@ def test_detail_status_round_trip_revokes_create_before_the_next_tick(
     start.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    ("state", "outcome", "expected_reason"),
+    [
+        ("start_failed", "not_started", service.START_FAILURE_MESSAGE),
+        (
+            "exhausted",
+            "execution_closed_without_progress",
+            "The workflow ended before evaluation began. Your task is saved.",
+        ),
+    ],
+)
+def test_detail_echo_keeps_terminal_reason_and_refuses_plain_resume(
+    auth_client, intent, transport, no_new_usage, state, outcome, expected_reason
+):
+    start, describe = transport
+    requests = EvalTaskStartRequest.objects.filter(pk=intent.pk)
+    requests.update(state=state, last_outcome=outcome, attempts=2)
+    EvalTask.objects.filter(pk=intent.pk).update(status="failed")
+    before = requests.values().get()
+    response = auth_client.patch(
+        f"{_CREATE}{intent.pk}/", {"status": "failed", "name": "renamed"}, format="json"
+    )
+    assert response.status_code == 200, response.content
+    assert requests.values().get() == before
+    logs = auth_client.get(f"{_CREATE}get_eval_task_logs/", {"eval_task_id": intent.pk})
+    assert logs.status_code == 200, logs.content
+    data = logs.json()["result"]
+    assert (data["status"], data["total_count"]) == ("failed", 0)
+    assert data["error_groups"][0]["sample"] == expected_reason
+    # The gated create may have closed before admission; not a prior drain.
+    describe.return_value = client.WF_CLOSED
+    refused = auth_client.post(f"{_CREATE}unpause_eval_task/?eval_task_id={intent.pk}")
+    assert refused.status_code == 400, refused.content
+    assert not EvalLogger.all_objects.filter(eval_task_id=str(intent.pk)).exists()
+    assert tick() == {"candidates": 0}
+    start.assert_not_called()
+
+
+def test_detail_echo_of_pending_preserves_its_live_create(
+    auth_client, intent, transport, no_new_usage
+):
+    rows = EvalTaskStartRequest.objects.filter(pk=intent.pk)
+    before = rows.values().get()
+    response = auth_client.patch(
+        f"{_CREATE}{intent.pk}/", {"status": "pending"}, format="json"
+    )
+    assert response.status_code == 200, response.content
+    assert rows.values().get() == before
+    refused = auth_client.post(f"{_CREATE}unpause_eval_task/?eval_task_id={intent.pk}")
+    assert refused.status_code == 400, refused.content
+    assert not EvalLogger.all_objects.filter(eval_task_id=str(intent.pk)).exists()
+    start, _ = transport
+    start.assert_not_called()
+    assert tick() == {"candidates": 1}
+    start.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("state", "outcome"),
+    [
+        ("start_failed", "not_started"),
+        ("exhausted", "execution_closed_without_progress"),
+        ("accepted", "execution_progress"),
+        ("accepted", "execution_completed"),
+        ("void", "superseded"),
+    ],
+)
+def test_void_for_tasks_never_rewrites_a_finished_intent(intent, state, outcome):
+    rows = EvalTaskStartRequest.objects.filter(pk=intent.pk)
+    rows.update(state=state, last_outcome=outcome, attempts=2)
+    before = rows.values().get()
+    EvalTaskStartRequest.void_for_tasks([intent.pk])
+    assert rows.values().get() == before
+
+
 def test_detail_delete_locks_task_before_results(intent, auth_client):
     from django.test.utils import CaptureQueriesContext
 
@@ -965,7 +1040,12 @@ def test_retired_cron_cannot_bypass_durable_create(intent, transport):
 def test_pending_task_without_intent_not_scanned(
     eval_task, transport, monkeypatch, no_new_usage
 ):
-    from tracer.utils.eval_tasks import eval_task_cron, process_eval_task
+    from tracer.utils.eval import evaluate_trace_observe
+    from tracer.utils.eval_tasks import (
+        eval_task_cron,
+        process_eval_task,
+        run_for_processed_spans,
+    )
 
     start, describe = transport
     EvalTask.objects.filter(pk=eval_task.pk).update(start_time=timezone.now())
@@ -974,6 +1054,10 @@ def test_pending_task_without_intent_not_scanned(
     eval_task_cron._original_func()
     enqueue.assert_not_called()
     process_eval_task._original_func(str(eval_task.pk))
+    run_for_processed_spans._original_func(
+        ["stale-span"], ["stale-config"], str(eval_task.pk)
+    )
+    evaluate_trace_observe._original_func(eval_task_id=str(eval_task.pk))
     assert not EvalLogger.all_objects.filter(eval_task_id=str(eval_task.pk)).exists()
     assert tick() == {"candidates": 0}
     start.assert_not_called()

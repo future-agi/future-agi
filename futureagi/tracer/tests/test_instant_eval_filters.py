@@ -602,18 +602,14 @@ def test_a_cancelled_run_is_not_resumed_retried_or_read_further(
 def test_a_run_that_cant_start_again_says_so_instead_of_reporting_success(
     auth_client, observe_project, yes_no, fake_view, started, monkeypatch
 ):
-    from temporalio.service import RPCError, RPCStatusCode
-
-    task, ids = _sampled_run(auth_client, observe_project, yes_no)
-    _answer(task, yes_no, ids[0], "Yes").save()
+    task, _ = _sampled_run(auth_client, observe_project, yes_no)
     EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PAUSED)
 
-    def rejected(task, **kwargs):
-        # A definitive refusal, not a lost acknowledgement of an accepted run.
-        raise RPCError("start rejected", RPCStatusCode.PERMISSION_DENIED, b"")
+    def unavailable(task, **kwargs):
+        raise RuntimeError("Temporal is unavailable")
 
     monkeypatch.setattr(
-        "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync", rejected
+        "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync", unavailable
     )
     response = _control(auth_client, observe_project, task.id, "resume")
     assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
