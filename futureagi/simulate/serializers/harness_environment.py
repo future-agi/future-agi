@@ -1748,9 +1748,7 @@ class HarnessCapabilityHeldBySerializer(serializers.Serializer):
     area = serializers.CharField(allow_null=True)
     count = serializers.IntegerField(min_value=1)
     reason = serializers.CharField(allow_null=True)
-    text = serializers.CharField(
-        source="label", help_text="What the run dialog shows for it."
-    )
+    text = serializers.CharField(help_text="What the run dialog shows for it.")
 
 
 class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerializer):

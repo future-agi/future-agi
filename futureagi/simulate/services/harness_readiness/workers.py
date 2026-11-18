@@ -19,6 +19,7 @@ from simulate.services.harness_readiness.catalogue import (
     WorkerToolView,
 )
 from simulate.services.harness_readiness.evidence import Evidence, contract_of
+from simulate.services.harness_starting_records import scenario_token
 from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 
 BYPASS_CODE = "worker_channel_bypassed"
@@ -89,8 +90,6 @@ def case_holds(pairing: Pairing, evidence: Evidence) -> Mapping[str, CaseHold] |
     """Each scenario's sealed hold by scenario token; None when the contract declares no workers, so no case relies
     on one. A bundle with no `worker-limits.json`, or one that could not be read, holds no entry: every case reads
     not known."""
-    from simulate.services.hosted_harness_gateway import _scenario_token
-
     if not _declared(pairing):
         return None
     sealed = (evidence.worker_limits or {}).get("scenarios")
@@ -105,7 +104,7 @@ def case_holds(pairing: Pairing, evidence: Evidence) -> Mapping[str, CaseHold] |
         if not isinstance(entry, Mapping) or not isinstance(entry.get("held"), bool):
             continue
         # A deadline decided at run (the door inside the agent) is not held before the run.
-        holds[_scenario_token(key)] = CaseHold(
+        holds[scenario_token(key)] = CaseHold(
             held=entry["held"],
             workers=tuple(sorted(str(one) for one in entry.get("workers") or [])),
             reason=(
@@ -125,11 +124,9 @@ def case_holds(pairing: Pairing, evidence: Evidence) -> Mapping[str, CaseHold] |
 
 def case_hold(holds: Mapping[str, CaseHold] | None, key: str) -> CaseHold:
     """One case's hold; clear when no worker is declared, not known when ALK sealed no answer for it."""
-    from simulate.services.hosted_harness_gateway import _scenario_token
-
     if holds is None:
         return NO_HOLD
-    return holds.get(_scenario_token(key), _NOT_KNOWN)
+    return holds.get(scenario_token(key), _NOT_KNOWN)
 
 
 def _routes(evidence: Evidence) -> dict[str, str]:

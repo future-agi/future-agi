@@ -60,6 +60,7 @@ from simulate.services.harness_scenario_needs import (
     CaseNeeds,
     case_needs,
 )
+from simulate.services.harness_starting_records import scenario_token
 from simulate.services.harness_versioning import validation
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -143,7 +144,7 @@ class HeldBy(TypedDict):
     count: int
     reason: str | None
     # What the run dialog shows for it, e.g. "Refund worker's limits are not held".
-    label: str
+    text: str
 
 
 class SelectionView(Scope):
@@ -352,7 +353,7 @@ def _held_by(
             "area": row["area"],
             "count": row["affected"]["count"],
             "reason": row["reason"],
-            "label": row["reason"] or row["label"],
+            "text": row["reason"] or row["label"],
         }
         for row in rows
         if row["status"] == "blocked" and row["affected"]["count"] > 0
@@ -364,7 +365,7 @@ def _held_by(
             "area": "workers",
             "count": count,
             "reason": reasons.get(key),
-            "label": f"{names.get(key, 'A worker')}'s limits are not held",
+            "text": f"{names.get(key, 'A worker')}'s limits are not held",
         }
         for key, count in sorted(by_worker.items())
     ]
@@ -628,8 +629,6 @@ def _place_all(
     evidence: Evidence,
     workers: list[WorkerBoundaryView],
 ) -> _Placement:
-    from simulate.services.hosted_harness_gateway import _scenario_token
-
     cases = case_needs(
         environment_version=pairing.environment_version,
         suite_version=pairing.suite_version,
@@ -639,7 +638,7 @@ def _place_all(
     kept: list[CaseNeeds] = []
     dropped: list[DroppedCase] = []
     for one in selected:
-        if _scenario_token(one.key) in dropped_tokens:
+        if scenario_token(one.key) in dropped_tokens:
             dropped.append(
                 {"key": one.key, "code": "scenario_dropped", "reason": DROPPED_REASON}
             )
@@ -674,7 +673,7 @@ def _place_all(
         _place(
             case,
             by_id,
-            proved=ready or _scenario_token(case.key) in proved,
+            proved=ready or scenario_token(case.key) in proved,
             voice=voice,
             many=many,
             pair_validating=pair_validating,
@@ -723,10 +722,8 @@ def _selected(cases: list[CaseNeeds], keys: list[str] | None) -> list[CaseNeeds]
 
 
 def _dropped_tokens(bundle: HarnessAssembledBundle | None) -> frozenset[str]:
-    from simulate.services.hosted_harness_gateway import _scenario_token
-
     return frozenset(
-        _scenario_token(key)
+        scenario_token(key)
         for warning in (bundle.warnings if bundle is not None else None) or []
         if isinstance(warning, Mapping) and warning.get("code") == "scenario_dropped"
         for key in warning.get("keys") or []
@@ -735,8 +732,6 @@ def _dropped_tokens(bundle: HarnessAssembledBundle | None) -> frozenset[str]:
 
 def _proved_tokens(pairing: Pairing) -> frozenset[str]:
     """Scenarios with a holding proof for this suite and environment version."""
-    from simulate.services.hosted_harness_gateway import _scenario_token
-
     proofs = (
         HarnessSuiteValidation.no_workspace_objects.filter(
             suite_version=pairing.suite_version,
@@ -746,7 +741,7 @@ def _proved_tokens(pairing: Pairing) -> frozenset[str]:
         .first()
     )
     return frozenset(
-        _scenario_token(key)
+        scenario_token(key)
         for key, proof in (proofs or {}).items()
         if isinstance(proof, Mapping) and proof.get("holds")
     )
