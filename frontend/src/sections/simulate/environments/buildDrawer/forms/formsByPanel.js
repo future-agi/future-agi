@@ -1,7 +1,5 @@
 import { GitHubCodeForm, UploadCodeForm } from "./ConnectCodeForm";
-import HostedForm from "./HostedForm";
-import LiveKitForm from "./LiveKitForm";
-import PhoneForm from "./PhoneForm";
+import HostedPlatformForm from "./HostedPlatformForm";
 import { UI_ONLY_FORMS } from "./uiOnly";
 import ScratchForm from "../starts/ScratchForm";
 import FromCodeForm from "../starts/FromCodeForm";
@@ -13,9 +11,9 @@ import WorldForm from "../starts/WorldForm";
 export const FORMS_BY_PANEL = {
   repo: GitHubCodeForm,
   upload: UploadCodeForm,
-  hosted: HostedForm,
-  livekit: LiveKitForm,
-  phone: PhoneForm,
+  hosted: HostedPlatformForm,
+  livekit: HostedPlatformForm,
+  phone: HostedPlatformForm,
   scratch: ScratchForm,
   fromCode: FromCodeForm,
   mcpWorld: McpForm,
