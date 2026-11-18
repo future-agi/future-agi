@@ -172,3 +172,47 @@ def test_the_newer_of_a_live_and_an_offline_proof_is_kept_per_case():
     assert proofs["a"] == newer_offline
     assert proofs["b"] == untimed_live
     assert proofs["c"] == older_live
+
+
+@pytest.mark.parametrize(
+    "laid, takes_flag, given",
+    [(True, True, True), (False, True, False), (True, False, False)],
+    ids=["document-and-flag", "no-document", "older-harness"],
+)
+def test_proving_is_given_the_agent_document_only_when_it_is_there_and_the_harness_takes_it(
+    tmp_path, laid, takes_flag, given
+):
+    """`--agent-document` reaches certify and prove-only when the document is laid and the harness lists the flag;
+    an older harness never sees an argument it would refuse."""
+    import os
+    import subprocess
+
+    from simulate.services.harness_versioning import assembly
+
+    document = tmp_path / "agent.json"
+    if laid:
+        document.write_text("{}")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "python"
+    fake.write_text(
+        "#!/bin/sh\necho '"
+        + ("--agent-document PATH" if takes_flag else "--prove-only")
+        + "'\n"
+    )
+    fake.chmod(0o755)
+    fragment = assembly.AGENT_DOCUMENT_FLAG.replace(
+        assembly.AGENT_READING_PATH, str(document)
+    )
+
+    out = subprocess.run(
+        ["/bin/sh", "-c", f"printf '%s' \"{fragment}\""],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        check=True,
+    ).stdout
+
+    assert out == (f" --agent-document {document}" if given else "")
+    assert assembly.AGENT_DOCUMENT_FLAG in assembly.certify_command(prove=True)
+    assert assembly.AGENT_DOCUMENT_FLAG in assembly.prove_suite_command()

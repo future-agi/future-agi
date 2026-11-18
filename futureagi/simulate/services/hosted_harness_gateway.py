@@ -2867,6 +2867,14 @@ class HostedHarnessGateway:
                 sandbox.fs.upload_file(adjustment_body, _ADJUSTMENTS_PATH)
             if authoring_archive is not None:
                 sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
+            agent_document = (
+                bundle_cache.stored_agent_document(job.agent_version_id)
+                if validation
+                else None
+            )
+            if agent_document is not None:
+                # Proving reads the version's tools from here; a reading in this sandbox replaces it.
+                sandbox.fs.upload_file(agent_document, bundle_cache.AGENT_READING_PATH)
             overlay = _alk_source_overlay()
             if overlay is not None:
                 sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -2976,6 +2984,10 @@ class HostedHarnessGateway:
                     )
                     + "true"
                 )
+                if reads_agent(job):
+                    bundle_command = (
+                        bundle_cache.agent_reading_command() + bundle_command
+                    )
             elif only_reading:
                 bundle_command = bundle_cache.agent_reading_command() + "true"
             elif assembled is not None:

@@ -1143,7 +1143,7 @@ class TestLaunchMiss:
             "python -m "
             "fi.alk.harness.hosted_authoring_entrypoint /work/certify-job.json "
             "--source /work/source --output /work/authoring --certify-only "
-            "--bundle-output /work/bundle "
+            f"--bundle-output /work/bundle{assembly.AGENT_DOCUMENT_FLAG} "
             "&& rm -rf /work/authoring/environment-bundle "
             "&& cp -a /work/bundle /work/authoring/environment-bundle && "
             "python -m fi.alk.harness.hosted_entrypoint /work/job.json"
@@ -1203,7 +1203,10 @@ class TestLaunchMiss:
 
         assert attempt.state == HostedHarnessAttempt.State.RUNNING
         command = _command(gateway)
-        assert "--certify-only --bundle-output /work/bundle " in command
+        assert (
+            f"--certify-only --bundle-output /work/bundle{assembly.AGENT_DOCUMENT_FLAG} "
+            in command
+        )
         assert "--target-secrets" not in command
         assert "--provider-profile-cache" not in command
         uploads = gateway.client.sandbox.fs.uploads

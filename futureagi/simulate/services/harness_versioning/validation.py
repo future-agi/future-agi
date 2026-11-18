@@ -306,6 +306,7 @@ def reads_agent(job: HostedHarnessJob) -> bool:
     """Whether a validation job first reads its agent version's tools."""
     return ((job.payload or {}).get("metadata") or {}).get("agent_reading") in (
         "before_certify",
+        "before_proving",
         "only",
     )
 
@@ -509,10 +510,8 @@ def start_validation(
                 "state": HarnessAssembledBundle.State.PENDING,
             },
         )
-        # Only an explicit Re-check reads the version's tools: it costs model calls.
-        read = purpose == "recheck" and needs_reading(
-            locked, agent_version, environment_version, runtime
-        )
+        # Any check of an agent version whose tools no build has read reads them first: proving needs them.
+        read = needs_reading(locked, agent_version, environment_version, runtime)
         certified = (
             bundle.state == HarnessAssembledBundle.State.READY and bundle.object_key
         )
@@ -534,6 +533,7 @@ def start_validation(
                 bundle,
                 purpose=purpose,
                 move=move,
+                reading="before_proving" if read else None,
                 proving="only",
                 scenario_keys=scenario_keys,
             )
@@ -703,7 +703,7 @@ def _create_job(
     *,
     purpose: Purpose,
     move: AgentMove | None,
-    reading: Literal["before_certify", "only"] | None = None,
+    reading: Literal["before_certify", "before_proving", "only"] | None = None,
     proving: Proving | None = None,
     scenario_keys: list[str] | None = None,
 ) -> HostedHarnessJob:

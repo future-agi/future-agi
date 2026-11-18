@@ -1985,20 +1985,74 @@ class TestAgentReading:
             assembly.agent_reading_command() + assembly.certify_command(prove=True)
         )
 
-    def test_a_default_move_never_reads(self, user, workspace, storage, gateway):
+    @pytest.mark.parametrize("purpose", ["agent_move", "save"])
+    def test_a_check_that_brings_in_an_unread_version_reads_it_before_certifying(
+        self, user, workspace, storage, gateway, purpose
+    ):
+        """Proving needs the version's tools, so any check of an unread version reads them first."""
         environment = _not_built_with(
-            _pending(user, workspace, storage, "pv-move-no-read")
+            _pending(user, workspace, storage, f"pv-{purpose}-read")
         )
-        move = validation.agent_move(
-            "hand", environment, environment.agent_version, user=None
+        move = (
+            validation.agent_move(
+                "hand", environment, environment.agent_version, user=None
+            )
+            if purpose == "agent_move"
+            else None
         )
-        job = _start(environment, purpose="agent_move", move=move).job
+        job = _start(environment, purpose=purpose, move=move).job
 
         _launch(gateway, job)
 
+        assert _job_metadata(job)["agent_reading"] == "before_certify"
+        command = gateway.client.sandbox.process.session_request.command
+        assert _without_deadline(command) == (
+            assembly.agent_reading_command() + assembly.certify_command(prove=True)
+        )
+
+    def test_proving_a_certified_unread_pairing_reads_the_version_first(
+        self, user, workspace, storage, gateway
+    ):
+        environment = _not_built_with(
+            _environment(user, workspace, "pv-prove-read", storage)
+        )
+        assert _row(environment).state == "ready"
+
+        job = _start(environment, purpose="prove").job
+        _launch(gateway, job)
+
+        assert _job_metadata(job)["agent_reading"] == "before_proving"
+        assert validation.reads_agent(job)
+        command = gateway.client.sandbox.process.session_request.command
+        assert command.startswith(assembly.agent_reading_command())
+        assert "--prove-only" in command
+
+    def test_a_stored_reading_is_laid_where_proving_reads_it(
+        self, user, workspace, storage, gateway
+    ):
+        from simulate.services.agent_setup import store_agent
+
+        environment = _not_built_with(
+            _environment(user, workspace, "pv-prove-doc", storage)
+        )
+        document = json.loads(_reading(_EMAIL))
+        store_agent(
+            agent_version_id=environment.agent_version_id,
+            agent=document["agent"],
+            sdk_version=document["sdk_version"],
+        )
+
+        job = _start(environment, purpose="prove").job
+        _launch(gateway, job)
+
+        laid = json.loads(
+            gateway.client.sandbox.fs.uploads[assembly.AGENT_READING_PATH]
+        )
+        assert [tool["name"] for tool in laid["agent"]["tools"]] == ["send_email"]
+        assert laid["sdk_version"] == document["sdk_version"]
         assert "agent_reading" not in _job_metadata(job)
         command = gateway.client.sandbox.process.session_request.command
-        assert _without_deadline(command) == assembly.certify_command(prove=True)
+        assert assembly.AGENT_DOCUMENT_FLAG in command
 
     def test_a_certified_unread_pairing_starts_a_reading_only_check(
         self, user, workspace, storage, gateway
@@ -2086,13 +2140,10 @@ class TestAgentReading:
     ):
         from simulate.services.agent_setup import stored_agent
 
-        environment = _not_built_with(
-            _pending(user, workspace, storage, "pv-no-read-store")
-        )
-        move = validation.agent_move(
-            "hand", environment, environment.agent_version, user=None
-        )
-        job = _start(environment, purpose="agent_move", move=move).job
+        # The agent the environment was built with is never read: its tools are the contract's.
+        environment = _pending(user, workspace, storage, "pv-no-read-store")
+        job = _start(environment).job
+        assert not validation.reads_agent(job)
         attempt = _launch(gateway, job)
         _ready(_row(environment))
         _exit(gateway, monkeypatch, 0, {assembly.AGENT_READING_PATH: _reading(_EMAIL)})
@@ -2343,7 +2394,8 @@ class TestScenarioProving:
         # ALK's live prover on the sealed runtime, the way a build proves: never the offline-only module.
         assert (
             "python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
-            f"--source /work/source --output /work/authoring --prove-only --deadline-at {deadline} || true"
+            f"--source /work/source --output /work/authoring --prove-only --deadline-at {deadline}"
+            f"{assembly.AGENT_DOCUMENT_FLAG} || true"
         ) in command
         assert "fi.alk.harness.prove_suite " not in command
         assert assembly.SCENARIO_PROOFS_PATH == "/work/authoring/scenario-proofs.json"
@@ -2361,7 +2413,7 @@ class TestScenarioProving:
         assert command == (
             "timeout 1500 python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
             "--source /work/source --output /work/authoring --prove-only --keys refund-1,status_2 "
-            "--deadline-at 1800000000 || true; "
+            f"--deadline-at 1800000000{assembly.AGENT_DOCUMENT_FLAG} || true; "
         )
 
     def test_scenario_proofs_kept_after_certify(

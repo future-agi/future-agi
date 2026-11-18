@@ -1339,11 +1339,17 @@ def prove_suite_command(
     return (
         "timeout 1500 python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
         f"--source /work/source --output {PurePosixPath(SCENARIO_PROOFS_PATH).parent} "
-        f"--prove-only{keys_flag}{_deadline_flag(deadline_at)} || true; "
+        f"--prove-only{keys_flag}{_deadline_flag(deadline_at)}{AGENT_DOCUMENT_FLAG} || true; "
     )
 
 
 AGENT_READING_PATH = "/work/reading/agent.json"
+# The agent version's tools, for proving to refuse a case whose reference calls one it lacks: the document a reading
+# wrote or the version's stored one, given only when it is there and the harness takes the flag.
+AGENT_DOCUMENT_FLAG = (
+    f"$(test -f {AGENT_READING_PATH} && python -m fi.alk.harness.hosted_authoring_entrypoint --help 2>/dev/null "
+    f"| grep -q -- --agent-document && echo ' --agent-document {AGENT_READING_PATH}')"
+)
 
 
 def agent_reading_command() -> str:
@@ -1355,6 +1361,28 @@ def agent_reading_command() -> str:
         "fi.alk.harness.hosted_agent_reading --source /work/source "
         f"--output {PurePosixPath(AGENT_READING_PATH).parent} || true; "
     )
+
+
+def stored_agent_document(agent_version_id: Any) -> bytes | None:
+    """The agent version's stored document as a reading writes it, ``{sdk_version, agent}``; ``None`` when no
+    current reading of it is stored (a stale one no longer matches the agent's provider, as readiness reads it)."""
+    from simulate.models import AgentVersion
+    from simulate.services.agent_setup import stored_agent_answer
+
+    version = (
+        AgentVersion.no_workspace_objects.filter(id=agent_version_id).first()
+        if agent_version_id is not None
+        else None
+    )
+    answer = stored_agent_answer(version) if version is not None else None
+    if answer is None or answer.setup_stale:
+        return None
+    return json.dumps(
+        {"sdk_version": answer.sdk_version, "agent": answer.agent},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode()
 
 
 def agent_reading(sandbox: Any) -> dict[str, Any] | None:
@@ -1392,7 +1420,7 @@ def certify_command(*, prove: bool = False, deadline_at: float | None = None) ->
         "python -m "
         "fi.alk.harness.hosted_authoring_entrypoint "
         f"{CERTIFY_JOB_PATH} --source /work/source --output /work/authoring "
-        f"--certify-only --bundle-output /work/bundle{proving} "
+        f"--certify-only --bundle-output /work/bundle{proving}{AGENT_DOCUMENT_FLAG} "
         "&& rm -rf /work/authoring/environment-bundle "
         "&& cp -a /work/bundle /work/authoring/environment-bundle"
     )
