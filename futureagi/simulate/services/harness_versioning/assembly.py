@@ -277,12 +277,13 @@ class Seal:
     """What a ready bundle was sealed with: its contract, whether a chat's save resealed it from its tree
     (``resealed``) rather than a build sealing it, and whether it says which (``stamped``): a bundle sealed before
     builds stamped theirs says nothing. ``seeded``: its row holds the bundle a full build cached as it recorded the
-    version, not one a run cached."""
+    version, not one a run cached. ``sha256``: the digest its row records for the bundle."""
 
     contract: dict[str, Any]
     resealed: bool
     stamped: bool = True
     seeded: bool = False
+    sha256: str = ""
 
 
 def pins_bundle_key(pins: Any) -> str | None:
@@ -319,20 +320,21 @@ def latest_seal(environment_version: Any) -> Seal | None:
 
 
 def _seal_at(rows: Any) -> Seal | None:
-    key = (
+    row = (
         rows.filter(state=HarnessAssembledBundle.State.READY, deleted=False)
         .exclude(object_key__isnull=True)
         .exclude(object_key="")
         .order_by("-updated_at")
-        .values_list("object_key", flat=True)
+        .values_list("object_key", "sha256")
         .first()
     )
-    if not key:
+    if not row:
         return None
+    key, sha256 = row[0], row[1] or ""
     seeded = key.startswith(archives.SEALED_PREFIX)
     cached = cache.get(_SEAL_CACHE + key)
     if cached is not None:
-        return _seal(cached, seeded)
+        return _seal(cached, seeded, sha256)
     try:
         found = archives.read_members(
             archives.get_archive(key),
@@ -364,10 +366,10 @@ def _seal_at(rows: Any) -> Seal | None:
         else "",
     }
     cache.set(_SEAL_CACHE + key, read, _SEAL_SECONDS)
-    return _seal(read, seeded)
+    return _seal(read, seeded, sha256)
 
 
-def _seal(read: Any, seeded: bool) -> Seal | None:
+def _seal(read: Any, seeded: bool, sha256: str) -> Seal | None:
     if not isinstance(read, dict) or read == _UNREADABLE or not read.get("contract"):
         return None
     stamp = str(read.get("stamp") or "")
@@ -376,6 +378,7 @@ def _seal(read: Any, seeded: bool) -> Seal | None:
         resealed=bool(stamp) and stamp != BUILD_SEAL,
         stamped=bool(stamp),
         seeded=seeded,
+        sha256=sha256,
     )
 
 

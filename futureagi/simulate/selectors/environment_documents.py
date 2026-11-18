@@ -157,7 +157,8 @@ def _resolve(job: HostedHarnessJob, version: Any, key: str | None) -> dict[str, 
 def _resealed(node: Any, seal: Any) -> bool:
     """Whether a chat's save resealed ``node``'s bundle rather than a build sealing it. A stamp says which. A bundle
     sealed before builds stamped theirs is a build's when a full build made the version or cached the bundle, and a
-    reseal only when a run cached it for a version whose save recorded resealing one."""
+    reseal only when a run cached the very bundle the version's save recorded resealing: another pair's run certifies
+    a bundle of its own."""
     from simulate.services.harness_versioning.versions import PROVED_ORIGINS
 
     if seal.stamped:
@@ -165,7 +166,12 @@ def _resealed(node: Any, seal: Any) -> bool:
     if seal.seeded or getattr(node, "origin", "") in PROVED_ORIGINS:
         return False
     recorded = (node.documents or {}).get("workspace_sealed")
-    return isinstance(recorded, dict) and bool(recorded.get("resealed"))
+    return (
+        isinstance(recorded, dict)
+        and bool(recorded.get("resealed"))
+        and bool(seal.sha256)
+        and seal.sha256 == recorded.get("sha256")
+    )
 
 
 def _overlay(
