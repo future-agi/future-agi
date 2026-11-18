@@ -547,3 +547,47 @@ def test_numeric_similarity_preserves_first_number_and_scale():
         result = evaluate(None, output, expected, None)
         assert result["score"] == pytest.approx(score), (output, expected)
         assert result["reason"] == f"Numeric Similarity: {score:.3f}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Please order 1000000000000000 units",
+        "Please order 1,000,000,000,000,000 units",
+        "Please order 1e15 units",
+    ],
+)
+def test_numeric_similarity_order_verb_is_not_an_identifier_label(text):
+    evaluate = _load_eval("numeric_similarity")
+    for left, right in [(text, "1e15"), ("1e15", text)]:
+        assert evaluate(None, left, right, None) == {
+            "score": 1.0,
+            "reason": "Numeric Similarity: 1.000",
+        }
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("Order number: 9007199254740992", "Order number: 9007199254740993"),
+        ("9007199254740992 bytes", "9007199254740993 bytes"),
+    ],
+)
+def test_numeric_similarity_distinct_large_integers_never_match(first, second):
+    evaluate = _load_eval("numeric_similarity")
+    assert evaluate(None, first, second, None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in expected",
+    }
+    assert evaluate(None, second, first, None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in output",
+    }
+
+
+def test_numeric_similarity_very_long_digit_run_is_non_finite():
+    evaluate = _load_eval("numeric_similarity")
+    assert evaluate(None, "9" * 5000, 1, None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Non-finite number in output",
+    }

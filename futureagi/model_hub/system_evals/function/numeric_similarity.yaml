@@ -48,9 +48,14 @@ config:
                         or re.search(r'\b(?:v\.?|version(?:\.|\s*[:=]?\s*))$', prefix, re.I)):
                     return None, f"Version identifier in {name}"
                 # Labels and zero padding indicate an identifier; magnitude alone does not.
+                # Digits a float cannot hold exactly are rejected too, so two different
+                # integers (Order number: 9007199254740992 / ...993) never compare equal.
                 if re.fullmatch(r'[-+]?\d{16,}\.?', token):
-                    if (re.search(r'\b(?:id|identifier|order)\s*[:=#]?\s*$', prefix, re.I)
-                            or token.lstrip('+-').startswith('0')):
+                    digits = token.strip('+-.')
+                    approx = float(digits)
+                    if (re.search(r'\b(?:id|identifier)\s*[:=#]?\s*$', prefix, re.I)
+                            or digits.startswith('0')
+                            or (math.isfinite(approx) and approx != int(digits))):
                         return None, f"Long integer identifier in {name}"
                 value = token.replace(",", "")
             try:
