@@ -444,10 +444,13 @@ the user each image reads it as: the gateway runs as uid and gid 65532
 and the frontend's nginx master reads its key as root before it starts the
 workers. The frontend expects a key mode of `0400`, or `0440` from a Kubernetes
 Secret mounted with `fsGroup`; a key that its group can write or anyone else
-can read or write still loads, at startup and on rotation, but it logs a
-warning naming the file and its mode (never the key). Kubernetes mounts Secret
-files `0644` unless the volume sets `defaultMode`, so set `defaultMode: 0440`
-there. A missing, empty or unreadable key still fails startup. For example:
+can read or write still loads, but it logs a warning naming the file and its
+mode (never the key) at startup and on each certificate rotation (a mode change
+alone is checked at the next rotation). Kubernetes mounts Secret files `0644`
+unless the volume sets `defaultMode`, so set `defaultMode: 0440` there in your
+own manifests. The Helm chart's frontend TLS volume does not set `defaultMode`
+yet, so a Helm install with frontend TLS logs this warning and has no value to
+clear it. A missing, empty or unreadable key still fails startup. For example:
 
 ```yaml
 # docker-compose.native-tls.yml, next to docker-compose.distributed.yml
@@ -548,9 +551,10 @@ Create the file before the first start (`mkdir -p frontend-runtime && touch
 frontend-runtime/config.js`): for a missing source Docker creates a directory
 instead. For HTTPS, add the certificate directory mount and `FRONTEND_TLS_*`
 settings above. Without a writable `/tmp` the container exits with
-`[entrypoint] cannot write /tmp/futureagi-nginx/listen.conf`, and without a
-writable `config.js` with `[entrypoint] cannot write
-/usr/share/nginx/html/config.js`. Moving `config.js` elsewhere with
+`[entrypoint] cannot write /tmp/futureagi-nginx/listen.conf`. Without a
+writable `config.js` it still starts, but logs `[entrypoint] warning: cannot
+write /usr/share/nginx/html/config.js` and serves the image's empty placeholder,
+so the browser gets none of the `VITE_*` settings. Moving `config.js` elsewhere with
 `CONFIG_PATH` needs your own nginx configuration that serves `/config.js` from
 that path, as the Helm chart does.
 
