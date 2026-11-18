@@ -242,7 +242,7 @@ def _already_redacted(match: re.Match) -> bool:
     does not nest it. A value that only starts with one (an unterminated
     quote running on over later text) is redacted again."""
     if match["quote"]:
-        return match["quoted"] == _REDACTED
+        return bool(match["quoted"] == _REDACTED)
     # The unquoted value stops before the closing bracket, and includes an
     # opening quote or bracket that is not a delimiter, such as the curly
     # quote of ``password=“[Filtered]”``.
@@ -253,8 +253,9 @@ def _already_redacted(match: re.Match) -> bool:
         "Ps",
     ):
         value = value[1:]
-    return value == _REDACTED[:-1] and match.string.startswith(
-        _REDACTED, match.end("value") - len(value)
+    return bool(
+        value == _REDACTED[:-1]
+        and match.string.startswith(_REDACTED, match.end("value") - len(value))
     )
 
 
@@ -281,7 +282,7 @@ def _scrub_text(value: Any) -> Any:
 
     def redact(match: re.Match) -> str:
         if _TOKEN_USAGE_NAME.search(match["key"]) or _already_redacted(match):
-            return match[0]
+            return str(match[0])
         return (
             f"{match['key']}{match['sep']}{match['quote'] or ''}"
             f"{_REDACTED}{match['close'] or ''}"
@@ -421,10 +422,12 @@ def _scrub_log_args(
     )
     redacted = False
     searchable = bool(spans) and isinstance(formatted, str)
-    starts = [start for start, _ in spans] if searchable else []
-    ends = [end for _, end in spans] if searchable else []
+    starts = [start for start, _ in (spans or [])] if searchable else []
+    ends = [end for _, end in (spans or [])] if searchable else []
     to_end = (
-        [start for start, end in spans if end == len(formatted)] if searchable else []
+        [start for start, end in (spans or []) if end == len(formatted)]
+        if searchable
+        else []
     )
     found: dict[str, bool] = {}
     over_budget = False
@@ -432,7 +435,7 @@ def _scrub_log_args(
         values = params.values() if isinstance(params, dict) else params
         distinct = {str(param) for param in values}
         over_budget = (
-            len(distinct) * (len(spans) + len(formatted) // 256) > _SEARCH_BUDGET
+            len(distinct) * (len(spans or []) + len(formatted) // 256) > _SEARCH_BUDGET
         )
 
     def occurs(rendered: str) -> bool:
