@@ -114,7 +114,11 @@ const AddScenarioModal = ({ open, onClose, onCreateSuccess }) => {
       };
 
       trackEvent(Events.scenarioCreateClicked, {
-        [PropertyName.formFields]: payload,
+        [PropertyName.formFields]: {
+          dataset_id: payload.dataset_id,
+          kind: payload.kind,
+          has_description: Boolean(payload.description),
+        },
       });
 
       await axios.post(endpoints.scenarios.create, payload);
@@ -137,7 +141,7 @@ const AddScenarioModal = ({ open, onClose, onCreateSuccess }) => {
       fullWidth
       PaperProps={{
         sx: {
-          width: "500px",
+          width: "560px",
           maxHeight: "800px",
         },
       }}
@@ -165,7 +169,7 @@ const AddScenarioModal = ({ open, onClose, onCreateSuccess }) => {
             sx={{ position: "absolute", top: "12px", right: "12px" }}
           >
             <Iconify
-              icon="eva:close-fill"
+              icon="solar:close-linear"
               color="text.primary"
               height={24}
               width={24}

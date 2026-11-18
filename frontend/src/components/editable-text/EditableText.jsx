@@ -167,7 +167,6 @@ const EditableText = React.forwardRef(
                   onClick={handleEditClick}
                   className="editable-text-icon"
                   sx={{
-                    padding: 0.5,
                     ...iconSx,
                   }}
                 >

@@ -43,7 +43,47 @@ def _select(task, task_queue, *, workflow_confirmed_stopped: bool = False):
         task_id=str(task.id),
         task_queue=task_queue,
         workflow_confirmed_stopped=workflow_confirmed_stopped,
+        **_instant_sizing(task),
     )
+
+
+# Instant eval: a person is watching the answers land, so a run drains in
+# batches of up to 200 with 32 evals in flight instead of waves of 10 behind a
+# 50-row barrier, whatever its size. Each worker process still holds at most
+# JEV_MAX_CONCURRENT Jev calls at once. Regular historical tasks keep the
+# conservative defaults.
+INSTANT_BATCH_SIZE = 200
+INSTANT_MAX_CONCURRENT = 32
+# A worker that dies mid-answer is noticed after a minute, not five.
+INSTANT_HEARTBEAT_S = 60
+
+
+def _instant_sizing(task) -> dict:
+    limit = getattr(task, "spans_limit", None) or 0
+    if limit <= 0:
+        return {}
+    try:
+        # Primary: the workflow starts right after the request that set the
+        # task's evals; a replica that has not applied them sizes the run as
+        # a regular task.
+        configs = list(task.evals.using("default").values_list("config", flat=True))
+    except Exception:
+        # Falls back to the regular sizing; say so, a run sized wrong is slow.
+        logger.warning(
+            "instant_eval_sizing_unreadable", task_id=str(task.id), exc_info=True
+        )
+        return {}
+    if not configs or not all(
+        isinstance(c, dict) and c.get("instant_eval") for c in configs
+    ):
+        return {}
+    sizing = {
+        "batch_size": min(limit, INSTANT_BATCH_SIZE),
+        "max_concurrent": min(limit, INSTANT_MAX_CONCURRENT),
+        "heartbeat_s": INSTANT_HEARTBEAT_S,
+    }
+    logger.info("instant_eval_sizing", task_id=str(task.id), **sizing)
+    return sizing
 
 
 def start_eval_task_workflow_sync(
@@ -52,6 +92,7 @@ def start_eval_task_workflow_sync(
     *,
     replace_existing: bool = False,
     workflow_confirmed_stopped: bool | None = None,
+    start_once: bool = False,
 ) -> str:
     """Start the workflow for ``task`` from synchronous Django code.
 
@@ -70,7 +111,14 @@ def start_eval_task_workflow_sync(
     reaches a run that started with nothing draining. A replacing start
     terminates whatever it finds, and whether that was a live drain is exactly
     what the starter's own describe, taken just before, has to say.
+
+    ``start_once`` fences both create's initial dispatch and retries of an
+    unconfirmed start: coalesce with a live execution, but reject a closed one
+    rather than run the task again. The server enforces this even if the
+    execution closes after our describe.
     """
+    if start_once and replace_existing:
+        raise ValueError("an initial start retry cannot replace an execution")
     if workflow_confirmed_stopped is None:
         workflow_confirmed_stopped = _describe_says_nothing_is_draining(task.id)
     elif replace_existing:
@@ -94,8 +142,12 @@ def start_eval_task_workflow_sync(
         workflow_id=_workflow_id(str(task.id)),
         task_queue=task_queue,
         cancel_existing=False,
-        # Closed executions may be followed by a new run under the per-task ID.
-        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        # Initial starts and their retries must not re-run a closed execution.
+        id_reuse_policy=(
+            WorkflowIDReusePolicy.REJECT_DUPLICATE
+            if start_once
+            else WorkflowIDReusePolicy.ALLOW_DUPLICATE
+        ),
         id_conflict_policy=conflict_policy,
     )
     return handle.id

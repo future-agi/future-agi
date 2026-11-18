@@ -413,9 +413,7 @@ class MCPConnectorToolsView(APIView):
         invalid_names = requested_names - discovered_names
 
         if invalid_names:
-            return _gm.bad_request(
-                f"Unknown tools: {', '.join(sorted(invalid_names))}"
-            )
+            return _gm.bad_request(f"Unknown tools: {', '.join(sorted(invalid_names))}")
 
         connector.enabled_tool_names = list(requested_names)
         connector.save(update_fields=["enabled_tool_names", "updated_at"])

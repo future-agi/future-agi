@@ -118,9 +118,9 @@ class BaseTool(ABC):
     - execute(): the actual tool logic
     """
 
-    name: ClassVar[str]
-    description: ClassVar[str]
-    category: ClassVar[str]
+    name: str
+    description: str
+    category: str
     input_model: ClassVar[Type[PydanticBaseModel]] = EmptyInput
 
     @abstractmethod

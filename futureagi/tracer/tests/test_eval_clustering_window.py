@@ -56,12 +56,20 @@ def test_window_excludes_old_includes_recent(
     # Distinct eval_task_ids: two live evals on the same (task, span, config)
     # would collide on the eval_logger_live_span_uniq work-item constraint.
     _make_failing_eval(
-        trace, observation_span, custom_eval_config,
-        old_exp, age_days=_CLUSTER_WINDOW_DAYS + 30, eval_task_id="et-old",
+        trace,
+        observation_span,
+        custom_eval_config,
+        old_exp,
+        age_days=_CLUSTER_WINDOW_DAYS + 30,
+        eval_task_id="et-old",
     )
     _make_failing_eval(
-        trace, observation_span, custom_eval_config,
-        new_exp, age_days=1, eval_task_id="et-new",
+        trace,
+        observation_span,
+        custom_eval_config,
+        new_exp,
+        age_days=1,
+        eval_task_id="et-new",
     )
 
     explanations = {
@@ -78,8 +86,11 @@ def test_boundary_just_inside_window_is_included(
 ):
     exp = "failure just inside the window boundary"
     _make_failing_eval(
-        trace, observation_span, custom_eval_config,
-        exp, age_days=_CLUSTER_WINDOW_DAYS - 1,
+        trace,
+        observation_span,
+        custom_eval_config,
+        exp,
+        age_days=_CLUSTER_WINDOW_DAYS - 1,
     )
 
     explanations = {
@@ -306,3 +317,41 @@ def test_clustering_includes_ch_only_session_failure(project, custom_eval_config
 def test_window_constant_unchanged():
     """Guards against an accidental edit to the recency window."""
     assert _CLUSTER_WINDOW_DAYS == 60
+
+
+@pytest.mark.django_db
+def test_a_batch_reads_only_the_pages_it_needs(
+    project, trace, observation_span, custom_eval_config, monkeypatch
+):
+    """A bounded batch stops reading once it has ``limit`` rows: the backlog
+    is paged with a LIMIT in SQL, so it is never all held in memory (with
+    server-side cursors disabled, ``.iterator()`` fetched every row first)."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from tracer.queries import eval_clustering
+
+    monkeypatch.setattr(eval_clustering, "_FETCH_PAGE", 2)
+    made = [
+        _make_failing_eval(
+            trace,
+            observation_span,
+            custom_eval_config,
+            f"failure {i}",
+            age_days=10 - i,
+            eval_task_id=f"et-page-{i}",
+        )
+        for i in range(7)
+    ]
+    oldest_first = [str(ev.id) for ev in made]
+
+    with CaptureQueriesContext(connection) as queries:
+        batch = get_unclustered_eval_results(str(project.id), limit=3)
+    assert [r.eval_logger_id for r in batch] == oldest_first[:3]
+    reads = [q["sql"] for q in queries if "tracer_eval_logger" in q["sql"]]
+    # Two pages of two rows each, each one LIMITed.
+    assert len(reads) == 2
+    assert all("LIMIT 2" in sql for sql in reads)
+
+    every = get_unclustered_eval_results(str(project.id))
+    assert [r.eval_logger_id for r in every] == oldest_first

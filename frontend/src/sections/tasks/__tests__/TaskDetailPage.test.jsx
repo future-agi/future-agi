@@ -1,11 +1,18 @@
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import TaskDetailPage from "../TaskDetailPage";
 import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { defaultSamplingPolicy } from "../components/samplingPolicyForm";
 
 const axiosPatchMock = vi.hoisted(() => vi.fn());
 const axiosPostMock = vi.hoisted(() => vi.fn());
@@ -121,7 +128,7 @@ const renderTaskDetail = (taskId = "missing-task") => {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[`/dashboard/tasks/${taskId}`]}>
         <Routes>
@@ -130,6 +137,7 @@ const renderTaskDetail = (taskId = "missing-task") => {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, queryClient };
 };
 
 const loadedTask = (overrides = {}) => ({
@@ -138,6 +146,7 @@ const loadedTask = (overrides = {}) => ({
   project_id: "project-1",
   project_name: "Project One",
   status: "completed",
+  last_run: "2026-11-17T00:00:00Z",
   filters_applied: {},
   evals_applied: [],
   sampling_rate: 100,
@@ -291,6 +300,157 @@ describe("TaskDetailPage", () => {
         {},
       );
     });
+  });
+
+  it("starts a saved Pending task once and disables Start task in flight", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ status: "pending", can_start: true }),
+      isLoading: false,
+      isError: false,
+    });
+    let acceptStart;
+    axiosPostMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        acceptStart = resolve;
+      }),
+    );
+
+    renderTaskDetail("task-1");
+    const button = screen.getByRole("button", { name: /start task/i });
+    expect(button).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: /^resume$/i }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(axiosPostMock).toHaveBeenCalledWith(
+        "/tracer/eval-task/unpause_eval_task/?eval_task_id=task-1",
+        { start: true },
+      );
+      expect(button).toBeDisabled();
+    });
+    fireEvent.click(button);
+    expect(axiosPostMock).toHaveBeenCalledOnce();
+    await act(async () => {
+      acceptStart({ data: { result: { message: "Task start accepted" } } });
+    });
+    await waitFor(() => {
+      expect(enqueueSnackbar).toHaveBeenCalledWith("Task start accepted", {
+        variant: "success",
+      });
+    });
+    expect(screen.getByText("pending")).toBeInTheDocument();
+  });
+
+  it("treats an already accepted initial start as success", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ status: "pending", can_start: true }),
+      isLoading: false,
+      isError: false,
+    });
+    axiosPostMock.mockResolvedValueOnce({
+      data: { result: { message: "Task start already accepted" } },
+    });
+    const { queryClient } = renderTaskDetail("task-1");
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    fireEvent.click(screen.getByRole("button", { name: /start task/i }));
+
+    await waitFor(() => {
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Task start already accepted",
+        { variant: "success" },
+      );
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["taskDetails", "task-1"],
+      });
+    });
+    expect(axiosPostMock).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes after an already-started conflict without retrying the start", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ status: "pending", can_start: true }),
+      isLoading: false,
+      isError: false,
+    });
+    // The axios interceptor exposes the API error envelope at the top level.
+    axiosPostMock.mockRejectedValueOnce({
+      status: false,
+      statusCode: 409,
+      code: "eval_task_already_started",
+      result: "This task has already started.",
+    });
+    const { queryClient } = renderTaskDetail("task-1");
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    fireEvent.click(screen.getByRole("button", { name: /start task/i }));
+
+    await waitFor(() => {
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "This task has already started. Refreshing its status.",
+        { variant: "info" },
+      );
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["taskDetails", "task-1"],
+      });
+    });
+    expect(axiosPostMock).toHaveBeenCalledOnce();
+  });
+
+  it("allows retrying an unconfirmed start without claiming the task is running", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ status: "pending", can_start: true }),
+      isLoading: false,
+      isError: false,
+    });
+    axiosPostMock.mockRejectedValueOnce(new Error("synthetic network failure"));
+    renderTaskDetail("task-1");
+    const button = screen.getByRole("button", { name: /start task/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Task start could not be confirmed. Try again.",
+        { variant: "error" },
+      );
+      expect(button).toBeEnabled();
+    });
+    expect(screen.getByText("pending")).toBeInTheDocument();
+    fireEvent.click(button);
+    await waitFor(() => expect(axiosPostMock).toHaveBeenCalledTimes(2));
+  });
+
+  it.each([
+    { status: "pending", can_start: false },
+    { status: "pending" },
+    { status: "running", can_start: true },
+    { status: "completed", can_start: true },
+    { status: "paused", can_start: true },
+    { status: "failed", can_start: true },
+  ])("does not offer Start task for ineligible details %j", (task) => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask(task),
+      isLoading: false,
+      isError: false,
+    });
+    renderTaskDetail("task-1");
+    expect(
+      screen.queryByRole("button", { name: /start task/i }),
+    ).not.toBeInTheDocument();
+    expect(axiosPostMock).not.toHaveBeenCalled();
+  });
+
+  it("disables Start task when the viewer cannot run tasks", () => {
+    useAuthContextMock.mockReturnValue({ role: "Viewer" });
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ status: "pending", can_start: true }),
+      isLoading: false,
+      isError: false,
+    });
+    renderTaskDetail("task-1");
+    const button = screen.getByRole("button", { name: /start task/i });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(axiosPostMock).not.toHaveBeenCalled();
   });
 
   it("offers no Resume for a completed task", () => {
@@ -480,6 +640,95 @@ describe("TaskDetailPage", () => {
     );
   });
 
+  it.each(["save", "duplicate"])(
+    "%s normalizes raw numeric predicate drafts at the mutation boundary",
+    async (action) => {
+      const policy = defaultSamplingPolicy();
+      policy.strata = [
+        {
+          name: "costly",
+          rate: 50,
+          filters: [{ key: "cost", op: "gt", values: ["0.5"] }],
+        },
+      ];
+      useGetTaskData.mockReturnValue({
+        data: loadedTask({
+          sampling_policy: policy,
+          evals_applied: [{ id: "eval-1" }],
+        }),
+        isLoading: false,
+        isError: false,
+      });
+      renderTaskDetail("task-1");
+      if (action === "save") {
+        fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+        await screen.findByText("Update Task");
+        await act(async () =>
+          confirmDialogMock.mock.calls.at(-1)[0].onConfirm("edit"),
+        );
+      } else {
+        fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+        fireEvent.click(
+          await screen.findByRole("menuitem", { name: /duplicate/i }),
+        );
+        fireEvent.click(
+          await screen.findByRole("button", { name: /^create$/i }),
+        );
+      }
+      const request = action === "save" ? axiosPatchMock : axiosPostMock;
+      await waitFor(() => expect(request).toHaveBeenCalledOnce());
+      expect(
+        request.mock.calls[0][1].sampling_policy.strata[0].filters[0].values,
+      ).toEqual([0.5]);
+      expect(policy.strata[0].filters[0].values).toEqual(["0.5"]);
+    },
+  );
+
+  it.each(["save", "duplicate"])(
+    "%s refuses an incomplete numeric predicate even at the mutation boundary",
+    async (action) => {
+      const policy = defaultSamplingPolicy();
+      policy.strata = [
+        {
+          name: "costly",
+          rate: 50,
+          filters: [{ key: "cost", op: "gt", values: ["1e-"] }],
+        },
+      ];
+      useGetTaskData.mockReturnValue({
+        data: loadedTask({
+          sampling_policy: policy,
+          evals_applied: [{ id: "eval-1" }],
+        }),
+        isLoading: false,
+        isError: false,
+      });
+      renderTaskDetail("task-1");
+      if (action === "save") {
+        // Exercise the confirmation callback itself, independent of the first
+        // schema gate (the form may change after the dialog was opened).
+        await act(async () =>
+          confirmDialogMock.mock.calls.at(-1)[0].onConfirm("edit"),
+        );
+      } else {
+        fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+        fireEvent.click(
+          await screen.findByRole("menuitem", { name: /duplicate/i }),
+        );
+        fireEvent.click(
+          await screen.findByRole("button", { name: /^create$/i }),
+        );
+      }
+      await waitFor(() =>
+        expect(enqueueSnackbar).toHaveBeenCalledWith(expect.any(String), {
+          variant: "error",
+        }),
+      );
+      expect(axiosPatchMock).not.toHaveBeenCalled();
+      expect(axiosPostMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("duplicates a task with converted wire-format filters, date_range, and evals", async () => {
     useGetTaskData.mockReturnValue({
       data: loadedTask({
@@ -518,7 +767,9 @@ describe("TaskDetailPage", () => {
     });
     fireEvent.click(duplicateItem);
 
-    const createButton = await screen.findByRole("button", { name: /^create$/i });
+    const createButton = await screen.findByRole("button", {
+      name: /^create$/i,
+    });
     fireEvent.click(createButton);
 
     await waitFor(() => {
@@ -533,10 +784,7 @@ describe("TaskDetailPage", () => {
         filters: {
           project_id: "project-1",
           date_preset: "custom",
-          date_range: [
-            "2026-01-01T00:00:00.000Z",
-            "2026-01-02T00:00:00.000Z",
-          ],
+          date_range: ["2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z"],
           filters: [
             {
               column_id: "llm.model_name",
@@ -578,7 +826,9 @@ describe("TaskDetailPage", () => {
     });
     fireEvent.click(duplicateItem);
 
-    const createButton = await screen.findByRole("button", { name: /^create$/i });
+    const createButton = await screen.findByRole("button", {
+      name: /^create$/i,
+    });
     fireEvent.click(createButton);
 
     await waitFor(() => {
@@ -635,7 +885,9 @@ describe("TaskDetailPage", () => {
 
     // Live edit the startDate in the form
     const dateInput = screen.getByTestId("test-start-date");
-    fireEvent.change(dateInput, { target: { value: "2026-03-01T00:00:00.000Z" } });
+    fireEvent.change(dateInput, {
+      target: { value: "2026-03-01T00:00:00.000Z" },
+    });
 
     fireEvent.click(screen.getByRole("button", { name: /actions/i }));
     const duplicateItem = await screen.findByRole("menuitem", {
@@ -643,7 +895,9 @@ describe("TaskDetailPage", () => {
     });
     fireEvent.click(duplicateItem);
 
-    const createButton = await screen.findByRole("button", { name: /^create$/i });
+    const createButton = await screen.findByRole("button", {
+      name: /^create$/i,
+    });
     fireEvent.click(createButton);
 
     await waitFor(() => {

@@ -1,5 +1,6 @@
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useMemo, useRef, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useAgTheme } from "src/hooks/use-ag-theme";

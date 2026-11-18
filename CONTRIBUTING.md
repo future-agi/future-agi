@@ -14,6 +14,7 @@ Future AGI is an open-source AI evaluation and observability platform, and we we
 - ✨ [Request a feature](https://github.com/future-agi/future-agi/issues/new?template=feature_request.yml)
 - 🔖 [Good first issues](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 - 💬 [Join Discord](https://discord.com/invite/n2tCUKBkAw)
+- [Automatic-update developer guide](deploy/update/DEVELOPER_GUIDE.md) — requirements for migrations, configuration, startup, storage and recovery changes
 
 ---
 
@@ -65,14 +66,14 @@ troubleshooting.
 # From repo root — installs husky hooks and lint-staged tooling.
 yarn install
 
-# For Python hooks (black, isort, mypy, Django system checks):
+# For the Python pre-commit hooks (ruff check --fix, ruff format, mypy, file checks):
 cd futureagi && make pre-commit-install
 ```
 
 On every commit, `lint-staged` auto-formats and lints the staged files:
 
 - `frontend/src/**` → ESLint + Prettier
-- `futureagi/**/*.py` → `black`, `isort`, `mypy` (via pre-commit)
+- `futureagi/**/*.py` → `ruff check --fix`, then `ruff format` (`scripts/lint-staged-python.sh`)
 
 Branch names are validated on `git push`.
 
@@ -151,8 +152,8 @@ Framework integrations live in the `traceAI` SDK (separate repo). For Python: [g
 
 We follow:
 
-- **Python:** PEP 8 via Ruff + Black (line length 88)
-- **Imports:** `isort` with Black profile
+- **Python:** PEP 8 via Ruff: `ruff check` and `ruff format` (line length 88)
+- **Imports:** sorted by Ruff's isort rules (`I`)
 - **Types:** new code must pass `mypy` (we use a baseline for existing code)
 - **JS / TS:** ESLint (Airbnb) + Prettier
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`)
@@ -168,6 +169,7 @@ Before requesting review:
 
 - [ ] PR description explains **what** and **why** (not just **how** — the diff shows that)
 - [ ] Tests added or updated
+- [ ] If changing migrations, configuration, startup or persistent storage, follow the [automatic-update developer checklist](deploy/update/DEVELOPER_GUIDE.md)
 - [ ] `make check-all` (backend) or `yarn check-all` (frontend) passes
 - [ ] Docstrings on new public APIs
 - [ ] [CHANGELOG](https://futureagi.com/changelog) updated if user-facing

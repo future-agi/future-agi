@@ -63,7 +63,9 @@ class ClusterAnalysisResult:
     synthesis: Optional[ClusterSynthesis] = None
     findings: list[ClusterFinding] = field(default_factory=list)
     turn_count: int = 0
-    terminated_reason: str = ""  # "synthesis_submitted" | "max_turns" | "error" | "stop"
+    terminated_reason: str = (
+        ""  # "synthesis_submitted" | "max_turns" | "error" | "stop"
+    )
     error: Optional[str] = None
     cost_usd: float = 0.0
 

@@ -49,9 +49,11 @@ describe("PrebuiltEnvironmentsBrowse", () => {
     ["Voice & chat", "Computer use", "Code"].forEach((group) => {
       expect(screen.getByText(group)).toBeInTheDocument();
     });
-    ["Retail Banking Assistant", "Browser", "Coding", "Verilog"].forEach(
-      (name) => expect(screen.getByText(name)).toBeInTheDocument(),
+    ["Retail Banking Assistant", "Coding", "Verilog"].forEach((name) =>
+      expect(screen.getByText(name)).toBeInTheDocument(),
     );
+    // "Browser" is both a group header and a tile's surface label (sentence case).
+    expect(screen.getAllByText("Browser")).toHaveLength(2);
   });
 
   it("reports the exact scenario count on a tile", async () => {

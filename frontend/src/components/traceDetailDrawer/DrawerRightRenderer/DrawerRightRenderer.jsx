@@ -225,8 +225,6 @@ const DrawerRightRenderer = ({ observationSpan }) => {
             backgroundColor: "transparent",
             color: "primary.main",
             border: "2px solid var(--primary-main)",
-            paddingX: "12px",
-            paddingY: 2,
             display: "flex",
             alignItems: "center",
             gap: 1,
@@ -237,7 +235,7 @@ const DrawerRightRenderer = ({ observationSpan }) => {
           }}
           onClick={handleOpenAddToDataset}
         >
-          <Iconify icon="prime:plus" color="primary.main" width={20} />
+          <Iconify icon="solar:add-linear" color="primary.main" width={20} />
           Add to Dataset
         </Button> */}
 
@@ -251,8 +249,6 @@ const DrawerRightRenderer = ({ observationSpan }) => {
               backgroundColor: "transparent",
               color: "primary.main",
               border: "2px solid var(--primary-main)",
-              paddingX: "12px",
-              paddingY: 2,
               display: "flex",
               alignItems: "center",
               gap: 1,
@@ -263,7 +259,7 @@ const DrawerRightRenderer = ({ observationSpan }) => {
             }}
           >
             <Iconify
-              icon="fluent:prompt-16-regular"
+              icon="solar:chat-square-code-linear"
               color="primary.main"
               width={20}
             />
@@ -280,8 +276,6 @@ const DrawerRightRenderer = ({ observationSpan }) => {
               backgroundColor: "transparent",
               color: "primary.main",
               border: "2px solid var(--primary-main)",
-              paddingX: "12px",
-              paddingY: 2,
               display: "flex",
               alignItems: "center",
               gap: 1,
@@ -292,7 +286,7 @@ const DrawerRightRenderer = ({ observationSpan }) => {
             }}
           >
             <Iconify
-              icon="grommet-icons:nodes"
+              icon="solar:graph-linear"
               color="primary.main"
               width={20}
             />

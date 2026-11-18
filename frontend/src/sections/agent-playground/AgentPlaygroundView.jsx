@@ -106,6 +106,7 @@ const AgentPlaygroundView = React.memo(function AgentPlaygroundView() {
       <Divider />
       <Box
         sx={{
+          px: 2,
           borderBottom: "1px solid",
           borderColor: "divider",
         }}

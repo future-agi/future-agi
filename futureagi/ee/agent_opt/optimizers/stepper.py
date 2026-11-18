@@ -34,37 +34,30 @@ class OptimizerStepper(ABC):
 
     @classmethod
     @abstractmethod
-    def from_state(cls, state: Dict[str, Any], *, config: Dict[str, Any]):
-        ...
+    def from_state(cls, state: Dict[str, Any], *, config: Dict[str, Any]): ...
 
     @abstractmethod
-    def next_candidate(self) -> Optional[str]:
-        ...
+    def next_candidate(self) -> Optional[str]: ...
 
     @abstractmethod
     def on_result(
         self, *, prompt: str, score: float, metadata: Optional[Dict[str, Any]] = None
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abstractmethod
-    def to_state(self) -> Dict[str, Any]:
-        ...
+    def to_state(self) -> Dict[str, Any]: ...
 
     @property
     @abstractmethod
-    def remaining(self) -> int:
-        ...
+    def remaining(self) -> int: ...
 
     @property
     @abstractmethod
-    def best_prompt(self) -> str:
-        ...
+    def best_prompt(self) -> str: ...
 
     @property
     @abstractmethod
-    def best_score(self) -> float:
-        ...
+    def best_score(self) -> float: ...
 
 
 @dataclass
@@ -99,7 +92,12 @@ class RandomSearchStepper(OptimizerStepper):
     ) -> "RandomSearchStepper":
         teacher_kwargs = teacher_model_kwargs or {}
         variations = variation_generator(
-            initial_prompt, num_variations, teacher_model, teacher_kwargs, api_key, task_description
+            initial_prompt,
+            num_variations,
+            teacher_model,
+            teacher_kwargs,
+            api_key,
+            task_description,
         )
         return cls(
             initial_prompt=initial_prompt,
@@ -343,9 +341,7 @@ class MetaPromptStepper(OptimizerStepper):
         if not self.eval_subset_indices:
             return dataset
         return [
-            dataset[idx]
-            for idx in self.eval_subset_indices
-            if 0 <= idx < len(dataset)
+            dataset[idx] for idx in self.eval_subset_indices if 0 <= idx < len(dataset)
         ]
 
     def _generate_improved_prompt(
@@ -442,7 +438,9 @@ class BayesianStepper(OptimizerStepper):
         return cls(n_trials=n_trials, completed_trials=0, _best_prompt=initial_prompt)
 
     @classmethod
-    def from_state(cls, state: Dict[str, Any], *, config: Dict[str, Any]) -> "BayesianStepper":
+    def from_state(
+        cls, state: Dict[str, Any], *, config: Dict[str, Any]
+    ) -> "BayesianStepper":
         return cls(
             n_trials=state.get("n_trials", config.get("n_trials", 0)),
             completed_trials=state.get("completed_trials", 0),
@@ -496,12 +494,16 @@ class ProTeGiStepper(OptimizerStepper):
     _best_score: float = -1.0
 
     @classmethod
-    def from_config(cls, *, num_rounds: int, initial_prompts: List[str]) -> "ProTeGiStepper":
+    def from_config(
+        cls, *, num_rounds: int, initial_prompts: List[str]
+    ) -> "ProTeGiStepper":
         base = initial_prompts[0] if initial_prompts else ""
         return cls(num_rounds=num_rounds, beam=set(initial_prompts), _best_prompt=base)
 
     @classmethod
-    def from_state(cls, state: Dict[str, Any], *, config: Dict[str, Any]) -> "ProTeGiStepper":
+    def from_state(
+        cls, state: Dict[str, Any], *, config: Dict[str, Any]
+    ) -> "ProTeGiStepper":
         return cls(
             num_rounds=state.get("num_rounds", config.get("num_rounds", 0)),
             beam=set(state.get("beam", [])),
@@ -580,7 +582,9 @@ class PromptWizardStepper(OptimizerStepper):
         )
 
     @classmethod
-    def from_state(cls, state: Dict[str, Any], *, config: Dict[str, Any]) -> "PromptWizardStepper":
+    def from_state(
+        cls, state: Dict[str, Any], *, config: Dict[str, Any]
+    ) -> "PromptWizardStepper":
         return cls(
             refine_iterations=state.get(
                 "refine_iterations", config.get("refine_iterations", 0)

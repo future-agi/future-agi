@@ -2,12 +2,19 @@ package a2a
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/mcp"
+	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
 )
 
 func newTestA2AServer() *Server {
@@ -297,5 +304,224 @@ func TestTasksCancel(t *testing.T) {
 	json.Unmarshal(resp.Result, &task)
 	if task.Status.State != TaskStatusCanceled {
 		t.Fatalf("expected canceled, got %s", task.Status.State)
+	}
+}
+
+func TestListAgentsConcurrentWithFetchCards(t *testing.T) {
+	cardSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(AgentCard{Name: "travel", Version: "1.0"})
+	}))
+	defer cardSrv.Close()
+
+	reg := NewRegistry(map[string]AgentConfig{
+		"travel": {URL: cardSrv.URL, Description: "Travel agent"},
+	})
+	s := NewServer(CardConfig{Name: "test"}, reg)
+	defer s.Close()
+	listSrv := httptest.NewServer(http.HandlerFunc(s.ListAgents))
+	defer listSrv.Close()
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	var sawCard atomic.Bool
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			type agentInfo struct {
+				Name string     `json:"name"`
+				Card *AgentCard `json:"card"`
+			}
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					resp, err := listSrv.Client().Get(listSrv.URL + "/v1/agents")
+					if err != nil {
+						t.Errorf("list agents: %v", err)
+						return
+					}
+					var result []agentInfo
+					err = json.NewDecoder(resp.Body).Decode(&result)
+					resp.Body.Close()
+					if resp.StatusCode != http.StatusOK {
+						t.Errorf("expected 200, got %d", resp.StatusCode)
+						return
+					}
+					if err != nil {
+						t.Errorf("decode: %v", err)
+						return
+					}
+					for _, info := range result {
+						if info.Card != nil {
+							sawCard.Store(true)
+						}
+					}
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < 20; i++ {
+		reg.FetchCards(context.Background())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !sawCard.Load() {
+		if time.Now().After(deadline) {
+			close(stop)
+			wg.Wait()
+			t.Fatal("timed out waiting for card in GET /v1/agents")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	close(stop)
+	wg.Wait()
+}
+
+// newPipelineTestA2AServer returns a server that takes the pipeline path, with
+// model calls going to executor.
+func newPipelineTestA2AServer(t *testing.T, executor ChatCompletionExecutor) *Server {
+	t.Helper()
+	s := NewServer(CardConfig{Name: "test-agentcc"}, NewRegistry(nil),
+		WithPipeline(pipeline.NewEngine(), &providers.Registry{}),
+		WithChatCompletionExecutor(executor))
+	t.Cleanup(s.Close)
+	return s
+}
+
+// sendReturnImmediately starts a returnImmediately task and returns the task
+// from the message/send response.
+func sendReturnImmediately(t *testing.T, s *Server, metadata string) Task {
+	t.Helper()
+	params := MessageSendParams{
+		Message:       Message{Role: "user", Parts: []MessagePart{{Type: "text", Text: "Hello"}}},
+		Configuration: &MessageSendConfiguration{ReturnImmediately: true},
+	}
+	if metadata != "" {
+		params.Metadata = json.RawMessage(metadata)
+	}
+	data, _ := json.Marshal(params)
+	resp := decodeA2AResponse(t, postA2A(t, s, &mcp.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  MethodMessageSend,
+		Params:  data,
+	}))
+	if resp.Error != nil {
+		t.Fatalf("unexpected send error: %s", resp.Error.Message)
+	}
+	var task Task
+	if err := json.Unmarshal(resp.Result, &task); err != nil {
+		t.Fatal(err)
+	}
+	return task
+}
+
+// callTaskMethod calls tasks/get or tasks/cancel, which take the same params,
+// and returns the task from the response.
+func callTaskMethod(t *testing.T, s *Server, method, taskID string) Task {
+	t.Helper()
+	data, _ := json.Marshal(TaskGetParams{TaskID: taskID})
+	resp := decodeA2AResponse(t, postA2A(t, s, &mcp.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  method,
+		Params:  data,
+	}))
+	if resp.Error != nil {
+		t.Fatalf("unexpected %s error: %s", method, resp.Error.Message)
+	}
+	var task Task
+	if err := json.Unmarshal(resp.Result, &task); err != nil {
+		t.Fatal(err)
+	}
+	return task
+}
+
+// waitForTaskWorker waits until the background worker for taskID has returned.
+// The worker drops its cancel func only after storing its final state.
+func waitForTaskWorker(t *testing.T, s *Server, taskID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, running := s.taskCancels.Load(taskID); !running {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("worker for task %s did not finish", taskID)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestReturnImmediatelyResponseDoesNotShareTaskWithWorker(t *testing.T) {
+	// Without metadata.model the worker fails the task at once, while the
+	// handler is still encoding the message/send response.
+	s := newPipelineTestA2AServer(t, func(context.Context, Caller, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		t.Error("executor should not be called without a model")
+		return nil, nil
+	})
+
+	sent := sendReturnImmediately(t, s, "")
+	if sent.Status.State != TaskStatusWorking {
+		t.Fatalf("message/send state = %q, want %q", sent.Status.State, TaskStatusWorking)
+	}
+
+	waitForTaskWorker(t, s, sent.ID)
+	if got := callTaskMethod(t, s, MethodTasksGet, sent.ID); got.Status.State != TaskStatusFailed {
+		t.Fatalf("tasks/get state = %q, want %q", got.Status.State, TaskStatusFailed)
+	}
+}
+
+func TestTasksCancelWhileReturnImmediatelyTaskRuns(t *testing.T) {
+	started := make(chan struct{})
+	s := newPipelineTestA2AServer(t, func(ctx context.Context, _ Caller, _ *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	sent := sendReturnImmediately(t, s, `{"model":"test-model"}`)
+	<-started
+
+	// The worker wakes as soon as the cancel func runs and records the
+	// cancellation while tasks/cancel is still updating the same task.
+	if got := callTaskMethod(t, s, MethodTasksCancel, sent.ID); got.Status.State != TaskStatusCanceled {
+		t.Fatalf("tasks/cancel state = %q, want %q", got.Status.State, TaskStatusCanceled)
+	}
+
+	waitForTaskWorker(t, s, sent.ID)
+	if got := callTaskMethod(t, s, MethodTasksGet, sent.ID); got.Status.State != TaskStatusCanceled {
+		t.Fatalf("tasks/get state = %q, want %q", got.Status.State, TaskStatusCanceled)
+	}
+}
+
+func TestTasksCancelIsNotOverwrittenByLateResult(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	s := newPipelineTestA2AServer(t, func(context.Context, Caller, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		close(started)
+		<-release
+		return &models.ChatCompletionResponse{Choices: []models.Choice{{
+			Message: models.Message{Role: "assistant", Content: json.RawMessage(`"late answer"`)},
+		}}}, nil
+	})
+
+	sent := sendReturnImmediately(t, s, `{"model":"test-model"}`)
+	<-started
+
+	if got := callTaskMethod(t, s, MethodTasksCancel, sent.ID); got.Status.State != TaskStatusCanceled {
+		t.Fatalf("tasks/cancel state = %q, want %q", got.Status.State, TaskStatusCanceled)
+	}
+
+	// The model call returns a result after the task was canceled.
+	close(release)
+	waitForTaskWorker(t, s, sent.ID)
+
+	if got := callTaskMethod(t, s, MethodTasksGet, sent.ID); got.Status.State != TaskStatusCanceled {
+		t.Fatalf("tasks/get state = %q, want %q", got.Status.State, TaskStatusCanceled)
 	}
 }

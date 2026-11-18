@@ -1,28 +1,8 @@
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import React, { useState, useMemo } from "react";
-import {
-  Box,
-  Typography,
-  Stack,
-  Tab,
-  Tabs,
-  Card,
-  CardContent,
-  Grid,
-  Chip,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  TextField,
-  Button,
-  Alert,
-  Skeleton,
-  CircularProgress,
-  Switch,
-  IconButton,
-} from "@mui/material";
+import { Box, Typography, Stack, Tab, Tabs, Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Button, Alert, Skeleton, CircularProgress, Switch, IconButton } from "@mui/material";
+import Section from "src/components/section";
+import MetricStrip from "src/components/metric-strip";
 import { LoadingScreen } from "src/components/loading-screen";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
@@ -43,8 +23,19 @@ import EditGuardrailDialog from "./EditGuardrailDialog";
 import GuardrailAnalyticsTab from "./GuardrailAnalyticsTab";
 import FeedbackSummaryCard from "./FeedbackSummaryCard";
 import GuardrailConfigTab from "../settings/GuardrailConfigTab";
+import { writableOrgConfig } from "../utils/orgConfig";
 
 // Tab slug <-> index mapping
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  info: "info",
+  primary: "discovery",
+  secondary: "discovery",
+  default: "neutral",
+};
+
 const TAB_SLUGS = [
   "overview",
   "configuration",
@@ -169,60 +160,21 @@ const OverviewTab = ({ guardrails, gatewayId }) => {
 
   return (
     <Stack spacing={3}>
-      <Grid container spacing={2}>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Total Guardrails
-              </Typography>
-              <Typography variant="h4">{guardrails.length}</Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Active
-              </Typography>
-              <Typography variant="h4" color="success.main">
-                {activeCount}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Disabled
-              </Typography>
-              <Typography variant="h4" color="text.secondary">
-                {guardrails.length - activeCount}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Types
-              </Typography>
-              <Typography variant="h4">
-                {
-                  new Set(
-                    guardrails.map((g) => g.type || getGuardrailType(g.name)),
-                  ).size
-                }
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+      <MetricStrip
+        items={[
+          { label: "Total guardrails", value: guardrails.length },
+          { label: "Active", value: activeCount },
+          { label: "Disabled", value: guardrails.length - activeCount },
+          {
+            label: "Types",
+            value: new Set(
+              guardrails.map((g) => g.type || getGuardrailType(g.name)),
+            ).size,
+          },
+        ]}
+      />
 
-      <Card>
+      <Section variant="panel" sx={{ p: 0, overflow: "hidden" }}>
         <TableContainer>
           <Table size="small">
             <TableHead>
@@ -232,7 +184,12 @@ const OverviewTab = ({ guardrails, gatewayId }) => {
                 <TableCell>Enabled</TableCell>
                 <TableCell>Action</TableCell>
                 <TableCell>Stage</TableCell>
-                <TableCell align="right">Actions</TableCell>
+                <TableCell
+                  sx={{ fontVariantNumeric: "tabular-nums" }}
+                  align="right"
+                >
+                  Actions
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -257,36 +214,30 @@ const OverviewTab = ({ guardrails, gatewayId }) => {
                     />
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      label={getGuardrailAction(g)}
-                      color={getModeColor(getGuardrailAction(g))}
-                      size="small"
-                      variant="outlined"
+                    <StatusBadge
+                      status={getGuardrailAction(g)}
+                      label={String(getGuardrailAction(g))}
+                      role={CHIP_ROLE[getModeColor(getGuardrailAction(g))]}
                     />
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      label={
-                        (g.phase || g.stage || "pre") === "pre"
-                          ? "Before LLM"
-                          : "After LLM"
-                      }
-                      size="small"
-                      variant="outlined"
-                      color={
-                        (g.phase || g.stage || "pre") === "pre"
-                          ? "info"
-                          : "secondary"
-                      }
-                    />
+                    <Typography variant="body2" color="text.secondary">
+                      {(g.phase || g.stage || "pre") === "pre"
+                        ? "Before LLM"
+                        : "After LLM"}
+                    </Typography>
                   </TableCell>
-                  <TableCell align="right">
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
                     <IconButton
+                      className="row-hover-action"
                       size="small"
                       onClick={() => setEditTarget(g)}
                       title="Edit"
                     >
-                      <Iconify icon="mdi:pencil-outline" width={18} />
+                      <Iconify icon="solar:pen-linear" width={20} />
                     </IconButton>
                   </TableCell>
                 </TableRow>
@@ -303,7 +254,7 @@ const OverviewTab = ({ guardrails, gatewayId }) => {
             </TableBody>
           </Table>
         </TableContainer>
-      </Card>
+      </Section>
 
       <EditGuardrailDialog
         open={Boolean(editTarget)}
@@ -369,11 +320,7 @@ const ConfigTab = () => {
     // Convert checks back to rules format for org config storage
     const toSave = checksToRules(localGuardrails) || localGuardrails;
     createOrgConfig.mutate(
-      {
-        providers: orgConfig?.providers || {},
-        guardrails: toSave,
-        routing: orgConfig?.routing || {},
-      },
+      { ...writableOrgConfig(orgConfig), guardrails: toSave },
       {
         onSuccess: () => {
           setDirty(false);
@@ -503,170 +450,162 @@ const PlaygroundTab = ({ gatewayId }) => {
   return (
     <Stack spacing={2}>
       {/* Input card */}
-      <Card>
-        <CardContent>
-          <Typography variant="h6" mb={1}>
-            Test Guardrails
-          </Typography>
-          <Typography variant="body2" color="text.secondary" mb={2}>
-            Send a real request through the gateway to test which guardrails
-            fire. Blocked requests return 403/446, warnings return 246.
-          </Typography>
+      <Section variant="panel">
+        <Typography variant="h6" mb={1}>
+          Test Guardrails
+        </Typography>
+        <Typography variant="body2" color="text.secondary" mb={2}>
+          Send a real request through the gateway to test which guardrails fire.
+          Blocked requests return 403/446, warnings return 246.
+        </Typography>
 
-          {/* Example prompts */}
-          <Stack direction="row" spacing={1} mb={2} flexWrap="wrap" useFlexGap>
-            {EXAMPLE_PROMPTS.map((ex) => (
-              <Chip
-                key={ex.label}
-                label={ex.label}
-                size="small"
-                variant="outlined"
-                onClick={() => setPrompt(ex.value)}
-                sx={{ cursor: "pointer" }}
-              />
-            ))}
-          </Stack>
-
-          <TextField
-            fullWidth
-            multiline
-            rows={4}
-            placeholder="Enter a test prompt..."
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-          />
-          <Stack direction="row" spacing={2} mt={2} alignItems="center">
-            <TextField
+        {/* Example prompts */}
+        <Stack direction="row" spacing={1} mb={2} flexWrap="wrap" useFlexGap>
+          {EXAMPLE_PROMPTS.map((ex) => (
+            <Chip
+              key={ex.label}
+              label={ex.label}
               size="small"
-              label="Model (optional)"
-              placeholder="e.g. gpt-4o-mini"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              sx={{ width: 240 }}
+              variant="outlined"
+              onClick={() => setPrompt(ex.value)}
+              sx={{ cursor: "pointer" }}
             />
-            <Button
-              variant="contained"
-              onClick={handleTest}
-              disabled={!prompt.trim() || loading}
-              startIcon={
-                loading ? (
-                  <CircularProgress size={16} color="inherit" />
-                ) : (
-                  <Iconify icon="mdi:play" width={18} />
-                )
-              }
-            >
-              {loading ? "Running..." : "Run Test"}
-            </Button>
-          </Stack>
-        </CardContent>
-      </Card>
+          ))}
+        </Stack>
+
+        <TextField
+          fullWidth
+          multiline
+          rows={4}
+          placeholder="Enter a test prompt..."
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+        />
+        <Stack direction="row" spacing={2} mt={2} alignItems="center">
+          <TextField
+            size="small"
+            label="Model (optional)"
+            placeholder="e.g. gpt-4o-mini"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            sx={{ width: 240 }}
+          />
+          <Button
+            variant="contained"
+            onClick={handleTest}
+            disabled={!prompt.trim() || loading}
+            startIcon={
+              loading ? (
+                <CircularProgress size={16} color="inherit" />
+              ) : (
+                <Iconify icon="solar:play-linear" width={20} />
+              )
+            }
+          >
+            {loading ? "Running..." : "Run Test"}
+          </Button>
+        </Stack>
+      </Section>
 
       {/* Result card */}
       {result && !result.error && (
-        <Card>
-          <CardContent>
-            <Stack direction="row" spacing={2} alignItems="center" mb={2}>
-              <Typography variant="h6">Result</Typography>
-              <Chip
-                label={
-                  result.blocked
-                    ? "BLOCKED (446)"
-                    : result.warned
-                      ? "WARNING (246)"
-                      : `OK (${statusCode})`
-                }
-                color={
-                  result.blocked
-                    ? "error"
-                    : result.warned
-                      ? "warning"
-                      : "success"
-                }
-                size="small"
-              />
-              {result.model && (
-                <Chip label={result.model} size="small" variant="outlined" />
-              )}
-            </Stack>
+        <Section variant="panel">
+          <Stack direction="row" spacing={2} alignItems="center" mb={2}>
+            <Typography variant="h6">Result</Typography>
+            <Chip
+              label={
+                result.blocked
+                  ? `BLOCKED (${statusCode})`
+                  : result.warned
+                    ? `WARNING (${statusCode})`
+                    : `OK (${statusCode})`
+              }
+              color={
+                result.blocked ? "error" : result.warned ? "warning" : "success"
+              }
+              size="small"
+            />
+            {result.model && (
+              <Chip label={result.model} size="small" variant="outlined" />
+            )}
+          </Stack>
 
-            {result.blocked && (
-              <Alert severity="error" sx={{ mb: 2 }}>
-                Request was blocked by guardrails. The prompt triggered one or
-                more guardrail rules configured to block.
+          {result.blocked && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              Request was blocked by guardrails. The prompt triggered one or
+              more guardrail rules configured to block.
+            </Alert>
+          )}
+          {result.warned && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              Request completed with warnings. One or more guardrails flagged
+              the content but allowed it through.
+            </Alert>
+          )}
+          {!result.blocked &&
+            !result.warned &&
+            statusCode >= 200 &&
+            statusCode < 300 && (
+              <Alert severity="success" sx={{ mb: 2 }}>
+                Request passed all guardrails and completed successfully.
               </Alert>
             )}
-            {result.warned && (
-              <Alert severity="warning" sx={{ mb: 2 }}>
-                Request completed with warnings. One or more guardrails flagged
-                the content but allowed it through.
-              </Alert>
-            )}
-            {!result.blocked &&
-              !result.warned &&
-              statusCode >= 200 &&
-              statusCode < 300 && (
-                <Alert severity="success" sx={{ mb: 2 }}>
-                  Request passed all guardrails and completed successfully.
-                </Alert>
-              )}
 
-            {/* Guardrail headers */}
-            {hasGuardrailHeaders && (
-              <>
-                <Typography variant="subtitle2" mb={1}>
-                  Guardrail Headers
-                </Typography>
-                <Box
-                  sx={{
-                    mb: 2,
-                    bgcolor: "action.hover",
-                    borderRadius: 1,
-                    p: 1.5,
-                    fontFamily: "monospace",
-                    fontSize: "0.75rem",
-                  }}
-                >
-                  {Object.entries(guardrailHeaders).map(([k, v]) => (
-                    <Typography
-                      key={k}
-                      variant="caption"
-                      component="div"
-                      sx={{ fontFamily: "monospace" }}
-                    >
-                      <strong>{k}:</strong> {v}
-                    </Typography>
-                  ))}
-                </Box>
-              </>
-            )}
+          {/* Guardrail headers */}
+          {hasGuardrailHeaders && (
+            <>
+              <Typography variant="subtitle2" mb={1}>
+                Guardrail Headers
+              </Typography>
+              <Box
+                sx={{
+                  mb: 2,
+                  bgcolor: "action.hover",
+                  borderRadius: 1,
+                  p: 1.5,
+                  fontFamily: "monospace",
+                  fontSize: "0.75rem",
+                }}
+              >
+                {Object.entries(guardrailHeaders).map(([k, v]) => (
+                  <Typography
+                    key={k}
+                    variant="caption"
+                    component="div"
+                    sx={{ fontFamily: "monospace" }}
+                  >
+                    <strong>{k}:</strong> {v}
+                  </Typography>
+                ))}
+              </Box>
+            </>
+          )}
 
-            {/* Response body */}
-            {body && (
-              <>
-                <Typography variant="subtitle2" mb={1}>
-                  Response Body
-                </Typography>
-                <Box
-                  sx={{
-                    bgcolor: "action.hover",
-                    borderRadius: 1,
-                    p: 1.5,
-                    fontFamily: "monospace",
-                    fontSize: "0.75rem",
-                    whiteSpace: "pre-wrap",
-                    maxHeight: 400,
-                    overflow: "auto",
-                  }}
-                >
-                  {typeof body === "string"
-                    ? body
-                    : JSON.stringify(body, null, 2)}
-                </Box>
-              </>
-            )}
-          </CardContent>
-        </Card>
+          {/* Response body */}
+          {body && (
+            <>
+              <Typography variant="subtitle2" mb={1}>
+                Response Body
+              </Typography>
+              <Box
+                sx={{
+                  bgcolor: "action.hover",
+                  borderRadius: 1,
+                  p: 1.5,
+                  fontFamily: "monospace",
+                  fontSize: "0.75rem",
+                  whiteSpace: "pre-wrap",
+                  maxHeight: 400,
+                  overflow: "auto",
+                }}
+              >
+                {typeof body === "string"
+                  ? body
+                  : JSON.stringify(body, null, 2)}
+              </Box>
+            </>
+          )}
+        </Section>
       )}
 
       {/* Error */}
@@ -680,59 +619,65 @@ const PlaygroundTab = ({ gatewayId }) => {
 
       {/* History */}
       {history.length > 0 && (
-        <Card>
-          <CardContent>
-            <Typography variant="subtitle2" mb={1}>
-              Recent Tests
-            </Typography>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Time</TableCell>
-                  <TableCell>Prompt</TableCell>
-                  <TableCell>Model</TableCell>
-                  <TableCell>Result</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {history.map((h, i) => (
-                  <TableRow key={i}>
-                    <TableCell>
-                      <Typography variant="caption">
-                        {h.time.toLocaleTimeString()}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" noWrap sx={{ maxWidth: 300 }}>
-                        {h.prompt}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="caption">
-                        {h.model || "auto"}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        label={
-                          h.blocked
-                            ? "Blocked"
-                            : h.warned
-                              ? "Warning"
-                              : `${h.status_code || "OK"}`
-                        }
-                        color={
+        <Section variant="panel">
+          <Typography variant="subtitle2" mb={1}>
+            Recent Tests
+          </Typography>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Time</TableCell>
+                <TableCell>Prompt</TableCell>
+                <TableCell>Model</TableCell>
+                <TableCell>Result</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {history.map((h, i) => (
+                <TableRow key={i}>
+                  <TableCell>
+                    <Typography variant="caption">
+                      {h.time.toLocaleTimeString()}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" noWrap sx={{ maxWidth: 300 }}>
+                      {h.prompt}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="caption">
+                      {h.model || "auto"}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge
+                      status={
+                        h.blocked
+                          ? "Blocked"
+                          : h.warned
+                            ? "Warning"
+                            : `${h.statusCode || "OK"}`
+                      }
+                      label={String(
+                        h.blocked
+                          ? "Blocked"
+                          : h.warned
+                            ? "Warning"
+                            : `${h.statusCode || "OK"}`,
+                      )}
+                      role={
+                        CHIP_ROLE[
                           h.blocked ? "error" : h.warned ? "warning" : "success"
-                        }
-                        size="small"
-                      />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+                        ]
+                      }
+                    />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Section>
       )}
     </Stack>
   );
@@ -748,7 +693,6 @@ const LogsTab = ({ gatewayId }) => {
     queryKey: ["agentcc-guardrail-logs", gatewayId],
     queryFn: async () => {
       const qs = createQueryString({
-        gateway_id: gatewayId,
         guardrail_triggered: true,
         limit: 50,
       });
@@ -766,13 +710,11 @@ const LogsTab = ({ gatewayId }) => {
   const logList = Array.isArray(logs) ? logs : logs?.results || [];
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   return (
-    <Card>
+    <Section variant="panel" sx={{ p: 0, overflow: "hidden" }}>
       <TableContainer>
         <Table size="small">
           <TableHead>
@@ -809,16 +751,22 @@ const LogsTab = ({ gatewayId }) => {
                   </Typography>
                 </TableCell>
                 <TableCell>
-                  <Chip
-                    label={log.status_code || "\u2014"}
-                    color={
-                      log.status_code === 246
-                        ? "warning"
-                        : log.status_code === 446
-                          ? "error"
-                          : "default"
+                  <StatusBadge
+                    status={log.status_code || "\u2014"}
+                    label={String(log.status_code || "\u2014")}
+                    role={
+                      CHIP_ROLE[
+                        log.status_code === 246
+                          ? "warning"
+                          : // Every 4xx/5xx is an error. That includes 403, which
+                            // the gateway answers a block with, and the legacy 446.
+                            log.status_code >= 400 && log.status_code < 600
+                            ? "error"
+                            : log.status_code >= 200 && log.status_code < 300
+                              ? "success"
+                              : "default"
+                      ]
                     }
-                    size="small"
                   />
                 </TableCell>
                 <TableCell>
@@ -855,7 +803,7 @@ const LogsTab = ({ gatewayId }) => {
           </TableBody>
         </Table>
       </TableContainer>
-    </Card>
+    </Section>
   );
 };
 
@@ -911,7 +859,7 @@ const GuardrailManagementSection = () => {
       <Tabs
         value={tab}
         onChange={handleTabChange}
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+        sx={{ boxShadow: "none", mb: 3, borderBottom: 1, borderColor: "divider" }}
       >
         {TAB_LABELS.map((label) => (
           <Tab key={label} label={label} />

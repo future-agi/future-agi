@@ -2,6 +2,8 @@ package logging
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -117,6 +119,9 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 			if rc.ImageResponse != nil {
 				rec.StatusCode = 200
 			}
+		case "speech_relay", "transcription_relay":
+			// The session ran; a failed dial or upgrade records its error below.
+			rec.StatusCode = 200
 		case "speech", "speech_stream":
 			if rc.Metadata["response_content_type"] != "" {
 				rec.StatusCode = 200
@@ -141,6 +146,10 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 			if rc.OCRResponse != nil {
 				rec.StatusCode = 200
 			}
+		case "decision":
+			if rc.DecisionResponse != nil {
+				rec.StatusCode = 200
+			}
 		}
 	}
 	if rec.ResolvedModel == "" && rec.StatusCode > 0 {
@@ -150,10 +159,16 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 	// Determine status code from errors.
 	if len(rc.Errors) > 0 {
 		lastErr := rc.Errors[len(rc.Errors)-1]
-		if apiErr, ok := lastErr.(*models.APIError); ok {
+		var apiErr *models.APIError
+		if errors.As(lastErr, &apiErr) {
 			rec.StatusCode = apiErr.Status
 			rec.ErrorMessage = apiErr.Message
 			rec.ErrorCode = apiErr.Code
+			if rc.EndpointType == "decision" {
+				// A vendor's error text can quote the decision's content back;
+				// the code and status say what happened.
+				rec.ErrorMessage = http.StatusText(apiErr.Status)
+			}
 		} else {
 			if rec.StatusCode == 0 {
 				rec.StatusCode = 500
@@ -204,7 +219,24 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 		}
 	}
 
+	// A decision always logs its summary — question IDs and types, the state's
+	// size, the answers and usage — and its full bodies only where bodies are
+	// recorded and privacy mode allows them.
+	if rc.EndpointType == "decision" {
+		rec.RequestBodyJSON, rec.ResponseBodyJSON = payloads.ForEndpoint(rc)
+		if cfg.IncludeBodies && decisionBodiesAllowed(rc) {
+			rec.RequestBodyJSON, rec.ResponseBodyJSON = payloads.DecisionBodies(rc)
+		}
+	}
+
 	return rec
+}
+
+// decisionBodiesAllowed reports whether privacy mode lets a decision's full
+// bodies into the log. Any privacy setting keeps them out: the redactor walks
+// chat messages, not a decision's state.
+func decisionBodiesAllowed(rc *models.RequestContext) bool {
+	return rc.Metadata["org_privacy_enabled"] != "true" && rc.Metadata["org_privacy_mode"] == "" && rc.Metadata["privacy_mode"] == ""
 }
 
 // redactRecord applies privacy redaction to message content in the trace record.
@@ -257,13 +289,23 @@ func redactChoices(choices []models.Choice, r *privacy.Redactor, mode string) []
 	return out
 }
 
+// sensitiveHeaderKeys never reach a request log. The gateway accepts a
+// credential in each of these, so a missing entry publishes it to everyone
+// with access to the logs — x-goog-api-key was missing, and the GenAI route
+// reads a caller's Google key from it (handlers_genai.go).
 var sensitiveHeaderKeys = map[string]bool{
-	"authorization":    true,
-	"x-api-key":        true,
-	"api-key":          true,
-	"x-auth-token":     true,
-	"cookie":           true,
-	"x-webhook-secret": true,
+	"authorization":                  true,
+	"proxy-authorization":            true,
+	"x-agentcc-provider-key":         true,
+	"x-api-key":                      true,
+	"api-key":                        true,
+	"x-goog-api-key":                 true,
+	"x-goog-iam-authorization-token": true,
+	"x-amz-security-token":           true,
+	"x-auth-token":                   true,
+	"cookie":                         true,
+	"set-cookie":                     true,
+	"x-webhook-secret":               true,
 }
 
 func sanitizeHeaders(h map[string][]string) map[string][]string {

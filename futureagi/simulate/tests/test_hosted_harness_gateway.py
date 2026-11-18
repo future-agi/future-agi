@@ -5,34 +5,60 @@ import hashlib
 import io
 import json
 import os
+import subprocess
+import sys
 import tarfile
 import tempfile
 import tracemalloc
+import uuid
 import zlib
 from contextlib import nullcontext
 from datetime import timedelta
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+from typing import NamedTuple
 from unittest.mock import patch
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import pytest
 from django.test import override_settings
 from django.utils import timezone
 
-from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+from simulate.models import (
+    HostedHarnessAttempt,
+    HostedHarnessExecution,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
+    HostedHarnessScenario,
+    TestExecution,
+)
+from simulate.models.test_execution import CallExecution
+from simulate.selectors.agent_fix import ran_at
+from simulate.services import harness_usage
+from simulate.services.agent_setup import store_agent
+from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_capacity import SandboxCapacity
 from simulate.services.harness_provider import serialize_job
+from simulate.services.harness_usage import (
+    harness_consumption,
+    record_harness_usage,
+    replay_harness_usage,
+)
 from simulate.services.hosted_harness import (
+    PLATFORM_FAILURE_DOMAINS,
     HostedHarnessError,
+    begin_scenarios,
     create_hosted_job,
+    provision_scenarios,
     record_cleanup,
     register_attempt,
     request_cancellation,
+    scope_dispatch_to_rerun,
+    update_execution_counts,
 )
+from simulate.services.hosted_harness_diagnostics import cached_attempt_redaction_values
 from simulate.services.hosted_harness_gateway import (
     _ADJUSTMENTS_PATH,
     _SIMULATOR_SECRETS_PATH,
-    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
     HostedHarnessGateway,
     HostedSourceAcquirer,
     _authoring_archive_for,
@@ -44,6 +70,7 @@ from simulate.services.hosted_harness_gateway import (
     _platform_simulator_material,
     _provider_egress_domains,
     _provider_import_authoring_material,
+    _read_harness_spend,
     _resolved_egress_domains,
     _validate_resolved_egress_domains,
     _webrtc_egress_cidrs,
@@ -51,21 +78,41 @@ from simulate.services.hosted_harness_gateway import (
     detect_source_connectors,
     detect_source_credentials,
     guest_failure_cause,
+    guest_job_document,
     pack_authoring_archive,
     prepare_dispatch_payload,
     resolve_authored_connector,
     resolve_platform_simulator_secrets,
 )
+from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 from simulate.services.hosted_sandbox import (
     SandboxConflictError,
+    SandboxFileNotFoundError,
     SandboxNotFoundError,
     SandboxProviderError,
 )
+from simulate.tests.test_agent_setup_service import source_agent
+from tfc.ee_loader import has_ee
+
+
+@pytest.fixture(autouse=True)
+def _no_conversation_runtime(monkeypatch):
+    """A launch asks for the conversation's harness; tests never start one."""
+    started: list[str] = []
+    monkeypatch.setattr(
+        "simulate.tasks.hosted_harness_conversation.schedule_conversation_runtime",
+        lambda conversation_id, _base_url: started.append(conversation_id),
+    )
+    return started
 
 
 @pytest.fixture(autouse=True)
 def _isolate_platform_simulator_environment(settings, monkeypatch):
-    """Tests opt in explicitly instead of reading the developer machine's provider keys."""
+    """Tests opt in explicitly instead of reading the developer machine's provider keys.
+
+    Hosted runs require AgentCC, so every test starts with one configured; a test about its
+    absence removes it.
+    """
     settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
     for name in (
         "AGENTCC_BASE_URL",
@@ -75,8 +122,12 @@ def _isolate_platform_simulator_environment(settings, monkeypatch):
         "ALK_HOSTED_AGENTCC_MODEL",
         "ALK_HARNESS",
         "ALK_HARNESS_MODEL",
+        "SIMULATOR_STT_PROVIDER",
+        "SIMULATOR_TTS_PROVIDER",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
+    monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
 
 
 def test_guest_failure_cause_preserves_legacy_runnable_entrypoint_blocker() -> None:
@@ -90,15 +141,7 @@ def test_guest_failure_cause_preserves_legacy_runnable_entrypoint_blocker() -> N
     )
 
 
-def test_platform_simulator_material_uses_deployment_credentials_only(
-    tmp_path, monkeypatch
-):
-    credentials = tmp_path / "vertex.json"
-    credentials.write_text(
-        json.dumps({"project_id": "platform-simulator-project"}), encoding="utf-8"
-    )
-    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
-    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+def test_platform_simulator_material_uses_deployment_credentials_only(monkeypatch):
     monkeypatch.setenv("SIMULATOR_LLM_PROVIDER", "vertex")
     monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.7-flash")
     monkeypatch.delenv("ALK_HARNESS", raising=False)
@@ -107,19 +150,20 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-key")
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-key")
     monkeypatch.setenv("DEEPGRAM_API_KEY", "platform-deepgram-secret")
+    monkeypatch.setenv("CARTESIA_API_KEY", "platform-cartesia-secret")
     monkeypatch.setenv("LIVEKIT_URL", "wss://platform-livekit.example")
     monkeypatch.setenv("LIVEKIT_API_KEY", "platform-livekit-key")
     monkeypatch.setenv("LIVEKIT_API_SECRET", "platform-livekit-secret")
     monkeypatch.setenv("LIVEKIT_OUTBOUND_TRUNK_ID", "ST_platform-outbound")
     monkeypatch.setenv("PSTN_CALLER_NUMBER", "+14155550123")
 
-    values, credential_bytes = _platform_simulator_material()
+    values = _platform_simulator_material()
 
-    assert values["GOOGLE_CLOUD_PROJECT"] == "platform-simulator-project"
-    assert values["GOOGLE_APPLICATION_CREDENTIALS"] == (
-        _SIMULATOR_VERTEX_CREDENTIALS_PATH
-    )
-    assert values["DEEPGRAM_API_KEY"] == "platform-deepgram-secret"
+    # Behind the gateway neither the models nor speech need a vendor credential in the sandbox.
+    assert "GOOGLE_CLOUD_PROJECT" not in values
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in values
+    assert "DEEPGRAM_API_KEY" not in values
+    assert "CARTESIA_API_KEY" not in values
     assert values["LIVEKIT_URL"] == "wss://platform-livekit.example"
     assert values["LIVEKIT_API_KEY"] == "platform-livekit-key"
     assert values["LIVEKIT_API_SECRET"] == "platform-livekit-secret"
@@ -129,46 +173,32 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     assert values["ALK_HARNESS_MODEL"] == "vertex_ai/gemini-3.7-flash"
     assert values["ALK_CLAUDE_GATEWAY_URL"] == "https://gateway.futureagi.test"
     assert values["ALK_CLAUDE_GATEWAY_API_KEY"] == "harness-key"
-    assert values["ANTHROPIC_VERTEX_PROJECT_ID"] == "platform-simulator-project"
-    assert credential_bytes == credentials.read_bytes()
+    assert "ANTHROPIC_VERTEX_PROJECT_ID" not in values
 
 
-def test_platform_simulator_defaults_to_claude_authoring_and_gemini_caller(
+def test_platform_simulator_defaults_to_gateway_authoring_and_gemini_caller(
     monkeypatch,
 ):
     monkeypatch.delenv("SIMULATOR_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("SIMULATOR_LLM_MODEL", raising=False)
-    monkeypatch.delenv("ALK_HOSTED_AGENTCC_BASE_URL", raising=False)
-    monkeypatch.delenv("AGENTCC_INTERNAL_API_KEY", raising=False)
-    monkeypatch.delenv("AGENTCC_HARNESS_API_KEY", raising=False)
-    monkeypatch.delenv("AGENTCC_BASE_URL", raising=False)
-    monkeypatch.delenv("ALK_HARNESS", raising=False)
-    monkeypatch.delenv("ALK_HARNESS_MODEL", raising=False)
-    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
 
-    values, credential_bytes = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["SIMULATOR_LLM_PROVIDER"] == "vertex"
-    assert values["SIMULATOR_LLM_MODEL"] == "gemini-3.8-flash"
+    assert values["SIMULATOR_LLM_MODEL"] == "vertex_ai/gemini-3.8-flash"
     assert values["ALK_HARNESS"] == "claude"
-    assert values["ALK_HARNESS_MODEL"] == "claude-sonnet-4-6"
-    assert credential_bytes is None
+    assert values["ALK_HARNESS_MODEL"] == "vertex_ai/gemini-3.7-flash"
 
 
-def test_platform_authoring_backend_is_independent_from_simulated_caller(
-    tmp_path, monkeypatch
-):
+def test_platform_authoring_backend_is_independent_from_simulated_caller(monkeypatch):
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "platform-internal-key")
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "platform-harness-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
-    credentials = tmp_path / "vertex.json"
-    credentials.write_text('{"project_id":"platform-project"}', encoding="utf-8")
-    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
     monkeypatch.setenv("SIMULATOR_LLM_PROVIDER", "vertex")
     monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.1-flash-lite")
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("ALK_HARNESS_MODEL", "claude-sonnet-4-6")
-    values, _credential_bytes = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["ALK_HARNESS"] == "claude"
     assert values["ALK_HARNESS_MODEL"] == "claude-sonnet-4-6"
@@ -184,7 +214,7 @@ def test_claude_authoring_prefers_platform_owned_harness_key(monkeypatch):
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
 
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["AGENTCC_API_KEY"] == "harness-virtual-key"
     assert values["AGENTCC_BASE_URL"] == "https://gateway.example.test"
@@ -197,16 +227,12 @@ def test_claude_authoring_prefers_platform_owned_harness_key(monkeypatch):
 
 
 def test_platform_ambience_clips_reach_the_harness_and_its_egress(monkeypatch):
-    monkeypatch.delenv(
-        "ALK_HOSTED_SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS", raising=False
-    )
-    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-service-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
     monkeypatch.delenv("ALK_BACKGROUND_NOISE_CATALOG", raising=False)
 
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     clips = json.loads(values["ALK_BACKGROUND_NOISE_CATALOG"])
     assert clips and all(
@@ -224,22 +250,25 @@ def test_platform_ambience_clips_reach_the_harness_and_its_egress(monkeypatch):
 def test_caller_barge_in_rate_comes_from_platform_configuration(monkeypatch):
     monkeypatch.setenv("ALK_HARNESS", "gemini")
     monkeypatch.setenv("HARNESS_CALLER_BARGE_IN_RATE", "0.2")
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
     assert values["HARNESS_CALLER_BARGE_IN_RATE"] == "0.2"
 
 
+def test_authoring_duration_cap_reaches_the_sandbox(monkeypatch):
+    monkeypatch.setenv("ALK_HARNESS", "gemini")
+    monkeypatch.setenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "5400")
+    values = _platform_simulator_material()
+    assert values["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"] == "5400"
+
+
 def test_a_deployment_catalogue_overrides_the_platform_clips(monkeypatch, tmp_path):
-    monkeypatch.delenv(
-        "ALK_HOSTED_SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS", raising=False
-    )
-    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-service-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
     inline = '[{"environment":"street","url":"https://clips.example.test/street.mp3"}]'
     monkeypatch.setenv("ALK_BACKGROUND_NOISE_CATALOG", inline)
 
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["ALK_BACKGROUND_NOISE_CATALOG"] == inline
 
@@ -247,16 +276,12 @@ def test_a_deployment_catalogue_overrides_the_platform_clips(monkeypatch, tmp_pa
     path.write_text(inline, encoding="utf-8")
     monkeypatch.setenv("ALK_BACKGROUND_NOISE_CATALOG", str(path))
 
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["ALK_BACKGROUND_NOISE_CATALOG"] == inline
 
 
 def test_admission_counts_the_ambience_hosts_that_launch_adds(monkeypatch):
-    monkeypatch.delenv(
-        "ALK_HOSTED_SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS", raising=False
-    )
-    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-service-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
@@ -266,7 +291,7 @@ def test_admission_counts_the_ambience_hosts_that_launch_adds(monkeypatch):
         "security": {"allowed_egress_domains": []},
     }
 
-    launched, _ = _platform_simulator_material()
+    launched = _platform_simulator_material()
     clip_hosts = {
         urlparse(clip["url"]).hostname
         for clip in json.loads(launched["ALK_BACKGROUND_NOISE_CATALOG"])
@@ -284,13 +309,13 @@ def test_claude_authoring_uses_separate_remote_gateway_key(monkeypatch):
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "remote-virtual-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.futureagi.com")
 
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["AGENTCC_API_KEY"] == "remote-virtual-key"
     assert values["AGENTCC_BASE_URL"] == "https://gateway.futureagi.com"
 
 
-def test_claude_authoring_requires_sandbox_reachable_gateway(monkeypatch):
+def test_hosted_runs_require_sandbox_reachable_gateway(monkeypatch):
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
     monkeypatch.delenv("AGENTCC_BASE_URL", raising=False)
@@ -298,7 +323,7 @@ def test_claude_authoring_requires_sandbox_reachable_gateway(monkeypatch):
     with pytest.raises(HostedHarnessError) as exc:
         _platform_simulator_material()
 
-    assert exc.value.code == "authoring_gateway_not_configured"
+    assert exc.value.code == "agentcc_not_configured"
 
 
 def test_claude_authoring_falls_back_to_internal_key(monkeypatch):
@@ -307,7 +332,7 @@ def test_claude_authoring_falls_back_to_internal_key(monkeypatch):
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-evaluator-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
 
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["AGENTCC_API_KEY"] == "internal-evaluator-key"
     assert values["ALK_CLAUDE_GATEWAY_API_KEY"] == "internal-evaluator-key"
@@ -838,6 +863,38 @@ def test_authoring_stage_outputs_exposes_generic_certification_evidence():
     assert certification["data"]["certificate"]["fingerprint"] == "sha256:test"
 
 
+def test_call_actor_stage_output_keeps_actors_without_a_channel():
+    from simulate.services.hosted_harness_gateway import (
+        authoring_stage_outputs_from_archive,
+    )
+
+    actors = {
+        "actors": [
+            {"id": "spouse", "name": "Sam", "channel": "audio_mix"},
+            {
+                "id": "claims_supervisor",
+                "name": "Dana Brooks",
+                "permitted_actions": ["approvals.put"],
+            },
+        ]
+    }
+    body = io.BytesIO()
+    with tarfile.open(fileobj=body, mode="w:gz") as archive:
+        payload = json.dumps(actors).encode()
+        member = tarfile.TarInfo("actors.json")
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+
+    outputs = authoring_stage_outputs_from_archive(body.getvalue())
+
+    listing = next(item for item in outputs if item["kind"] == "call_actors")
+    assert [one["id"] for one in listing["data"]["call_actors"]] == [
+        "spouse",
+        "claims_supervisor",
+    ]
+    assert listing["summary"] == "2 actors"
+
+
 def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
     (tmp_path / "contract.json").write_text("{}", encoding="utf-8")
 
@@ -1062,6 +1119,76 @@ def test_dispatch_payload_uses_platform_livekit_url_for_provider_voice(connector
     assert "must-not-be-copied" not in json.dumps(dispatched)
 
 
+# ALK's HarnessJob refuses any non-empty value under a secret-looking key.
+_ALK_SECRET_NAMES = {
+    "api_key",
+    "api_secret",
+    "authorization",
+    "credential",
+    "credentials",
+    "password",
+    "private_key",
+    "secret",
+    "token",
+}
+
+
+def _alk_secret_paths(value, path=()):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            current = (*path, str(key))
+            normalized = str(key).lower().replace("-", "_")
+            if normalized in _ALK_SECRET_NAMES and item not in (None, "", {}, []):
+                yield ".".join(current)
+            yield from _alk_secret_paths(item, current)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from _alk_secret_paths(item, (*path, str(index)))
+
+
+def _chat_state_payload():
+    return {
+        "agent": {"connector": "auto", "config": {}},
+        "metadata": {
+            "authoring_revision": "rev-1",
+            "conversation_checkpoints": {
+                "conv-1": {"digest": "d", "draft_basis": {"token": "abc123"}}
+            },
+            "draft_saves": {"key-1": {"pieces": {}, "at": "2026-10-18"}},
+            "evidence_adds": {
+                "key-2": {"import": "i", "cases": ["c"], "saved": True, "at": "t"}
+            },
+        },
+    }
+
+
+def test_guest_job_document_drops_server_only_chat_state():
+    payload = _chat_state_payload()
+
+    document = guest_job_document(payload)
+
+    assert document["metadata"] == {"authoring_revision": "rev-1"}
+    assert list(_alk_secret_paths(document)) == []
+    assert "conversation_checkpoints" in payload["metadata"]
+    assert "draft_saves" in payload["metadata"]
+    assert "evidence_adds" in payload["metadata"]
+
+
+def test_dispatch_and_certify_jobs_pass_alk_secret_check_with_chat_state():
+    from simulate.services.harness_versioning.assembly import certify_job_payload
+
+    payload = _chat_state_payload()
+
+    dispatched = prepare_dispatch_payload(payload, {})
+    certify = certify_job_payload(dispatched, 3)
+
+    for document in (dispatched, certify):
+        assert "conversation_checkpoints" not in document["metadata"]
+        assert "draft_saves" not in document["metadata"]
+        assert list(_alk_secret_paths(document)) == []
+    assert payload == _chat_state_payload()
+
+
 @pytest.mark.django_db
 def test_gateway_clones_exact_commit_without_archiving_git_credentials(
     organization, monkeypatch
@@ -1102,7 +1229,14 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
     assert all(
         "installation-secret-token" not in " ".join(cmd) for cmd in observed_commands
     )
-    assert observed_token == ["Authorization: Bearer installation-secret-token"] * 4
+    # GitHub takes an installation token as Basic x-access-token, not Bearer.
+    assert (
+        observed_token
+        == [
+            "Authorization: Basic eC1hY2Nlc3MtdG9rZW46aW5zdGFsbGF0aW9uLXNlY3JldC10b2tlbg=="
+        ]
+        * 4
+    )
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
         names = set(tar.getnames())
     assert "source/agent.py" in names
@@ -1213,7 +1347,7 @@ def test_authoring_launch_uses_requested_resources(monkeypatch):
     )
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: ({}, None),
+        lambda: {},
     )
 
     def capture_launch(spec, **_kwargs):
@@ -1697,8 +1831,9 @@ def test_daytona_permanent_provider_rejection_fails_without_retry(organization):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("unrestricted", [False, True])
 def test_daytona_launch_uploads_contract_files_and_starts_one_session(
-    organization, settings, monkeypatch
+    organization, settings, monkeypatch, unrestricted
 ):
     payload = _payload()
     payload["source"] = {
@@ -1715,17 +1850,18 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
     settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    settings.ALK_HOSTED_EGRESS_UNRESTRICTED = unrestricted
     simulator_values = {
         "ALK_HARNESS": "vertex-gemini",
         "ALK_HARNESS_MODEL": "gemini-3.7-flash",
-        "DEEPGRAM_API_KEY": "platform-simulator-deepgram",
-        "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-        "GOOGLE_CLOUD_PROJECT": "platform-simulator-project",
-        "GOOGLE_CLOUD_LOCATION": "global",
+        "AGENTCC_BASE_URL": "https://gateway.example.test",
+        "AGENTCC_API_KEY": "harness-virtual-key",
+        "SIMULATOR_STT_PROVIDER": "deepgram",
+        "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS": "3600",
     }
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: (simulator_values, b'{"project_id":"platform-simulator-project"}'),
+        lambda: simulator_values,
     )
 
     selected_capacity = SandboxCapacity("selected", 6, 12_288, 20, 1)
@@ -1737,6 +1873,8 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
 
     assert attempt.state == HostedHarnessAttempt.State.RUNNING
     assert attempt.provider_ref == "sandbox-1"
+    exports = client.sandbox.process.session_request.env
+    assert exports["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"] == "3600"
     assert (
         client.params.cpu_units,
         client.params.memory_mb,
@@ -1754,20 +1892,25 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "/work/job.json",
         "/run/futureagi/secrets.json",
         _SIMULATOR_SECRETS_PATH,
-        _SIMULATOR_VERTEX_CREDENTIALS_PATH,
         "/run/futureagi/capabilities.json",
         "/run/futureagi/entrypoint-command-id",
     }
+    assert "/run/futureagi/simulator-vertex-sa.json" not in client.sandbox.fs.uploads
     assert client.sandbox.process.sessions == ["alk-harness"]
     assert json.loads(client.sandbox.fs.uploads["/run/futureagi/secrets.json"]) == {}
     assert json.loads(client.sandbox.fs.uploads[_SIMULATOR_SECRETS_PATH]) == (
         simulator_values
     )
-    assert b"platform-simulator-deepgram" not in (
+    assert b"harness-virtual-key" not in (
         client.sandbox.process.session_request.command.encode()
     )
-    assert "--adjustments /run/futureagi/adjustments.jsonl" in (
-        client.sandbox.process.session_request.command
+    assert "--await-harness" in client.sandbox.process.session_request.command
+    assert (
+        client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
+        == "gemini-3.7-flash"
+    )
+    assert job.conversation.messages.get().content.startswith(
+        "Build the test environment"
     )
     assert "; fi &&" in client.sandbox.process.session_request.command
     # Authoring and call execution are distinct bounded phases. The sandbox must survive the
@@ -1779,18 +1922,66 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "if [ -f /work/authoring.tar.gz ]; then mkdir -p /work/authoring"
         in prepare_command
     )
-    assert client.params.unrestricted_egress is False
+    assert client.params.unrestricted_egress is unrestricted
     assert set(client.params.allowed_domains) == {
-        "aiplatform.googleapis.com",
         "agent.example.com",
-        "api.deepgram.com",
         "*.vapi.ai",
-        "global-aiplatform.googleapis.com",
+        "gateway.example.test",
         "ingest.example.com",
-        "oauth2.googleapis.com",
         "platform.example.com",
-        "us-east5-aiplatform.googleapis.com",
     }
+    # Controlled egress: the harness points the agent at a proxy that refuses every host outside this list.
+    allowed = dispatched["metadata"].get("egress_allowed_hosts")
+    assert allowed == (None if unrestricted else sorted(client.params.allowed_domains))
+
+
+@pytest.mark.django_db
+def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
+    organization, settings, monkeypatch
+):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="launch-gateway-staged"
+    )
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = "sha256:" + "b" * 64
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    settings.ALK_HOSTED_BUILDER_SESSION = False
+    simulator_values = {
+        "ALK_HARNESS": "vertex-gemini",
+        "ALK_HARNESS_MODEL": "gemini-3.7-flash",
+        "AGENTCC_BASE_URL": "https://gateway.example.test",
+        "AGENTCC_API_KEY": "harness-virtual-key",
+        "DEEPGRAM_API_KEY": "platform-simulator-deepgram",
+    }
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        lambda: simulator_values,
+    )
+
+    selected_capacity = SandboxCapacity("selected", 6, 12_288, 20, 1)
+    with patch(
+        "simulate.services.harness_capacity.configured_capacity",
+        return_value=selected_capacity,
+    ):
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    assert attempt.state == HostedHarnessAttempt.State.RUNNING
+    command = client.sandbox.process.session_request.command
+    assert "--await-harness" not in command and "--adjustments" in command
+    assert not job.conversation.messages.filter(
+        content__startswith="Build the test environment"
+    ).exists()
 
 
 def _launch_and_read_job_json(
@@ -1827,21 +2018,15 @@ def _launch_and_read_job_json(
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
     settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
-    # The platform simulator credential is deployment material; these tests are
-    # about the admitted parallelism the guest receives, not credential loading.
+    # Platform simulator config is deployment material; these tests are about the
+    # admitted parallelism the guest receives, not what the sandbox is given.
     simulator_values = {
         "ALK_HARNESS": "vertex-gemini",
         "ALK_HARNESS_MODEL": "gemini-2.5-flash",
-        "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-        "GOOGLE_CLOUD_PROJECT": "platform-simulator-project",
-        "GOOGLE_CLOUD_LOCATION": "global",
     }
     with patch(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        return_value=(
-            simulator_values,
-            b'{"project_id":"platform-simulator-project"}',
-        ),
+        return_value=simulator_values,
     ):
         gateway.launch(job, endpoint_base_url="https://platform.example.com")
 
@@ -1939,7 +2124,7 @@ def test_unified_provider_import_authoring_receives_one_shot_target_key(
     )
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: ({}, None),
+        lambda: {},
     )
 
     gateway.launch(job, endpoint_base_url="https://platform.example.com")
@@ -1996,6 +2181,7 @@ def test_daytona_adjustment_is_persisted_and_delivered_to_active_authoring(
         {
             "instruction": "Create 1 more scenario covering discounts",
             "client_request_id": "browser-1",
+            "scenario_delta": 1,
         },
     )
 
@@ -2011,6 +2197,47 @@ def test_daytona_adjustment_is_persisted_and_delivered_to_active_authoring(
     assert records[0]["status"] == "pending"
     assert adjusted.payload["metadata"]["adjustments"] == records
     assert adjusted.payload["scenario_count"] == 3
+
+
+@pytest.mark.django_db
+def test_adjustment_goes_to_the_stage_the_chat_names(organization, settings, tmp_path):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="adjust-named-stage"
+    )
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    dockerfile = tmp_path / "Dockerfile.hosted"
+    dockerfile.write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    gateway.dockerfile = str(dockerfile)
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    with patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    job.refresh_from_db()
+
+    adjusted = gateway.adjust(
+        job,
+        {
+            "instruction": "Identity needs a date of birth; update the scenario callers too",
+            "client_request_id": "chat-1",
+            "target_stage": "environment",
+        },
+    )
+
+    assert (
+        adjusted.payload["metadata"]["adjustments"][-1]["target_stage"] == "environment"
+    )
 
 
 @pytest.mark.django_db
@@ -2060,7 +2287,7 @@ def test_daytona_retry_replays_persisted_adjustments_before_authoring(
 
 
 @pytest.mark.django_db
-def test_daytona_adjustment_accepts_natural_language_number(
+def test_daytona_adjustment_takes_the_scenario_count_it_is_given(
     organization, settings, tmp_path
 ):
     payload = _payload()
@@ -2092,8 +2319,9 @@ def test_daytona_adjustment_accepts_natural_language_number(
     adjusted = gateway.adjust(
         job,
         {
-            "instruction": "Add one more scenario covering discounts",
+            "instruction": "Cover discounts",
             "client_request_id": "browser-word-1",
+            "scenario_delta": 1,
         },
     )
 
@@ -2127,7 +2355,7 @@ def test_daytona_livekit_launch_uses_coturn_domain_allowlist(
     ]
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: ({}, None),
+        lambda: {},
     )
 
     gateway.launch(job, endpoint_base_url="https://platform.example.com")
@@ -2419,9 +2647,10 @@ def test_reconcile_relaunches_infra_failure_until_budget_then_fails(
         attempt1 = gateway.launch(job, endpoint_base_url="https://platform.example.com")
     assert attempt1.attempt_number == 1
     monkeypatch.setattr(gateway, "inspect", lambda _: {"exit_code": 2, "logs": "boom"})
-    assert gateway.reconcile_completed(attempt1).state == (
-        HostedHarnessJob.State.RETRY_WAIT
-    )
+    retried = gateway.reconcile_completed(attempt1)
+    assert retried.state == HostedHarnessJob.State.RETRY_WAIT
+    # A build's product is its bundle, not call results: it retries whole.
+    assert "rerun_execution_keys" not in retried.payload["metadata"]
 
     # Relaunch a fresh attempt; register_attempt supersedes attempt 1.
     with acquire:
@@ -2553,7 +2782,7 @@ def test_reconcile_waits_when_daytona_deletion_is_already_in_progress(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("exit_code", [0, 3, 78])
+@pytest.mark.parametrize("exit_code", [3, 78])
 def test_reconcile_terminal_and_authoring_exits_never_retry(
     organization, monkeypatch, exit_code
 ):
@@ -2716,6 +2945,860 @@ def test_reconcile_exit0_refreshes_terminal_delivery_flags(organization, monkeyp
     assert refreshed.terminal_failure is None
 
 
+def _delivered_run(
+    organization, key: str, *, receipts: int, parallelism: int = 1
+) -> HostedHarnessAttempt:
+    """A two-call Run of a saved environment holding its first ``receipts`` results and no
+    acknowledged manifest."""
+    environment, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"{key}-environment"
+    )
+    payload = _payload()
+    payload["scenario_count"] = 2
+    # Enough CPU for that many worlds side by side.
+    payload["runtime"].update(parallelism=parallelism, cpu_units=2 * parallelism)
+    job, _ = create_hosted_job(organization, payload, idempotency_key=key)
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example", provider_ref="sandbox-1"
+    ).attempt
+    keys = ["scenario-1", "scenario-2"]
+    provisioned = provision_scenarios(
+        attempt,
+        {
+            "operation": "provision",
+            "name": "Delivered run",
+            "personas": [
+                {"scenario_key": name, "name": name, "description": name}
+                for name in keys
+            ],
+        },
+    )
+    attempt.job.refresh_from_db()
+    begin_scenarios(
+        attempt,
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["result"]["run_test_id"],
+            "scenario_keys": keys,
+        },
+    )
+    registrations = HostedHarnessScenario.no_workspace_objects.filter(job=job).order_by(
+        "scenario_key"
+    )
+    for number, registration in enumerate(registrations):
+        # A Run's call hangs off its execution, not off the scenario it was built from.
+        call = registration.call_execution
+        HostedHarnessScenario.no_workspace_objects.filter(id=registration.id).update(
+            call_execution=None
+        )
+        execution = HostedHarnessExecution.no_workspace_objects.create(
+            job=job,
+            source_scenario=registration,
+            execution_key=f"{registration.scenario_key}:0",
+            trial_index=0,
+            call_execution=call,
+        )
+        if number < receipts:
+            _receive(attempt, execution)
+    job.refresh_from_db()
+    # The executions a Run sends its guest, which a relaunch can narrow.
+    metadata = {
+        **(job.payload.get("metadata") or {}),
+        "execution_manifest": [
+            {"execution_key": f"{name}:0", "scenario_key": name, "trial_index": 0}
+            for name in keys
+        ],
+    }
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        environment=environment, payload={**job.payload, "metadata": metadata}
+    )
+    return attempt
+
+
+def _receive(attempt: HostedHarnessAttempt, execution: HostedHarnessExecution) -> None:
+    HostedHarnessReceipt.no_workspace_objects.create(
+        job_id=attempt.job_id,
+        attempt=attempt,
+        scenario=execution.source_scenario,
+        execution=execution,
+        attempt_number=attempt.attempt_number,
+        digest=f"sha256:{uuid.uuid4().hex * 2}",
+        status="passed",
+        body={},
+    )
+    CallExecution.objects.filter(id=execution.call_execution_id).update(
+        status=CallExecution.CallStatus.COMPLETED
+    )
+
+
+def _deliver_terminal(attempt: HostedHarnessAttempt, stage: str) -> None:
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        terminal_event_received=True,
+        terminal_stage=stage,
+        state=HostedHarnessAttempt.State.FINALIZING,
+    )
+
+
+def _exited_cleanly(monkeypatch) -> tuple[HostedHarnessGateway, dict]:
+    """A gateway whose guest exited 0 and whose offline spool holds nothing more."""
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    captured = {}
+
+    def fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", fake_delete)
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 0, "logs": "", "process_logs": ""},
+    )
+    monkeypatch.setattr(gateway, "_recover_offline_delivery", lambda _: False)
+    return gateway, captured
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_keeps_a_scored_run_whose_manifest_was_lost(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "scored-run-lost-manifest", receipts=2)
+    _deliver_terminal(attempt, "completed")
+    gateway, captured = _exited_cleanly(monkeypatch)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert captured["retry_pending"] is False
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    assert attempt.terminal_failure is None
+    # Nothing stands in for the manifest: the attempt still records that it never came.
+    assert attempt.manifest_acked is False
+    assert not attempt.manifests.exists()
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_completes_a_scored_run_whose_terminal_event_was_lost(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "scored-run-lost-terminal", receipts=2)
+    gateway, captured = _exited_cleanly(monkeypatch)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    # Kept as a Run whose manifest was lost is kept. No relaunch, so no call runs or
+    # is charged a second time.
+    assert captured["retry_pending"] is False
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    assert job.attempts.count() == 1
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    assert attempt.terminal_failure is None
+    # The ending is the platform's conclusion and says so; no guest sent it.
+    assert attempt.terminal_event_received is False
+    assert (attempt.terminal_stage, attempt.terminal_reason) == (
+        "completed",
+        "terminal_event_lost",
+    )
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("terminal_stage", "receipts", "retried"),
+    [
+        ("completed", 1, True),  # a result never arrived
+        (None, 1, True),  # neither a result nor the terminal event arrived
+        ("canceled", 2, False),  # the guest's own ending is not retried
+    ],
+)
+def test_reconcile_exit0_retries_a_run_only_when_its_results_are_missing(
+    organization, monkeypatch, terminal_stage, receipts, retried
+):
+    attempt = _delivered_run(
+        organization, f"run-missing-{terminal_stage}", receipts=receipts
+    )
+    if terminal_stage:
+        _deliver_terminal(attempt, terminal_stage)
+    gateway, captured = _exited_cleanly(monkeypatch)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "terminal_delivery_incomplete"
+    assert captured["retry_pending"] is retried
+    assert job.state == (
+        HostedHarnessJob.State.RETRY_WAIT if retried else HostedHarnessJob.State.FAILED
+    )
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_relaunches_only_the_calls_without_a_result(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-missing-relaunch", receipts=1)
+    _deliver_terminal(first, "completed")
+    gateway, _ = _exited_cleanly(monkeypatch)
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    # Launch sends the guest what scope_dispatch_to_rerun leaves of the job's document:
+    # the call whose result was lost, not the call that already has its result.
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    dispatched = scope_dispatch_to_rerun(job.payload)
+    assert [
+        entry["execution_key"] for entry in dispatched["metadata"]["execution_manifest"]
+    ] == ["scenario-2:0"]
+    assert dispatched["scenario_count"] == 1
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    _receive(
+        second,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=first.job_id, execution_key="scenario-2:0"
+        ),
+    )
+    _deliver_terminal(second, "completed")
+
+    job = gateway.reconcile_completed(second)
+
+    # The first attempt's result and the relaunch's together finish the Run.
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    update_execution_counts(job)
+    job.refresh_from_db()
+    assert (job.completed_count, job.failed_count) == (2, 0)
+
+
+@override_settings(
+    HARNESS_PARALLELISM_ENABLED=True, ALK_DAYTONA_DOCKERFILE="/hosted/Dockerfile"
+)
+@pytest.mark.django_db
+def test_relaunch_of_one_lost_call_keeps_the_runs_parallelism(
+    organization, monkeypatch
+):
+    first = _delivered_run(
+        organization, "run-missing-relaunch-w2", receipts=1, parallelism=2
+    )
+    _deliver_terminal(first, "completed")
+    gateway, _ = _exited_cleanly(monkeypatch)
+    gateway.reconcile_completed(first)
+
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    )
+    _receive(
+        second.attempt,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=first.job_id, execution_key="scenario-2:0"
+        ),
+    )
+    _deliver_terminal(second.attempt, "completed")
+    job = gateway.reconcile_completed(second.attempt)
+
+    # The relaunch runs its one call alone, but the Run's calls ran two at a time:
+    # running fewer calls is no clamp.
+    assert second.admitted_parallelism == 1
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert ran_at(job) == 2
+    assert "parallelism_clamped" not in job.payload["metadata"]
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_scores_the_run_from_its_calls_when_the_relaunch_runs_out(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-missing-relaunch-spent", receipts=1)
+    _deliver_terminal(first, "completed")
+    gateway, _ = _exited_cleanly(monkeypatch)
+    gateway.reconcile_completed(first)
+    # The relaunch, the last the budget allows, loses the one call it was sent.
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    _deliver_terminal(second, "completed")
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert job.failure["code"] == "terminal_delivery_incomplete"
+    calls = {
+        execution.execution_key: execution.call_execution
+        for execution in HostedHarnessExecution.no_workspace_objects.filter(
+            job=job
+        ).select_related("call_execution")
+    }
+    assert calls["scenario-1:0"].status == CallExecution.CallStatus.COMPLETED
+    assert calls["scenario-2:0"].status == CallExecution.CallStatus.FAILED
+    assert calls["scenario-2:0"].ended_reason == job.failure["message"]
+    # The Run is not failed: it is scored from the call that has its result, as after
+    # an in-run re-run.
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+# The losses the platform retries, by the failure code each records on the attempt.
+_LOSSES = {
+    "guest_crashed": {"exit_code": 2, "logs": "boom", "process_logs": ""},
+    "evidence_undeliverable": {"exit_code": 4, "logs": "", "process_logs": ""},
+    "sandbox_disappeared": SandboxNotFoundError("sandbox not found", status_code=404),
+    "sandbox_unreachable": SandboxProviderError("toolbox unavailable", status_code=502),
+}
+
+
+def _lost_by(monkeypatch, code: str) -> HostedHarnessGateway:
+    """A gateway whose guest's attempt ends in the loss that records ``code``."""
+    gateway, _ = _exited_cleanly(monkeypatch)
+    loss = _LOSSES[code]
+
+    def inspect(_attempt):
+        if isinstance(loss, Exception):
+            raise loss
+        return loss
+
+    monkeypatch.setattr(gateway, "inspect", inspect)
+    return gateway
+
+
+def _dispatched(job: HostedHarnessJob) -> list[str]:
+    """The executions launch sends the job's next guest."""
+    job.refresh_from_db()
+    manifest = scope_dispatch_to_rerun(job.payload)["metadata"]["execution_manifest"]
+    return [entry["execution_key"] for entry in manifest]
+
+
+def _run_calls(
+    attempt: HostedHarnessAttempt,
+    tokens: dict[str, int],
+    interrupted: dict[str, str] | None = None,
+) -> None:
+    """What a guest does with the calls it is sent: report each call's usage and deliver
+    each call's result through the platform's own receipt ingestion. A call in
+    ``interrupted`` ends errored in that failure domain."""
+    interrupted = interrupted or {}
+    now = timezone.now().isoformat()
+    record_harness_usage(
+        attempt,
+        {
+            "schema_version": "futureagi.harness-usage.v1",
+            "operation": "report",
+            "records": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "action": "text_call",
+                    "scenario_key": key,
+                    "amount": amount,
+                    "funding": "platform",
+                    "occurred_at": now,
+                    "outcome": "completed",
+                }
+                for key, amount in tokens.items()
+            ],
+        },
+        emit=False,
+    )
+    for key in tokens:
+        execution = HostedHarnessExecution.no_workspace_objects.select_related(
+            "source_scenario"
+        ).get(job_id=attempt.job_id, execution_key=key)
+        body = {
+            "schema_version": "futureagi.harness-result.v1",
+            "job_id": str(attempt.job_id),
+            "attempt_id": str(attempt.id),
+            "attempt_number": attempt.attempt_number,
+            "scenario_key": key,
+            "scenario_id": str(execution.source_scenario.scenario_id),
+            "scenario_attempt": attempt.attempt_number,
+            "world_index": None,
+            "status": "errored" if key in interrupted else "passed",
+            "sub_goals": [],
+            "evaluations": [],
+            "call": {"started_at": now, "ended_at": now, "duration_ms": 1000},
+            "failure": {
+                "domain": interrupted[key],
+                "stage": "call",
+                "code": "call_interrupted",
+                "message": "the call was cut off",
+            }
+            if key in interrupted
+            else None,
+        }
+        body["digest"] = canonical_digest(body)
+        ingest_result_receipt(attempt, body, replay_usage=False)
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_retry_after_a_loss_runs_only_the_calls_without_a_result(
+    organization, monkeypatch, code
+):
+    attempt = _delivered_run(organization, f"run-loss-{code}", receipts=1)
+
+    job = _lost_by(monkeypatch, code).reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == code
+    assert job.state == HostedHarnessJob.State.RETRY_WAIT
+    # The call that already has its result is not run again.
+    assert _dispatched(job) == ["scenario-2:0"]
+
+
+@pytest.mark.django_db
+def test_a_retry_after_a_loss_with_no_result_in_runs_every_call(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "run-loss-nothing-in", receipts=0)
+
+    job = _lost_by(monkeypatch, "guest_crashed").reconcile_completed(attempt)
+
+    assert job.state == HostedHarnessJob.State.RETRY_WAIT
+    assert _dispatched(job) == ["scenario-1:0", "scenario-2:0"]
+    # Nothing narrowed, so the Run is not marked as a re-run of some of its calls.
+    assert "rerun_execution_keys" not in job.payload["metadata"]
+
+
+@pytest.mark.django_db
+def test_a_result_that_lands_before_cleanup_is_not_run_again(organization):
+    attempt = _delivered_run(organization, "run-loss-late-result", receipts=2)
+    # The gateway decided to retry while one result was still in flight.
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        terminal_stage="failed",
+        terminal_failure={"domain": "infrastructure", "code": "sandbox_unreachable"},
+    )
+
+    job = record_cleanup(
+        attempt.id,
+        provider_ref=str(attempt.provider_ref),
+        verified_absent=True,
+        retry_pending=True,
+        details={"provider": "test"},
+    )
+
+    # Nothing is left to run, and the failure was the platform's, not the guest's: the Run is
+    # kept, not relaunched and not failed.
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    attempt.refresh_from_db()
+    assert attempt.terminal_reason == "terminal_event_lost"
+
+
+def _retried_after_a_loss(organization, monkeypatch, name: str, code: str):
+    """A two-call Run whose first attempt ran one call (100 tokens) before ``code``
+    ended it, and whose retry ran what it was sent (10 tokens per call)."""
+    first = _delivered_run(organization, name, receipts=0)
+    _run_calls(first, {"scenario-1:0": 100})
+    gateway = _lost_by(monkeypatch, code)
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    # The retry's guest runs what it is sent, and every call it runs is charged.
+    _run_calls(second, dict.fromkeys(_dispatched(second.job), 10))
+    _deliver_terminal(second, "completed")
+    monkeypatch.setattr(
+        gateway, "inspect", lambda _: {"exit_code": 0, "logs": "", "process_logs": ""}
+    )
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    return first, second, job
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_call_with_a_result_is_charged_once_across_a_retry(
+    organization, monkeypatch, code
+):
+    *_, job = _retried_after_a_loss(
+        organization, monkeypatch, f"run-loss-charged-once-{code}", code
+    )
+
+    # The billed events are built from the same records: the first call's 100 tokens
+    # once, the second call's 10.
+    assert harness_consumption(job)["text_sim_tokens"] == 110
+
+
+@pytest.mark.django_db
+@pytest.mark.skipif(not has_ee("ee.usage"), reason="emits ee usage events")
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_retried_run_bills_each_call_under_one_event_id_on_every_replay(
+    organization, monkeypatch, code
+):
+    from ee.usage.services import emitter
+
+    first, second, _ = _retried_after_a_loss(
+        organization, monkeypatch, f"run-loss-billing-identity-{code}", code
+    )
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+
+    replays = []
+    for _ in range(2):
+        events.clear()
+        replay_harness_usage(first)
+        replay_harness_usage(second)
+        replays.append(
+            sorted(
+                (event.properties["scenario_key"], event.amount, event.event_id)
+                for event in events
+                if event.event_type == "text_call"
+            )
+        )
+
+    # Billing deduplicates on the event id. Each call is billed once, under the id of
+    # the attempt that ran it, and a replay sends the same ids again.
+    assert [(key, amount) for key, amount, _ in replays[0]] == [
+        ("scenario-1:0", 100),
+        ("scenario-2:0", 10),
+    ]
+    assert replays[1] == replays[0]
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("domain", sorted(PLATFORM_FAILURE_DOMAINS))
+def test_a_call_the_platform_interrupted_runs_again_and_is_charged_once(
+    organization, monkeypatch, domain
+):
+    first = _delivered_run(organization, f"run-interrupted-{domain}", receipts=0)
+    # Both calls have a receipt, but the platform's own failure ended the second.
+    _run_calls(
+        first,
+        {"scenario-1:0": 100, "scenario-2:0": 50},
+        interrupted={"scenario-2:0": domain},
+    )
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    # The interrupted call has no result, so it runs again; the other does not.
+    assert _dispatched(second.job) == ["scenario-2:0"]
+    _run_calls(second, dict.fromkeys(_dispatched(second.job), 10))
+    _deliver_terminal(second, "completed")
+    monkeypatch.setattr(
+        gateway, "inspect", lambda _: {"exit_code": 0, "logs": "", "process_logs": ""}
+    )
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    # The interrupted receipt's 50 tokens are never charged: each call is charged once,
+    # 100 for the first and 10 for the second's re-run.
+    assert harness_consumption(job)["text_sim_tokens"] == 110
+
+
+@pytest.mark.django_db
+@pytest.mark.skipif(not has_ee("ee.usage"), reason="emits ee usage events")
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+def test_a_call_the_simulator_failed_keeps_its_result_across_a_retry(
+    organization, monkeypatch
+):
+    from ee.usage.services import emitter
+
+    first = _delivered_run(organization, "run-simulator-failed", receipts=0)
+    # The simulator's own failure is a result, unlike the platform's: it is kept and
+    # charged, and only the call with no receipt runs again.
+    _run_calls(first, {"scenario-1:0": 100}, interrupted={"scenario-1:0": "simulator"})
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    assert _dispatched(second.job) == ["scenario-2:0"]
+    _run_calls(second, dict.fromkeys(_dispatched(second.job), 10))
+    _deliver_terminal(second, "completed")
+    monkeypatch.setattr(
+        gateway, "inspect", lambda _: {"exit_code": 0, "logs": "", "process_logs": ""}
+    )
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert harness_consumption(job)["text_sim_tokens"] == 110
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    replays = []
+    for _ in range(2):
+        events.clear()
+        replay_harness_usage(first)
+        replay_harness_usage(second)
+        replays.append(
+            sorted(
+                (event.properties["scenario_key"], event.amount, event.event_id)
+                for event in events
+                if event.event_type == "text_call"
+            )
+        )
+    # One event per call, each under its own id, and the same ids on the second replay.
+    assert [(key, amount) for key, amount, _ in replays[0]] == [
+        ("scenario-1:0", 100),
+        ("scenario-2:0", 10),
+    ]
+    assert len({event_id for _key, _amount, event_id in replays[0]}) == 2
+    assert replays[1] == replays[0]
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+def test_a_late_result_after_a_failed_poll_keeps_the_run_without_that_failure(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "run-late-after-failed-poll", receipts=1)
+    gateway = _lost_by(monkeypatch, "sandbox_unreachable")
+
+    def delete_in_progress(_attempt, **_kwargs):
+        raise SandboxConflictError("sandbox state change in progress", status_code=409)
+
+    monkeypatch.setattr(gateway, "_delete_and_record", delete_in_progress)
+    # Poll 1: unreachable with one result missing, and its delete still in progress.
+    assert gateway.reconcile_completed(attempt) is None
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "sandbox_unreachable"
+    # The missing result lands late; by poll 2 the sandbox is gone.
+    _receive(
+        attempt,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=attempt.job_id, execution_key="scenario-2:0"
+        ),
+    )
+
+    def gone(_attempt):
+        raise SandboxNotFoundError("sandbox not found", status_code=404)
+
+    monkeypatch.setattr(gateway, "inspect", gone)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    # Every result is in: poll 1's failure does not describe the Run that is kept.
+    assert attempt.terminal_failure is None
+    assert job.failure is None
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("lands", [True, False], ids=["last-lands", "still-missing"])
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_result_landing_while_the_sandbox_is_deleted_keeps_the_run(
+    organization, monkeypatch, code, lands
+):
+    attempt = _delivered_run(
+        organization, f"run-lands-during-delete-{code}-{lands}", receipts=1
+    )
+    gateway = _lost_by(monkeypatch, code)
+
+    def cleanup_after_the_last_result(attempt_id, **kwargs):
+        # The platform recorded its failure with one result missing; the last result lands
+        # while the sandbox is deleted (or found gone), before cleanup is recorded.
+        if lands:
+            _receive(
+                attempt,
+                HostedHarnessExecution.no_workspace_objects.get(
+                    job_id=attempt.job_id, execution_key="scenario-2:0"
+                ),
+            )
+        return record_cleanup(attempt_id, **kwargs)
+
+    def delete(lost, *, retry_pending=False, **_kwargs):
+        return cleanup_after_the_last_result(
+            lost.id,
+            provider_ref=str(lost.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(f"{_GATEWAY}.record_cleanup", cleanup_after_the_last_result)
+    monkeypatch.setattr(gateway, "_delete_and_record", delete)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    if lands:
+        assert job.state == HostedHarnessJob.State.COMPLETED
+        assert job.failure is None
+        assert attempt.terminal_failure is None
+        assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    else:
+        # A result is still missing: the platform's failure stands and only that call runs.
+        assert job.state == HostedHarnessJob.State.RETRY_WAIT
+        assert _dispatched(job) == ["scenario-2:0"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "ending",
+    [
+        ({"terminal_event_received": True, "terminal_stage": "failed"}, "FAILED"),
+        ({"terminal_stage": "canceled"}, "CANCELED"),
+    ],
+    ids=["guest-reported-failure", "cancellation"],
+)
+def test_cleanup_with_every_result_in_keeps_a_guest_failure_or_a_cancellation(
+    organization, ending
+):
+    fields, state = ending
+    attempt = _delivered_run(organization, f"run-own-ending-{state}", receipts=2)
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        terminal_failure={"domain": "agent", "code": "guest_failed"}, **fields
+    )
+
+    job = record_cleanup(
+        attempt.id,
+        provider_ref=str(attempt.provider_ref),
+        verified_absent=True,
+        retry_pending=True,
+        details={"provider": "test"},
+    )
+
+    assert job.state == getattr(HostedHarnessJob.State, state)
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+def test_a_narrowed_retry_counts_the_calls_it_kept(organization, monkeypatch):
+    first = _delivered_run(organization, "run-narrowed-call-counts", receipts=1)
+    assert _lost_by(monkeypatch, "guest_crashed").reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+
+    _run_calls(second, dict.fromkeys(_dispatched(second.job), 10))
+
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    execution = TestExecution.objects.get(id=job.test_execution_id)
+    # Both calls are done: the one the retry kept and the one it ran again.
+    assert execution.completed_calls == 2
+    assert job.completed_count == 2
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("attempts", [2, 1], ids=["retry-left", "retry-spent"])
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_loss_after_every_result_is_in_keeps_the_scored_run(
+    organization, monkeypatch, code, attempts
+):
+    attempt = _delivered_run(organization, f"run-all-in-{code}-{attempts}", receipts=0)
+    _run_calls(attempt, {"scenario-1:0": 100, "scenario-2:0": 10})
+    payload = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id).payload
+    HostedHarnessJob.no_workspace_objects.filter(id=attempt.job_id).update(
+        payload={
+            **payload,
+            "retry": {**payload["retry"], "max_infrastructure_attempts": attempts},
+        }
+    )
+
+    job = _lost_by(monkeypatch, code).reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    # Nothing is relaunched, so no call runs or is charged a second time, and the
+    # attempt ends as the platform's conclusion, as when only its terminal event is lost.
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    assert attempt.terminal_failure is None
+    assert (attempt.terminal_stage, attempt.terminal_reason) == (
+        "completed",
+        "terminal_event_lost",
+    )
+    assert harness_consumption(job)["text_sim_tokens"] == 110
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", ["evidence_undeliverable", "sandbox_unreachable"])
+def test_a_loss_after_the_guest_reported_its_own_failure_relaunches_nothing(
+    organization, monkeypatch, code
+):
+    attempt = _delivered_run(organization, f"run-own-failure-{code}", receipts=2)
+    _deliver_terminal(attempt, "failed")
+
+    job = _lost_by(monkeypatch, code).reconcile_completed(attempt)
+
+    # The guest's failed ending is its own, and every call has its result: a relaunch
+    # would only run and charge them again.
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert job.failure["code"] == code
+
+
+@pytest.mark.django_db
+def test_a_crash_retry_that_runs_out_scores_the_run_from_its_calls(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-loss-spent", receipts=1)
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    gateway.reconcile_completed(first)
+    # The retry, the last the budget allows, crashes before the one call it was sent.
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert job.failure["code"] == "guest_crashed"
+    statuses = dict(
+        HostedHarnessExecution.no_workspace_objects.filter(job=job).values_list(
+            "execution_key", "call_execution__status"
+        )
+    )
+    assert statuses == {
+        "scenario-1:0": CallExecution.CallStatus.COMPLETED,
+        "scenario-2:0": CallExecution.CallStatus.FAILED,
+    }
+    # As after an in-run re-run, the Run is scored from the call that has its result.
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
 @pytest.mark.django_db(transaction=True)
 def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     organization, monkeypatch
@@ -2742,7 +3825,7 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     gateway.client = client
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: ({}, None),
+        lambda: {"ALK_HARNESS_MODEL": "gemini-3.7-flash"},
     )
     barrier = Barrier(2)
 
@@ -2766,7 +3849,61 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     assert states == ["starting", "starting"]
     assert client.sandbox.process.sessions == [_CHAT_SESSION]
     assert "hosted_chat_entrypoint" in client.sandbox.process.session_request.command
+    assert (
+        client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
+        == "gemini-3.7-flash"
+    )
+    # A build runs as a chat turn: its spend is in the chat's ledger, which the attempt's
+    # cleanup reads.
+    assert (
+        client.sandbox.process.session_request.env["ALK_SPEND_JOURNAL"]
+        == "/work/builder-cost.json"
+    )
     assert client.deleted is False
+
+
+@pytest.mark.django_db
+def test_chat_sandbox_job_document_omits_server_only_chat_state(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness_conversation import ensure_conversation
+
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key="chat-doc")
+    job.payload = {
+        **job.payload,
+        "metadata": {
+            **(job.payload.get("metadata") or {}),
+            **_chat_state_payload()["metadata"],
+        },
+    }
+    # A finished job's chat gets a sandbox of its own, sent the job document.
+    job.state = HostedHarnessJob.State.FAILED
+    job.current_stage = "failed"
+    job.save(update_fields=["payload", "state", "current_stage", "updated_at"])
+    conversation = ensure_conversation(job)
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    for name, value in (
+        ("load_workspace_archive", lambda _conversation: None),
+        ("_authoring_archive_for", lambda _job: None),
+        ("_platform_simulator_material", lambda: {}),
+        ("_resolved_egress_domains", lambda *_args: {"platform.example"}),
+    ):
+        monkeypatch.setattr(f"simulate.services.hosted_harness_gateway.{name}", value)
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        lambda *_: (b"source", None),
+    )
+
+    gateway.ensure_conversation_runtime(
+        job, conversation=conversation, endpoint_base_url="https://platform.example"
+    )
+
+    document = json.loads(client.sandbox.fs.uploads["/work/job.json"])
+    assert "conversation_checkpoints" not in document["metadata"]
+    assert "draft_saves" not in document["metadata"]
+    assert list(_alk_secret_paths(document)) == []
 
 
 @pytest.mark.django_db
@@ -2798,21 +3935,104 @@ def test_hosted_execution_cancel_signals_workflow_without_deleting_sandbox(
     assert job.cancel_reason == "user_canceled"
 
 
-def test_platform_simulator_material_carries_observe_credentials(monkeypatch):
-    for name, value in {
-        "HARNESS_OBSERVABILITY": "on",
-        "FI_API_KEY": "observe-key",
-        "FI_SECRET_KEY": "observe-secret",
-        "FI_HARNESS_PROJECT": "hosted-harness",
-    }.items():
-        monkeypatch.setenv(name, value)
+_OBSERVE_NAMES = (
+    "HARNESS_OBSERVABILITY",
+    "FI_API_KEY",
+    "FI_SECRET_KEY",
+    "FI_HARNESS_PROJECT",
+)
 
-    values, _credentials = _platform_simulator_material()
+
+def _set_observe_env(
+    monkeypatch, flag, *, api_key="observe-key", secret="observe-secret"
+):
+    for name in _OBSERVE_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    if flag is not None:
+        monkeypatch.setenv("HARNESS_OBSERVABILITY", flag)
+    if api_key:
+        monkeypatch.setenv("FI_API_KEY", api_key)
+    if secret:
+        monkeypatch.setenv("FI_SECRET_KEY", secret)
+    monkeypatch.setenv("FI_HARNESS_PROJECT", "hosted-harness")
+
+
+@pytest.mark.parametrize("flag", [None, "", "off", "0", "false", "maybe"])
+def test_platform_simulator_material_keeps_the_harness_untraced_without_opt_in(
+    monkeypatch, flag
+):
+    _set_observe_env(monkeypatch, flag)
+
+    values = _platform_simulator_material()
+
+    # The keys travel regardless, because the harness grades with them.
+    assert values["FI_API_KEY"] == "observe-key"
+    assert values["FI_SECRET_KEY"] == "observe-secret"
+    assert values["FI_HARNESS_PROJECT"] == "hosted-harness"
+    assert values["HARNESS_OBSERVABILITY"] == "off"
+
+
+@pytest.mark.parametrize("flag", ["on", "ON ", "true", "1", " Yes "])
+def test_platform_simulator_material_lets_the_harness_trace_on_opt_in(
+    monkeypatch, flag
+):
+    _set_observe_env(monkeypatch, flag)
+
+    values = _platform_simulator_material()
 
     assert values["FI_API_KEY"] == "observe-key"
     assert values["FI_SECRET_KEY"] == "observe-secret"
     assert values["FI_HARNESS_PROJECT"] == "hosted-harness"
     assert values["HARNESS_OBSERVABILITY"] == "on"
+
+
+@pytest.mark.parametrize(
+    "missing", [{"api_key": ""}, {"secret": ""}, {"api_key": "", "secret": ""}]
+)
+@pytest.mark.parametrize("flag", [None, "on"])
+def test_platform_simulator_material_forwards_no_key_that_is_not_set(
+    monkeypatch, flag, missing
+):
+    _set_observe_env(monkeypatch, flag, **missing)
+
+    values = _platform_simulator_material()
+
+    if "api_key" in missing:
+        assert "FI_API_KEY" not in values
+    else:
+        assert values["FI_API_KEY"] == "observe-key"
+    if "secret" in missing:
+        assert "FI_SECRET_KEY" not in values
+    else:
+        assert values["FI_SECRET_KEY"] == "observe-secret"
+    # The flag is always sent; without keys the harness has nothing to trace with anyway.
+    assert values["HARNESS_OBSERVABILITY"] == ("on" if flag else "off")
+
+
+def test_the_collector_host_follows_the_keys_whatever_the_harness_flag(monkeypatch):
+    monkeypatch.setenv("ALK_HOSTED_FI_BASE_URL", "https://collector.example.test")
+    payload = {
+        "agent": {"connector": "auto"},
+        "security": {"allowed_egress_domains": []},
+    }
+
+    # The platform evals call the collector, so keys without the opt-in still need its host.
+    for flag in (None, "off", "on"):
+        _set_observe_env(monkeypatch, flag)
+        values = _platform_simulator_material()
+        assert values["FI_BASE_URL"] == "https://collector.example.test"
+        assert "collector.example.test" in _resolved_egress_domains(
+            payload, {}, values, None
+        )
+
+    # Without keys no rule adds the host in this setup, so the keys are what put it there.
+    for api_key, secret in (("", ""), ("observe-key", ""), ("", "observe-secret")):
+        _set_observe_env(monkeypatch, "on", api_key=api_key, secret=secret)
+        values = _platform_simulator_material()
+        assert values["FI_BASE_URL"] == "https://collector.example.test"
+        assert "collector.example.test" not in _resolved_egress_domains(
+            payload, {}, values, None
+        )
 
 
 def test_platform_simulator_prefers_public_callback_for_hosted_observability(
@@ -2822,6 +4042,2034 @@ def test_platform_simulator_prefers_public_callback_for_hosted_observability(
     monkeypatch.setenv("HARNESS_PUBLIC_BASE_URL", "https://platform.example.test")
     monkeypatch.setenv("FI_BASE_URL", "http://backend:80")
 
-    values, _credentials = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["FI_BASE_URL"] == "https://platform.example.test"
+
+
+# ---------------------------------------------------------------------------
+# Observability export decided at launch
+# ---------------------------------------------------------------------------
+
+_GATEWAY = "simulate.services.hosted_harness_gateway"
+_EXPORT_SNAPSHOT = "alk-hosted-v1"
+_COLLECTOR = "https://collector.example.com"
+_EXPORT_API_KEY = "export-api-key-0001"
+_EXPORT_SECRET_KEY = "export-secret-key-0001"
+_LEAK_SENTINEL = "LEAK-SENTINEL-DO-NOT-LOG"
+_INGEST_API_ALIAS = "FI_SIMULATION_INGEST_API_KEY"
+_INGEST_SECRET_ALIAS = "FI_SIMULATION_INGEST_SECRET_KEY"
+_INGEST_PAIR = {
+    _INGEST_API_ALIAS: _EXPORT_API_KEY,
+    _INGEST_SECRET_ALIAS: _EXPORT_SECRET_KEY,
+}
+
+
+class _ExportCredentials(NamedTuple):
+    api_key: str
+    secret_key: str
+    enabled: bool
+
+
+class _CredentialsThatFailAfterTheKeys:
+    """Hands out both key values, then fails when asked whether the key is enabled."""
+
+    api_key = _EXPORT_API_KEY
+    secret_key = _EXPORT_SECRET_KEY
+
+    @property
+    def enabled(self):
+        raise RuntimeError(_LEAK_SENTINEL)
+
+
+class _Logs:
+    """Stands in for the module's structlog logger and keeps what it was told."""
+
+    def __init__(self):
+        self.records = []
+
+    def __getattr__(self, level):
+        def log(event, *args, **kwargs):
+            self.records.append((level, event, kwargs))
+
+        return log
+
+    def events(self, name):
+        return [(level, kw) for level, event, kw in self.records if event == name]
+
+    def text(self):
+        return repr(self.records)
+
+
+class _OrderedDaytona(_Daytona):
+    """A sandbox client that writes sandbox creation and every upload into one list."""
+
+    def __init__(self, events):
+        super().__init__()
+        self.events = events
+        stored = self.sandbox.fs.upload_file
+
+        def upload(content, path):
+            events.append(("upload", path))
+            stored(content, path)
+
+        self.sandbox.fs.upload_file = upload
+
+    def create(self, params, **kwargs):
+        self.events.append(("create", None))
+        return super().create(params, **kwargs)
+
+
+class _StopAfterJobJson(Exception):
+    pass
+
+
+class _StoppingFilesystem(_Filesystem):
+    """Keeps the uploads, then ends the call once the job document is in."""
+
+    def upload_file(self, content, path):
+        super().upload_file(content, path)
+        if path == "/work/job.json":
+            raise _StopAfterJobJson
+
+
+def _mark_text(mark):
+    return mark.get("OTEL_RESOURCE_ATTRIBUTES", "")
+
+
+class _ExportWorld:
+    """A launchable job and every collaborator the export decision reads, at its seam.
+
+    The database holds the agent, its observability row, the observability project and the
+    job. The three producers owned by other tickets (the agent summary, the hidden
+    simulation project and the key resolver) are stand-ins that record how they were
+    called; the hidden project's row is made in the database when the stand-in is called.
+    With ``hidden="real"`` the hidden project is made by the real function instead. With
+    ``summary="real"`` the agent's setup is read from the versions the test stores.
+    """
+
+    def __init__(
+        self,
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        *,
+        tag="a",
+        bind="metadata",
+        instrumentation="opentelemetry",
+        kind="source",
+        declared=None,
+        provider="enabled",
+        project="live",
+        snapshot_setting=_EXPORT_SNAPSHOT,
+        measure_setting=_EXPORT_SNAPSHOT,
+        collector=_COLLECTOR,
+        credentials="ok",
+        summary="stub",
+        summary_raises=False,
+        hidden="ok",
+        cap_at_baseline=False,
+        base_domains=("ingest.example.com",),
+        customer_domains=("agent.example.com",),
+        stale_mark=None,
+        library_missing=(),
+    ):
+        from model_hub.models.ai_model import AIModel
+        from simulate.models import AgentDefinition, RunTest
+        from tracer.models.observability_provider import (
+            ObservabilityProvider,
+            ProviderChoices,
+        )
+        from tracer.models.project import Project
+
+        self.organization = organization
+        self.workspace = workspace
+        self.declared = dict(declared or {})
+        self.events = []
+        self.hidden = None
+        self.hidden_calls = []
+        self.summary_calls = []
+        self.summary_versions = []
+        self.credential_calls = []
+        self.logs = _Logs()
+        self.collector = collector
+
+        project_workspace = None if project == "no_workspace" else workspace
+        project_organization = organization
+        if project == "other_org":
+            from accounts.models.organization import Organization
+
+            project_organization = Organization.objects.create(name="Project owner org")
+        self.project = Project.no_workspace_objects.create(
+            name=f"Support Bot {tag}",
+            organization=project_organization,
+            workspace=project_workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        if project == "no_workspace":
+            # A save hook gives every project a workspace, so a legacy row without one can only be
+            # made by an update that skips the hook.
+            Project.no_workspace_objects.filter(id=self.project.id).update(
+                workspace=None
+            )
+            self.project.refresh_from_db()
+        if project == "deleted":
+            self.project.deleted = True
+            self.project.save()
+        self.provider = None
+        if provider != "missing":
+            self.provider = ObservabilityProvider.no_workspace_objects.create(
+                project=self.project,
+                provider=ProviderChoices.OTHERS,
+                organization=organization,
+                workspace=workspace,
+                enabled=provider in {"enabled", "deleted"},
+            )
+            if provider == "deleted":
+                self.provider.deleted = True
+                self.provider.save()
+        self.agent = AgentDefinition.no_workspace_objects.create(
+            agent_name=f"Code agent {tag}",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description="A code agent",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+            observability_provider=self.provider,
+        )
+
+        payload = _payload()
+        payload["source"] = {
+            "kind": "remote",
+            "endpoint": "https://agent.example.com",
+            "visibility": "public",
+        }
+        payload["security"]["allowed_egress_domains"] = list(customer_domains)
+        payload["agent"]["secret_refs"] = {
+            alias: {
+                "manager": "platform-vault",
+                "key": f"vault-{alias}",
+                "purpose": "target_provider",
+            }
+            for alias in self.declared
+        }
+        if stale_mark is not None:
+            payload["metadata"]["customer_code_environment"] = dict(stale_mark)
+        bound_id = {
+            "metadata": str(self.agent.id),
+            "bad_id": "not-a-uuid",
+            "other_org": None,
+            "deleted": None,
+        }.get(bind)
+        if bind == "other_org":
+            from accounts.models.organization import Organization
+
+            stranger = AgentDefinition.no_workspace_objects.create(
+                agent_name="Other tenant",
+                agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+                inbound=True,
+                description="x",
+                organization=Organization.objects.create(name="Other tenant org"),
+                languages=["en"],
+            )
+            bound_id = str(stranger.id)
+        if bind == "deleted":
+            self.agent.deleted = True
+            self.agent.save()
+            bound_id = str(self.agent.id)
+        if bound_id:
+            payload["metadata"]["agent_definition_id"] = bound_id
+        self.job, _ = create_hosted_job(
+            organization,
+            payload,
+            idempotency_key=f"export-{tag}-{uuid.uuid4().hex[:8]}",
+            workspace=workspace,
+        )
+        if bind == "run_test":
+            run_test = RunTest.objects.create(
+                name=f"Bound run {tag}",
+                organization=organization,
+                agent_definition=self.agent,
+            )
+            self.job.run_test = run_test
+            self.job.save(update_fields=["run_test"])
+
+        self.client = _OrderedDaytona(self.events)
+        self.gateway = object.__new__(HostedHarnessGateway)
+        self.gateway.client = self.client
+        self.gateway.snapshot = _EXPORT_SNAPSHOT
+        self.gateway.snapshot_digest = "sha256:good"
+        self.client.runtime_digest = "sha256:good"
+        settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = list(base_domains)
+        settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
+        settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+
+        for name in (
+            "ALK_HOSTED_FI_BASE_URL",
+            "HARNESS_PUBLIC_BASE_URL",
+            "FI_BASE_URL",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        if collector is not None:
+            monkeypatch.setenv("ALK_HOSTED_FI_BASE_URL", collector)
+        settings.ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS = (
+            [snapshot_setting] if snapshot_setting else []
+        )
+        settings.ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS = (
+            [measure_setting] if measure_setting else []
+        )
+        monkeypatch.setattr(f"{_GATEWAY}.structlog_logger", self.logs)
+        monkeypatch.setattr(
+            f"{_GATEWAY}.PlatformSecretResolver.resolve",
+            lambda _self, _job: dict(self.declared),
+        )
+
+        summary_module = ModuleType("simulate.services.agent_setup")
+
+        def launched_agent_summary(agent_definition_id, *, agent_version_id):
+            self.summary_calls.append(agent_definition_id)
+            self.summary_versions.append(agent_version_id)
+            if summary_raises:
+                raise RuntimeError(_LEAK_SENTINEL)
+            return SimpleNamespace(kind=kind, instrumentation=instrumentation)
+
+        summary_module.launched_agent_summary = launched_agent_summary
+        if summary == "stub":
+            monkeypatch.setitem(
+                sys.modules, "simulate.services.agent_setup", summary_module
+            )
+
+        ingest_module = ModuleType("tracer.services.collector_ingest")
+        ingest_module.ExportCredentials = _ExportCredentials
+
+        # Keyword-only, like the real one, so a positional call fails here too.
+        def get_or_create_export_credentials(
+            *, organization_id, workspace_id, agent_definition_id
+        ):
+            self.events.append(("key", None))
+            self.credential_calls.append(
+                (organization_id, workspace_id, agent_definition_id)
+            )
+            if credentials == "raises":
+                raise RuntimeError(_LEAK_SENTINEL)
+            if credentials == "none":
+                return None
+            if credentials == "fails_after_the_keys":
+                return _CredentialsThatFailAfterTheKeys()
+            if credentials == "no_api_key":
+                return _ExportCredentials("", _EXPORT_SECRET_KEY, True)
+            if credentials == "no_secret_key":
+                return _ExportCredentials(_EXPORT_API_KEY, "", True)
+            return _ExportCredentials(
+                _EXPORT_API_KEY, _EXPORT_SECRET_KEY, credentials != "disabled"
+            )
+
+        ingest_module.get_or_create_export_credentials = (
+            get_or_create_export_credentials
+        )
+        monkeypatch.setitem(
+            sys.modules, "tracer.services.collector_ingest", ingest_module
+        )
+
+        if hidden != "real":
+            from tracer.services.simulation_project import SimulationProjectError
+
+            def ensure_simulation_project(agent):
+                self.events.append(("hidden", None))
+                self.hidden_calls.append(agent.id)
+                if hidden == "raises":
+                    raise SimulationProjectError(_LEAK_SENTINEL)
+                hidden_workspace = agent.workspace
+                if hidden == "other_workspace":
+                    from accounts.models.workspace import Workspace
+
+                    hidden_workspace = Workspace.objects.create(
+                        name="Simulation workspace",
+                        organization=agent.organization,
+                        is_default=False,
+                        is_active=True,
+                        created_by=user,
+                    )
+                row = Project.with_simulation.create(
+                    name=f"fi-simulation-{agent.id}",
+                    organization=agent.organization,
+                    workspace=hidden_workspace,
+                    model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+                    trace_type="observe",
+                    simulation_agent=agent,
+                )
+                if hidden == "no_workspace":
+                    Project.with_simulation.filter(id=row.id).update(workspace=None)
+                    row = Project.with_simulation.get(id=row.id)
+                self.hidden = row
+                return row
+
+            # Only the function is replaced: other modules import names from this one.
+            monkeypatch.setattr(
+                "tracer.services.simulation_project.ensure_simulation_project",
+                ensure_simulation_project,
+            )
+        for module in library_missing:
+            monkeypatch.setitem(sys.modules, module, None)
+
+        self.simulator_values = {
+            "ALK_HARNESS": "vertex-gemini",
+            "ALK_HARNESS_MODEL": "gemini-3.7-flash",
+            "AGENTCC_BASE_URL": "https://gateway.example.test",
+            "AGENTCC_API_KEY": "harness-virtual-key",
+        }
+        monkeypatch.setattr(
+            f"{_GATEWAY}._platform_simulator_material",
+            lambda: dict(self.simulator_values),
+        )
+        if cap_at_baseline:
+            self.client.max_egress_domains = len(self.baseline_domains())
+
+    def baseline_domains(self):
+        return _resolved_egress_domains(
+            self.job.payload,
+            dict(self.declared),
+            self.simulator_values,
+            "platform.example.com",
+        )
+
+    def launch(self):
+        self.attempt = self.gateway.launch(
+            self.job, endpoint_base_url="https://platform.example.com"
+        )
+        return self
+
+    @property
+    def uploads(self):
+        return self.client.sandbox.fs.uploads
+
+    @property
+    def job_json(self):
+        return json.loads(self.uploads["/work/job.json"])
+
+    @property
+    def mark(self):
+        return self.job_json["metadata"]["customer_code_environment"]
+
+    @property
+    def secrets(self):
+        return json.loads(self.uploads["/run/futureagi/secrets.json"])
+
+    @property
+    def refs(self):
+        return self.job_json["agent"]["secret_refs"]
+
+    @property
+    def domains(self):
+        return set(self.client.params.allowed_domains)
+
+    def export_log(self):
+        return self.logs.events("observability_export_unavailable")
+
+
+def _assert_launched_without_export(world, declared_secrets=None):
+    """The run was made, marked, and given nothing of the export."""
+    assert world.attempt.state == HostedHarnessAttempt.State.RUNNING
+    mark = world.mark
+    assert set(mark) == {"OTEL_RESOURCE_ATTRIBUTES"}
+    assert "fi.simulation.origin=simulation" in _mark_text(mark)
+    assert "project_name" not in _mark_text(mark)
+    assert world.secrets == (declared_secrets or {})
+    assert not any(
+        ref.get("purpose") == "observability_export" for ref in world.refs.values()
+    )
+    assert "collector.example.com" not in world.domains
+    assert _EXPORT_API_KEY.encode() not in world.uploads["/work/job.json"]
+    assert _LEAK_SENTINEL not in world.logs.text()
+
+
+@pytest.mark.django_db
+def test_all_three_job_uploads_carry_the_mark_and_the_row_does_not(
+    organization, workspace, user, settings, monkeypatch
+):
+    from tracer.services.simulation_mark import customer_code_environment
+
+    stale = {"OTEL_STALE_VALUE": "from the row"}
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        bind="run_test",
+        stale_mark=stale,
+    ).launch()
+    job = world.job
+    expected = customer_code_environment(
+        organization_id=str(job.organization_id),
+        job_id=str(job.id),
+        run_id=str(job.run_id),
+        run_test_id=str(job.run_test_id),
+        test_execution_id=None,
+        project_name=world.hidden.name,
+        collector_url=_COLLECTOR,
+        export="our_keys",
+        instrumentation="opentelemetry",
+    )
+    # The launch's document carries exactly the function's dictionary, in place of the
+    # value the stored request had.
+    assert world.mark == expected
+    assert world.mark != stale
+    # The object the launch was handed first, then the stored row.
+    for read_back in (False, True):
+        if read_back:
+            job.refresh_from_db()
+        assert job.payload["metadata"]["customer_code_environment"] == stale
+        assert "fi.simulation" not in json.dumps(job.payload)
+
+    # Authoring and chat are never bound: the mark, and no export, no log line.
+    for upload_document in (_authoring_document, _chat_document):
+        logs = _Logs()
+        monkeypatch.setattr(f"{_GATEWAY}.structlog_logger", logs)
+        document, source_job = upload_document(monkeypatch)
+        mark = document["metadata"]["customer_code_environment"]
+        assert mark == customer_code_environment(
+            organization_id=str(source_job.organization_id),
+            job_id=str(source_job.id),
+            run_id=str(source_job.run_id),
+            run_test_id=None,
+            test_execution_id=None,
+        )
+        assert set(mark) == {"OTEL_RESOURCE_ATTRIBUTES"}
+        assert "project_name" not in mark["OTEL_RESOURCE_ATTRIBUTES"]
+        assert "fi.simulation.origin=simulation" in mark["OTEL_RESOURCE_ATTRIBUTES"]
+        assert logs.events("observability_export_unavailable") == []
+        assert logs.events("simulation_mark_unavailable") == []
+        assert source_job.payload["metadata"]["customer_code_environment"] == stale
+
+
+def _unbound_job():
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    payload["metadata"] = {
+        "customer_code_environment": {"OTEL_STALE_VALUE": "from the row"}
+    }
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        organization_id=uuid.uuid4(),
+        run_id=uuid.uuid4(),
+        run_test_id=None,
+        test_execution_id=None,
+        payload=payload,
+        # A job with no environment of its own stands in for one.
+        environment=None,
+    )
+
+
+def _authoring_document(monkeypatch, events=None):
+    job = _unbound_job()
+    client = _Daytona() if events is None else _OrderedDaytona(events)
+    client.sandbox.fs = _StoppingFilesystem()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    monkeypatch.setattr(f"{_GATEWAY}._mark_stage", lambda *_: None)
+    monkeypatch.setattr(
+        f"{_GATEWAY}.HostedSourceAcquirer.acquire", lambda *_: (b"source", None)
+    )
+    monkeypatch.setattr(
+        f"{_GATEWAY}._provider_import_authoring_material", lambda *_: ({}, "")
+    )
+    monkeypatch.setattr(f"{_GATEWAY}._platform_simulator_material", lambda: {})
+    with pytest.raises(_StopAfterJobJson):
+        gateway.author(job)
+    return json.loads(client.sandbox.fs.uploads["/work/job.json"]), job
+
+
+def _chat_document(monkeypatch, events=None):
+    job = _unbound_job()
+    client = _Daytona() if events is None else _OrderedDaytona(events)
+    client.sandbox.fs = _StoppingFilesystem()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    monkeypatch.setattr(f"{_GATEWAY}.load_workspace_archive", lambda _c: None)
+    monkeypatch.setattr(f"{_GATEWAY}._authoring_archive_for", lambda _j: None)
+    monkeypatch.setattr(
+        f"{_GATEWAY}.HostedSourceAcquirer.acquire", lambda *_: (b"source", None)
+    )
+    monkeypatch.setattr(
+        f"{_GATEWAY}.issue_conversation_capability",
+        lambda *_a, **_k: SimpleNamespace(document={"conversation": "x"}),
+    )
+    monkeypatch.setattr(f"{_GATEWAY}._platform_simulator_material", lambda: {})
+    with pytest.raises(_StopAfterJobJson):
+        gateway._start_chat_sandbox(
+            job,
+            conversation=SimpleNamespace(id=uuid.uuid4(), job_id=job.id),
+            endpoint_base_url="https://platform.example.com",
+        )
+    return json.loads(client.sandbox.fs.uploads["/work/job.json"]), job
+
+
+def test_authoring_and_chat_documents_carry_the_mark_even_when_the_function_fails(
+    monkeypatch,
+):
+    # The upload of these two is the only place the mark can be lost, so a failing
+    # function must give them an empty dictionary rather than stop the call.
+    def explode(**_kwargs):
+        raise RuntimeError(_LEAK_SENTINEL)
+
+    monkeypatch.setattr(
+        "tracer.services.simulation_mark.customer_code_environment", explode
+    )
+    for upload_document in (_authoring_document, _chat_document):
+        logs = _Logs()
+        monkeypatch.setattr(f"{_GATEWAY}.structlog_logger", logs)
+        document, job = upload_document(monkeypatch)
+        assert document["metadata"]["customer_code_environment"] == {}
+        assert logs.events("simulation_mark_unavailable") == [
+            ("warning", {"job_id": str(job.id), "reason": "raised"})
+        ]
+        assert _LEAK_SENTINEL not in logs.text()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "tag, bind, word",
+    [
+        ("otel", "metadata", "opentelemetry"),
+        ("traceai", "run_test", "traceai"),
+    ],
+)
+def test_export_environment_and_keys_for_a_bound_source_agent_with_observability_on(
+    tag, bind, word, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=tag,
+        bind=bind,
+        instrumentation=word,
+    ).launch()
+    mark = world.mark
+    attributes = _mark_text(mark)
+    # The hidden project's name, never the observability project's.
+    assert f"project_name={quote(world.hidden.name, safe='')}" in attributes
+    assert quote(world.project.name, safe="") not in attributes
+    assert world.hidden.name != world.project.name
+    assert "fi.simulation.origin=simulation" in attributes
+    assert "OTEL_EXPORTER_OTLP_PROTOCOL" not in mark
+    assert world.export_log() == []
+    # The document and the stored request: the refs and the dictionary are on the
+    # sandbox's copy only.
+    # Checked on the object the launch was handed, then on the stored row: a shared
+    # nested dictionary would otherwise be written to without ever being saved.
+    for read_back in (False, True):
+        if read_back:
+            world.job.refresh_from_db()
+        assert "customer_code_environment" not in world.job.payload["metadata"]
+        stored_refs = world.job.payload["agent"]["secret_refs"]
+        assert not any(
+            r["purpose"] == "observability_export" for r in stored_refs.values()
+        )
+        assert stored_refs == {}
+    assert world.domains >= {"collector.example.com"}
+    assert world.hidden_calls == [world.agent.id]
+    assert world.summary_calls == [world.agent.id]
+    # The key is the agent's, found by the hidden project's workspace.
+    assert world.credential_calls == [
+        (str(organization.id), str(world.hidden.workspace_id), str(world.agent.id))
+    ]
+    assert mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert mark["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] == f"{_COLLECTOR}/v1/traces"
+    expected_names = {
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "FI_SIMULATION_EXPORT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    }
+    if word == "traceai":
+        assert mark["FI_BASE_URL"] == _COLLECTOR
+        expected_names.add("FI_BASE_URL")
+    assert set(mark) == expected_names
+    # The same two secrets for both words, and none of the names an SDK reads.
+    assert world.secrets == _INGEST_PAIR
+    assert {
+        alias: ref
+        for alias, ref in world.refs.items()
+        if ref["purpose"] == "observability_export"
+    } == {
+        alias: {
+            "manager": "platform-config",
+            "key": alias,
+            "purpose": "observability_export",
+        }
+        for alias in _INGEST_PAIR
+    }
+    assert set(world.refs) == set(_INGEST_PAIR)
+    # A key value never rides in the document, a log line, or an exception message.
+    document = world.uploads["/work/job.json"]
+    assert _EXPORT_API_KEY.encode() not in document
+    assert _EXPORT_SECRET_KEY.encode() not in document
+    assert _EXPORT_API_KEY not in world.logs.text()
+    # The launch-time redaction set holds each value.
+    redacted = cached_attempt_redaction_values(world.attempt.id)
+    assert {_EXPORT_API_KEY, _EXPORT_SECRET_KEY} <= set(redacted)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "tag, declared, model_hosts",
+    [
+        ("untraced", None, "gateway.example.test"),
+        # The agent's own exporter keeps its own endpoint: ours is under a name it never reads.
+        (
+            "untraced-own",
+            {"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"},
+            "gateway.example.test",
+        ),
+        # A model base URL the agent declares is a model host too; a tool's URL is not.
+        (
+            "untraced-llm",
+            {
+                "LLM_BASE_URL": "https://LLM.example/v1",
+                "CRM_BASE_URL": "https://crm.example",
+            },
+            "gateway.example.test,llm.example",
+        ),
+    ],
+)
+def test_an_untraced_agent_is_measured_through_names_its_own_exporters_never_read(
+    tag, declared, model_hosts, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=tag,
+        instrumentation="none",
+        declared=declared,
+    ).launch()
+    mark = world.mark
+
+    assert world.export_log() == []
+    assert set(mark) == {
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "FI_SIMULATION_EXPORT",
+        "FI_SIMULATION_INSTRUMENT",
+        "FI_SIMULATION_TRACES_ENDPOINT",
+        "FI_SIMULATION_MODEL_HOSTS",
+    }
+    assert mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert mark["FI_SIMULATION_INSTRUMENT"] == "traceai"
+    assert mark["FI_SIMULATION_TRACES_ENDPOINT"] == f"{_COLLECTOR}/v1/traces"
+    # Every hosted model call goes to the platform's gateway: a request there outside a
+    # measured SDK call reads partial in the sandbox, never as a lower cost.
+    assert mark["FI_SIMULATION_MODEL_HOSTS"] == model_hosts
+    # Into the hidden project, under the agent's ingest key, as a traced agent's spans are.
+    assert f"project_name={quote(world.hidden.name, safe='')}" in _mark_text(mark)
+    assert {alias: world.secrets.get(alias) for alias in _INGEST_PAIR} == _INGEST_PAIR
+    # The agent's own endpoint, when it set one, reaches it as it gave it.
+    assert world.secrets == {**_INGEST_PAIR, **(declared or {})}
+    assert world.domains >= {"collector.example.com"}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "tag, options",
+    [
+        ("off-disabled", {"provider": "disabled"}),
+        ("off-missing", {"provider": "missing"}),
+        ("off-deleted", {"provider": "deleted"}),
+        ("off-project", {"project": "deleted"}),
+        ("off-org", {"project": "other_org"}),
+    ],
+)
+def test_an_untraced_agent_is_measured_whatever_its_observability_switch_says(
+    tag, options, organization, workspace, user, settings, monkeypatch
+):
+    # Measuring records the models, tokens and timing only, never prompts or replies, so the
+    # switch does not stop it. A traced agent's switch still does (see _REFUSALS).
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=tag,
+        instrumentation="none",
+        **options,
+    ).launch()
+
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert world.mark["FI_SIMULATION_INSTRUMENT"] == "traceai"
+    assert world.secrets == _INGEST_PAIR
+    # The spans go to the hidden project, never to the agent's own.
+    assert quote(world.project.name, safe="") not in _mark_text(world.mark)
+
+
+def _store_versions(agent, *instrumentations):
+    """One version per word, oldest first, each with a stored source setup that traces so."""
+    versions = []
+    for number, instrumentation in enumerate(instrumentations, start=1):
+        version = agent.create_version(
+            description="", commit_message=f"v{number}", status="active"
+        )
+        if instrumentation is not None:
+            store_agent(
+                agent_version_id=version.id,
+                agent=source_agent(instrumentation=instrumentation),
+                sdk_version="0.2.3",
+            )
+        versions.append(version)
+    return versions
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "pinned, newest, measured",
+    [
+        # A newer version that traces nothing does not measure an older traced one past
+        # its switch: the older one's own setup records prompts and replies.
+        ("traceai", "none", False),
+        # A newer traced version does not stop an older untraced one being measured.
+        ("none", "traceai", True),
+    ],
+)
+def test_the_version_a_run_launches_decides_its_export(
+    pinned, newest, measured, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=f"pin-{pinned}",
+        summary="real",
+        provider="disabled",
+    )
+    launched, _newer = _store_versions(world.agent, pinned, newest)
+    world.job.agent_version = launched
+    world.job.save(update_fields=["agent_version"])
+
+    world.launch()
+
+    if measured:
+        assert world.export_log() == []
+        assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    else:
+        assert world.export_log() == [
+            ("info", {"job_id": str(world.job.id), "reason": "observability_off"})
+        ]
+        assert "FI_SIMULATION_EXPORT" not in world.mark
+
+
+@pytest.mark.django_db
+def test_a_run_pinned_to_a_version_with_no_stored_setup_reads_the_agent_s_own(
+    organization, workspace, user, settings, monkeypatch
+):
+    # A version made by a push stores no setup; the agent's newest stored one decides.
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="pin-pushed",
+        summary="real",
+        provider="disabled",
+    )
+    _stored, pushed = _store_versions(world.agent, "none", None)
+    world.job.agent_version = pushed
+    world.job.save(update_fields=["agent_version"])
+
+    world.launch()
+
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("listed_in", ["settings", "environment"])
+@pytest.mark.parametrize(
+    "allowlist, instrumentation, refusal",
+    [
+        ("EXPORT", "traceai", "snapshot_unsupported"),
+        ("MEASURE", "none", "not_instrumented"),
+    ],
+)
+def test_the_snapshot_allowlists_are_read_from_django_settings(
+    allowlist,
+    instrumentation,
+    refusal,
+    listed_in,
+    organization,
+    workspace,
+    user,
+    settings,
+    monkeypatch,
+):
+    in_settings = _EXPORT_SNAPSHOT if listed_in == "settings" else ""
+    option = "snapshot_setting" if allowlist == "EXPORT" else "measure_setting"
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=f"{allowlist}-{listed_in}",
+        instrumentation=instrumentation,
+        **{option: in_settings},
+    )
+    # The process environment says the opposite of the setting; the setting decides.
+    monkeypatch.setenv(
+        f"ALK_HOSTED_OBSERVABILITY_{allowlist}_SNAPSHOTS",
+        "" if in_settings else _EXPORT_SNAPSHOT,
+    )
+
+    world.launch()
+
+    if in_settings:
+        assert world.export_log() == []
+        assert "FI_SIMULATION_EXPORT" in world.mark
+    else:
+        assert world.export_log() == [
+            ("info", {"job_id": str(world.job.id), "reason": refusal})
+        ]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("instrumentation", ["traceai", "opentelemetry"])
+def test_a_snapshot_that_cannot_measure_still_exports_a_traced_agent(
+    instrumentation, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=f"nomeasure-{instrumentation[:4]}",
+        instrumentation=instrumentation,
+        measure_setting="",
+    ).launch()
+
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert "FI_SIMULATION_INSTRUMENT" not in world.mark
+    assert world.secrets == _INGEST_PAIR
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("flag", [None, "off", "on"])
+def test_the_harness_flag_never_changes_the_agents_own_export(
+    flag, organization, workspace, user, settings, monkeypatch
+):
+    from tracer.services.simulation_mark import customer_code_environment
+
+    backend_key = "backend-observe-key-0001"
+    _set_observe_env(monkeypatch, flag, api_key=backend_key)
+    # Same world as the bound-source export test above, except that the platform simulator
+    # material is the real one for the four harness names, so the flag can reach the launch.
+    world = _ExportWorld(organization, workspace, user, settings, monkeypatch)
+    real_values = _platform_simulator_material()
+    world.simulator_values.update(
+        {name: real_values[name] for name in _OBSERVE_NAMES if name in real_values}
+    )
+    world.launch()
+
+    # The export is the one the flag-free test above expects: the hidden project, the
+    # collector, the two ingest aliases with the export's own values.
+    job = world.job
+    assert world.export_log() == []
+    assert world.mark == customer_code_environment(
+        organization_id=str(job.organization_id),
+        job_id=str(job.id),
+        run_id=str(job.run_id),
+        run_test_id=None,
+        test_execution_id=None,
+        project_name=world.hidden.name,
+        collector_url=_COLLECTOR,
+        export="our_keys",
+        instrumentation="opentelemetry",
+    )
+    assert world.secrets == _INGEST_PAIR
+    assert set(world.refs) == set(_INGEST_PAIR)
+    assert "collector.example.com" in world.domains
+    assert world.credential_calls == [
+        (str(organization.id), str(world.hidden.workspace_id), str(world.agent.id))
+    ]
+    # The backend's key is never the agent's: not among the plan's secrets, the document or
+    # the agent's secrets file.
+    assert backend_key not in world.secrets.values()
+    assert backend_key.encode() not in world.uploads["/work/job.json"]
+    assert backend_key.encode() not in world.uploads["/run/futureagi/secrets.json"]
+    # The harness's own file always holds the keys (it grades with them); the flag decides only
+    # whether it traces itself.
+    harness_file = json.loads(world.uploads[_SIMULATOR_SECRETS_PATH])
+    assert harness_file["FI_API_KEY"] == backend_key
+    assert harness_file["FI_SECRET_KEY"] == "observe-secret"
+    assert harness_file["HARNESS_OBSERVABILITY"] == ("on" if flag == "on" else "off")
+
+
+@pytest.mark.django_db
+def test_the_observability_project_is_never_written_and_only_the_hidden_one_is_made(
+    organization, workspace, user, settings, monkeypatch
+):
+    from tracer.models.project import Project
+
+    world = _ExportWorld(
+        organization, workspace, user, settings, monkeypatch, tag="untouched"
+    )
+    before = Project.no_workspace_objects.get(id=world.project.id)
+    projects_before = set(Project.with_simulation.values_list("id", flat=True))
+    world.launch()
+    assert world.export_log() == []
+    after = Project.no_workspace_objects.get(id=world.project.id)
+    assert (after.name, after.updated_at) == (before.name, before.updated_at)
+    projects_after = set(Project.with_simulation.values_list("id", flat=True))
+    assert projects_after - projects_before == {world.hidden.id}
+    assert projects_before <= projects_after
+    # The hidden project is left out of the managers the rest of the application reads.
+    assert world.hidden.id not in set(
+        Project.no_workspace_objects.values_list("id", flat=True)
+    )
+
+
+@pytest.mark.django_db
+def test_an_observability_project_without_a_workspace_still_exports_to_the_hidden_one(
+    organization, workspace, user, settings, monkeypatch
+):
+    # The row only gates the export; only the hidden project's workspace is read.
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="legacy",
+        project="no_workspace",
+    ).launch()
+    assert world.project.workspace_id is None
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert world.secrets == _INGEST_PAIR
+
+
+@pytest.mark.django_db
+def test_the_key_is_asked_for_by_the_hidden_projects_workspace_when_it_is_another_one(
+    organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="elsewhere",
+        hidden="other_workspace",
+    ).launch()
+    assert world.hidden.workspace_id is not None
+    assert world.hidden.workspace_id != world.project.workspace_id
+    assert world.hidden.workspace_id != world.agent.workspace_id
+    assert world.credential_calls == [
+        (str(organization.id), str(world.hidden.workspace_id), str(world.agent.id))
+    ]
+    assert world.export_log() == []
+    assert world.secrets == _INGEST_PAIR
+
+
+@pytest.mark.django_db
+def test_the_launch_through_the_real_hidden_project_function(
+    organization, workspace, user, settings, monkeypatch
+):
+    from tracer.models.project import Project
+    from tracer.services.simulation_project import simulation_project_name
+
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="real",
+        hidden="real",
+    ).launch()
+    assert world.export_log() == []
+    name = simulation_project_name(world.agent.id)
+    assert f"project_name={quote(name, safe='')}" in _mark_text(world.mark)
+    hidden = Project.with_simulation.get(simulation_agent=world.agent)
+    assert hidden.name == name
+    assert hidden.workspace_id == workspace.id
+    assert world.credential_calls == [
+        (str(organization.id), str(hidden.workspace_id), str(world.agent.id))
+    ]
+    # The other managers leave the hidden project out, so a read through one of them
+    # cannot be how the launch found it.
+    assert hidden.id not in set(
+        Project.no_workspace_objects.values_list("id", flat=True)
+    )
+
+    # Another job for the same agent finds the project and makes no second one.
+    payload = json.loads(json.dumps(world.job.payload))
+    payload.pop("run_id")
+    world.job, _ = create_hosted_job(
+        organization,
+        payload,
+        idempotency_key=f"export-real-{uuid.uuid4().hex[:8]}",
+        workspace=workspace,
+    )
+    world.launch()
+    assert world.export_log() == []
+    assert f"project_name={quote(name, safe='')}" in _mark_text(world.mark)
+    assert Project.with_simulation.filter(simulation_agent=world.agent).count() == 1
+
+
+@pytest.mark.django_db
+def test_a_deleted_hidden_project_warns_and_the_launch_goes_on_without_the_export(
+    organization, workspace, user, settings, monkeypatch
+):
+    from tracer.models.project import Project
+    from tracer.services.simulation_project import ensure_simulation_project
+
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="gone",
+        hidden="real",
+    )
+    hidden = ensure_simulation_project(world.agent)
+    Project.with_simulation.filter(id=hidden.id).update(deleted=True)
+    world.launch()
+    assert world.export_log() == [
+        (
+            "warning",
+            {"job_id": str(world.job.id), "reason": "SimulationProjectError"},
+        )
+    ]
+    assert world.credential_calls == []
+    _assert_launched_without_export(world)
+
+
+@pytest.mark.django_db
+def test_the_hidden_project_is_made_before_the_key_and_both_before_the_sandbox_exists(
+    organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization, workspace, user, settings, monkeypatch, tag="order"
+    ).launch()
+    names = [name for name, _ in world.events]
+    assert names.count("hidden") == 1
+    assert names.count("key") == 1
+    # The key is asked for the hidden project's workspace, so the project comes first.
+    assert names.index("hidden") < names.index("key")
+    # Before the sandbox is created, so before the first upload (and the attempt row).
+    assert names.index("key") < names.index("create")
+    assert names.index("key") < names.index("upload")
+
+
+@pytest.mark.django_db
+def test_a_trailing_slash_on_the_collector_never_doubles_the_traces_path(
+    organization, workspace, user, settings, monkeypatch
+):
+    for tag, slashes in (("slash1", "/"), ("slash2", "//")):
+        world = _ExportWorld(
+            organization,
+            workspace,
+            user,
+            settings,
+            monkeypatch,
+            tag=tag,
+            instrumentation="traceai",
+            collector=f"{_COLLECTOR}{slashes}",
+        ).launch()
+        assert (
+            world.mark["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]
+            == f"{_COLLECTOR}/v1/traces"
+        )
+        assert world.mark["FI_BASE_URL"] == _COLLECTOR
+        assert "collector.example.com" in world.domains
+        assert world.export_log() == []
+
+
+# Each refusal: the world's options, the reason word, and the level it is logged at.
+_REFUSALS = {
+    "snapshot_not_listed": (
+        {"snapshot_setting": "some-other-snapshot"},
+        "snapshot_unsupported",
+        "info",
+    ),
+    "snapshot_setting_empty": (
+        {"snapshot_setting": ""},
+        "snapshot_unsupported",
+        "info",
+    ),
+    # An untraced agent is measured only on a snapshot whose hook knows how: an older one
+    # would put our key on the exporter the agent aims at its own endpoint.
+    "untraced_on_a_snapshot_that_cannot_measure": (
+        {"instrumentation": "none", "measure_setting": "some-other-snapshot"},
+        "not_instrumented",
+        "info",
+    ),
+    "untraced_with_the_measure_setting_empty": (
+        {"instrumentation": "none", "measure_setting": ""},
+        "not_instrumented",
+        "info",
+    ),
+    "untraced_own_endpoint_on_a_snapshot_that_cannot_measure": (
+        {
+            "instrumentation": "none",
+            "measure_setting": "",
+            "declared": {
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"
+            },
+        },
+        "not_instrumented",
+        "info",
+    ),
+    "unbound": ({"bind": "none"}, "not_bound", "info"),
+    "metadata_id_not_a_uuid": ({"bind": "bad_id"}, "not_bound", "info"),
+    "agent_of_another_organisation": ({"bind": "other_org"}, "not_bound", "info"),
+    "agent_deleted": ({"bind": "deleted"}, "not_bound", "info"),
+    # A traced agent exports what its own setup records, prompts and replies included: its
+    # observability switch decides, whatever the instrumentation.
+    "row_disabled": ({"provider": "disabled"}, "observability_off", "info"),
+    "no_observability_row": ({"provider": "missing"}, "observability_off", "info"),
+    "project_deleted": ({"project": "deleted"}, "observability_off", "info"),
+    "provider_row_deleted": ({"provider": "deleted"}, "observability_off", "info"),
+    "project_of_another_organisation": (
+        {"project": "other_org"},
+        "observability_off",
+        "info",
+    ),
+    "traceai_row_disabled": (
+        {"instrumentation": "traceai", "provider": "disabled"},
+        "observability_off",
+        "info",
+    ),
+    "traceai_no_observability_row": (
+        {"instrumentation": "traceai", "provider": "missing"},
+        "observability_off",
+        "info",
+    ),
+    "hidden_project_without_workspace": (
+        {"hidden": "no_workspace"},
+        "no_workspace",
+        "warning",
+    ),
+    "hidden_project_cannot_be_made": (
+        {"hidden": "raises"},
+        "SimulationProjectError",
+        "warning",
+    ),
+    "hosted_agent": ({"kind": "hosted"}, "not_source", "info"),
+    "no_collector": ({"collector": None}, "no_collector", "warning"),
+    "collector_without_a_host": (
+        {"collector": "https://:8443"},
+        "no_collector",
+        "warning",
+    ),
+    "collector_without_a_scheme": (
+        {"collector": "collector.example.com"},
+        "no_collector",
+        "warning",
+    ),
+    "otel_declares_traces_endpoint": (
+        {"declared": {"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"}},
+        "customer_configuration",
+        "warning",
+    ),
+    "otel_declares_traces_endpoint_in_lower_case": (
+        {"declared": {"otel_exporter_otlp_traces_endpoint": "https://theirs.example"}},
+        "customer_configuration",
+        "warning",
+    ),
+    "otel_declares_endpoint": (
+        {"declared": {"OTEL_EXPORTER_OTLP_ENDPOINT": "https://theirs.example"}},
+        "customer_configuration",
+        "warning",
+    ),
+    "traceai_declares_traces_endpoint": (
+        {
+            "instrumentation": "traceai",
+            "declared": {
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"
+            },
+        },
+        "customer_configuration",
+        "warning",
+    ),
+    "otel_declares_ingest_api_key": (
+        {"declared": {"FI_SIMULATION_INGEST_API_KEY": "theirs"}},
+        "customer_configuration",
+        "warning",
+    ),
+    "otel_declares_ingest_secret_key_in_lower_case": (
+        {"declared": {"fi_simulation_ingest_secret_key": "theirs"}},
+        "customer_configuration",
+        "warning",
+    ),
+    "otel_declares_another_ingest_name": (
+        {"declared": {"FI_SIMULATION_INGEST_OTHER": "theirs"}},
+        "customer_configuration",
+        "warning",
+    ),
+    "traceai_declares_ingest_secret_key": (
+        {
+            "instrumentation": "traceai",
+            "declared": {"FI_SIMULATION_INGEST_SECRET_KEY": "theirs"},
+        },
+        "customer_configuration",
+        "warning",
+    ),
+    "traceai_declares_ingest_api_key_in_lower_case": (
+        {
+            "instrumentation": "traceai",
+            "declared": {"fi_simulation_ingest_api_key": "theirs"},
+        },
+        "customer_configuration",
+        "warning",
+    ),
+    "traceai_declares_base_url": (
+        {
+            "instrumentation": "traceai",
+            "declared": {"FI_BASE_URL": "https://theirs.example"},
+        },
+        "customer_configuration",
+        "warning",
+    ),
+    "traceai_declares_endpoint": (
+        {
+            "instrumentation": "traceai",
+            "declared": {"OTEL_EXPORTER_OTLP_ENDPOINT": "https://theirs.example"},
+        },
+        "customer_configuration",
+        "warning",
+    ),
+    "export_key_disabled": ({"credentials": "disabled"}, "key_disabled", "warning"),
+    "key_resolver_raises": ({"credentials": "raises"}, "no_key", "warning"),
+    "key_resolver_answers_nothing": ({"credentials": "none"}, "no_key", "warning"),
+    "key_without_its_api_key": ({"credentials": "no_api_key"}, "no_key", "warning"),
+    "key_without_its_secret_key": (
+        {"credentials": "no_secret_key"},
+        "no_key",
+        "warning",
+    ),
+    "summary_raises": ({"summary_raises": True}, "RuntimeError", "warning"),
+    "egress_cap": ({"cap_at_baseline": True}, "egress_cap", "warning"),
+    "summary_module_missing": (
+        {"library_missing": ("simulate.services.agent_setup",)},
+        "ModuleNotFoundError",
+        "warning",
+    ),
+    "key_module_missing": (
+        {"library_missing": ("tracer.services.collector_ingest",)},
+        "ModuleNotFoundError",
+        "warning",
+    ),
+}
+
+
+# The reasons decided before the hidden project is asked for.
+_BEFORE_THE_HIDDEN_PROJECT = {
+    "snapshot_unsupported",
+    "not_bound",
+    "observability_off",
+    "not_source",
+}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("case", sorted(_REFUSALS))
+def test_a_refused_export_leaves_the_mark_and_launches(
+    case, organization, workspace, user, settings, monkeypatch
+):
+    options, reason, level = _REFUSALS[case]
+    world = _ExportWorld(
+        organization, workspace, user, settings, monkeypatch, tag=case[:12], **options
+    ).launch()
+    assert world.export_log() == [
+        (level, {"job_id": str(world.job.id), "reason": reason})
+    ]
+    # The customer's own secrets reach the sandbox untouched, and nothing of ours does.
+    _assert_launched_without_export(world, declared_secrets=world.declared)
+    assert set(world.refs) == set(world.declared)
+    if reason in _BEFORE_THE_HIDDEN_PROJECT or case in {
+        "summary_raises",
+        "summary_module_missing",
+        "untraced_on_a_snapshot_that_cannot_measure",
+        "untraced_with_the_measure_setting_empty",
+        "untraced_own_endpoint_on_a_snapshot_that_cannot_measure",
+    }:
+        # A run refused before that step must not have made the project.
+        assert world.hidden_calls == []
+        assert world.hidden is None
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "collector",
+    [
+        "http://localhost:8000",
+        "http://host.docker.internal:8000",
+        "http://10.0.0.3:8000",
+        "https://s3cret-user:s3cret-pass@collector.example.com",
+    ],
+)
+def test_an_unsafe_collector_address_is_refused_before_a_key_is_resolved(
+    collector, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="unsafe",
+        instrumentation="traceai",
+        collector=collector,
+    ).launch()
+    assert world.export_log() == [
+        ("warning", {"job_id": str(world.job.id), "reason": "no_collector"})
+    ]
+    # Nothing is read or written for a run that cannot export.
+    assert world.credential_calls == []
+    _assert_launched_without_export(world)
+    assert urlparse(collector).hostname not in world.domains
+    assert b"s3cret" not in world.uploads["/work/job.json"]
+    assert "s3cret" not in world.logs.text()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "word, declared",
+    [
+        ("traceai", {"FI_API_KEY": "their-api-key"}),
+        ("traceai", {"FI_SECRET_KEY": "their-secret-key"}),
+        (
+            "traceai",
+            {"FI_API_KEY": "their-api-key", "FI_SECRET_KEY": "their-secret-key"},
+        ),
+        (
+            "opentelemetry",
+            {"FI_API_KEY": "their-api-key", "FI_SECRET_KEY": "their-secret-key"},
+        ),
+    ],
+)
+def test_declared_fi_keys_stay_as_declared_and_our_pair_ships_beside_them(
+    word, declared, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="theirs",
+        instrumentation=word,
+        declared=declared,
+    ).launch()
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    # Their values reach the process untouched, whether one name, both or neither is
+    # declared, and no alias of ours takes their names.
+    assert world.secrets == {**declared, **_INGEST_PAIR}
+    assert {
+        alias
+        for alias, ref in world.refs.items()
+        if ref["purpose"] == "observability_export"
+    } == set(_INGEST_PAIR)
+    assert all(world.refs[alias]["purpose"] == "target_provider" for alias in declared)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("word", ["opentelemetry", "traceai"])
+@pytest.mark.parametrize(
+    "name", ["OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS"]
+)
+def test_a_declared_otlp_headers_alias_no_longer_refuses_the_export(
+    word, name, organization, workspace, user, settings, monkeypatch
+):
+    declared = {name: "x-theirs=1"}
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="headers",
+        instrumentation=word,
+        declared=declared,
+    ).launch()
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    # Their header stays as declared; the hook, not the launcher, merges it.
+    assert world.secrets == {**declared, **_INGEST_PAIR}
+
+
+def test_the_export_plan_does_not_print_its_keys():
+    from simulate.services.hosted_harness_gateway import _ExportPlan
+
+    plan = _ExportPlan(
+        project_name="fi-simulation-agent",
+        collector_url=_COLLECTOR,
+        export="our_keys",
+        instrumentation="traceai",
+        secrets=tuple(_INGEST_PAIR.items()),
+        redaction_values=(_EXPORT_API_KEY, _EXPORT_SECRET_KEY),
+    )
+    text = repr(plan)
+    assert _EXPORT_API_KEY not in text
+    assert _EXPORT_SECRET_KEY not in text
+
+
+def test_authoring_and_chat_marks_are_computed_before_the_sandbox_is_created(
+    monkeypatch,
+):
+    events = []
+    monkeypatch.setattr(
+        "tracer.services.simulation_mark.customer_code_environment",
+        lambda **_kwargs: events.append(("mark", None)) or {},
+    )
+    for upload_document in (_authoring_document, _chat_document):
+        events.clear()
+        upload_document(monkeypatch, events)
+        names = [name for name, _ in events]
+        assert names.count("mark") == 1
+        assert names.index("mark") < names.index("create")
+
+
+@pytest.mark.django_db
+def test_a_failure_after_the_key_leaves_no_alias_ref_or_host(
+    organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="halfway",
+        instrumentation="traceai",
+        credentials="fails_after_the_keys",
+    )
+    world.launch()
+    # Both key values had been read when the enabled check failed.
+    assert world.credential_calls
+    assert world.export_log() == [
+        ("warning", {"job_id": str(world.job.id), "reason": "RuntimeError"})
+    ]
+    _assert_launched_without_export(world)
+    assert set(_INGEST_PAIR).isdisjoint(world.secrets)
+    redacted = cached_attempt_redaction_values(world.attempt.id)
+    assert not any(_EXPORT_API_KEY in value for value in redacted)
+
+
+@pytest.mark.django_db
+def test_a_collector_host_already_allowed_adds_nothing_to_the_egress_list(
+    organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="listed",
+        base_domains=("ingest.example.com", "collector.example.com"),
+        cap_at_baseline=True,
+    ).launch()
+    # The list was already at the provider's cap, and the host was on it.
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert len(world.domains) == world.client.max_egress_domains
+
+
+@pytest.mark.django_db
+def test_a_collector_host_past_the_egress_cap_is_dropped_and_the_launch_goes_on(
+    organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="cap",
+        cap_at_baseline=True,
+    ).launch()
+    assert world.export_log() == [
+        ("warning", {"job_id": str(world.job.id), "reason": "egress_cap"})
+    ]
+    assert len(world.domains) == world.client.max_egress_domains
+    _assert_launched_without_export(world)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "customer_domains, code",
+    [
+        ([f"host{n}.example.com" for n in range(21)], "egress_domain_limit_exceeded"),
+        (["10.0.0.5"], None),
+    ],
+)
+def test_the_customers_own_egress_validation_stays_fail_closed_with_the_export_on(
+    customer_domains, code, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="closed",
+        customer_domains=customer_domains,
+    )
+    with pytest.raises(HostedHarnessError) as raised:
+        world.launch()
+    if code:
+        assert raised.value.code == code
+    # Refused before any decision: no hidden project, no key, no sandbox.
+    assert world.credential_calls == []
+    assert world.hidden_calls == []
+    assert world.events == []
+
+
+_BAD_MARKS = {
+    "raises": (RuntimeError(_LEAK_SENTINEL), "raised"),
+    "not_a_dict": (["OTEL_RESOURCE_ATTRIBUTES"], "invalid"),
+    "none": (None, "invalid"),
+    "otlp_headers": ({"OTEL_EXPORTER_OTLP_HEADERS": "x=y"}, "invalid"),
+    "otlp_traces_headers": ({"OTEL_EXPORTER_OTLP_TRACES_HEADERS": "x=y"}, "invalid"),
+    "fi_api_key": ({"FI_API_KEY": "a-key"}, "invalid"),
+    "fi_secret_key": ({"FI_SECRET_KEY": "a-secret"}, "invalid"),
+    "ingest_api_key": ({"FI_SIMULATION_INGEST_API_KEY": "a-key"}, "invalid"),
+    "ingest_secret_key": ({"FI_SIMULATION_INGEST_SECRET_KEY": "a-secret"}, "invalid"),
+    "eleven_entries": ({f"OTEL_NAME_{n}": "v" for n in range(11)}, "invalid"),
+    "foreign_name": ({"HTTP_PROXY": "http://x"}, "invalid"),
+    "lowercase_name": ({"otel_resource_attributes": "x"}, "invalid"),
+    "base_url_with_suffix": ({"FI_BASE_URL_EXTRA": "x"}, "invalid"),
+    "value_not_text": ({"OTEL_RESOURCE_ATTRIBUTES": 1}, "invalid"),
+    "value_too_long": ({"OTEL_RESOURCE_ATTRIBUTES": "a" * 2049}, "invalid"),
+    "value_not_ascii": ({"OTEL_RESOURCE_ATTRIBUTES": "café"}, "invalid"),
+    "value_has_newline": ({"OTEL_RESOURCE_ATTRIBUTES": "a\nb"}, "invalid"),
+}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("case", sorted(_BAD_MARKS))
+def test_bad_or_raising_mark_is_logged_and_the_launch_goes_on_unmarked(
+    case, organization, workspace, user, settings, monkeypatch
+):
+    outcome, reason = _BAD_MARKS[case]
+
+    def function(**_kwargs):
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=case[:12],
+        instrumentation="traceai",
+    )
+    monkeypatch.setattr(
+        "tracer.services.simulation_mark.customer_code_environment", function
+    )
+    world.launch()
+    assert world.logs.events("simulation_mark_unavailable") == [
+        ("warning", {"job_id": str(world.job.id), "reason": reason})
+    ]
+    assert world.mark == {}
+    # The key travels with the dictionary that says what to do with it, or not at all.
+    assert world.secrets == {}
+    assert not any(
+        ref.get("purpose") == "observability_export" for ref in world.refs.values()
+    )
+    assert "collector.example.com" not in world.domains
+    assert world.attempt.state == HostedHarnessAttempt.State.RUNNING
+    assert _EXPORT_API_KEY.encode() not in world.uploads["/work/job.json"]
+    assert _LEAK_SENTINEL not in world.logs.text()
+
+
+@pytest.mark.django_db
+def test_an_empty_dictionary_from_the_function_passes_and_is_not_logged(
+    organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization, workspace, user, settings, monkeypatch, tag="empty"
+    )
+    monkeypatch.setattr(
+        "tracer.services.simulation_mark.customer_code_environment",
+        lambda **_kwargs: {},
+    )
+    world.launch()
+    assert world.logs.events("simulation_mark_unavailable") == []
+    assert world.mark == {}
+    # An empty dictionary is a valid answer, so the decision it came with stands.
+    assert world.secrets == _INGEST_PAIR
+
+
+@pytest.mark.parametrize(
+    "mark, accepted",
+    [
+        ({}, True),
+        ({"OTEL_RESOURCE_ATTRIBUTES": "a=b"}, True),
+        (
+            {"FI_SIMULATION_EXPORT": "our_keys", "FI_BASE_URL": "https://x.example"},
+            True,
+        ),
+        ({f"OTEL_NAME_{n}": "v" for n in range(10)}, True),
+        ({f"OTEL_NAME_{n}": "v" for n in range(11)}, False),
+        ({"OTEL_X": "a" * 2048}, True),
+        ({"OTEL_X": "a" * 2049}, False),
+        ({"FI_BASE_URLX": "x"}, False),
+        ({"FI_API_KEY": "x"}, False),
+        ({"FI_SECRET_KEY": "x"}, False),
+        ({"OTEL_EXPORTER_OTLP_HEADERS": "x"}, False),
+        ({"OTEL_EXPORTER_OTLP_TRACES_HEADERS": "x"}, False),
+        ({"FI_SIMULATION_INGEST_API_KEY": "x"}, False),
+        ({"FI_SIMULATION_INGEST_SECRET_KEY": "x"}, False),
+        ({"FI_SIMULATION_INGEST_OTHER": "x"}, True),
+        ({"OTEL_X": b"bytes"}, False),
+        ({1: "x"}, False),
+        ("OTEL_X=1", False),
+    ],
+)
+def test_the_mark_check_accepts_only_the_documented_shape(mark, accepted):
+    from simulate.services.hosted_harness_gateway import _mark_is_acceptable
+
+    assert _mark_is_acceptable(mark) is accepted
+
+
+@pytest.mark.django_db
+def test_diagnostics_redaction_fallback_holds_every_ingest_key_switched_off_deleted_or_not(
+    organization, workspace, user, monkeypatch
+):
+    from accounts.models.organization import Organization
+    from accounts.models.user import OrgApiKey
+    from simulate.services.hosted_harness_diagnostics import (
+        forget_attempt_redaction_values,
+    )
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"redact-{uuid.uuid4().hex[:8]}"
+    )
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example"
+    ).attempt
+    forget_attempt_redaction_values(attempt.id)
+    ingest = OrgApiKey.no_workspace_objects.create(
+        organization=organization, workspace=workspace, name="ingest", type="ingest"
+    )
+    switched_off = OrgApiKey.no_workspace_objects.create(
+        organization=organization,
+        workspace=None,
+        name="ingest off",
+        type="ingest",
+        enabled=False,
+    )
+    deleted = OrgApiKey.no_workspace_objects.create(
+        organization=organization,
+        workspace=workspace,
+        name="ingest gone",
+        type="ingest",
+    )
+    # Soft-deleted the way the keys view does it, so every manager but the base one hides it.
+    OrgApiKey._base_manager.filter(id=deleted.id).update(deleted=True)
+    ordinary = OrgApiKey.no_workspace_objects.create(
+        organization=organization, workspace=workspace, name="ordinary", type="user"
+    )
+    stranger = OrgApiKey.no_workspace_objects.create(
+        organization=Organization.objects.create(name="Key owner org"),
+        workspace=None,
+        name="ingest elsewhere",
+        type="ingest",
+    )
+    before = OrgApiKey._base_manager.filter(type="ingest").count()
+    seen = {}
+
+    def poll(_attempt, _sandbox, **kwargs):
+        seen.update(kwargs)
+
+    monkeypatch.setattr(f"{_GATEWAY}.poll_sandbox_diagnostics", poll)
+    HostedHarnessGateway._capture_diagnostics(attempt, object(), final=True)
+
+    values = set(seen["secret_values"])
+    assert {ingest.api_key, ingest.secret_key} <= values
+    # Switching a key off stops the export, but a running sandbox may still hold it.
+    assert {switched_off.api_key, switched_off.secret_key} <= values
+    # So may a key deleted after the launch.
+    assert {deleted.api_key, deleted.secret_key} <= values
+    assert not {ordinary.api_key, ordinary.secret_key} & values
+    # Another organisation's key is not this job's to hold.
+    assert not {stranger.api_key, stranger.secret_key} & values
+    # Read, never created.
+    assert OrgApiKey._base_manager.filter(type="ingest").count() == before
+
+
+class _StoredObject(io.BytesIO):
+    def release_conn(self):
+        pass
+
+
+class _MemoryStorage:
+    """Object storage kept in memory; the suite has no reachable bucket."""
+
+    def __init__(self):
+        self.objects = {}
+
+    def bucket_exists(self, _bucket):
+        return False
+
+    def make_bucket(self, _bucket):
+        pass
+
+    def set_bucket_policy(self, _bucket, _policy):
+        pass
+
+    def put_object(self, bucket_name, object_name, data, length, content_type=None):
+        self.objects[object_name] = data.read(length)
+
+    def get_object(self, _bucket, object_name):
+        return _StoredObject(self.objects[object_name])
+
+
+@pytest.fixture
+def memory_storage(monkeypatch):
+    from tfc.utils import storage_client
+
+    fake = _MemoryStorage()
+    monkeypatch.setattr(storage_client, "_client", fake)
+    return fake
+
+
+def _write_metadata(job_id, **keys):
+    """Write metadata keys the way a path other than the caller's job object would."""
+    row = HostedHarnessJob.no_workspace_objects.get(id=job_id)
+    payload = dict(row.payload)
+    payload["metadata"] = {**(payload.get("metadata") or {}), **keys}
+    row.payload = payload
+    row.save(update_fields=["payload", "updated_at"])
+
+
+def _stored_metadata(job_id):
+    return HostedHarnessJob.no_workspace_objects.get(id=job_id).payload["metadata"]
+
+
+def _authoring_archive():
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:gz") as archive:
+        body = b"{}"
+        member = tarfile.TarInfo("contract.json")
+        member.size = len(body)
+        archive.addfile(member, io.BytesIO(body))
+    return out.getvalue()
+
+
+@pytest.mark.django_db
+def test_a_stale_progress_save_keeps_the_observability_refusal(
+    organization, memory_storage
+):
+    from simulate.services.hosted_harness_gateway import (
+        _record_harness_spend,
+        store_authoring_archive,
+    )
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="stale-progress-save"
+    )
+    refusal = {"code": "agent_not_stored", "details": {}}
+
+    # The poll read the job before the provision wrote the reason.
+    stale = HostedHarnessJob.no_workspace_objects.get(id=job.id)
+    _write_metadata(job.id, observability_refusal=refusal)
+    key = store_authoring_archive(stale, _authoring_archive(), advance_lifecycle=False)
+
+    metadata = _stored_metadata(job.id)
+    assert metadata["observability_refusal"] == refusal
+    assert metadata["authoring_object_key"] == key
+    assert stale.payload["metadata"]["authoring_object_key"] == key
+
+    stale = HostedHarnessJob.no_workspace_objects.get(id=job.id)
+    newer = {"code": "bound", "details": {}}
+    # A second attempt's spend lands after the poll read the job.
+    other = {"total_usd": 0.5, "unpriced_turns": 0, "stages": []}
+    _write_metadata(
+        job.id,
+        observability_refusal=newer,
+        harness_spend={"total_usd": 0.5, "unpriced_turns": 0, "attempts": {"2": other}},
+    )
+    _record_harness_spend(stale, 1, cli={"total_usd": 0.1, "stages": []})
+
+    metadata = _stored_metadata(job.id)
+    assert metadata["observability_refusal"] == newer
+    assert sorted(metadata["harness_spend"]["attempts"]) == ["1", "2"]
+    assert metadata["harness_spend"]["attempts"]["2"] == other
+    assert metadata["harness_spend"]["total_usd"] == 0.6
+    assert metadata["authoring_object_key"] == key
+
+
+@pytest.mark.django_db
+def test_a_stale_adjustment_save_keeps_the_observability_refusal(organization):
+    first = {"adjustment_id": "adj-1", "status": "pending", "instruction": "one"}
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="stale-adjustment-save"
+    )
+    _write_metadata(job.id, adjustments=[first])
+    stale = HostedHarnessJob.no_workspace_objects.get(id=job.id)
+
+    # A refusal and a second adjustment land after the poll read the job.
+    refusal = {"code": "bound", "details": {}}
+    second = {"adjustment_id": "adj-2", "status": "pending", "instruction": "two"}
+    _write_metadata(job.id, observability_refusal=refusal, adjustments=[first, second])
+    status_line = json.dumps({"adjustment_id": "adj-1", "status": "applied"})
+    sandbox = SimpleNamespace(
+        fs=SimpleNamespace(
+            download_file=lambda path, timeout=None: status_line.encode()
+        )
+    )
+
+    HostedHarnessGateway._sync_adjustment_progress(stale, sandbox)
+
+    metadata = _stored_metadata(job.id)
+    assert metadata["observability_refusal"] == refusal
+    assert [
+        (item["adjustment_id"], item["status"]) for item in metadata["adjustments"]
+    ] == [
+        ("adj-1", "applied"),
+        ("adj-2", "pending"),
+    ]
+
+
+def _ledger(stage: str, usd: float) -> bytes:
+    """A spend ledger as ALK writes it, with one stage."""
+    return json.dumps(
+        {
+            "schema": "futureagi.harness-spend.v1",
+            "total_usd": usd,
+            "unpriced_turns": 0,
+            "stages": [
+                {
+                    "stage": stage,
+                    "usd": usd,
+                    "turns": 1,
+                    "models": ["gemini-3.7-flash"],
+                    "tokens_in": 1000,
+                    "tokens_out": 100,
+                    "tokens_cached": 0,
+                }
+            ],
+        }
+    ).encode()
+
+
+def _sandbox_holding(files: dict[str, bytes]) -> SimpleNamespace:
+    def download_file(path, timeout=None):
+        if path not in files:
+            raise SandboxFileNotFoundError(path)
+        return files[path]
+
+    return SimpleNamespace(fs=SimpleNamespace(download_file=download_file))
+
+
+@pytest.mark.django_db
+def test_two_builds_of_one_environment_each_record_only_their_own_spend(
+    organization,
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="builder-spend-two-builds"
+    )
+    # Each build runs as a chat turn in its own attempt's sandbox, whose chat process
+    # starts a ledger of its own: never the session's running total.
+    for number, usd in ((1, 1.0), (2, 2.0)):
+        attempt = register_attempt(
+            job.id,
+            endpoint_base_url="https://platform.example",
+            provider_ref=f"sandbox-{number}",
+        ).attempt
+        _read_harness_spend(
+            attempt,
+            _sandbox_holding({"/work/builder-cost.json": _ledger("builder", usd)}),
+        )
+
+    spend = _stored_metadata(job.id)["harness_spend"]
+    assert {key: one["total_usd"] for key, one in spend["attempts"].items()} == {
+        "1": 1.0,
+        "2": 2.0,
+    }
+    assert spend["total_usd"] == 3.0
+
+
+@pytest.mark.django_db
+def test_a_build_beside_a_chat_records_both_ledgers_under_distinct_stage_names(
+    organization,
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="builder-spend-both-ledgers"
+    )
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example", provider_ref="sandbox-1"
+    ).attempt
+
+    _read_harness_spend(
+        attempt,
+        _sandbox_holding(
+            {
+                "/work/authoring/cost.json": _ledger("build-environment", 0.5),
+                "/work/builder-cost.json": _ledger("build-environment", 0.25),
+            }
+        ),
+    )
+
+    recorded = _stored_metadata(job.id)["harness_spend"]["attempts"]["1"]
+    assert recorded["total_usd"] == 0.75
+    # Billing prices each stage once by name, so the chat's keeps a prefix.
+    assert [stage["stage"] for stage in recorded["stages"]] == [
+        "build-environment",
+        "chat:build-environment",
+    ]
+
+
+def test_process_log_capture_labels_the_builds_logs_apart_from_the_runs(tmp_path):
+    from simulate.services.hosted_harness_diagnostics import _process_log_command
+
+    build = tmp_path / "authoring" / "generic-harness" / "process-logs"
+    retained = tmp_path / "diagnostics" / "process-logs"
+    live = tmp_path / "worlds" / "w0" / "agent"
+    for directory in (build, retained, live):
+        directory.mkdir(parents=True)
+    (build / "worlds-w0-agent-a.log").write_text("validation worker\n")
+    (retained / "worlds-w0-agent-b.log").write_text("stt: 402 Payment Required\n")
+    (live / "process.log").write_text("live worker\n")
+
+    output = subprocess.run(
+        ["sh", "-c", _process_log_command(str(tmp_path))],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+    assert f"===== build: {build}/worlds-w0-agent-a.log =====" in output
+    assert f"===== run: {retained}/worlds-w0-agent-b.log =====" in output
+    assert f"===== run: {live}/process.log =====" in output
+    assert (
+        output.index("validation worker")
+        < output.index("402 Payment Required")
+        < output.index("live worker")
+    )

@@ -110,6 +110,10 @@ export const scenarioFromApi = (row = {}) => {
     conversationBranch: row.branch,
     branchCategory: row.branch,
     subTasks: Array.isArray(row.sub_goals) ? row.sub_goals : [],
+    callActors: Array.isArray(row.actors) ? row.actors : [],
+    // {code, message} when the scenario cannot work as set, else null.
+    doorProblem: row.door_problem,
+    faults: Array.isArray(row.faults) ? row.faults : [],
     persona: persona
       ? {
           name: persona.name,
@@ -131,6 +135,8 @@ export const scenarioFromApi = (row = {}) => {
     status: row.status,
     callExecutionId: row.call_execution_id ?? null,
     group: row.group,
+    // "added" | "changed" | "unchanged" while the list shows unsaved changes.
+    draftChange: row.draft_change ?? null,
     _raw: row,
   };
 };

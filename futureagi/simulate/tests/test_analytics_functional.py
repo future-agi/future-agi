@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 from django.core.cache import cache
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework import status
 
@@ -464,6 +466,12 @@ class TestRunResultsV3Views:
             {"name": "Verify identity", "held": True},
             {"name": "Create refund", "held": False},
             {"name": "Send confirmation", "held": None},
+            {
+                "name": "Offer upgrade",
+                "held": True,
+                "verdict": "not_applicable",
+                "reason": "Not applicable: x",
+            },
             "Unmeasured goal",
         ]
         metadata = (
@@ -481,6 +489,12 @@ class TestRunResultsV3Views:
             {"name": "Verify identity", "passed": True},
             {"name": "Create refund", "passed": False},
             {"name": "Send confirmation", "passed": None},
+            {
+                "name": "Offer upgrade",
+                "passed": None,
+                "result": "not_applicable",
+                "reason": "Not applicable: x",
+            },
             {"name": "Unmeasured goal", "passed": None},
         ]
         response = auth_client.get(
@@ -783,9 +797,7 @@ class TestRunResultsV3Views:
         assert response.status_code == 200
         body = response.json()
         assert len(body["scenario_risk"]) == 2
-        assert {item["scenario"] for item in body["scenario_risk"]} == {
-            scenario.name
-        }
+        assert {item["scenario"] for item in body["scenario_risk"]} == {scenario.name}
         assert len({item["scenario_key"] for item in body["scenario_risk"]}) == 2
         assert len({item["scenario_key"] for item in body["reliability"]["rows"]}) == 2
 
@@ -1272,6 +1284,328 @@ class TestRunResultsV3Views:
         assert row["outcome"] == "error"
         assert row["harness_outcome_status"] == "error"
         assert row["execution_status"] == "completed"
+
+    def test_a_scenario_skipped_with_call_actors_switched_off_keeps_dev_s_outcome_and_shows_why(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.CANCELLED
+        call.call_metadata = {
+            "harness_outcome_status": "skipped",
+            "hosted_harness_receipt": {
+                "status": "skipped",
+                "sub_goals": [],
+                "reason": "actors are switched off",
+            },
+        }
+        call.eval_outputs = {}
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+        base = f"/simulate/v3/test-executions/{test_execution.id}"
+
+        calls = auth_client.get(f"{base}/calls/")
+        analytics = auth_client.get(f"{base}/analytics/")
+
+        assert calls.status_code == analytics.status_code == status.HTTP_200_OK
+        row = next(
+            item for item in calls.json()["results"] if item["id"] == str(call.id)
+        )
+        assert (row["outcome"], row["outcome_reason"]) == (
+            "error",
+            "actors are switched off",
+        )
+        body = analytics.json()
+        assert "skipped" not in body["summary"]["outcomes"]
+        assert body["dashboard"]["run_health"]["attempted"] == body["summary"]["total"]
+
+    def test_a_call_its_actor_never_reached_or_a_stopped_call_says_why_and_no_other_failure_does(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        missing, crashed = analytics_call_executions[0], analytics_call_executions[1]
+        for call, failure in (
+            (
+                missing,
+                {
+                    "code": "actor_missing",
+                    "message": "inconclusive: scenario problem, not the agent's: did not reach the agent: "
+                    "Sam Rivera (not_triggered), Jo Park (not_delivered: the model did not answer), "
+                    "Lee (not_delivered: the world refused its post_message)",
+                },
+            ),
+            (
+                crashed,
+                {"code": "call_failed", "message": "RuntimeError: internal detail"},
+            ),
+        ):
+            call.status = CallExecution.CallStatus.COMPLETED
+            call.call_metadata = {
+                "harness_outcome_status": "errored",
+                "hosted_harness_receipt": {
+                    "status": "errored",
+                    "sub_goals": [],
+                    "failure": failure,
+                },
+            }
+            call.eval_outputs = {}
+            call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+
+        rows = {
+            item["id"]: item
+            for item in auth_client.get(
+                f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+            ).json()["results"]
+        }
+        assert rows[str(missing.id)]["outcome_reason"] == (
+            "Inconclusive, a problem of the scenario, not the agent: did not reach the agent: "
+            "Sam Rivera (never came in), Jo Park (came in but never spoke: the model did not answer), "
+            "Lee (came in but never spoke: the world refused its post_message)"
+        )
+        assert rows[str(crashed.id)]["outcome_reason"] is None
+        crashed.status = CallExecution.CallStatus.CANCELLED
+        crashed.call_metadata = {}
+        crashed.save(update_fields=["status", "call_metadata"])
+        stopped = next(
+            item
+            for item in auth_client.get(
+                f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+            ).json()["results"]
+            if item["id"] == str(crashed.id)
+        )
+        assert (stopped["outcome"], stopped["outcome_reason"]) == (
+            "error",
+            "Stopped before it finished: the run was cancelled",
+        )
+
+    def test_a_call_where_nothing_it_tests_happened_reads_no_score(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {
+            "harness_outcome_status": "no_score",
+            "hosted_harness_receipt": {
+                "status": "passed",
+                "sub_goals": [
+                    {
+                        "name": "noticed",
+                        "held": True,
+                        "judged": True,
+                        "verdict": "not_applicable",
+                        "reason": "Not applicable: the caller never asked to cancel in this call.",
+                    }
+                ],
+            },
+        }
+        call.eval_outputs = {}
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        row = next(
+            item for item in response.json()["results"] if item["id"] == str(call.id)
+        )
+        assert row["outcome"] == "no_score"
+        risk = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        ).json()["dashboard"]["use_case_risk"]
+        assert sum(one["no_score"] for one in risk) == 1
+        assert row["sub_goal_results"] == [
+            {
+                "name": "noticed",
+                "passed": None,
+                "result": "not_applicable",
+                "reason": "Not applicable: the caller never asked to cancel in this call.",
+            }
+        ]
+
+    def test_a_failed_eval_on_a_call_with_no_scored_sub_goal_still_reads_failed(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {
+            "harness_outcome_status": "no_score",
+            "hosted_harness_receipt": {"status": "passed", "sub_goals": []},
+        }
+        call.eval_outputs = {
+            "native": {
+                "source": "harness",
+                "name": "Native evaluation",
+                "output": "Failed",
+                "output_type": "Pass/Fail",
+                "status": "completed",
+            }
+        }
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        row = next(
+            item for item in response.json()["results"] if item["id"] == str(call.id)
+        )
+        assert row["outcome"] == "failed"
+
+    def test_a_passing_eval_scores_a_call_whose_sub_goals_did_not_apply(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {
+            "harness_outcome_status": "no_score",
+            "hosted_harness_receipt": {"status": "passed", "sub_goals": []},
+        }
+        call.eval_outputs = {
+            "native": {
+                "source": "harness",
+                "name": "Native evaluation",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+                "status": "completed",
+            }
+        }
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+        url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+
+        rows = auth_client.get(url).json()["results"]
+        passed = auth_client.get(
+            url, {"filters": json.dumps({"status": ["passed"]})}
+        ).json()["results"]
+
+        assert next(row for row in rows if row["id"] == str(call.id))["outcome"] == (
+            "passed"
+        )
+        assert str(call.id) in {row["id"] for row in passed}
+
+    def test_calls_rows_expose_scoring_states(
+        self, auth_client, test_execution, scenario
+    ):
+        """Each documented example row comes out of the stored state behind it:
+        still scoring, timed out, and nothing to score."""
+        from simulate.services.harness_run_evals import EVAL_QUEUED_KEY
+        from simulate.services.scoring_status import (
+            CSAT_STAMP_KEY,
+            REASON_CSAT_NO_EVIDENCE,
+            REASON_CSAT_TIMED_OUT_NOT_STARTED,
+            REASON_EVAL_TIMED_OUT_RUNNING,
+        )
+
+        template = EvalTemplate.objects.create(
+            name="Scoring states",
+            config={"output": "Pass/Fail"},
+            organization=test_execution.run_test.organization,
+        )
+        tone, resolution = (
+            SimulateEvalConfig.objects.create(
+                name=name,
+                eval_template=template,
+                run_test=test_execution.run_test,
+                mapping={"conversation": "transcript"},
+            )
+            for name in ("Tone", "Resolution")
+        )
+        now = timezone.now()
+        closed = {"eval_started": True, "eval_completed": True}
+
+        def _call(call_metadata, eval_outputs):
+            return CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                status="completed",
+                completed_at=now,
+                call_metadata=call_metadata,
+                eval_outputs=eval_outputs,
+            )
+
+        scoring = _call(
+            {
+                "eval_started": True,
+                EVAL_QUEUED_KEY: {str(tone.id): now.isoformat()},
+                "csat_status": "pending",
+                CSAT_STAMP_KEY: now.isoformat(),
+            },
+            {},
+        )
+        timed_out = _call(
+            {
+                **closed,
+                "csat_status": "timed_out",
+                "csat_error": REASON_CSAT_TIMED_OUT_NOT_STARTED,
+            },
+            {
+                str(resolution.id): {
+                    "output": None,
+                    "reason": REASON_EVAL_TIMED_OUT_RUNNING,
+                    "output_type": None,
+                    "name": "Resolution",
+                    "status": "timed_out",
+                    "timestamp": now.isoformat(),
+                }
+            },
+        )
+        nothing = _call(
+            {**closed, "csat_status": "skipped", "csat_error": REASON_CSAT_NO_EVIDENCE},
+            {},
+        )
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = {row["id"]: row for row in response.json()["results"]}
+
+        def _scoring(call):
+            row = rows[str(call.id)]
+            return {
+                key: row[key]
+                for key in (
+                    "scoring_status",
+                    "csat_status",
+                    "csat_reason",
+                    "evaluations",
+                )
+            }
+
+        empty = {"type": "", "value": None, "score": None, "passed": None}
+        assert _scoring(scoring) == {
+            "scoring_status": "pending",
+            "csat_status": "pending",
+            "csat_reason": None,
+            "evaluations": [
+                {
+                    "id": str(tone.id),
+                    "name": "Tone",
+                    **empty,
+                    "reason": "",
+                    "status": "pending",
+                }
+            ],
+        }
+        assert _scoring(timed_out) == {
+            "scoring_status": "timed_out",
+            "csat_status": "timed_out",
+            "csat_reason": REASON_CSAT_TIMED_OUT_NOT_STARTED,
+            "evaluations": [
+                {
+                    "id": str(resolution.id),
+                    "name": "Resolution",
+                    **empty,
+                    "reason": REASON_EVAL_TIMED_OUT_RUNNING,
+                    "status": "timed_out",
+                }
+            ],
+        }
+        assert _scoring(nothing) == {
+            "scoring_status": "not_applicable",
+            "csat_status": "skipped",
+            "csat_reason": REASON_CSAT_NO_EVIDENCE,
+            "evaluations": [],
+        }
 
     def test_persona_is_not_a_grouping_option(
         self, auth_client, test_execution, analytics_call_executions
@@ -1919,7 +2253,12 @@ class TestRunResultsV3Views:
         return template, config
 
     def test_an_eval_binding_edit_without_updated_at_refreshes_the_cached_page(
-        self, auth_client, organization, run_test, test_execution, analytics_call_executions
+        self,
+        auth_client,
+        organization,
+        run_test,
+        test_execution,
+        analytics_call_executions,
     ):
         _, config = self._threshold_eval(
             organization, run_test, analytics_call_executions
@@ -1935,7 +2274,12 @@ class TestRunResultsV3Views:
         assert (after["passed"], after["failed"]) == (0, 1)
 
     def test_an_eval_template_edit_refreshes_the_cached_page(
-        self, auth_client, organization, run_test, test_execution, analytics_call_executions
+        self,
+        auth_client,
+        organization,
+        run_test,
+        test_execution,
+        analytics_call_executions,
     ):
         template, _ = self._threshold_eval(
             organization, run_test, analytics_call_executions
@@ -2031,6 +2375,171 @@ class TestRunResultsV3Views:
 
         assert (by_status["count"], by_goal["count"]) == (1, 0)
 
+    @staticmethod
+    def _set_harness_outcome(call, outcome):
+        CallExecution.objects.filter(pk=call.pk).update(
+            call_metadata={"harness_outcome_status": outcome}
+        )
+
+    def test_hand_off_facets_read_calls_newer_than_the_page_cache(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        first, second = analytics_call_executions[:2]
+        for call in (first, second):
+            self._set_harness_outcome(call, "passed")
+        self._calls(auth_client, test_execution)
+        # A filtered page caches the whole run's rows as well.
+        self._calls(
+            auth_client, test_execution, filters=json.dumps({"status": ["passed"]})
+        )
+        self._set_harness_outcome(second, "failed")
+
+        body = self._calls(
+            auth_client,
+            test_execution,
+            filters=json.dumps(
+                {"call_execution_id": [str(first.id).upper(), str(second.id)]}
+            ),
+        )
+
+        assert body["facets"]["status"] == [
+            {"value": "failed", "count": 1},
+            {"value": "passed", "count": 1},
+        ]
+
+    def test_facets_cache_miss_reads_calls_newer_than_the_page_cache(
+        self, auth_client, test_execution, analytics_call_executions, monkeypatch
+    ):
+        class NoFacetsCache:
+            def get(self, key):
+                return None
+
+            def set(self, key, value, timeout=None):
+                pass
+
+        monkeypatch.setattr(
+            "simulate.services.run_results_v3_queries.cache", NoFacetsCache()
+        )
+        first = analytics_call_executions[0]
+        self._set_harness_outcome(first, "passed")
+        self._calls(auth_client, test_execution)
+        self._set_harness_outcome(first, "failed")
+
+        body = self._calls(auth_client, test_execution)
+
+        statuses = {item["value"]: item["count"] for item in body["facets"]["status"]}
+        assert statuses.get("failed") == 1
+        assert "passed" not in statuses
+
+    def test_hand_off_facets_on_a_running_run_scope_mixed_case_ids(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        TestExecution.objects.filter(pk=test_execution.pk).update(
+            status=TestExecution.ExecutionStatus.RUNNING
+        )
+        failed = analytics_call_executions[3]
+
+        body = self._calls(
+            auth_client,
+            test_execution,
+            filters=json.dumps({"call_execution_id": [str(failed.id).upper()]}),
+        )
+
+        assert body["facets"]["status"] == [{"value": "error", "count": 1}]
+        assert sum(item["count"] for item in body["facets"]["goal"]) == 1
+
+    def test_warm_hand_off_facets_scan_the_calls_without_the_sql_read_model(
+        self,
+        auth_client,
+        test_execution,
+        test_execution_2,
+        analytics_call_executions,
+        scenario,
+        monkeypatch,
+    ):
+        first, second, deleted = analytics_call_executions[:3]
+        for call in (first, second):
+            self._set_harness_outcome(call, "passed")
+        CallExecution.objects.filter(pk=deleted.pk).update(deleted=True)
+        other_run = CallExecution.objects.create(
+            test_execution=test_execution_2, scenario=scenario, status="failed"
+        )
+        hand_off = json.dumps(
+            {
+                "call_execution_id": [
+                    str(first.id).upper(),
+                    str(second.id),
+                    str(other_run.id),
+                    str(deleted.id),
+                ]
+            }
+        )
+        # Caches the hand-off's rows and the whole run's rows.
+        cold = self._calls(auth_client, test_execution, filters=hand_off)
+        assert cold["facets"]["status"] == [{"value": "passed", "count": 2}]
+        self._set_harness_outcome(second, "failed")
+
+        def no_sql(*args, **kwargs):
+            raise AssertionError("facets compiled the SQL read model")
+
+        monkeypatch.setattr("simulate.views.run_results_v3.run_calls_queryset", no_sql)
+        warm = self._calls(auth_client, test_execution, filters=hand_off)
+
+        assert [row["id"] for row in warm["results"]] == [
+            row["id"] for row in cold["results"]
+        ]
+        assert warm["count"] == 2
+        assert warm["facets"]["status"] == [
+            {"value": "failed", "count": 1},
+            {"value": "passed", "count": 1},
+        ]
+        assert warm["facets"]["goal"] == cold["facets"]["goal"]
+        assert sum(item["count"] for item in warm["facets"]["goal"]) == 2
+
+    def test_scoring_configs_load_once_and_warn_only_when_a_read_scores(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        run_test,
+        score_template,
+        caplog,
+    ):
+        SimulateEvalConfig.objects.create(
+            name="Bad threshold",
+            eval_template=score_template,
+            run_test=run_test,
+            config={"pass_threshold": 70},
+        )
+        logger = "simulate.services.run_results_v3_scoring"
+
+        def warnings():
+            return [
+                record
+                for record in caplog.records
+                if record.name == logger and "Invalid pass_threshold" in record.message
+            ]
+
+        with (
+            caplog.at_level("WARNING", logger=logger),
+            CaptureQueriesContext(connection) as queries,
+        ):
+            # Cold and filtered: both the SQL read model and the scan score.
+            self._calls(auth_client, test_execution, search="Scenario")
+        assert len(warnings()) == 1
+        config_reads = [
+            query["sql"]
+            for query in queries.captured_queries
+            if 'FROM "simulate_eval_config"' in query["sql"]
+        ]
+        # The catalog, two page-cache keys and the one scoring load.
+        assert len(config_reads) == 4, config_reads
+
+        caplog.clear()
+        with caplog.at_level("WARNING", logger=logger):
+            self._calls(auth_client, test_execution, search="Scenario")
+        assert warnings() == []
+
     def test_groups_score_an_eval_the_catalog_has_not_listed(
         self, auth_client, test_execution, analytics_call_executions
     ):
@@ -2111,6 +2620,7 @@ class TestRunResultsV3Views:
                 "arguments": {"order_id": "AB-1"},
                 "result": {"status": "shipped"},
                 "duration_ms": 309,
+                "kind": "agent_call",
             }
         ]
 
@@ -2135,6 +2645,7 @@ class TestRunResultsV3Views:
             "failed": 0,
             "error": 1,
             "inconclusive": 2,
+            "no_score": 0,
         }
         # An infrastructure error says nothing about the agent, so it is not in the rate.
         assert body["summary"]["measured"] == 1
@@ -2203,11 +2714,20 @@ class TestRunResultsV3Views:
         by_key = {row["scenario"]: row for row in reliability["rows"]}
         assert by_key["flips"]["verdict"] == "flaky"
         assert by_key["fails-then-errors"]["error"] == 1
-        interval = reliability["pass_rate_interval"]
-        # Trials of one scenario are not independent, so the range must not claim more
-        # precision than the 3 scenarios behind these 5 verdicts.
-        assert interval["low"] < 60.0 < interval["high"]
-        assert 3 <= interval["effective_n"] <= 5
+        # The errored trial is out of every denominator: (1 + 1/2 + 0) / 3.
+        assert reliability["inconclusive"] == 1
+        assert reliability["pass_hat_1"] == 50.0
+        assert reliability["k"] == 2
+        assert reliability["pass_hat_k"] == 50.0
+        assert reliability["pass_hat_k_scenarios"] == 2
+        # Three scenarios are too few for a range worth acting on.
+        assert reliability["pass_rate_interval"] is None
+        # The run header reads the same block without the full analytics payload.
+        headline = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/reliability/"
+        )
+        assert headline.status_code == status.HTTP_200_OK
+        assert headline.json() == reliability
         evaluation = next(
             row for row in body["evaluations"] if row["id"] == "policy-check"
         )
@@ -2645,6 +3165,7 @@ class TestRunResultsV3Views:
         assert not {"wpm", "stop", "talk", "turn_count"} & metrics.keys()
         assert {key: metrics[key]["label"] for key in metrics} == {
             "pass_rate": "Chats passed",
+            "trial_pass": "Trials passed",
             "total": "Total chats",
             "ran_cleanly": "Chats ran cleanly",
             "connected_rate": "Chats connected (%)",
@@ -3872,3 +4393,27 @@ class TestRunTestEvalSummaryComparisonView:
             url, {"execution_ids": json.dumps([str(test_execution.id)])}
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db
+def test_the_aggregate_average_leaves_out_results_that_are_neither_a_pass_nor_a_fail(
+    test_execution, scenario
+):
+    from simulate.utils.test_execution import calculate_aggregate_metrics
+
+    for index, value in enumerate(
+        ("Passed", "Not applicable", "Inconclusive", "Failed")
+    ):
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number=f"+1555000{index:04d}",
+            status=CallExecution.CallStatus.COMPLETED,
+            eval_outputs={
+                "e1": {"name": "Noticed", "output": value, "output_type": "Pass/Fail"}
+            },
+        )
+    metrics = calculate_aggregate_metrics(
+        CallExecution.objects.filter(test_execution=test_execution)
+    )
+    assert metrics["avg_noticed"] == 50.0

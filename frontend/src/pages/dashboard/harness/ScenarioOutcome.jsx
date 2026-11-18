@@ -90,7 +90,7 @@ export default function ScenarioOutcome({ outcome }) {
           >
             {checksLabel}
             <Iconify
-              icon={open ? "eva:chevron-up-fill" : "eva:chevron-down-fill"}
+              icon={open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"}
               width={14}
             />
           </Link>

@@ -1,8 +1,10 @@
-from typing import Container
+from collections import Counter
+from collections.abc import Container
 
 import numpy as np
 
 from simulate.models import CallExecution, SimulateEvalConfig
+from simulate.selectors.runs import user_executions
 
 
 def iter_live_eval_outputs(eval_outputs, eval_configs: Container[str]):
@@ -40,9 +42,7 @@ def derive_kpi_output_type(eval_template):
         "percentage": "score",
         "deterministic": "choices",
     }
-    return mapping.get(
-        getattr(eval_template, "output_type_normalized", None), "score"
-    )
+    return mapping.get(getattr(eval_template, "output_type_normalized", None), "score")
 
 
 def _get_eval_config_for_agent_version(agent_version):
@@ -69,7 +69,7 @@ def _get_completed_call_executions_for_agent_version(agent_version):
 def _get_completed_call_executions(run_test, execution_id):
     """Get completed call executions with eval outputs"""
     base_query = {
-        "test_execution__run_test": run_test,
+        "test_execution__in": user_executions().filter(run_test=run_test),
         "status": "completed",
         "eval_outputs__isnull": False,
     }
@@ -158,9 +158,20 @@ def _calculate_config_stats(eval_config, outputs):
         raise ValueError(f"Invalid output type: {output_type}")
 
 
+NOT_APPLICABLE_OUTPUT = "Not applicable"
+INCONCLUSIVE_OUTPUT = "Inconclusive"
+# Results that are neither a pass nor a fail, so no pass rate counts them.
+UNSCORED_OUTPUTS = frozenset({NOT_APPLICABLE_OUTPUT, INCONCLUSIVE_OUTPUT})
+
+
 def _calculate_pass_fail_stats(eval_config, outputs):
     """Calculate Pass/Fail statistics"""
-    total_calls = len(outputs)
+    unscored = Counter(
+        output.get("output")
+        for output in outputs
+        if output.get("output") in UNSCORED_OUTPUTS
+    )
+    total_calls = len(outputs) - sum(unscored.values())
     pass_count = 0
     fail_count = 0
 
@@ -189,6 +200,8 @@ def _calculate_pass_fail_stats(eval_config, outputs):
             "fail": fail_rate,
             "pass_count": pass_count,
             "fail_count": fail_count,
+            "not_applicable_count": unscored[NOT_APPLICABLE_OUTPUT],
+            "inconclusive_count": unscored[INCONCLUSIVE_OUTPUT],
         },
     }
 

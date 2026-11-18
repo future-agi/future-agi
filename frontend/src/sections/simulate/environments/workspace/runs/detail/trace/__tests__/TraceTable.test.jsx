@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "src/utils/test-utils";
 
 import TraceTable from "../TraceTable";
+import { STATUS_META } from "../../../runs.constants";
 
 const row = (id) => ({
   id,
@@ -315,6 +316,60 @@ describe("TraceTable — sub-goal verdicts", () => {
       }
     }
   });
+
+  it("says a check whose evidence never arrived is not measured, and what each check was decided from", () => {
+    render(
+      table({
+        groups: [
+          {
+            ...group("A", ["a1"]),
+            rows: [
+              {
+                ...row("a1"),
+                status: "failed",
+                subGoalResults: [
+                  {
+                    name: "Refund row",
+                    passed: false,
+                    evidence: ["world_state", "tool_calls"],
+                  },
+                  {
+                    name: "Polite",
+                    passed: null,
+                    result: "unmeasured",
+                    evidence: ["transcript"],
+                  },
+                  {
+                    name: "Refund once",
+                    passed: null,
+                    result: "unmeasured",
+                    reason: "Unmeasured: the world's action log could not be read",
+                    evidence: ["world_state"],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        activeCallId: "a1",
+      }),
+    );
+    const details = within(activeRow())
+      .getAllByText("Scenario a1")[0]
+      .closest("td");
+    expect(within(details).getByText("Not measured")).toBeInTheDocument();
+    expect(
+      within(details).getByText(
+        "Unmeasured: the world's action log could not be read",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(details).getByText("from the world, the agent's calls"),
+    ).toBeInTheDocument();
+    expect(
+      within(details).getByText("from the transcript"),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("TraceTable — column group band", () => {
@@ -495,9 +550,10 @@ describe("TraceTable — eval cells without a score", () => {
     return screen.findByRole("tooltip");
   };
 
-  it("shows N/A for a finished call with no result", async () => {
+  it("shows a dash for a finished call with no result: the eval doesn't apply", async () => {
     renderCell({ evalResults: [] });
-    expect(await hoverText("N/A")).toHaveTextContent(
+    expect(within(evalCell()).queryByText("N/A")).toBeNull();
+    expect(await hoverText("-")).toHaveTextContent(
       "Not applicable to this scenario",
     );
   });
@@ -527,18 +583,40 @@ describe("TraceTable — eval cells without a score", () => {
     },
   );
 
-  it("explains a failed eval with its reason", async () => {
+  it("marks a failed eval Failed and explains it with its reason", async () => {
     renderCell({
       evalResults: [
-        { id: "e1", score: null, status: "failed", reason: "Timed out" },
+        { id: "e1", score: null, status: "failed", reason: "Model quota hit" },
       ],
     });
-    expect(await hoverText("-")).toHaveTextContent(
-      "Evaluation failed: Timed out",
+    expect(await hoverText("Failed")).toHaveTextContent(
+      "Evaluation failed: Model quota hit",
     );
   });
 
-  it("explains a skipped eval with its reason", async () => {
+  it("marks a failed eval with no reason Failed, with a generic tip", async () => {
+    renderCell({ evalResults: [{ id: "e1", score: null, status: "failed" }] });
+    expect(await hoverText("Failed")).toHaveTextContent("Evaluation failed");
+  });
+
+  it("marks a timed-out eval Timed out and shows the server's reason", async () => {
+    renderCell({
+      evalResults: [
+        {
+          id: "e1",
+          score: null,
+          status: "timed_out",
+          reason: "Scoring timed out: no progress for 10 minutes.",
+        },
+      ],
+    });
+    expect(within(evalCell()).queryByText("N/A")).toBeNull();
+    expect(await hoverText("Timed out")).toHaveTextContent(
+      "Scoring timed out: no progress for 10 minutes.",
+    );
+  });
+
+  it("marks a skipped eval Not scored, with its reason", async () => {
     renderCell({
       evalResults: [
         {
@@ -549,8 +627,8 @@ describe("TraceTable — eval cells without a score", () => {
         },
       ],
     });
-    expect(await hoverText("-")).toHaveTextContent(
-      "Skipped: No transcript data available",
+    expect(await hoverText("Not scored")).toHaveTextContent(
+      "No transcript data available",
     );
   });
 
@@ -563,16 +641,19 @@ describe("TraceTable — eval cells without a score", () => {
     renderCell({
       evalResults: [{ id: "e1", score: null, status: "error", reason: "Boom" }],
     });
-    expect(await hoverText("-")).toHaveTextContent("Evaluation failed: Boom");
+    expect(await hoverText("Failed")).toHaveTextContent(
+      "Evaluation failed: Boom",
+    );
   });
 
-  it("shows N/A for a completed result with neither a score nor a label", () => {
+  it("shows a dash for a scored result with neither a score nor a label", () => {
     renderCell({
       evalResults: [
-        { id: "e1", score: null, label: null, status: "completed" },
+        { id: "e1", score: null, label: null, status: "succeeded" },
       ],
     });
-    expect(within(evalCell()).getByText("N/A")).toBeInTheDocument();
+    expect(within(evalCell()).queryByText("N/A")).toBeNull();
+    expect(within(evalCell()).getByText("-")).toBeInTheDocument();
   });
 
   it("shows a label-only result as its label, with no tooltip", () => {
@@ -628,6 +709,154 @@ describe("TraceTable — metric cells while the call runs", () => {
   });
 });
 
+describe("TraceTable — CSAT cell from the call's CSAT status", () => {
+  const renderCsat = (overrides) =>
+    render(
+      <TraceTable
+        groups={[
+          {
+            label: "A",
+            count: 1,
+            rows: [
+              {
+                ...row("c1"),
+                csat: null,
+                executionStatus: "completed",
+                ...overrides,
+              },
+            ],
+            agg: {},
+          },
+        ]}
+        evals={[]}
+        onOpen={vi.fn()}
+        activeCallId="c1"
+      />,
+    );
+  // The call row's cell under the CSAT header, whatever columns are on.
+  const csatCell = () => {
+    const heads = [
+      ...document.querySelectorAll("thead tr:last-of-type th"),
+    ].map((th) => th.textContent.trim());
+    return document.querySelector('tr[aria-selected="true"]').children[
+      heads.indexOf("CSAT")
+    ];
+  };
+  const hoverCsat = async (text) => {
+    fireEvent.mouseOver(within(csatCell()).getByText(text));
+    return screen.findByRole("tooltip");
+  };
+
+  it("loads while CSAT is pending on a finished call", () => {
+    renderCsat({ csatStatus: "pending" });
+    expect(csatCell().querySelector(".MuiSkeleton-root")).not.toBeNull();
+  });
+
+  it("shows the score once CSAT succeeded", () => {
+    renderCsat({ csatStatus: "succeeded", csat: 7.5 });
+    expect(csatCell()).toHaveTextContent("7.5");
+  });
+
+  it("marks timed-out CSAT and shows its reason", async () => {
+    renderCsat({
+      csatStatus: "timed_out",
+      csatReason: "CSAT timed out: no result within 10 minutes.",
+    });
+    expect(await hoverCsat("Timed out")).toHaveTextContent(
+      "CSAT timed out: no result within 10 minutes.",
+    );
+  });
+
+  it("marks failed CSAT and shows its reason", async () => {
+    renderCsat({
+      csatStatus: "failed",
+      csatReason: "CSAT could not be scored.",
+    });
+    expect(await hoverCsat("Failed")).toHaveTextContent(
+      "CSAT could not be scored.",
+    );
+  });
+
+  it("marks skipped CSAT Not scored, with its reason", async () => {
+    renderCsat({
+      csatStatus: "skipped",
+      csatReason: "Nothing to score: the call has no transcript or recording.",
+    });
+    expect(await hoverCsat("Not scored")).toHaveTextContent(
+      "Nothing to score: the call has no transcript or recording.",
+    );
+  });
+
+  it("shows a plain dash when CSAT doesn't apply", () => {
+    renderCsat({ csatStatus: "not_applicable" });
+    expect(csatCell().querySelector(".MuiSkeleton-root")).toBeNull();
+    expect(csatCell()).toHaveTextContent("-");
+  });
+
+  it("falls back to the call's own status when there is no CSAT status", () => {
+    renderCsat({ executionStatus: "ongoing" });
+    expect(csatCell().querySelector(".MuiSkeleton-root")).not.toBeNull();
+  });
+});
+
+describe("TraceTable — eval header action", () => {
+  const EVALS = [
+    { id: "e1", name: "Tone" },
+    { id: "e2", name: "Accuracy" },
+  ];
+  const evalHeader = (name) => screen.getByText(name).closest("th");
+
+  it("shows only the eval's name without a header action", () => {
+    render(table({ evals: EVALS }));
+    expect(within(evalHeader("Tone")).queryByRole("button")).toBeNull();
+  });
+
+  it("puts the host's action inside that eval's header", () => {
+    const renderEvalHeaderAction = vi.fn((e) => (
+      <button type="button">{`act-${e.id}`}</button>
+    ));
+    render(table({ evals: EVALS, renderEvalHeaderAction }));
+
+    expect(
+      within(evalHeader("Tone")).getByRole("button", { name: "act-e1" }),
+    ).toBeInTheDocument();
+    expect(
+      within(evalHeader("Accuracy")).getByRole("button", { name: "act-e2" }),
+    ).toBeInTheDocument();
+    expect(renderEvalHeaderAction).toHaveBeenCalledWith(EVALS[0]);
+  });
+
+  it("keeps an eval header with an action pinned", () => {
+    render(
+      table({
+        evals: EVALS,
+        renderEvalHeaderAction: () => <button type="button">act</button>,
+      }),
+    );
+    expect(window.getComputedStyle(evalHeader("Tone")).position).toBe("sticky");
+  });
+
+  it("gives a sub-goal column no action", () => {
+    const renderEvalHeaderAction = vi.fn(() => (
+      <button type="button">act</button>
+    ));
+    render(
+      table({
+        evals: EVALS,
+        columns: new Set(["callDetails", "subGoalEvals"]),
+        subGoalEvals: [{ id: "sg-1", name: "pin_verified" }],
+        renderEvalHeaderAction,
+      }),
+    );
+
+    expect(within(evalHeader("pin_verified")).queryByRole("button")).toBeNull();
+    expect(within(evalHeader("Tone")).getByRole("button")).toBeInTheDocument();
+    expect(renderEvalHeaderAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: "sg-1" }),
+    );
+  });
+});
+
 describe("TraceTable — persona cell", () => {
   it("shows a persona that has no name but has other fields", () => {
     render(
@@ -657,5 +886,96 @@ describe("TraceTable — persona cell", () => {
     );
     expect(screen.getByText("Indian male")).toBeInTheDocument();
     expect(screen.getByText("Anxious")).toBeInTheDocument();
+  });
+});
+
+describe("TraceTable skipped scenarios", () => {
+  it("shows why a scenario was skipped beside its outcome", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("off"),
+            status: "error",
+            durationMs: null,
+            outcomeReason: "actors are switched off",
+            subGoalResults: [{ name: "noticed", passed: null }],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    expect(screen.getByText("actors are switched off")).toBeInTheDocument();
+    expect(screen.getByText("noticed")).toBeInTheDocument();
+  });
+});
+
+describe("TraceTable calls with no pass or fail", () => {
+  it("reads No score with the reason the server gives", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("ns"),
+            status: "no_score",
+            outcomeReason: "2 not applicable, 1 inconclusive",
+            subGoalResults: [
+              { name: "noticed", passed: null, result: "not_applicable" },
+            ],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    expect(screen.getByText("No score")).toBeInTheDocument();
+    expect(
+      screen.getByText("2 not applicable, 1 inconclusive"),
+    ).toBeInTheDocument();
+  });
+
+  it("reads Inconclusive with why the call was not scored", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("in"),
+            status: "unmeasured",
+            outcomeReason: "The deciding moment cannot be heard.",
+            subGoalResults: [{ name: "booked", passed: true }],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    expect(screen.getByText("Inconclusive")).toBeInTheDocument();
+    expect(
+      screen.getByText("The deciding moment cannot be heard."),
+    ).toBeInTheDocument();
+  });
+
+  it("says a sub-goal did not apply, and why, apart from an inconclusive one", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("na"),
+            status: "no_score",
+            subGoalResults: [
+              {
+                name: "noticed",
+                passed: null,
+                result: "not_applicable",
+                reason: "The roommate never spoke",
+              },
+            ],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    const verdict = within(screen.getByText("noticed").parentElement).getByText(
+      STATUS_META.not_applicable.label,
+    );
+    expect(verdict).toHaveAccessibleName("The roommate never spoke");
   });
 });

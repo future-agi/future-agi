@@ -6,8 +6,8 @@ import Iconify from "src/components/iconify";
 
 /**
  * One goal the run's evals say broke: how often, what the eval expected, and
- * the ways it broke. Every number is a count of calls, so each matches what its
- * View link opens and the rows add up to the card's.
+ * the ways it broke that have findings. Every number is a count of calls,
+ * and each View link opens the calls included in its count.
  */
 
 const VISIBLE_WAYS = 3;
@@ -33,7 +33,7 @@ function CountRow({ count, text, onView }) {
       <Typography
         sx={{
           typography: "s2",
-          fontWeight: 700,
+          fontWeight: 600,
           width: 24,
           textAlign: "right",
           flexShrink: 0,
@@ -51,7 +51,7 @@ function CountRow({ count, text, onView }) {
       <Button
         size="small"
         onClick={onView}
-        sx={{ minWidth: 0, typography: "s3", flexShrink: 0 }}
+        sx={{ minWidth: 0, flexShrink: 0 }}
       >
         View
       </Button>
@@ -80,14 +80,14 @@ export default function GoalCard({ goal, onViewCalls }) {
     <Box
       sx={{
         p: 2,
-        borderRadius: 1,
+        borderRadius: "8px",
         border: "1px solid",
         borderColor: "divider",
       }}
     >
       <Stack direction="row" alignItems="baseline" spacing={1.5}>
         <Typography
-          sx={{ typography: "s1", fontWeight: 700, flex: 1, minWidth: 0 }}
+          sx={{ typography: "s1", fontWeight: 500, flex: 1, minWidth: 0 }}
         >
           {goal.label}
         </Typography>
@@ -95,7 +95,7 @@ export default function GoalCard({ goal, onViewCalls }) {
           sx={{
             typography: "s2",
             fontWeight: 600,
-            color: "error.main",
+            color: "status.danger.fg",
             flexShrink: 0,
             fontVariantNumeric: "tabular-nums",
           }}
@@ -109,12 +109,12 @@ export default function GoalCard({ goal, onViewCalls }) {
         </Typography>
       )}
 
-      {(goal.ways.length > 0 || goal.unexplainedCallIds.length > 0) && (
+      {goal.ways.length > 0 && (
         <Box sx={{ mt: 1.5 }}>
           <Typography
             sx={{
               typography: "s3",
-              fontWeight: 700,
+              fontWeight: 600,
               color: "text.subtitle",
               mb: 0.25,
             }}
@@ -136,19 +136,12 @@ export default function GoalCard({ goal, onViewCalls }) {
                 <Button
                   size="small"
                   onClick={() => setExpanded(true)}
-                  sx={{ typography: "s2", p: 0, minWidth: 0 }}
+                  sx={{ p: 0, minWidth: 0 }}
                 >
                   {folded.length} other ways
                 </Button>
               }
               onView={() => onViewCalls?.(foldedCallIds)}
-            />
-          )}
-          {goal.unexplainedCallIds.length > 0 && (
-            <CountRow
-              count={goal.unexplainedCallIds.length}
-              text="Not explained yet"
-              onView={() => onViewCalls?.(goal.unexplainedCallIds)}
             />
           )}
         </Box>
@@ -160,7 +153,6 @@ export default function GoalCard({ goal, onViewCalls }) {
           variant="outlined"
           onClick={() => onViewCalls?.(goal.brokenCallIds)}
           startIcon={<Iconify icon="solar:eye-linear" width={15} />}
-          sx={{ typography: "s3", fontWeight: 600 }}
         >
           View {broken} {broken === 1 ? "call" : "calls"}
         </Button>
@@ -177,7 +169,6 @@ GoalCard.propTypes = {
     brokenCallIds: PropTypes.arrayOf(PropTypes.string),
     testedCalls: PropTypes.number,
     ways: PropTypes.arrayOf(wayShape),
-    unexplainedCallIds: PropTypes.arrayOf(PropTypes.string),
   }).isRequired,
   onViewCalls: PropTypes.func,
 };
@@ -189,14 +180,14 @@ export function OneOffRow({ way, onViewCalls }) {
     <Box sx={{ py: 1.25, borderTop: "1px solid", borderColor: "divider" }}>
       <Stack direction="row" alignItems="baseline" spacing={1.5}>
         <Typography
-          sx={{ typography: "s2", fontWeight: 700, flex: 1, minWidth: 0 }}
+          sx={{ typography: "s2", fontWeight: 600, flex: 1, minWidth: 0 }}
         >
           {title}
         </Typography>
         <Button
           size="small"
           onClick={() => onViewCalls?.(way.callIds)}
-          sx={{ minWidth: 0, typography: "s3", flexShrink: 0 }}
+          sx={{ minWidth: 0, flexShrink: 0 }}
         >
           View call
         </Button>

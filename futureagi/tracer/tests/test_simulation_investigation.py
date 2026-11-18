@@ -1,5 +1,6 @@
 """Per-call Debug Analysis of a simulation run and its Omega claim boundaries."""
 
+import json
 import uuid
 from copy import deepcopy
 from datetime import timedelta
@@ -10,6 +11,8 @@ from django.test import override_settings
 from django.utils import timezone
 
 from simulate.models import Scenarios
+from simulate.models.agent_definition import AgentDefinition
+from simulate.models.agent_version import AgentVersion
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.run_test import RunTest
 from simulate.models.test_execution import CallExecution, TestExecution
@@ -29,7 +32,9 @@ from tracer.services.grouping.control import claim_feature_jobs, claim_grouping_
 from tracer.services.grouping.feature_completion import complete_feature_job
 from tracer.services.simulation_diagnosis import _is_caller_fault
 from tracer.services.simulation_investigation import (
+    _CALLER_TEXT_LIMIT,
     SimulationInvestigationConflict,
+    _tool_calls,
     simulation_evidence_page,
 )
 from tracer.services.trace_investigation import (
@@ -330,6 +335,46 @@ def test_debug_publication_retains_scoped_findings_for_grouping(
     assert snapshot["report"]["trace_id"] is None
 
 
+def test_debug_finding_without_a_broken_goal_is_grouped(
+    auth_client, organization, workspace
+):
+    scenario = Scenarios.objects.create(
+        name="Refund",
+        source="Refund policy",
+        organization=organization,
+        workspace=workspace,
+    )
+    execution, call = _execution(
+        organization, workspace, scenario, "passing", CallExecution.CallStatus.COMPLETED
+    )
+    auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
+    claim = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"][0]
+    result = _failure_result(claim, call)
+    result["outcome"] = "success"
+    result["requirement_checks"][0]["status"] = "satisfied"
+    result["findings"][0].update(requirement_id=None, recovery="unrecovered")
+    result["result_digest"] = canonical_wire_result_digest(result)
+
+    receipt = publish_investigation(
+        idempotency_key=str(claim["attempt_id"]),
+        lease_token=claim["lease_token"],
+        result=result,
+        wire_result_digest=result["result_digest"],
+    )
+
+    # A one-off no authored goal covers groups with the same one-off on other calls.
+    report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
+    snapshot = export_grouping_snapshot(report=report)
+    assert receipt["grouping_status"] == "pending"
+    assert report.has_issues is True
+    assert [
+        finding["requirement_id"] for finding in snapshot["report"]["findings"]
+    ] == [None]
+    assert len(snapshot["occurrences"]) == 1
+
+
 def test_debug_evidence_carries_the_runs_live_eval_verdicts(
     auth_client, organization, workspace
 ):
@@ -372,6 +417,181 @@ def test_debug_evidence_carries_the_runs_live_eval_verdicts(
             "reason": "Replied in Spanish throughout.",
         }
     ]
+
+
+def test_debug_evidence_carries_the_agent_prompt_and_recorded_tool_calls(
+    auth_client, organization, workspace
+):
+    scenario = Scenarios.objects.create(
+        name="Booking",
+        source="Booking policy",
+        organization=organization,
+        workspace=workspace,
+    )
+    execution, call = _execution(
+        organization, workspace, scenario, "tools", CallExecution.CallStatus.COMPLETED
+    )
+    agent = AgentDefinition.objects.create(
+        agent_name="Booking Agent",
+        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        contact_number="+15551230000",
+        inbound=True,
+        description="Draft prompt",
+        organization=organization,
+        workspace=workspace,
+        languages=["en"],
+    )
+    version = AgentVersion.objects.create(
+        agent_definition=agent,
+        organization=organization,
+        workspace=workspace,
+        version_number=1,
+        version_name="v1",
+        configuration_snapshot={
+            "description": "You book tables. Confirm the party size first.",
+            "api_key": "never-served",
+        },
+    )
+    call.agent_version = version
+    call.call_metadata = {"agent_prompt": "You book tables."}
+    call.provider_call_data = {
+        "livekit": {
+            "tool_calls": [
+                {
+                    "name": "book_table",
+                    "arguments": {"party_size": 4},
+                    "result": "x" * 4100,
+                    "ok": True,
+                    "error": None,
+                    "refused": False,
+                    "at": 12.5,
+                    "start_time_ms": 12500,
+                },
+                {"arguments": {}},
+            ]
+        }
+    }
+    call.save(update_fields=["agent_version", "call_metadata", "provider_call_data"])
+    auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
+    claim = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    served = simulation_evidence_page(
+        attempt_id=claim["attempt_id"], lease_token=claim["lease_token"], cursor=0
+    )["calls"][0]
+
+    # The version's prompt wins over call_metadata's copy, and nothing else
+    # from the snapshot is served.
+    assert served["agent_prompt"] == "You book tables. Confirm the party size first."
+    assert "never-served" not in str(served)
+    [tool] = served["tool_calls"]
+    assert tool["name"] == "book_table"
+    assert tool["arguments"] == {"party_size": 4}
+    assert tool["start_time_ms"] == 12500
+    assert "at" not in tool
+    assert tool["result"].startswith("x" * 4000)
+    assert tool["result"].endswith("... [100 more characters]")
+
+    # A call no provider recorded tools for has no tool_calls, not an empty list.
+    call.provider_call_data = {"livekit": {"transcript": []}}
+    call.agent_version = None
+    call.save(update_fields=["provider_call_data", "agent_version"])
+    served = simulation_evidence_page(
+        attempt_id=claim["attempt_id"], lease_token=claim["lease_token"], cursor=0
+    )["calls"][0]
+    assert "tool_calls" not in served
+    assert served["agent_prompt"] == "You book tables."
+
+
+def _tool_call(index, **fields):
+    return {"name": f"tool_{index}", "ok": True, **fields}
+
+
+def _served_tool_calls(tool_calls):
+    return _tool_calls(
+        SimpleNamespace(provider_call_data={"livekit": {"tool_calls": tool_calls}})
+    )
+
+
+def test_tool_call_values_are_cut_by_their_serialized_size():
+    small = {"party_size": 4}
+    large = {"rows": ["x" * 100] * 100}
+    [served] = _served_tool_calls(
+        [_tool_call(0, arguments=small, result=large, error=["y" * 5000])]
+    )
+
+    assert served["arguments"] == small
+    assert served["result"].startswith('{"rows":["')
+    assert "more characters]" in served["result"]
+    assert len(served["result"]) < 4100
+    assert served["error"].startswith('["yyy')
+    assert served["ok"] is True
+
+
+def test_tool_calls_stop_at_the_total_and_say_how_many_were_left_out():
+    served = _served_tool_calls(
+        [_tool_call(index, result="x" * 4000) for index in range(100)]
+    )
+
+    assert len(json.dumps(served)) < 260_000
+    assert served[-1]["name"] == "tool_calls_omitted"
+    assert served[-1]["result"].startswith(f"{101 - len(served)} more recorded")
+    assert [entry["name"] for entry in served[:3]] == ["tool_0", "tool_1", "tool_2"]
+
+
+def test_tool_calls_stop_at_the_count_limit_the_worker_accepts():
+    fits = [_tool_call(index) for index in range(500)]
+    assert _served_tool_calls(fits) == fits
+
+    served = _served_tool_calls([_tool_call(index) for index in range(600)])
+    assert len(served) == 500
+    assert served[-1]["name"] == "tool_calls_omitted"
+    assert served[-1]["result"].startswith("101 more recorded")
+
+
+def test_debug_evidence_page_fits_a_call_with_the_most_tool_calls(
+    auth_client, organization, workspace
+):
+    scenario = Scenarios.objects.create(
+        name="Booking",
+        source="Booking policy",
+        organization=organization,
+        workspace=workspace,
+    )
+    execution, call = _execution(
+        organization, workspace, scenario, "large", CallExecution.CallStatus.COMPLETED
+    )
+    # As many tool calls as a call may carry, each with a large dict: about 7 MB
+    # before the limits, which would fail the whole analysis.
+    call.call_metadata = {"agent_prompt": "Follow the booking policy. " * 2000}
+    call.provider_call_data = {
+        "livekit": {
+            "tool_calls": [
+                _tool_call(
+                    index,
+                    arguments={"rows": ["x" * 100] * 100},
+                    result="y" * 4000,
+                )
+                for index in range(500)
+            ]
+        }
+    }
+    call.save(update_fields=["call_metadata", "provider_call_data"])
+    auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
+    claim = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    page = simulation_evidence_page(
+        attempt_id=claim["attempt_id"], lease_token=claim["lease_token"], cursor=0
+    )
+
+    assert len(json.dumps(page, separators=(",", ":")).encode()) < 1_800_000
+    [served] = page["calls"]
+    assert served["tool_calls"][0]["name"] == "tool_0"
+    assert served["tool_calls"][-1]["name"] == "tool_calls_omitted"
+    assert page["next_cursor"] == page["total_calls"] == 1
 
 
 @override_settings(
@@ -630,7 +850,7 @@ def test_debug_counts_calls_whose_own_analysis_ended_without_a_report(
     assert auth_client.get(url).status_code == 200
 
 
-def _hosted_run(organization, workspace, execution, catalogue=None):
+def _hosted_run(organization, workspace, execution, catalogue=None, **scenario_fields):
     """An environment job holding one authored scenario, and the run's child job."""
 
     def job(**fields):
@@ -654,12 +874,95 @@ def _hosted_run(organization, workspace, execution, catalogue=None):
         stage_outputs=[{"kind": "sub_goals", "data": {"sub_goals": catalogue or []}}]
     )
     job(environment=environment, run_test=execution.run_test)
-    HostedHarnessScenario.no_workspace_objects.create(
+    return HostedHarnessScenario.no_workspace_objects.create(
         job=environment,
         scenario_key="pin-booking",
         use_case="Book a guest ride",
         sub_goals=["exact_greeting", "spoken_pin_guidance"],
         tests="the agent books after a spoken PIN",
+        **scenario_fields,
+    )
+
+
+def test_debug_evidence_carries_the_simulated_callers_situation_and_persona(
+    auth_client, organization, workspace
+):
+    scenario = Scenarios.objects.create(
+        name="Fee disputes",
+        source="Billing support",
+        organization=organization,
+        workspace=workspace,
+    )
+    execution, call = _execution(
+        organization, workspace, scenario, "caller", CallExecution.CallStatus.COMPLETED
+    )
+    call.call_metadata = {"harness_scenario_key": "pin-booking"}
+    call.save(update_fields=["call_metadata"])
+    persona = {
+        "name": "Dana Reyes",
+        "personality": "impatient",
+        "communication_style": "direct",
+        "multilingual": True,
+        "metadata": {"first_language": "Spanish", "member_id": "M-1042"},
+    }
+    authored = _hosted_run(
+        organization,
+        workspace,
+        execution,
+        instruction="You want a late-cancellation fee removed.",
+        persona=persona,
+    )
+    auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
+    claim = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    def served():
+        return simulation_evidence_page(
+            attempt_id=claim["attempt_id"], lease_token=claim["lease_token"], cursor=0
+        )["calls"][0]
+
+    call_record = served()
+    assert call_record["situation"] == "You want a late-cancellation fee removed."
+    # The whole authored persona, including what the amend whitelist leaves out: the
+    # caller's name, whether it switches language, and its languages and identifiers.
+    assert call_record["persona"] == persona
+
+    # Any shape but a persona object is left out, so the worker never refuses the
+    # page over it.
+    for malformed in ("A busy office manager.", ["impatient"], {}):
+        authored.persona = malformed
+        authored.save(update_fields=["persona"])
+        assert served()["persona"] is None
+
+    # A blank instruction is no situation.
+    authored.instruction = "  \n\t "
+    authored.save(update_fields=["instruction"])
+    assert served()["situation"] is None
+
+    # Outsized authored values are cut, so one scenario cannot push the page past
+    # the payload limit. The persona stays an object with every key.
+    authored.instruction = "x" * 930_000
+    authored.persona = {**persona, "metadata": {"notes": "y" * 930_000}}
+    authored.save(update_fields=["instruction", "persona"])
+    call_record = served()
+    assert call_record["situation"] == (
+        "x" * _CALLER_TEXT_LIMIT
+        + f"... [{930_000 - _CALLER_TEXT_LIMIT} more characters]"
+    )
+    assert set(call_record["persona"]) == set(persona)
+    assert call_record["persona"]["name"] == "Dana Reyes"
+    assert call_record["persona"]["metadata"].endswith("more characters]")
+    assert len(json.dumps(call_record["persona"])) < 2 * _CALLER_TEXT_LIMIT
+
+    # A call with no authored scenario says it has none.
+    call.call_metadata = {}
+    call.save(update_fields=["call_metadata"])
+    call_record = served()
+    assert (call_record["goals"], call_record["situation"], call_record["persona"]) == (
+        None,
+        None,
+        None,
     )
 
 

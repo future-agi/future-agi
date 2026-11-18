@@ -7,9 +7,9 @@ export default function Field({ label, required, value, onChange, placeholder, h
   return (
     <Box sx={{ flex: fullWidth ? 1 : undefined }}>
       {label && (
-        <Typography sx={{ typography: "s3", fontWeight: "fontWeightSemiBold", mb: 0.5 }}>
+        <Typography sx={{ typography: "s1", fontWeight: 500, mb: 0.5 }}>
           {label}
-          {required && <Box component="span" sx={{ color: "error.main", ml: 0.5 }}>*</Box>}
+          {required && <Box component="span" sx={{ color: "status.danger.fg", ml: 0.5 }}>*</Box>}
         </Typography>
       )}
       <TextField
@@ -24,14 +24,13 @@ export default function Field({ label, required, value, onChange, placeholder, h
         multiline={multiline}
         minRows={multiline ? 2 : undefined}
         sx={{
-          "& .MuiInputBase-input": {
-            typography: "s2",
-            ...(mono && { fontFamily: "ui-monospace, Menlo, monospace" }),
-          },
+          ...(mono && {
+            "& .MuiInputBase-input": { fontFamily: "ui-monospace, Menlo, monospace" },
+          }),
         }}
       />
       {caption && (
-        <Typography sx={{ typography: "s3", color: error ? "error.main" : "text.subtitle", mt: 0.5 }}>
+        <Typography sx={{ typography: "s3", color: error ? "status.danger.fg" : "text.subtitle", mt: 0.5 }}>
           {caption}
         </Typography>
       )}

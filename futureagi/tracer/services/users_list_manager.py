@@ -78,6 +78,10 @@ USERS_EXPORT_COLUMNS = [
     # projects exports twice; the project names each row's scope.  Appended
     # so existing column positions stay stable.
     ("Project", "project_name"),
+    ("Cost coverage", "cost_coverage.status"),
+    ("Known cost subtotal ($)", "cost_coverage.known_subtotal"),
+    ("Known cost fact count", "cost_coverage.known_fact_count"),
+    ("Unknown cost fact count", "cost_coverage.unknown_fact_count"),
 ]
 
 
@@ -390,7 +394,8 @@ def _users_attr_enrichment_query(
         )
     if walked_typed_filter is not None:
         params.update(walked_typed_filter.order_params)
-        matching_activity_clauses.append(walked_typed_filter.order_clause)
+        if walked_typed_filter.order_clause:
+            matching_activity_clauses.append(walked_typed_filter.order_clause)
     matching_activity_projection = (
         ",\n        maxIf(latest_start_time, (("
         + ") OR (".join(matching_activity_clauses)
@@ -398,6 +403,14 @@ def _users_attr_enrichment_query(
         if matching_activity_clauses
         else ""
     )
+    if walked_typed_filter is not None and walked_typed_filter.canonical_values:
+        # One newest timestamp per distinct stored value, not one record per
+        # span. Python applies the very same canonical comparison as membership.
+        matching_activity_projection = """,
+        maxMapIf(
+            map(assumeNotNull(latest_attribute_value_json), latest_start_time),
+            latest_attribute_value_type = 'string'
+        ) AS canonical_string_activity"""
     sql = f"""
     WITH
     eu_survivor_map AS ({eu_map}),
@@ -628,7 +641,9 @@ class UsersListManager:
                 filter_type = config.get("filter_type") or config.get("filterType")
                 raw_value = config.get("filter_value", config.get("filterValue"))
                 raw_values = raw_value if isinstance(raw_value, list) else [raw_value]
-                value_types = config.get("attribute_value_types")
+                value_types = config.get(
+                    "attribute_value_types", config.get("attributeValueTypes")
+                )
                 if (
                     operation not in {"equals", "in"}
                     or filter_type not in {"text", "string"}
@@ -910,6 +925,21 @@ class UsersListManager:
                 if not uid or not key:
                     continue
                 newest_match = attr_row.get("latest_matching_start_time")
+                walked = self._walked_typed_filter
+                if walked is not None and walked.canonical_values and key == walked.key:
+                    matches = [
+                        moment
+                        for raw, moment in attr_row.get(
+                            "canonical_string_activity", {}
+                        ).items()
+                        if self._candidate_value_matches(
+                            json.loads(raw),
+                            "in",
+                            list(walked.canonical_values),
+                            case_insensitive=True,
+                        )
+                    ]
+                    newest_match = max(matches, default=None)
                 if isinstance(newest_match, datetime):
                     if newest_match.tzinfo is None:
                         newest_match = newest_match.replace(tzinfo=UTC)
@@ -2163,6 +2193,13 @@ class UsersListManager:
             value = self._native_filter_values_by_user.get(
                 str(row.get("end_user_id")), {}
             ).get(key, row.get(key))
+            coverage = row.get("cost_coverage")
+            if (
+                key == "total_cost"
+                and coverage is not None
+                and coverage["status"] != "complete"
+            ):
+                value = None
             expected = config.get("filter_value", config.get("filterValue"))
             operation = config.get("filter_op") or config.get("filterOp")
             if key in {"activated_at", "last_active"} and operation not in {
@@ -2638,12 +2675,27 @@ class UsersListManager:
         rows = list(payload.get("table") or ())
 
         for row in rows:
-            writer.writerow(
-                [
-                    self._format_export_cell(row.get(field))
-                    for _, field in USERS_EXPORT_COLUMNS
-                ]
-            )
+            coverage = row.get("cost_coverage")
+            cells = []
+            for _, field in USERS_EXPORT_COLUMNS:
+                if field.startswith("cost_coverage."):
+                    value = (
+                        coverage[field.split(".", 1)[1]]
+                        if coverage is not None
+                        else None
+                    )
+                elif (
+                    field == "total_cost"
+                    and coverage is not None
+                    and coverage["status"] != "complete"
+                ):
+                    # Keep the old complete-price column honest; the numeric
+                    # compatibility subtotal has its own explicitly named cell.
+                    value = None
+                else:
+                    value = row.get(field)
+                cells.append(self._format_export_cell(value))
+            writer.writerow(cells)
             yield _drain()
 
         truncated = bool(

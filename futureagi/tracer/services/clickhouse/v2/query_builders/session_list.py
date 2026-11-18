@@ -37,6 +37,18 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
     """Drop-in v2 SessionList builder."""
 
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
+    _COST_ATTRIBUTE_MAP = "attrs_string"
+    _INPUT_LENGTH_SQL = "input_length"
+    _COST_AGGREGATE = SessionListQueryBuilder._COST_AGGREGATE.replace(
+        "span_attr_str", "attrs_string"
+    )
+    _AGGREGATE_SELECT = SessionListQueryBuilder._AGGREGATE_SELECT.replace(
+        SessionListQueryBuilder._COST_AGGREGATE, _COST_AGGREGATE
+    )
+    _SESSION_SCAN_COLS = tuple(
+        "attrs_string" if col == "span_attr_str" else col
+        for col in SessionListQueryBuilder._SESSION_SCAN_COLS
+    )
 
     # CH25 keeps booleans in their own typed map, so the page hydration carries
     # one array the legacy schema has no source for.
@@ -74,6 +86,10 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
             f"toStartOfHour(fromUnixTimestamp64Micro(%({end_param})s - 1, 'UTC'))"
             " + INTERVAL 1 HOUR",
         )
+
+    def _replay_time_scope_sql(self, discovery_time_scope: str) -> str:
+        # Native discovery already rounds out to complete storage-hour keys.
+        return discovery_time_scope
 
     def build_candidate_slice_density_probe_query(
         self, *, slice_start: datetime, slice_end: datetime
