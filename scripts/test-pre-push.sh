@@ -10,15 +10,22 @@ cd "$repo"
 git -c user.name=Test -c user.email=test@example.invalid -c core.hooksPath=/dev/null \
     commit -q --allow-empty -m 'Seed branch-name test'
 seed=$(git rev-parse HEAD)
+zero=$(printf '%s' "$seed" | tr '0-9a-f' '0')
 fail=0
-while read -r expected branch; do
-    git checkout -q -B "$branch" "$seed"
+check() {
+    expected=$1 label=$2
     actual=0
     "$shell" "$hook" >/dev/null || actual=$?
     if [ "$actual" -ne "$expected" ]; then
-        printf '%s: %s: expected exit %s, got %s\n' "$shell" "$branch" "$expected" "$actual" >&2
+        printf '%s: %s: expected exit %s, got %s\n' "$shell" "$label" "$expected" "$actual" >&2
         fail=1
     fi
+}
+while read -r expected branch; do
+    git checkout -q -B "$branch" "$seed"
+    check "$expected" "$branch" <<EOF
+refs/heads/$branch $seed refs/heads/$branch $zero
+EOF
 done <<'CASES'
 0 main
 0 master
@@ -42,4 +49,24 @@ done <<'CASES'
 1 feat/sub/path
 1 dev-extra
 CASES
+
+git checkout -q --detach "$seed"
+check 0 'detached HEAD to valid branch' <<EOF
+HEAD $seed refs/heads/fix/valid $zero
+EOF
+check 0 'tag, deletion and protected branch' <<EOF
+refs/tags/v1 $seed refs/tags/v1 $zero
+(delete) $zero refs/heads/legacy $seed
+HEAD $seed refs/heads/main $zero
+EOF
+check 0 'no updates' </dev/null
+
+git checkout -q fix/0
+check 1 'valid checkout to invalid destination' <<EOF
+refs/heads/fix/0 $seed refs/heads/feature/bad $zero
+EOF
+check 1 'invalid destination after protected branch' <<EOF
+HEAD $seed refs/heads/dev $seed
+HEAD $seed refs/heads/feature/bad $zero
+EOF
 exit "$fail"

@@ -1,36 +1,23 @@
-# Branch naming convention validation (repo-wide).
-echo "🔍 Validating branch name..."
-
-branch_name=$(git rev-parse --abbrev-ref HEAD)
-
-# Skip validation for protected branches
-case "$branch_name" in
-  main|develop|master|dev)
-    echo "✅ Protected branch — skipping validation"
-    exit 0
-    ;;
-esac
-
-# Format: <type>/<ticket-id>-<description> or <type>/<description>
-# Types match Conventional Commits prefixes used in CONTRIBUTING.md.
+# Validate the destination branch of each update Git supplies on stdin.
 branch_regex='^(feat|fix|chore|docs|refactor|test|perf)/[a-zA-Z0-9]+([a-zA-Z0-9-]*[a-zA-Z0-9])?$'
+while read -r local_ref local_oid remote_ref remote_oid; do
+    # Deleting a ref does not create a branch name; tags are not branches.
+    [ "$local_ref" = '(delete)' ] && continue
+    case "$remote_ref" in
+        refs/heads/*) branch_name=${remote_ref#refs/heads/} ;;
+        *) continue ;;
+    esac
+    case "$branch_name" in
+        main|develop|master|dev) continue ;;
+    esac
 
-if ! printf '%s\n' "$branch_name" | grep -Eq "$branch_regex"; then
-    echo "❌ Invalid branch name: '$branch_name'"
-    echo ""
-    echo "Branch name must follow the pattern: <type>/<ticket-id>-<description>"
-    echo ""
-    echo "Valid types: feat, fix, chore, docs, refactor, test, perf"
-    echo ""
-    echo "✅ Valid examples:"
-    echo "  - feat/AUTH-123-user-login"
-    echo "  - fix/UI-456-button-alignment"
-    echo "  - refactor/cleanup-utils"
-    echo "  - docs/update-readme"
-    echo "  - perf/PERF-500-list-pagination"
-    echo ""
-    echo "See BRANCH_NAMING_CONVENTION.md for full guidelines."
-    exit 1
-fi
-
-echo "✅ Branch name '$branch_name' is valid"
+    if ! printf '%s\n' "$branch_name" | grep -Eq "$branch_regex"; then
+        echo "❌ Invalid branch name: '$branch_name'"
+        echo "Use <type>/<description> or <type>/<ticket-id>-<description>."
+        echo "Valid types: feat, fix, chore, docs, refactor, test, perf"
+        echo "For example: fix/UI-456-button-alignment or docs/update-readme."
+        echo "See BRANCH_NAMING_CONVENTION.md for full guidelines."
+        exit 1
+    fi
+    echo "✅ Branch name '$branch_name' is valid"
+done

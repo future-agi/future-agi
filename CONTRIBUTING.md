@@ -67,13 +67,14 @@ troubleshooting.
 yarn install
 ```
 
-This installs Husky and `lint-staged` and sets Git’s `core.hooksPath`. No separate
-Python hook installation is needed. Husky runs `lint-staged` on commit:
+The root install sets Git’s `core.hooksPath` to `.husky/_`. On a non-merge commit,
+Husky runs the [lint-staged tasks](.lintstagedrc.cjs), including staged safety checks.
+It does not install or run `futureagi/.pre-commit-config.yaml`.
 
-- For frontend or Markdown changes, install the formatter dependencies with `yarn --cwd frontend install`. Staged frontend source uses ESLint and Prettier.
-- `futureagi/**/*.py` (except migrations) → `ruff check --fix`, then `ruff format`. The [staged Python runner](scripts/lint-staged-python.sh) uses `uv` or `uvx` for the CI-pinned Ruff version. If it falls back to Ruff on `PATH`, it warns that CI may differ.
+- **Backend Python:** For staged `futureagi/**/*.py` files outside migrations, the [Python runner](scripts/lint-staged-python.sh) runs `ruff check --fix`, then `ruff format`. Install `uv` or `uvx` to run the CI-pinned Ruff. Offline, the runner can use `ruff` on `PATH` and warns that CI may differ. If no runner is available, the commit stops.
+- **Formatting:** Run `yarn --cwd frontend install` before staging files that need ESLint or Prettier. This includes frontend source and files formatted with the frontend copy of Prettier, such as Markdown, the root `package.json`, and GitHub workflow YAML.
 
-Branch names are validated on `git push`.
+On `git push`, Husky checks the destination name of each branch you create or update, even when you push from a detached `HEAD`.
 
 ### 4. Run tests
 
