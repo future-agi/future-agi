@@ -155,13 +155,41 @@ class HarnessSandboxClient:
                 detail = response.json().get("detail")
             except (ValueError, AttributeError):
                 detail = response.text[:500]
-            message = detail or "unknown error"
+            message = _refusal_message(detail) or "unknown error"
             if response.status_code < 500:
                 raise HarnessSandboxRejected(response.status_code, message)
             raise HarnessSandboxUnavailable(
                 f"ALK sandbox returned {response.status_code}: {message}"
             )
         return response.json()
+
+
+# The sentence the page shows for a code the ALK sandbox refuses a request with.
+KIT_REFUSALS = {
+    "github_commit_sha_required": (
+        "The GitHub source has no commit to run. Choose the branch or commit "
+        "again and resubmit."
+    ),
+}
+
+
+def _refusal_message(detail: Any) -> str:
+    """The sandbox's refusal as text for the page.
+
+    Its request validation answers with FastAPI's list of errors; their
+    messages are read, without pydantic's "Value error, " prefix, and a known
+    code becomes its sentence. Any other detail is used as it is.
+    """
+    if not isinstance(detail, list):
+        text = str(detail or "").strip()
+        return KIT_REFUSALS.get(text, text)
+    sentences = []
+    for error in detail:
+        message = error.get("msg") if isinstance(error, dict) else error
+        message = str(message or "").strip().removeprefix("Value error, ").strip()
+        if message:
+            sentences.append(KIT_REFUSALS.get(message, message).rstrip("."))
+    return ". ".join(sentences) + "." if sentences else ""
 
 
 def _valid_header_token(token: str) -> bool:

@@ -165,3 +165,43 @@ def test_a_401_on_a_request_that_carried_no_token_does_not_blame_the_token(monke
 
     assert "rejected the platform's token" not in str(caught.value)
     assert "401" in str(caught.value)
+
+
+# The kit's request validation answers 422 with FastAPI's list of errors. Its
+# text reaches the page as the refusal's message, so it must read as a sentence.
+def _validation_errors(*messages):
+    return [
+        {"type": "value_error", "loc": ["body"], "msg": f"Value error, {message}"}
+        for message in messages
+    ]
+
+
+def test_a_github_source_without_a_commit_is_refused_in_a_sentence(sandbox):
+    client = sandbox(422, detail=_validation_errors("github_commit_sha_required"))
+
+    with pytest.raises(HarnessSandboxRejected) as caught:
+        client.submit({"github_repository": "acme/agent"})
+
+    assert caught.value.status_code == 422
+    assert (
+        str(caught.value) == harness_sandbox.KIT_REFUSALS["github_commit_sha_required"]
+    )
+    assert "github_commit_sha_required" not in str(caught.value)
+
+
+def test_a_validation_list_without_a_known_code_reads_as_its_messages(sandbox):
+    client = sandbox(
+        422,
+        detail=_validation_errors(
+            "exactly_one_source_required", "A subfolder needs a GitHub repository."
+        ),
+    )
+
+    with pytest.raises(HarnessSandboxRejected) as caught:
+        client.submit({})
+
+    message = str(caught.value)
+    assert message == (
+        "exactly_one_source_required. A subfolder needs a GitHub repository."
+    )
+    assert "[{" not in message and "Value error" not in message
