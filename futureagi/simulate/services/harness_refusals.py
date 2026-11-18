@@ -1,179 +1,173 @@
 """What the page says when the ALK sandbox refuses a request on the connect and read path.
 
-The sandbox answers with a code (``github_ref_invalid``), a code and the name it is about
-(``environment_name_invalid: MY-KEY``), or a short phrase (``uploaded source was not
-found``). Each is turned into a sentence that says what went wrong and the one thing to do
-about it, in the shape of the product plan's Connect failures (TH-8978):
+The kit answers with a code (``github_ref_invalid``), a code and the name it is about
+(``environment_value_contains_nul: API_URL``), or a short phrase (``uploaded source was
+not found``). The platform owns every sentence a user reads (ADR-010,
+~/Desktop/coordination/architecture/decisions/ADR-010-refusal-codes-and-sentences.md):
 
-- a refusal the user can fix names the field and keeps the name the caller chose (a name,
-  never a value);
-- a refusal only the platform's own request can cause says so, and keeps the code so
-  support can find it;
-- any other message is shown as the kit wrote it.
+- a refusal the user can fix says what failed, naming the field by its label on the
+  Connect page, then the one thing to do;
+- a refusal only the platform's own request can cause shares one sentence that keeps the
+  code for support, and is logged as an error: it is our bug;
+- any other code gets a generic sentence and its code. The kit's own message never
+  reaches the page, because it can repeat what was typed; it goes to the server log.
+
+A name the refusal carries is shown only when it passes the check for a setting name or
+a relative path, and is short: it came from what the user typed, and a secret pasted
+where a name belongs must not be echoed.
 
 The codes and where the kit raises them are listed in ~/Desktop/TH-8978/birch-refusal-codes.md.
 """
 
 from __future__ import annotations
 
-# A refusal the user can fix: what went wrong, then the repair. ``{name}`` is the name the
-# refusal is about, as the caller sent it.
-_USER = {
-    # Choosing the source.
-    "A subfolder needs a GitHub repository to read it from.": (
-        "A subfolder can only be read from a GitHub repository. Choose a GitHub "
-        "repository, or clear the subfolder."
-    ),
-    "subfolder_requires_github_source": (
-        "A subfolder can only be read from a GitHub repository. Choose a GitHub "
-        "repository, or clear the subfolder."
-    ),
+import re
+from pathlib import PurePosixPath
+
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+# The kinds of name a refusal can carry, and the check each must pass to be shown.
+_SETTING = "setting"
+_PATH = "path"
+_SETTING_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+_PATH_PART = re.compile(r"[A-Za-z0-9._@+ -]{1,128}")
+_PATH_MAX = 200
+
+# A refusal the user can fix: (sentence, kind of name it carries or None). ``{name}``
+# stands for " <name>" when the name passes its check, and for nothing when it doesn't.
+_USER: dict[str, tuple[str, str | None]] = {
+    # Agent source: GitHub repository.
     "github_repository_invalid": (
-        "The repository isn't a GitHub repository we can read. Enter it as owner/name "
-        "or as its github.com link."
+        "The Repository URL isn't a GitHub repository we can read. Enter it as "
+        "https://github.com/owner/repository.",
+        None,
     ),
     "github_repository_url_must_point_to_repository_or_branch": (
-        "The repository link points inside the repository, not at it. Use the "
-        "repository's link or a branch link, not a file or commit link."
+        "The Repository URL points at a file or commit inside the repository. Use the "
+        "repository's link, or its .../tree/branch link.",
+        None,
     ),
     "github_ref_invalid": (
-        "The branch name isn't valid. Choose the branch again from the list."
+        "The branch in the Repository URL isn't a valid branch name. Copy the branch's "
+        "link from GitHub and paste it again.",
+        None,
     ),
-    "github_ref_conflicts_with_repository_url": (
-        "The repository link names a different branch from the one chosen. Choose one: "
-        "remove the branch from the link, or pick that branch."
-    ),
-    # Uploading the source.
+    # Agent source: Upload folder.
     "source may contain at most 5000 files": (
-        "The upload has more than 5000 files. Upload only the agent's folder, without "
-        "dependencies or build output."
+        "The uploaded folder has more than 5000 files. Upload only the agent's folder, "
+        "without dependencies or build output.",
+        None,
     ),
     "source exceeds the 50 MiB file or 200 MiB bundle limit": (
-        "The upload is too large: a file is over 50 MiB or the whole upload is over "
-        "200 MiB. Leave out large data, dependencies and build output, and upload again."
+        "The uploaded folder is too large: a file is over 50 MiB or the folder is over "
+        "200 MiB. Leave out large data, dependencies and build output, and upload again.",
+        None,
     ),
     "duplicate source path": (
-        "Two uploaded files have the same path, {name}. Remove one and upload again."
+        "Two files in the uploaded folder have the same path{name}. Remove one and "
+        "upload the folder again.",
+        _PATH,
     ),
     "unsafe source path": (
-        "The uploaded file {name} points outside the agent's folder. Upload the folder "
-        "again without it."
+        "A file in the uploaded folder{name} points outside the folder. Upload the "
+        "folder again without it.",
+        _PATH,
     ),
     "may contain secrets": (
-        "The uploaded file {name} may hold secrets. Leave it out of the upload and add "
-        "its values under Environment values or Secrets instead."
+        "The uploaded file{name} may hold secrets. Leave it out of the folder and add "
+        "its values under Additional environment values instead.",
+        _PATH,
     ),
     "uploaded source was not found": (
-        "The uploaded source is no longer available. Upload the agent's source again."
+        "The uploaded folder is no longer available. Upload the folder again.",
+        None,
     ),
     "uploaded source is incomplete": (
-        "The upload didn't finish. Upload the agent's source again."
+        "The folder upload didn't finish. Upload the folder again.",
+        None,
     ),
-    # Environment values and secrets.
+    # Additional environment values.
     "environment_values_limit_exceeded": (
-        "There are too many environment values. Remove the ones the agent doesn't read."
+        "There are too many Additional environment values. Remove the ones the agent "
+        "doesn't read.",
+        None,
     ),
     "environment_values_size_exceeded": (
-        "The environment values are too large together. Shorten or remove the largest "
-        "values; upload a credential file as a file instead."
+        "The Additional environment values are too large together. Shorten or remove "
+        "the largest ones, and use Upload credential file for a credential file.",
+        None,
     ),
     "environment_value_conflicts_with_secret_reference": (
-        "The same name is set both as an environment value and as a secret. Keep it in "
-        "one place."
+        "The same name is set both in Additional environment values and as a "
+        "credential. Keep it in one place.",
+        None,
     ),
     "environment_name_invalid": (
-        "The environment value name {name} isn't valid. Use letters, digits and "
-        "underscores, starting with a letter or underscore."
+        "The environment value name{name} isn't valid. Use letters, digits and "
+        "underscores, starting with a letter or underscore.",
+        _SETTING,
     ),
     "environment_name is invalid": (
         "The environment value name isn't valid. Use letters, digits and underscores, "
-        "starting with a letter or underscore."
+        "starting with a letter or underscore.",
+        None,
     ),
     "environment_name_reserved": (
-        "The name {name} is used by the runner itself. Send the value under another "
-        "name and read that name in the agent."
+        "The environment value name{name} is used by the runner itself. Send the value "
+        "under another name and read that name in the agent.",
+        _SETTING,
     ),
     "environment_name is reserved": (
         "That environment value name is used by the runner itself. Choose another name "
-        "and read that name in the agent."
+        "and read that name in the agent.",
+        None,
     ),
     "environment_value_contains_nul": (
-        "The environment value {name} contains a null character. Remove it and save "
-        "again."
+        "The environment value{name} contains a null character. Remove it and save "
+        "again.",
+        _SETTING,
     ),
+    # Credentials.
     "secret_reference_name_invalid": (
-        "The secret name {name} isn't valid. Use letters, digits and underscores, "
-        "starting with a letter or underscore."
+        "The credential name{name} isn't valid. Use letters, digits and underscores, "
+        "starting with a letter or underscore.",
+        _SETTING,
     ),
     "secret_alias_reserved": (
-        "The secret name {name} is used by the runner itself. Store the secret under "
-        "another name and read that name in the agent."
-    ),
-    "connector_config_name_reserved": (
-        "The connection setting {name} is used by the runner itself. Rename the setting "
-        "and read the new name in the agent."
+        "The credential name{name} is used by the runner itself. Store the credential "
+        "under another name and read that name in the agent.",
+        _SETTING,
     ),
     "sandbox_secret_reference_refused": (
-        "The secret {name} can't be used in the cloud check. Add it again under Secrets "
-        "and select it there."
+        "The credential{name} can't be used in the cloud check. Enter its value again "
+        "or upload it with Upload credential file.",
+        _SETTING,
     ),
     "sandbox_vault_reference_unknown": (
-        "The secret {name} wasn't found. Add it under Secrets, or select another one."
+        "The credential{name} wasn't found. Enter its value again or choose another "
+        "saved credential.",
+        _SETTING,
     ),
     "secret_file_reference_unavailable_or_consumed": (
-        "The uploaded credential file was already used or has expired. Upload it again."
+        "The uploaded credential file was already used or has expired. Use Upload "
+        "credential file to upload it again.",
+        None,
     ),
     "credential file may not exceed 5 MiB": (
         "The credential file is over 5 MiB. Upload the credential file itself, not a "
-        "folder or archive."
+        "folder or archive.",
+        None,
     ),
     "credential file is empty": (
-        "The credential file is empty. Upload the file that holds the credentials."
+        "The credential file is empty. Upload the file that holds the credentials.",
+        None,
     ),
     "Google application credentials must be a valid JSON object": (
         "The Google credentials file isn't a JSON key file. Upload the service account "
-        "key you downloaded from Google Cloud."
-    ),
-    # Calling a provider's agent.
-    "provider_phone_requires_e164_phone_number": (
-        "The phone number isn't in international format. Enter it with + and the "
-        "country code, for example +14155550100."
-    ),
-    "phone_connect_only_requires_e164_phone_number": (
-        "The phone number isn't in international format. Enter it with + and the "
-        "country code, for example +14155550100."
-    ),
-    "phone_connect_only_requires_target_system_prompt": (
-        "The agent's system prompt is missing or too long. Paste the agent's prompt, up "
-        "to 65,536 characters."
-    ),
-    "livekit_connect_only_requires_agent_name": (
-        "The LiveKit agent name is missing. Enter the name the agent registers with "
-        "LiveKit."
-    ),
-    "livekit_connect_only_requires_target_system_prompt": (
-        "The agent's system prompt is missing or too long. Paste the agent's prompt, up "
-        "to 65,536 characters."
-    ),
-    "connect_only_requires_assistant_id": (
-        "The Vapi assistant ID is missing. Enter the assistant's ID from Vapi."
-    ),
-    "connect_only_requires_agent_id": (
-        "The Retell agent ID is missing. Enter the agent's ID from Retell."
-    ),
-    "provider_import_requires_assistant_id": (
-        "The Vapi assistant ID is missing. Enter the assistant's ID from Vapi."
-    ),
-    "provider_import_requires_agent_id": (
-        "The Retell agent ID is missing. Enter the agent's ID from Retell."
-    ),
-    "provider_import_event_path_invalid": (
-        "The event path isn't a path on your server. Enter it starting with /, for "
-        "example /events."
-    ),
-    "provider_import_tool_path_invalid": (
-        "The tool path isn't a path on your server. Enter it starting with /, for "
-        "example /tools."
+        "key you downloaded from Google Cloud.",
+        None,
     ),
 }
 
@@ -182,7 +176,12 @@ _PLATFORM = frozenset(
     {
         "exactly_one_source_required",
         "provider_only_requires_connect_only_provider",
+        # The page has no subfolder field, and takes the branch from the Repository URL.
+        "A subfolder needs a GitHub repository to read it from.",
+        "subfolder_requires_github_source",
         "A subfolder needs the generic harness, which this job didn't ask for.",
+        "github_ref_conflicts_with_repository_url",
+        # The page resolves the commit before it sends the job.
         "github_commit_sha_required",
         "github_commit_sha_invalid",
         "source_locator_missing",
@@ -218,22 +217,29 @@ _PLATFORM = frozenset(
         "hosted_runtime_control_forbidden",
         "hosted_source_must_be_read_only",
         "resolved_secret_forbidden",
+        # Only a local sandbox reads a source path; the hosted page never sends one.
         "source_path must be an existing directory",
         "source_path is outside allowed roots",
     }
 )
 
 _PLATFORM_SENTENCE = (
-    "We couldn't start this because of a problem on our side ({code}). Try again, and "
-    "contact support if it keeps happening."
+    "We couldn't start the check because of a problem on our side ({code}). Try again; "
+    "if it keeps happening, contact support."
+)
+_UNKNOWN_SENTENCE = (
+    "The agent sandbox refused this{code}. Check the agent source and its settings, "
+    "then try again; if it keeps happening, contact support."
 )
 
 # The one refusal whose name comes before the phrase: "{path} may contain secrets; ...".
 _SECRET_FILE_SUFFIX = " may contain secrets; upload it through the .env control"
+# What an unknown refusal's code may look like to be shown at all.
+_CODE = re.compile(r"[a-z][a-z0-9_]{0,99}")
 
 
 def known_codes() -> frozenset[str]:
-    """Every code this module has a sentence for."""
+    """Every code this module has its own sentence for."""
     return frozenset(_USER) | _PLATFORM
 
 
@@ -250,16 +256,33 @@ def _split(message: str) -> tuple[str, str | None]:
     return code, rest.split(" (", 1)[0].strip()
 
 
+def _shown_name(name: str | None, kind: str | None) -> str | None:
+    """The name as the page may show it, or None when it isn't plainly a name."""
+    if not name or kind is None:
+        return None
+    if kind == _SETTING:
+        return name if _SETTING_NAME.fullmatch(name) else None
+    path = PurePosixPath(name)
+    if (
+        len(name) > _PATH_MAX
+        or path.is_absolute()
+        or not path.parts
+        or any(part == ".." or not _PATH_PART.fullmatch(part) for part in path.parts)
+    ):
+        return None
+    return name
+
+
 def refusal_sentence(message: str) -> str:
     """The sentence the page shows for one refusal message from the sandbox."""
     code, name = _split(message)
     if code in _USER:
-        template = _USER[code]
-        if "{name}" in template:
-            if not name:
-                return message
-            return template.format(name=name)
-        return template
+        template, kind = _USER[code]
+        shown = _shown_name(name, kind)
+        return template.format(name=f" {shown}" if shown else "")
     if code in _PLATFORM:
+        logger.error("harness_sandbox_refusal_on_our_side", code=code)
         return _PLATFORM_SENTENCE.format(code=code)
-    return message
+    logger.warning("harness_sandbox_refusal_unknown", kit_message=message[:500])
+    shown_code = code if _CODE.fullmatch(code) else None
+    return _UNKNOWN_SENTENCE.format(code=f" ({shown_code})" if shown_code else "")

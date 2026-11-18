@@ -6,8 +6,11 @@ import os
 from typing import Any
 
 import requests
+import structlog
 
 from simulate.services.harness_refusals import refusal_sentence
+
+logger = structlog.get_logger(__name__)
 
 
 class HarnessSandboxUnavailable(RuntimeError):
@@ -157,11 +160,25 @@ class HarnessSandboxClient:
                 detail = response.json().get("detail")
             except (ValueError, AttributeError):
                 detail = response.text[:500]
-            message = _refusal_message(detail) or "unknown error"
             if response.status_code < 500:
-                raise HarnessSandboxRejected(response.status_code, message)
+                raise HarnessSandboxRejected(
+                    response.status_code, _refusal_message(detail)
+                )
+            # A refusal the sandbox's own configuration causes (kit #353): our bug, not
+            # an outage, so it reads as the shared our-side sentence with its code.
+            configuration = _configuration_refusals(detail)
+            if configuration:
+                raise HarnessSandboxUnavailable(_refusal_message(configuration))
+            # Not a refusal: the sandbox can't do it right now. The page shows a fixed
+            # sentence; the kit's own text goes to the server log only (ADR-010).
+            logger.warning(
+                "harness_sandbox_unavailable",
+                status_code=response.status_code,
+                kit_detail=str(detail)[:500],
+            )
             raise HarnessSandboxUnavailable(
-                f"ALK sandbox returned {response.status_code}: {message}"
+                f"The agent sandbox couldn't take this right now "
+                f"(HTTP {response.status_code}). Try again in a few minutes."
             )
         return response.json()
 
@@ -170,19 +187,32 @@ def _refusal_message(detail: Any) -> str:
     """The sandbox's refusal as text for the page.
 
     Its request validation answers with FastAPI's list of errors; their
-    messages are read, without pydantic's "Value error, " prefix, and a known
-    code becomes its sentence (``harness_refusals``). Any other detail is used
-    as it is.
+    messages are read, without pydantic's "Value error, " prefix. Each becomes
+    the platform's own sentence (``harness_refusals``, ADR-010): the kit's text
+    never reaches the page, so a sentence two errors share is shown once.
     """
     if not isinstance(detail, list):
         return refusal_sentence(str(detail or "").strip())
-    sentences = []
+    sentences: list[str] = []
     for error in detail:
         message = error.get("msg") if isinstance(error, dict) else error
         message = str(message or "").strip().removeprefix("Value error, ").strip()
         if message:
-            sentences.append(refusal_sentence(message).rstrip("."))
-    return ". ".join(sentences) + "." if sentences else ""
+            sentence = refusal_sentence(message).rstrip(".")
+            if sentence not in sentences:
+                sentences.append(sentence)
+    return ". ".join(sentences) + "." if sentences else refusal_sentence("")
+
+
+def _configuration_refusals(detail: Any) -> list[dict]:
+    """The entries of a 5xx body the sandbox marks as its own configuration refusals."""
+    if not isinstance(detail, list):
+        return []
+    return [
+        error
+        for error in detail
+        if isinstance(error, dict) and error.get("type") == "sandbox_configuration"
+    ]
 
 
 def _valid_header_token(token: str) -> bool:

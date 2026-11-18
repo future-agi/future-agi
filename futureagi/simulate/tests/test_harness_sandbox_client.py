@@ -56,14 +56,25 @@ def test_other_client_errors_are_still_rejected(sandbox, status_code):
         client.get("missing")
 
     assert caught.value.status_code == status_code
-    assert str(caught.value) == "no such job"
+    # ADR-010: the kit's own text never reaches the page; an unknown refusal gets the
+    # generic sentence.
+    assert str(caught.value) == refusal_sentence("no such job")
+    assert "no such job" not in str(caught.value)
 
 
 def test_server_error_is_unavailable(sandbox):
-    client = sandbox(500, detail="boom")
+    # ADR-010: the page shows a fixed sentence with the status; the kit's own text
+    # goes to the server log only.
+    client = sandbox(500, detail="boom sk-live-in-a-traceback")
 
-    with pytest.raises(HarnessSandboxUnavailable, match="returned 500: boom"):
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
         client.list_jobs()
+
+    assert str(caught.value) == (
+        "The agent sandbox couldn't take this right now (HTTP 500). Try again in a "
+        "few minutes."
+    )
+    assert "boom" not in str(caught.value)
 
 
 def test_a_refusal_with_no_token_set_names_the_missing_setting(monkeypatch):
@@ -190,18 +201,22 @@ def test_a_github_source_without_a_commit_is_refused_in_a_sentence(sandbox):
 
     assert caught.value.status_code == 422
     assert str(caught.value) == refusal_sentence("github_commit_sha_required")
-    assert str(caught.value).startswith("We couldn't start this")
+    assert str(caught.value).startswith("We couldn't start the check")
 
 
 def test_a_code_the_user_can_fix_reaches_the_page_as_its_sentence(sandbox):
-    client = sandbox(422, detail=_validation_errors("environment_name_invalid: MY-KEY"))
+    client = sandbox(
+        422, detail=_validation_errors("environment_value_contains_nul: API_URL")
+    )
 
     with pytest.raises(HarnessSandboxRejected) as caught:
         client.submit({"source_id": "abc"})
 
-    assert str(caught.value) == refusal_sentence("environment_name_invalid: MY-KEY")
-    assert "MY-KEY" in str(caught.value)
-    assert "environment_name_invalid" not in str(caught.value)
+    assert str(caught.value) == refusal_sentence(
+        "environment_value_contains_nul: API_URL"
+    )
+    assert "API_URL" in str(caught.value)
+    assert "environment_value_contains_nul" not in str(caught.value)
 
 
 def test_an_endpoint_refusal_string_reaches_the_page_as_its_sentence(sandbox):
@@ -213,11 +228,15 @@ def test_an_endpoint_refusal_string_reaches_the_page_as_its_sentence(sandbox):
     assert str(caught.value) == refusal_sentence("uploaded source was not found")
 
 
-def test_a_validation_list_without_a_known_code_reads_as_its_messages(sandbox):
+def test_a_validation_list_without_a_known_code_never_shows_the_kits_text(sandbox):
+    # ADR-010: an unknown code gets the generic sentence and its code; free text the
+    # kit wrote (it can repeat what was typed) never reaches the page.
     client = sandbox(
         422,
         detail=_validation_errors(
-            "a_code_the_kit_adds_later", "A subfolder needs a GitHub repository."
+            "a_code_the_kit_adds_later",
+            "a_code_the_kit_adds_later",
+            "Unexpected value sk-live-pasted-here",
         ),
     )
 
@@ -226,6 +245,46 @@ def test_a_validation_list_without_a_known_code_reads_as_its_messages(sandbox):
 
     message = str(caught.value)
     assert message == (
-        "a_code_the_kit_adds_later. A subfolder needs a GitHub repository."
+        refusal_sentence("a_code_the_kit_adds_later").rstrip(".")
+        + ". "
+        + refusal_sentence("Unexpected value sk-live-pasted-here")
     )
+    assert "sk-live" not in message
     assert "[{" not in message and "Value error" not in message
+
+
+# Kit #353: a refusal the sandbox's own configuration causes is a 500 whose detail
+# entries are typed "sandbox_configuration". It is our bug, not an outage: the page
+# shows the shared our-side sentence with the code (ADR-010, 4).
+def test_a_configuration_refusal_shows_the_our_side_sentence_not_unavailable(sandbox):
+    client = sandbox(
+        500,
+        detail=[
+            {
+                "type": "sandbox_configuration",
+                "loc": ["sandbox"],
+                "msg": "Value error, hosted_isolation_must_be_dedicated_vm",
+            }
+        ],
+    )
+
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
+        client.submit({"github_repository": "acme/agent"})
+
+    assert str(caught.value) == refusal_sentence(
+        "hosted_isolation_must_be_dedicated_vm"
+    )
+    assert "(hosted_isolation_must_be_dedicated_vm)" in str(caught.value)
+    assert "couldn't take this right now" not in str(caught.value)
+
+
+def test_a_500_list_without_a_configuration_entry_is_still_unavailable(sandbox):
+    client = sandbox(
+        500,
+        detail=[{"type": "value_error", "loc": ["body"], "msg": "Value error, boom"}],
+    )
+
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
+        client.list_jobs()
+
+    assert "couldn't take this right now (HTTP 500)" in str(caught.value)

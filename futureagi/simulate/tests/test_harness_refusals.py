@@ -2,9 +2,11 @@
 sentence that says what went wrong and what to do about it (TH-8978).
 
 The codes and where the kit raises them are listed in
-~/Desktop/TH-8978/birch-refusal-codes.md. A code the user can fix names the field and
-the one action to take; a code only the platform can cause says so and keeps the code
-for support; any other message is shown as the kit wrote it.
+~/Desktop/TH-8978/birch-refusal-codes.md; the rules are ADR-010
+(~/Desktop/coordination/architecture/decisions/). A code the user can fix names the field
+and the one action to take; a code only the platform can cause says so and keeps the
+code for support; any other code gets a generic sentence and its code, never the kit's
+own message.
 """
 
 import re
@@ -17,16 +19,16 @@ from simulate.services.harness_refusals import refusal_sentence
 # Codes the user can fix on the page, as the kit sends them, with the value (a name the
 # caller chose, never a secret) the sentence must keep.
 USER_CODES = [
-    ("A subfolder needs a GitHub repository to read it from.", None),
-    ("subfolder_requires_github_source", None),
     ("github_repository_invalid", None),
     ("github_repository_url_must_point_to_repository_or_branch", None),
     ("github_ref_invalid", None),
-    ("github_ref_conflicts_with_repository_url", None),
     ("environment_values_limit_exceeded", None),
+    # A name that fails the check for a setting name or a path is left out (ADR-010).
+    ("environment_name_invalid: MY-KEY", None),
+    ("secret_reference_name_invalid: my key", None),
+    ("unsafe source path: ../etc/passwd", None),
     ("environment_values_size_exceeded", None),
     ("environment_value_conflicts_with_secret_reference", None),
-    ("environment_name_invalid: MY-KEY", "MY-KEY"),
     (
         "environment_name_reserved: PATH (the name steers a process the runner starts, "
         "or is the runner's own; send the value under another name and read that name "
@@ -34,18 +36,10 @@ USER_CODES = [
         "PATH",
     ),
     ("environment_value_contains_nul: API_URL", "API_URL"),
-    ("secret_reference_name_invalid: my key", "my key"),
     ("secret_alias_reserved: HOME", "HOME"),
-    (
-        "connector_config_name_reserved: PYTHONPATH (the name steers a process the "
-        "runner starts, or is the runner's own; send the value under another name and "
-        "read that name in the agent)",
-        "PYTHONPATH",
-    ),
     ("source may contain at most 5000 files", None),
     ("source exceeds the 50 MiB file or 200 MiB bundle limit", None),
     ("duplicate source path: app/main.py", "app/main.py"),
-    ("unsafe source path: ../etc/passwd", "../etc/passwd"),
     (
         "config/.env.local may contain secrets; upload it through the .env control",
         "config/.env.local",
@@ -60,17 +54,6 @@ USER_CODES = [
     ("credential file may not exceed 5 MiB", None),
     ("credential file is empty", None),
     ("Google application credentials must be a valid JSON object", None),
-    ("provider_phone_requires_e164_phone_number", None),
-    ("phone_connect_only_requires_e164_phone_number", None),
-    ("phone_connect_only_requires_target_system_prompt", None),
-    ("livekit_connect_only_requires_agent_name", None),
-    ("livekit_connect_only_requires_target_system_prompt", None),
-    ("connect_only_requires_assistant_id", None),
-    ("connect_only_requires_agent_id", None),
-    ("provider_import_requires_assistant_id", None),
-    ("provider_import_requires_agent_id", None),
-    ("provider_import_event_path_invalid", None),
-    ("provider_import_tool_path_invalid", None),
 ]
 
 # Codes only the platform's own request can cause: the user can't fix them.
@@ -80,6 +63,10 @@ PLATFORM_CODES = [
     "A subfolder needs the generic harness, which this job didn't ask for.",
     "github_commit_sha_required",
     "github_commit_sha_invalid",
+    # The page has no subfolder field, and it takes the branch from the repository URL.
+    "A subfolder needs a GitHub repository to read it from.",
+    "subfolder_requires_github_source",
+    "github_ref_conflicts_with_repository_url",
     "source_locator_missing: archive",
     "one relative path is required per file",
     "source_id is invalid",
@@ -117,6 +104,22 @@ PLATFORM_CODES = [
     "source_path is outside allowed roots",
 ]
 
+
+@pytest.fixture
+def logged(monkeypatch):
+    seen = []
+
+    class _Log:
+        def error(self, event, **fields):
+            seen.append(("error", event, fields.get("code")))
+
+        def warning(self, event, **fields):
+            seen.append(("warning", event, fields.get("kit_message")))
+
+    monkeypatch.setattr(harness_refusals, "logger", _Log())
+    return seen
+
+
 _SNAKE_CODE = re.compile(r"\b[a-z0-9]+(?:_[a-z0-9]+){2,}\b")
 
 
@@ -141,32 +144,81 @@ def test_a_code_the_user_can_fix_reads_as_what_failed_and_what_to_do(message, va
     assert not _SNAKE_CODE.search(sentence.replace(value or "\0", ""))
     if value is not None:
         assert value in sentence
+    elif ": " in message:
+        # A name that fails the check is left out, never echoed.
+        assert message.split(": ", 1)[1].split(" (", 1)[0] not in sentence
     # The kit's own hint is replaced by the sentence's repair, never doubled.
     assert "steers a process the runner starts" not in sentence
 
 
 @pytest.mark.parametrize("message", PLATFORM_CODES, ids=lambda m: _code_of(m)[:60])
-def test_a_code_only_the_platform_causes_says_so_and_keeps_the_code(message):
+def test_a_code_only_the_platform_causes_says_so_keeps_the_code_and_is_logged(
+    message, logged
+):
     sentence = refusal_sentence(message)
 
     assert sentence.startswith(
-        "We couldn't start this because of a problem on our side"
+        "We couldn't start the check because of a problem on our side"
     )
     assert f"({_code_of(message)})" in sentence
     assert sentence.endswith(".")
+    assert logged == [
+        ("error", "harness_sandbox_refusal_on_our_side", _code_of(message))
+    ]
+
+
+@pytest.mark.parametrize(
+    ("message", "code"),
+    [
+        ("a_code_the_kit_adds_later", "a_code_the_kit_adds_later"),
+        ("a_code_the_kit_adds_later: SOME_NAME", "a_code_the_kit_adds_later"),
+        # Out of this week's path (ADR-010, 5): these take the fallback for now.
+        (
+            "livekit_connect_only_requires_agent_name",
+            "livekit_connect_only_requires_agent_name",
+        ),
+        ("connect_only_requires_assistant_id", "connect_only_requires_assistant_id"),
+        (
+            "connector_config_name_reserved: PYTHONPATH",
+            "connector_config_name_reserved",
+        ),
+        ("The sandbox said something new: sk-live-pasted-here", None),
+        ("", None),
+    ],
+)
+def test_an_unknown_code_gets_a_generic_sentence_never_the_kits_message(
+    message, code, logged
+):
+    sentence = refusal_sentence(message)
+
+    assert sentence.startswith("The agent sandbox refused this")
+    assert ("(" + code + ")" in sentence) if code else "(" not in sentence
+    if message and message != code:
+        assert message not in sentence
+    assert "SOME_NAME" not in sentence and "sk-live" not in sentence
+    assert "PYTHONPATH" not in sentence
+    # The kit's message goes to the server log, not to the page.
+    assert logged == [("warning", "harness_sandbox_refusal_unknown", message)]
 
 
 @pytest.mark.parametrize(
     "message",
     [
-        "a_code_the_kit_adds_later",
-        "a_code_the_kit_adds_later: SOME_NAME",
-        "The sandbox said something new.",
-        "",
+        "environment_value_contains_nul: " + "A" * 65,
+        "environment_value_contains_nul: sk-live-0123456789",
+        "sandbox_vault_reference_unknown: bad name",
+        "duplicate source path: /etc/passwd",
+        "duplicate source path: app/../../secret",
+        "duplicate source path: " + "a/" * 150 + "x",
     ],
 )
-def test_an_unknown_message_is_shown_as_the_kit_wrote_it(message):
-    assert refusal_sentence(message) == message
+def test_a_name_that_is_not_a_plain_setting_name_or_path_is_left_out(message):
+    sentence = refusal_sentence(message)
+    name = message.split(": ", 1)[1]
+
+    assert name not in sentence
+    assert "{name}" not in sentence and "  " not in sentence
+    assert sentence.endswith(".")
 
 
 def test_every_code_is_classified_once():
