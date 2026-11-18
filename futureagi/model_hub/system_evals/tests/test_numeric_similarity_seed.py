@@ -10,7 +10,8 @@ from django.core.cache import cache
 from model_hub.management.commands import seed_system_evals as seeder
 from model_hub.models.evals_metric import EvalTemplate
 
-# The exact numeric_similarity definition shipped with catalog 32.
+# Catalogs 32 and 33 shipped the same numeric_similarity definition.
+PREVIOUS_VERSION = 33
 PREVIOUS = Path(__file__).parent / "fixtures/numeric_version_32/numeric_similarity.yaml"
 CACHE_KEY = "system_evals_version"
 
@@ -58,12 +59,12 @@ def test_existing_catalog_refreshes_only_numeric_similarity(monkeypatch):
     previous_cache = cache.get(CACHE_KEY)
     try:
         with monkeypatch.context() as old:
-            old.setattr(seeder, "SYSTEM_EVALS_VERSION", 32)
+            old.setattr(seeder, "SYSTEM_EVALS_VERSION", PREVIOUS_VERSION)
             old.setattr(seeder, "load_yaml_evals", lambda: old_definitions)
             seeder.seed_evals(force=True)
         before = _snapshot()
         assert set(before) >= {definition["eval_id"] for definition in definitions}
-        assert cache.get(CACHE_KEY) == 32
+        assert cache.get(CACHE_KEY) == PREVIOUS_VERSION
         assert _score(before[eval_id]["config"]["code"]) == pytest.approx(1 / 1234)
 
         assert seeder.seed_evals() == (0, 1, len(definitions) - 1)
