@@ -423,6 +423,27 @@ def test_numeric_similarity_reads_grouped_and_exponent_numbers():
         assert ev(None, b, a, None)["score"] == 1.0, (b, a)
 
 
+@pytest.mark.parametrize(
+    ("text", "value"),
+    [
+        ("Rs.500", 500),
+        ("Rs.1,234", 1234),
+        (".5", 0.5),
+        ("price: -.5e2", -50),
+        ("10000000000000000 bytes", "1e16"),
+        ("10,000,000,000,000,000 bytes", "1e16"),
+        ("1e16 bytes", 10**16),
+    ],
+)
+def test_numeric_similarity_measurement_spellings(text, value):
+    evaluate = _load_eval("numeric_similarity")
+    for left, right in [(text, value), (value, text)]:
+        assert evaluate(None, left, right, None) == {
+            "score": 1.0,
+            "reason": "Numeric Similarity: 1.000",
+        }
+
+
 @pytest.mark.parametrize(("interval", "lower"), [("lower bound 2..10", 2), ("0..9", 0)])
 def test_numeric_similarity_reads_first_bound_of_integer_range(interval, lower):
     evaluate = _load_eval("numeric_similarity")

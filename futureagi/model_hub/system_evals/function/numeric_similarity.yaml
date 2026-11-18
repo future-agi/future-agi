@@ -34,8 +34,9 @@ config:
                 if not text:
                     return None, f"{name} is empty"
                 # A decimal point may end a mantissa (2.e3), but not start a range (2..10).
+                # A leading decimal stands alone (.5); after a word the dot is punctuation (Rs.500).
                 match = re.search(
-                    r'[-+]?(?:(?:\d{1,3}(?:,\d{3})+(?!\d)|\d+)(?:\.(?!\.)\d*)?|\.\d+)(?:[eE][-+]?\d+)?',
+                    r'[-+]?(?:(?:\d{1,3}(?:,\d{3})+(?!\d)|\d+)(?:\.(?!\.)\d*)?|(?<!\w)\.\d+)(?:[eE][-+]?\d+)?',
                     text,
                 )
                 if not match:
@@ -44,14 +45,12 @@ config:
                 prefix = text[:match.start()]
                 # A dotted version is not a decimal; don't score just its prefix.
                 if (re.match(r'\.\d', text[match.end():])
-                        or re.search(r'\b(?:v|version\s*[:=]?\s*)$', prefix, re.I)):
+                        or re.search(r'\b(?:v\.?|version(?:\.|\s*[:=]?\s*))$', prefix, re.I)):
                     return None, f"Version identifier in {name}"
-                # Long ungrouped digit strings can be IDs, not measurements.
-                # Converting them to float can even equate two different IDs.
+                # Labels and zero padding indicate an identifier; magnitude alone does not.
                 if re.fullmatch(r'[-+]?\d{16,}\.?', token):
-                    digits = token.strip('+-.')
-                    if (re.search(r'\b(?:id|identifier)\s*[:=#]?\s*$', prefix, re.I)
-                            or digits.startswith('0') or float(digits) >= 2**53):
+                    if (re.search(r'\b(?:id|identifier|order)\s*[:=#]?\s*$', prefix, re.I)
+                            or token.lstrip('+-').startswith('0')):
                         return None, f"Long integer identifier in {name}"
                 value = token.replace(",", "")
             try:
