@@ -512,3 +512,54 @@ def test_an_unversioned_amend_writes_a_new_object_and_keeps_a_pending_extend(
     )
 
     assert run.payload["metadata"]["authoring_object_key"] == new_key
+
+
+def test_the_index_only_keys_are_the_ones_alk_adds_to_an_index_entry():
+    """Pinned to what ALK's write_index emits beyond a case's own fields, so a new index key cannot slip into a case's
+    file or the change review unnoticed."""
+    from pathlib import Path
+
+    from simulate.services.harness_versioning.hashing import INDEX_ONLY_FIELDS
+
+    fixture = Path(__file__).parent / "fixtures" / "alk_suite_index_only_keys.json"
+    emitted = json.loads(fixture.read_text(encoding="utf-8"))["index_only"]
+
+    assert INDEX_ONLY_FIELDS == frozenset(emitted)
+
+
+def test_an_amend_writes_only_the_cases_own_fields_into_its_file():
+    """The edit is the case's suite index entry: its bookkeeping stays in the index, and a file that took it from an
+    earlier rewrite is written back without it."""
+    entry = {"tests": "new", "steps": 2, "folder": "scenarios/explain_pin"}
+    polluted = {
+        "instruction": "call",
+        "steps": 3,
+        "folder": "scenarios/book_ride_airport",
+    }
+    archive = _read(_archive())
+    archive["scenarios/book_ride_airport/scenario.json"] = json.dumps(
+        {**json.loads(archive["scenarios/book_ride_airport/scenario.json"]), **polluted}
+    ).encode()
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:gz") as tar:
+        for path, data in archive.items():
+            member = tarfile.TarInfo(path)
+            member.size = len(data)
+            tar.addfile(member, io.BytesIO(data))
+
+    after = _read(
+        _rewritten_authoring_archive(
+            out.getvalue(),
+            _suite(explain_pin=entry, book_ride_airport={"tests": "also new"}),
+        )
+    )
+
+    for name in ("explain_pin", "book_ride_airport"):
+        written = json.loads(after[f"scenarios/{name}/scenario.json"])
+        assert not {"folder", "steps"} & set(written), (name, written)
+    assert json.loads(after["scenarios/explain_pin/scenario.json"])["tests"] == "new"
+    index = {one["name"]: one for one in json.loads(after["scenarios.json"])}
+    assert (index["explain_pin"]["steps"], index["explain_pin"]["folder"]) == (
+        2,
+        "scenarios/explain_pin",
+    )

@@ -6647,13 +6647,22 @@ def _rewritten_authoring_archive(body: bytes, suite: list[dict]) -> bytes | None
                 document = documents.get(parts[1])
                 edit = _edit_for(parts[1], document, suite)
                 if isinstance(document, dict) and edit is not None:
+                    from simulate.services.harness_versioning.hashing import (
+                        INDEX_ONLY_FIELDS,
+                    )
+
+                    # The case's own fields only: the edit is its suite index entry, whose bookkeeping stays there.
                     document = {
-                        **document,
-                        **{
-                            key: value
-                            for key, value in edit.items()
-                            if key not in {"scenario_key", "scenario_id"}
-                        },
+                        key: value
+                        for key, value in {
+                            **document,
+                            **{
+                                key: value
+                                for key, value in edit.items()
+                                if key not in {"scenario_key", "scenario_id"}
+                            },
+                        }.items()
+                        if key not in INDEX_ONLY_FIELDS
                     }
                     data = json.dumps(document, indent=2).encode("utf-8")
             elif parts == ("scenarios.json",):

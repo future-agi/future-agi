@@ -322,9 +322,6 @@ def _shared_keys(files: Mapping[str, bytes]) -> set[str]:
 
 # Where a scenario item keeps its entry in the suite index, which runs read as the scenario.
 INDEX_ENTRY = "_index"
-# What ALK's suite index adds to each entry (`folder.write_index`: the case's folder and its solution's step count).
-# A scenario document that carries them took them from its index entry, so they are never a change to the case.
-INDEX_ONLY_FIELDS = frozenset({"folder", "steps"})
 
 
 def index_key(entry: Any) -> str:
@@ -360,7 +357,11 @@ def _scenario_items(files: Mapping[str, bytes], whole: set[str]) -> list[Item]:
         inside = folders.get(key, {})
         parsed = read_json(inside.get("scenario.json", b""))
         document = (
-            {name: one for name, one in parsed.items() if name not in INDEX_ONLY_FIELDS}
+            {
+                name: one
+                for name, one in parsed.items()
+                if name not in hashing.INDEX_ONLY_FIELDS
+            }
             if isinstance(parsed, dict)
             else {}
         )
