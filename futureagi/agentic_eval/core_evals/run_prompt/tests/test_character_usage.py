@@ -169,6 +169,23 @@ def test_tts_cost_requires_billable_input_characters(path, input_usage, amount, 
     assert (cost["total_cost"], cost["pricing_source"]) == (amount, source)
 
 
+@pytest.mark.parametrize("model", ["openai/tts-1", "gemini-1.5-pro"])
+@pytest.mark.parametrize("unpriced_unit", ["images_generated", "audio_seconds"])
+def test_zero_in_another_unit_does_not_replace_the_token_estimate(model, unpriced_unit):
+    usage = {
+        "prompt_tokens": 1000,
+        "completion_tokens": 100,
+        "total_tokens": 1100,
+        "input_characters": "not-a-count",
+        unpriced_unit: 0,
+    }
+    response = ModelResponse(model=model, usage=usage)
+    raw_cost = calculate_total_cost(model, usage)
+    streamed_cost = ResponseFormatter.build_streaming_metadata(response, 0)["cost"]
+    assert streamed_cost == raw_cost
+    assert (raw_cost["total_cost"], raw_cost["pricing_source"]) == (0.000210, "default")
+
+
 def test_response_formatter_token_only_usage_is_labelled_estimate():
     response = SimpleNamespace(
         model="gemini-1.5-pro",

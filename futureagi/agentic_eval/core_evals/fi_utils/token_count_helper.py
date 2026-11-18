@@ -460,19 +460,38 @@ def calculate_total_cost(
     # Unrecognized pricing structure from AVAILABLE_MODELS: do NOT silently bill
     # $0 with source "available_models". Fall through to fallback pricing and
     # stamp a detectable source so downstream can distinguish a real $0.
+    selection_usage = token_usage
     if not recognized and pricing_source == "available_models":
+        if any(
+            unit in pricing
+            for unit in (
+                "input_per_1M_characters",
+                "input_per_1k_characters",
+                "output_per_1k_characters",
+            )
+        ):
+            # A zero image or audio count is not evidence for that fallback on a
+            # character-priced request. Keep the original usage for arithmetic,
+            # including an explicit custom fallback with a genuine zero.
+            selection_usage = {
+                key: value
+                for key, value in token_usage.items()
+                if not (key in ("images_generated", "audio_seconds") and value == 0)
+            }
         logger.warning(
             "unrecognized_model_pricing_using_fallback",
             model=model_name,
             pricing=pricing,
         )
-        pricing, fallback_type = _select_fallback_pricing(token_usage, fallback_pricing)
+        pricing, fallback_type = _select_fallback_pricing(
+            selection_usage, fallback_pricing
+        )
         pricing_source = "fallback" if fallback_pricing else "default"
         prompt_cost, completion_cost, recognized = _compute_costs(pricing, token_usage)
 
     # A custom fallback may itself be a placeholder or use unsupported units.
     if not recognized:
-        pricing, _ = _select_fallback_pricing(token_usage, None)
+        pricing, _ = _select_fallback_pricing(selection_usage, None)
         pricing_source = "default"
         prompt_cost, completion_cost, _ = _compute_costs(pricing, token_usage)
 
