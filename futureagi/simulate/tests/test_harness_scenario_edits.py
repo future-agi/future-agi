@@ -313,12 +313,23 @@ def test_every_field_an_edit_sets_is_kept_on_a_saved_member():
 def test_a_scenario_edit_survives_amend_and_save(
     user, workspace, storage, auth_client, field, value
 ):
-    """A field a person sets on a case is on the saved member after Save."""
+    """A field a person sets on a case is in a draft the amend names, and on the saved member after Save."""
     from simulate.models import HarnessSuiteMember
+    from simulate.services.harness_versioning import drafts
 
     environment = _built(user, workspace, f"ed-survive-{field}")
-    _amend_with(auth_client, environment, NAMES[0], field, value)
-    assert _edited(environment, NAMES[0]).get(field) == value
+    amended = _amend_with(auth_client, environment, NAMES[0], field, value)
+
+    assert amended["receipts"][0]["outcome"] == "applied", amended
+    draft = drafts.open_draft(environment, "suite")
+    assert draft is not None
+    assert amended["draft"] == {"id": str(draft.id), "revision": draft.revision}
+    [held] = [
+        one
+        for one in draft.documents["scenarios"]
+        if one.get("scenario_key") == _key(NAMES[0])
+    ]
+    assert held.get(field) == value
 
     _save(environment, user)
 
@@ -327,3 +338,33 @@ def test_a_scenario_edit_survives_amend_and_save(
         suite_version=environment.suite_version, scenario_key=_key(NAMES[0])
     )
     assert member.content.get(field) == value, (field, member.content.get(field))
+
+
+def test_an_amend_that_leaves_nothing_to_save_says_nothing_changed(
+    user, workspace, storage, auth_client
+):
+    """An applied receipt means a draft holds the change; an edit the saved version already reads is not applied,
+    and one that takes a draft back to the saved version is."""
+    from simulate.services.harness_versioning import drafts
+
+    environment = _built(user, workspace, "ed-no-op")
+    _amend_with(auth_client, environment, NAMES[0], "must_pass", True)
+    _save(environment, user)
+
+    again = _amend_with(auth_client, environment, NAMES[0], "must_pass", True)
+
+    assert again["receipts"][0]["outcome"] == "refused", again
+    assert again["receipts"][0]["code"] == "not_saved"
+    assert (
+        again["receipts"][0]["why"]
+        == "nothing changed: the saved version already has this"
+    )
+    assert drafts.open_draft(environment, "suite") is None
+
+    changed = _amend_with(auth_client, environment, NAMES[0], "must_pass", False)
+    back = _amend_with(auth_client, environment, NAMES[0], "must_pass", True)
+
+    assert changed["draft"] is not None
+    assert back["receipts"][0]["outcome"] == "applied", back
+    assert back["draft"] is None
+    assert drafts.open_draft(environment, "suite") is None

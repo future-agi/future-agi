@@ -2408,6 +2408,7 @@ class HostedHarnessProvider:
             # Where drafts apply, an edit goes to the unsaved changes, on top of them.
             on_draft = drafts.drafts_apply(job)
             draft_numbering = None
+            suite_draft = None
             if on_draft:
                 try:
                     drafts.require_no_rebuild(job, piece="suite")
@@ -2745,7 +2746,13 @@ class HostedHarnessProvider:
                         }
                     )
             if touched and on_draft:
-                return self._amend_draft(job, suite, receipts, request.user)
+                return self._amend_draft(
+                    job,
+                    suite,
+                    receipts,
+                    request.user,
+                    had_draft=suite_draft is not None,
+                )
             if touched:
                 # The archive a run replays changes first; if it cannot, nothing changes.
                 try:
@@ -2810,8 +2817,9 @@ class HostedHarnessProvider:
                     ]
         return Response({"receipts": receipts})
 
-    def _amend_draft(self, job, suite, receipts, user) -> Response:
-        """Write an amended suite into the unsaved changes; nothing runs it until Save."""
+    def _amend_draft(self, job, suite, receipts, user, *, had_draft: bool) -> Response:
+        """Write an amended suite into the unsaved changes; nothing runs it until Save. An edit that leaves no draft
+        where there was none changed nothing: the saved version already reads that way."""
         from simulate.services.harness_versioning import drafts
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
@@ -2851,6 +2859,8 @@ class HostedHarnessProvider:
         if write is None:
             return kept("the change could not be saved")
         draft = write.suite
+        if draft is None and not had_draft:
+            return kept("the saved version already has this")
         return Response(
             {
                 "receipts": receipts,
