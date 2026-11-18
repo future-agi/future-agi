@@ -1,14 +1,8 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
-import {
-  Box,
-  Button,
-  InputAdornment,
-  MenuItem,
-  Stack,
-  TextField,
-} from "@mui/material";
+import { Box, Button, InputAdornment, MenuItem, TextField } from "@mui/material";
 import Iconify from "src/components/iconify";
+import ListToolbar from "src/components/list-toolbar";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useConnectedAgents } from "src/api/agents/connectedAgents";
 import {
@@ -16,7 +10,6 @@ import {
   hasActiveFilters,
 } from "src/api/simulate-environments/environmentListParams";
 import { NOT_PROVIDED } from "../myEnvironments.constants";
-import SoonChip from "./SoonChip";
 
 // The list endpoint's own status values; "completed" reads as Ready.
 const STATUS_OPTIONS = [
@@ -37,7 +30,7 @@ const MENU_MAX_HEIGHT = 320;
 const AGENT_OPTIONS_LIMIT = 100;
 
 const compactInputSx = {
-  "& .MuiInputBase-root": { typography: "s2", height: 34 },
+  "& .MuiInputBase-root": { typography: "s2", height: 32 },
   "& .MuiOutlinedInput-input": { py: 0 },
 };
 const selectSx = {
@@ -102,7 +95,12 @@ FilterSelect.propTypes = {
  * Agent menus. Every filter is server-side and always sent; `onChange` gets
  * the whole next filters object.
  */
-export default function EnvironmentFilters({ value, onChange, statusCounts }) {
+export default function EnvironmentFilters({
+  value,
+  onChange,
+  statusCounts,
+  shown,
+}) {
   const { data: agents } = useConnectedAgents({
     page: 0,
     pageSize: AGENT_OPTIONS_LIMIT,
@@ -131,36 +129,32 @@ export default function EnvironmentFilters({ value, onChange, statusCounts }) {
 
   const set = (key) => (next) => onChange({ ...value, [key]: next });
 
+  const counts =
+    statusCounts && statusCounts !== NOT_PROVIDED ? statusCounts : null;
+  const total = counts
+    ? Object.values(counts).reduce((sum, c) => sum + (c || 0), 0)
+    : null;
+  const statusOptions = counts
+    ? STATUS_OPTIONS.filter(
+        (o) => counts[o.value] > 0 || o.value === value.status,
+      )
+    : STATUS_OPTIONS;
+
   const statusCount = (status) => {
-    if (statusCounts === NOT_PROVIDED) {
-      return (
-        <Box component="span" sx={{ ml: "auto", pl: 1.5 }}>
-          <SoonChip label="Count" what="Status counts" plural />
-        </Box>
-      );
-    }
-    if (!statusCounts) return null;
-    const n = status
-      ? statusCounts[status] ?? 0
-      : Object.values(statusCounts).reduce((sum, c) => sum + (c || 0), 0);
+    if (!counts) return null;
     return (
       <Box component="span" sx={countSx}>
-        {n}
+        {status ? counts[status] ?? 0 : total}
       </Box>
     );
   };
 
   const filtering = hasActiveFilters(value);
+  const clearLabel =
+    total != null && shown != null ? `Clear · ${shown} of ${total}` : "Clear";
 
   return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={1.5}
-      flexWrap="wrap"
-      rowGap={1}
-      sx={{ flexShrink: 0 }}
-    >
+    <ListToolbar flexWrap="wrap" rowGap={1}>
       <TextField
         size="small"
         value={search}
@@ -171,7 +165,7 @@ export default function EnvironmentFilters({ value, onChange, statusCounts }) {
             <InputAdornment position="start">
               <Iconify
                 icon="solar:magnifer-linear"
-                width={15}
+                width={16}
                 sx={{ color: "text.subtitle" }}
               />
             </InputAdornment>
@@ -183,7 +177,7 @@ export default function EnvironmentFilters({ value, onChange, statusCounts }) {
         label="Status"
         all="All statuses"
         value={value.status}
-        options={STATUS_OPTIONS}
+        options={statusOptions}
         onChange={set("status")}
         count={statusCount}
       />
@@ -203,18 +197,18 @@ export default function EnvironmentFilters({ value, onChange, statusCounts }) {
       />
       {filtering && (
         <Button
+          variant="outlined"
           size="small"
-          color="inherit"
           onClick={() => {
             // Drop half-typed text too, or its pending debounce re-applies it.
             setSearch("");
             onChange(EMPTY_ENV_FILTERS);
           }}
         >
-          Clear filters
+          {clearLabel}
         </Button>
       )}
-    </Stack>
+    </ListToolbar>
   );
 }
 
@@ -227,4 +221,5 @@ EnvironmentFilters.propTypes = {
   }).isRequired,
   onChange: PropTypes.func.isRequired,
   statusCounts: PropTypes.oneOfType([PropTypes.object, PropTypes.symbol]),
+  shown: PropTypes.number,
 };

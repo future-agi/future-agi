@@ -30,7 +30,9 @@ export const ENV_TABS_SX = {
 export const ENVIRONMENTS_HEADER = {
   title: "Environments",
   subtitle:
-    "Set up the world your agent is tested in: seeded data, tools and rules.",
+    "Build a simulated world for your agent, then run callers against it and read the failures.",
+  personasSubtitle:
+    "Reusable callers for voice and chat agents. Use writes an environment's tasks in a persona's voice.",
   connectHeading: "Or connect your own agent",
   connectSub: "We work with what you already have: no rewrite, no adapter.",
 };

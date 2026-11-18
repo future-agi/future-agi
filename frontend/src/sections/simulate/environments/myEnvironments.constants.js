@@ -34,7 +34,7 @@ export const BUILD_STATUS = {
 export const STATUS_META = {
   building: { label: "Building", role: "info" },
   not_run: { label: "Not run yet", role: "neutral" },
-  running: { label: "Running…", role: "info" },
+  running: { label: "Running", role: "info" },
   finalizing: { label: "Finalizing", role: "info" },
   cancelling: { label: "Cancelling", role: "neutral" },
   cancelled: { label: "Cancelled", role: "neutral" },

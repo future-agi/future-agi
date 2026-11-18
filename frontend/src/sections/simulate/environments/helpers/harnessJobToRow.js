@@ -113,21 +113,13 @@ const ENV_AGENT_TYPE = {
 const sent = (obj, key) =>
   obj && Object.hasOwn(obj, key) ? obj[key] : NOT_PROVIDED;
 
-// The last run's pass rate on the scenarios it scored (skipped ones don't
-// count), and how it moved against the run before it. Null when nothing was
-// scored, so the cell reads "-" rather than 0%.
 const lastRunOf = (run) => {
-  const passed = run?.outcome_passed ?? 0;
-  const failed = run?.outcome_failed ?? 0;
-  if (!run || passed + failed === 0) return null;
-  const rate = Math.round((passed / (passed + failed)) * 100);
-  const previous = sent(run, "previous_pass_rate");
-  const delta =
-    previous === NOT_PROVIDED || previous === null
-      ? previous
-      : Math.round(rate - previous);
-  return { rate, delta };
+  if (!run || run.pass_rate == null) return null;
+  return { rate: run.pass_rate, ordinal: run.run_number ?? null };
 };
+
+const versionLabelOf = (version) =>
+  version?.version_number != null ? `v${version.version_number}` : null;
 
 // Map one harness-environments list row to the flat row the My Environments
 // table reads. Unlike the harness-jobs projection, this payload carries the
@@ -153,11 +145,7 @@ export function harnessEnvToRow(item) {
     runsTotal: item?.runs_count ?? null,
     buildProgress: null,
     agent: sent(item, "agent"),
-    owner: sent(item, "owner"),
-    // No environment versions, nor an agent's Main / Live / Sealed tags, in
-    // the backend yet.
-    envVersion: NOT_PROVIDED,
-    agentTags: NOT_PROVIDED,
+    envVersion: versionLabelOf(item?.environment_version),
     // An older backend doesn't send last_run at all; null means never run.
     lastRun:
       sent(item, "last_run") === NOT_PROVIDED

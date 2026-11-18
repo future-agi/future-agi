@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Box, Button, Stack, Tab, Tabs, Typography } from "@mui/material";
+import { Box, Button, Stack, Tab, Tabs } from "@mui/material";
 import Iconify from "src/components/iconify";
+import PageHeader from "src/components/page-header";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import useEnvironmentsTab from "./hooks/useEnvironmentsTab";
 import { resetEnvironmentsEntryState } from "./store/useEnvironmentsStore";
@@ -10,6 +11,14 @@ import { DEFAULT_PAGE_SIZE } from "./myEnvironments.constants";
 import PersonasTab from "./PersonasTab";
 import BuildEnvironmentDrawer from "./buildDrawer/BuildEnvironmentDrawer";
 import { ENTRY_TAB, ENVIRONMENTS_HEADER } from "./environmentOptions";
+
+const TAB_SX = {
+  minWidth: 0,
+  px: 0.75,
+  "&:not(:last-of-type)": { mr: 2.5 },
+  color: "text.secondary",
+  "&.Mui-selected": { color: "text.primary" },
+};
 
 const TAB_PANELS = {
   [ENTRY_TAB.MY]: MyEnvironmentsTab,
@@ -27,13 +36,12 @@ function MyEnvironmentsLabel() {
   });
   return (
     <Stack direction="row" alignItems="center" spacing={0.75} component="span">
-      <span>My Environments</span>
+      <span>My environments</span>
       {isSuccess && (
         <Box
           component="span"
           sx={{
             typography: "s2",
-            color: "text.secondary",
             fontVariantNumeric: "tabular-nums",
           }}
         >
@@ -84,44 +92,34 @@ export default function EnvironmentsHome() {
         overflow: "hidden",
       }}
     >
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        justifyContent="space-between"
-        alignItems={{ sm: "flex-end" }}
-        spacing={2}
-        sx={{ px: 2, pt: 2, pb: 1.5, flexShrink: 0 }}
-      >
-        <Stack
-          direction="row"
-          alignItems="flex-start"
-          spacing={1.5}
-          flex={1}
-          minWidth={0}
-        >
-          <Box>
-            <Typography sx={{ typography: "m1", fontWeight: 600 }}>
-              {ENVIRONMENTS_HEADER.title}
-            </Typography>
-            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-              {ENVIRONMENTS_HEADER.subtitle}
-            </Typography>
-          </Box>
-        </Stack>
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
-          onClick={() => setBuildOpen(true)}
-          sx={{ flexShrink: 0 }}
-        >
-          Build environment
-        </Button>
-      </Stack>
+      <PageHeader
+        sx={{ px: 3, pt: 2, mb: 1.5, flexShrink: 0 }}
+        title={ENVIRONMENTS_HEADER.title}
+        description={
+          tab === ENTRY_TAB.PERSONAS
+            ? ENVIRONMENTS_HEADER.personasSubtitle
+            : ENVIRONMENTS_HEADER.subtitle
+        }
+        actions={
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
+            onClick={() => setBuildOpen(true)}
+          >
+            Build environment
+          </Button>
+        }
+      />
 
-      {/* Tab rail — the theme's tabs, unstyled, over one divider. */}
       <Box
-        sx={{ px: 2, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
+        sx={{
+          px: 3,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          flexShrink: 0,
+        }}
       >
         <Tabs
           sx={{ boxShadow: "none" }}
@@ -132,8 +130,14 @@ export default function EnvironmentsHome() {
             value={ENTRY_TAB.MY}
             disableRipple
             label={<MyEnvironmentsLabel />}
+            sx={TAB_SX}
           />
-          <Tab value={ENTRY_TAB.PERSONAS} disableRipple label="Personas" />
+          <Tab
+            value={ENTRY_TAB.PERSONAS}
+            disableRipple
+            label="Personas"
+            sx={TAB_SX}
+          />
         </Tabs>
       </Box>
 

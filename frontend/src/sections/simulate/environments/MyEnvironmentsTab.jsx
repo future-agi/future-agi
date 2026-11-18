@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography, Button } from "@mui/material";
 import { useNavigate } from "react-router-dom";
@@ -36,12 +36,20 @@ export default function MyEnvironmentsTab({ onBuild }) {
   };
   const { data, isLoading, isPending, isError, isPlaceholderData } =
     useMyEnvironments({ page, pageSize, filters });
-  const rows = data?.rows || [];
-  const total = data?.total || 0;
+  const filtersKey = JSON.stringify(filters);
+  const settledFiltersKey = useRef(filtersKey);
+  useEffect(() => {
+    if (data && !isPlaceholderData) settledFiltersKey.current = filtersKey;
+  }, [data, isPlaceholderData, filtersKey]);
+  const filterLoading =
+    Boolean(isPlaceholderData) && settledFiltersKey.current !== filtersKey;
+  const rows = filterLoading ? [] : data?.rows || [];
+  const total = filterLoading ? 0 : data?.total || 0;
   const loading = isLoading || isPending;
+  const settled = !loading && !filterLoading;
   const filtering = hasActiveFilters(filters);
   // Nothing built yet: the first-run empty state, with no filter bar.
-  const firstRun = !loading && !isError && total === 0 && !filtering;
+  const firstRun = settled && !isError && total === 0 && !filtering;
   // A failed list must read as an error, not as "no environments yet".
   const showError = isError && !loading && total === 0;
 
@@ -66,10 +74,8 @@ export default function MyEnvironmentsTab({ onBuild }) {
         minHeight: 0,
         display: "flex",
         flexDirection: "column",
-        gap: 1.5,
         overflow: "hidden",
-        px: 2,
-        pt: 2,
+        px: 3,
         pb: 2,
       }}
     >
@@ -80,6 +86,7 @@ export default function MyEnvironmentsTab({ onBuild }) {
           value={filters}
           onChange={changeFilters}
           statusCounts={data?.statusCounts}
+          shown={settled ? total : null}
         />
       )}
       {showError ? (
@@ -100,7 +107,7 @@ export default function MyEnvironmentsTab({ onBuild }) {
             </Typography>
           </Stack>
         </Box>
-      ) : !loading && total === 0 && filtering ? (
+      ) : settled && total === 0 && filtering ? (
         // Clear is in the filter bar above.
         <EmptyState icon="solar:filter-linear" title={NO_MATCH_MESSAGE} />
       ) : firstRun ? (
@@ -132,7 +139,7 @@ export default function MyEnvironmentsTab({ onBuild }) {
           }}
           // Dev's table dims the rows already shown while a new filter loads.
           isLoading={loading || Boolean(isPlaceholderData)}
-          pending={loading}
+          pending={!settled}
           onOpen={onOpen}
           onRun={onRun}
           onDelete={onDelete}
