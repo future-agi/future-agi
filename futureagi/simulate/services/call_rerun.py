@@ -14,7 +14,12 @@ from simulate.services.harness_worker_states import (
     ATTEMPTS_KEY,
     MAX_KEPT_ATTEMPTS,
 )
-from simulate.services.harness_workers import READ_KEY, WORKERS_KEY, attempt_end
+from simulate.services.harness_workers import (
+    READ_KEY,
+    WORKERS_KEY,
+    attempt_end,
+    timed_messages,
+)
 from simulate.services.hosted_harness_ingestion import WORLD_ACTIONS_KEY
 
 logger = structlog.get_logger(__name__)
@@ -57,7 +62,11 @@ def _attempt_record(metadata: dict[str, Any]) -> dict[str, Any]:
 
 
 def transcript_snapshot(call_execution: CallExecution) -> list[dict]:
-    """The call's transcript as a rerun snapshot keeps it, with who spoke each actor turn."""
+    """The call's transcript as a rerun snapshot keeps it, with who spoke each actor turn; a chat call's timed messages
+    in the same shape, as its worker record reads its turns."""
+    chat = timed_messages(call_execution)
+    if chat:
+        return chat
     return [
         dict(row)
         for row in with_speakers(call_execution.transcripts.all()).values(
