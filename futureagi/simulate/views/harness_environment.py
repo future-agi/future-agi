@@ -1214,7 +1214,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(jobs, request, view=self)
-        return paginator.get_paginated_response(environment_rows(page))
+        return paginator.get_paginated_response(environment_rows(page or []))
 
     @swagger_auto_schema(responses={200: HarnessEnvironmentDetailSerializer})
     def retrieve(self, request, pk=None):
