@@ -1,0 +1,39 @@
+{
+  "system": {
+    "agent_type": "voice",
+    "avg_score": 85,
+    "avg_response": 420,
+    "avg_agent_latency": 310,
+    "avg_score__00000000-0000-0000-0000-000000000004": 20,
+    "avg_response__00000000-0000-0000-0000-000000000005": 30,
+    "avg_agent_latency__00000000-0000-0000-0000-000000000006": 40
+  },
+  "forward": {
+    "tier_1": { "Warm": 2, "Cold": 1, "choices": ["Warm", "Cold"] },
+    "tier_1__00000000-0000-0000-0000-000000000002_": {
+      "Calm": 1,
+      "Rough": 1,
+      "None": 0,
+      "choices": ["Calm", "Rough", "None"]
+    },
+    "tier1_00000000-0000-0000-0000-000000000002": {
+      "Fine": 3,
+      "Flat": 1,
+      "choices": ["Fine", "Flat"]
+    }
+  },
+  "reverse": {
+    "tier_1": { "Warm": 2, "Cold": 1, "choices": ["Warm", "Cold"] },
+    "tier_1__00000000-0000-0000-0000-000000000002_": {
+      "Calm": 1,
+      "Rough": 1,
+      "None": 0,
+      "choices": ["Calm", "Rough", "None"]
+    },
+    "tier__1___00000000-0000-0000-0000-000000000002": {
+      "Fine": 3,
+      "Flat": 1,
+      "choices": ["Fine", "Flat"]
+    }
+  }
+}
