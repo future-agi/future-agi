@@ -28,17 +28,35 @@ def test_all_session_root_attributes_beyond_old_500_row_cutoff(engine, days):
             toUUID(%(session)s), map(concat('key_', toString(number)), 'value'),
             map('amount', toFloat64(number)), map('flag', toUInt8(modulo(number, 2))), 1
         FROM numbers(502)""",
-        {"project": PROJECT, "session": session_id,
-         "start_us": int(START.timestamp() * 1_000_000)},
+        {
+            "project": PROJECT,
+            "session": session_id,
+            "start_us": int(START.timestamp() * 1_000_000),
+        },
     )
     # A newer tombstone removes one root; neither it nor unrelated sessions
     # may be hydrated. Remaining 501 roots must all contribute their keys.
-    engine.insert(100, trace_id="trace-0", id="root-0", start_time=START,
-                  _version=2, is_deleted=1, attrs_string={"deleted": "gone"})
-    engine.insert(200, trace_id="other-trace", id="other-root",
-                  attrs_string={"other_session": "excluded"})
-    engine.insert(100, id="outside", start_time=START + timedelta(days=days),
-                  attrs_string={"outside_window": "excluded"})
+    engine.insert(
+        100,
+        trace_id="trace-0",
+        id="root-0",
+        start_time=START,
+        _version=2,
+        is_deleted=1,
+        attrs_string={"deleted": "gone"},
+    )
+    engine.insert(
+        200,
+        trace_id="other-trace",
+        id="other-root",
+        attrs_string={"other_session": "excluded"},
+    )
+    engine.insert(
+        100,
+        id="outside",
+        start_time=START + timedelta(days=days),
+        attrs_string={"outside_window": "excluded"},
+    )
     subject = builder(days=days)
     hydrated = engine.execute(*subject.build_page_hydration_query([session_id]))
     rows = type(subject).expand_page_attribute_rows(hydrated)

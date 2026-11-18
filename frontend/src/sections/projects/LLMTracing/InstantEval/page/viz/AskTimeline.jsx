@@ -811,7 +811,7 @@ function SquaresPlot({
             <Typography variant="caption" color="text.secondary">
               {rangeText(hoverColumn.start, hoverColumn.end)}
             </Typography>
-            <Typography variant="body2" sx={{ fontSize: 13, mt: 0.25 }}>
+            <Typography variant="body2" sx={{ fontSize: 12, mt: 0.25 }}>
               {columnSummary(hoverColumn, unit)}
             </Typography>
             <Typography
@@ -1330,7 +1330,7 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
       <Typography
         variant="body2"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: 600,
           minWidth: 40,
           fontVariantNumeric: "tabular-nums",
@@ -1338,7 +1338,7 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
       >
         {formatCount(value)}
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 13 }}>
+      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 12 }}>
         {text}
       </Typography>
     </Stack>
@@ -1348,7 +1348,7 @@ function ColumnCard({ column, question, colorOf, unit, sample }) {
       <Typography variant="caption" color="text.secondary">
         {rangeText(column.start, column.end)}
       </Typography>
-      <Typography variant="body2" sx={{ fontSize: 13, mb: 0.75 }}>
+      <Typography variant="body2" sx={{ fontSize: 12, mb: 0.75 }}>
         {formatCount(column.n)} {rowsNoun(unit, sample, column.n)}
       </Typography>
       <Stack spacing={0.25}>
@@ -1809,7 +1809,7 @@ function SquareCard({ item, question, colorOf }) {
           variant="body2"
           sx={{
             mt: 0.5,
-            fontSize: 13,
+            fontSize: 12,
             display: "-webkit-box",
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",

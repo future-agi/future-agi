@@ -51,8 +51,9 @@ def test_cutoff_read_filters_after_the_final_merge():
     assert "PREWHERE" not in client.sql
     assert client.settings == _CUTOFF_SETTINGS
     assert client.settings["optimize_move_to_prewhere_if_final"] == 0
-    assert "auto_minmax_index_created_at" in (
-        client.settings["ignore_data_skipping_indices"]
+    assert (
+        "auto_minmax_index_created_at"
+        in (client.settings["ignore_data_skipping_indices"])
     )
     # UTC text with microseconds, whatever zone the datetime carries.
     assert client.parameters["cutoff"] == "2026-07-01 10:00:00.250000"
