@@ -42,7 +42,10 @@ def aac_to_wav(audio_bytes: bytes) -> bytes:
             timeout=10,
         )
         metadata = json.loads(info.stdout)
-        duration = metadata["streams"][0].get("duration")
+        streams = metadata.get("streams")
+        if not streams:
+            raise ValueError("No audio stream in recording")
+        duration = streams[0].get("duration")
         # AAC frames can extend past the end of an MP4 audio track. Use its
         # declared playback length; raw ADTS has no such end marker. Never
         # pad or use an estimated bitrate-based duration to shorten raw AAC.

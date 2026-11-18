@@ -11,6 +11,7 @@ network access or ML models inside the sandbox.
 import base64
 import json
 import os
+import subprocess
 
 import structlog
 
@@ -444,7 +445,7 @@ def _preprocess_dead_air_detection(inputs):
             from evaluations.engine.dead_air_audio import aac_to_wav
 
             y, sr = librosa.load(io.BytesIO(aac_to_wav(audio_bytes)), sr=None)
-        except Exception:
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             logger.warning("dead_air_preprocess_decode_failed", error=str(e))
             inputs["_dead_air_error"] = f"Could not decode audio: {e}"
             return inputs
