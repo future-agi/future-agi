@@ -343,6 +343,11 @@ func (t *StdioTransport) write(ctx context.Context, data []byte) error {
 	if !stop() {
 		return ctx.Err()
 	}
+	if err != nil {
+		// The stdin reader can disappear while a worker still holds stdout.
+		// Don't wait for EOF on a session that can no longer send requests.
+		_ = t.Close()
+	}
 	return err
 }
 

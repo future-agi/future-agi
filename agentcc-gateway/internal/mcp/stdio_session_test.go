@@ -78,6 +78,23 @@ func TestStdioEOFEndsCallAndReconnects(t *testing.T) {
 	t.Fatal("EOF did not reconnect before the next scheduled ping")
 }
 
+func TestBrokenStdioInputInvalidatesSession(t *testing.T) {
+	c := catalogFixtureClient(t, "no-input", filepath.Join(t.TempDir(), "unused"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CallTool(ctx, "close-input", nil); err != nil {
+		t.Fatal(err)
+	}
+	// The server closed stdin before acknowledging that call but keeps
+	// stdout open. Only the failed write can tell the client to reconnect.
+	if _, err := c.CallTool(ctx, "again", nil); err == nil || c.Healthy() {
+		t.Fatalf("broken stdio input did not end the session: err=%v healthy=%t", err, c.Healthy())
+	}
+}
+
 func TestRejectedHandshakeDoesNotPublishCatalog(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "reached-prompts")
 	c := catalogFixtureClient(t, "incomplete", marker)
@@ -116,6 +133,13 @@ func TestStdioCatalogFixture(t *testing.T) {
 		var result any = struct{}{}
 		switch req.Method {
 		case MethodToolsCall:
+			if mode == "no-input" {
+				_ = os.Stdin.Close()
+				resp, _ := NewResponse(req.ID, ToolCallResult{})
+				_ = out.Encode(resp)
+				time.Sleep(10 * time.Second)
+				os.Exit(0)
+			}
 			if mode == "eof" {
 				_ = os.Stdout.Close()
 				time.Sleep(10 * time.Second) // no response; transport owns cleanup
