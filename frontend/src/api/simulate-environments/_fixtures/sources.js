@@ -30,9 +30,14 @@ export const sampleSourceSummary = () => ({
   validation_status: null,
 });
 
-// What changed in the Knowledge base since a copy was added, per file id. A
-// saved copy of a file listed here shows "Changed in the Knowledge base" in
-// Sources; Review refresh walks these changes. Add a file id to make it change.
+// How long after a copy is saved its Knowledge base file changes, for files
+// in KB_CHANGES. The World & tools tab flags the copy then (see
+// useKnowledgeBaseChanges). Add a file id to KB_CHANGES to make it change.
+export const KB_CHANGE_AFTER_MS = 20000;
+
+// What a Knowledge base file says once it changes, per file id. `passage` is
+// the copy's passage a rule change replaces; the "from" side is read from the
+// saved copy. `rows` is how many rows a row change adds or removes.
 const KB_CHANGES = {
   "7a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c01": [
     {
@@ -40,8 +45,9 @@ const KB_CHANGES = {
       kind: "rule-changed",
       label: "Return window",
       ref: "p.1",
-      from: "Items can be returned within 14 days of delivery for a full refund.",
+      passage: "p1",
       to: "Items can be returned within 21 days of delivery for a full refund.",
+      rule: "Refunds are allowed within 21 days of delivery.",
       scenarios: [
         "Refund asked on day 15",
         "Refund asked on day 21",
@@ -53,8 +59,9 @@ const KB_CHANGES = {
       kind: "rule-changed",
       label: "Supervisor approval amount",
       ref: "p.3",
-      from: "Refunds over $300 need a supervisor's approval before they are issued.",
+      passage: "p5",
       to: "Refunds over $250 need a supervisor's approval before they are issued.",
+      rule: "Refunds over $250 wait for a supervisor's approval.",
       scenarios: ["Refund of $280 on one order"],
     },
     {
@@ -62,7 +69,10 @@ const KB_CHANGES = {
       kind: "rule-added",
       label: "Damaged items",
       ref: "p.2",
+      passage: "p7",
+      page: 2,
       to: "Damaged items are refunded without a return once the caller sends a photo.",
+      rule: "Damaged items are refunded without a return, with a photo.",
       scenarios: [],
     },
   ],
@@ -72,6 +82,7 @@ const KB_CHANGES = {
       kind: "row-added",
       label: "40 orders",
       detail: "O-501 to O-540",
+      rows: 40,
       scenarios: ["Refund for a late order"],
     },
     {
@@ -79,6 +90,7 @@ const KB_CHANGES = {
       kind: "row-changed",
       label: "3 orders",
       detail: "O-104, O-118, O-230: delivery date and price fixed",
+      rows: 0,
       scenarios: ["Duplicate refund retry", "Refund asked on day 15"],
     },
     {
@@ -86,13 +98,56 @@ const KB_CHANGES = {
       kind: "row-removed",
       label: "2 orders",
       detail: "O-377, O-412: cancelled before dispatch",
+      rows: -2,
       scenarios: [],
     },
   ],
 };
 
-export const kbChangesOf = (origin) =>
-  (origin?.kind === "knowledge_base" && KB_CHANGES[origin.file_id]) || [];
+const passagesOf = (source) => source.ui?.parsed?.passages || [];
+
+// The changes waiting for a copy, each rule change's "from" read from it.
+export const kbChangesOf = (source) =>
+  (source.origin?.kind === "knowledge_base"
+    ? KB_CHANGES[source.origin.file_id] || []
+    : []
+  ).map((change) => ({
+    ...change,
+    from: passagesOf(source).find((one) => one.id === change.passage)?.text,
+  }));
+
+// The copy after a refresh: accepted rule changes replace or add passages,
+// row changes move the row count; the version goes up and the flag clears.
+export const kbRefreshed = (source, accepted) => {
+  const parsed = source.ui?.parsed;
+  let next = parsed;
+  if (parsed?.kind === "text") {
+    const passages = [...parsed.passages];
+    accepted.forEach((change) => {
+      const at = passages.findIndex((one) => one.id === change.passage);
+      const passage = {
+        ...(at >= 0 ? passages[at] : { id: change.passage, page: change.page }),
+        text: change.to,
+        rule: change.rule,
+      };
+      if (at >= 0) passages[at] = passage;
+      else passages.push(passage);
+    });
+    next = { ...parsed, passages };
+  } else if (parsed?.kind === "table") {
+    const delta = accepted.reduce((sum, change) => sum + (change.rows || 0), 0);
+    next = {
+      ...parsed,
+      rows: parsed.rows + delta,
+      accepted: parsed.accepted + delta,
+    };
+  }
+  return {
+    ...source,
+    version: source.version + 1,
+    ui: { ...source.ui, parsed: next, changed_upstream: false },
+  };
+};
 
 // Knowledge bases the picker lists, one per collection.
 export const KNOWLEDGE_BASES = [
@@ -105,6 +160,12 @@ export const KNOWLEDGE_BASES = [
         file_id: "7a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c01",
         name: "Refund policy 2026.pdf",
         size: 182 * 1024,
+        access: true,
+      },
+      {
+        file_id: "7a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c05",
+        name: "Returns FAQ.pdf",
+        size: 64 * 1024,
         access: true,
       },
     ],
@@ -480,8 +541,8 @@ export const readSource = ({ name, size, text, origin }) => {
     parsed: null,
     privacy: {},
     personal_choice: null,
-    // Shown once the copy is saved; see KB_CHANGES.
-    changed_upstream: kbChangesOf(origin).length > 0,
+    // Set once the Knowledge base file changes after the copy; see KB_CHANGES.
+    changed_upstream: false,
     ...fields,
   });
   const as = (role, visibility, fields) => ({

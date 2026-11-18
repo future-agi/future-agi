@@ -7,6 +7,7 @@ import WorldInternalsSection from "../contract/WorldInternalsSection";
 import SourcesSection from "../sources/SourcesSection";
 import SourceDrawer from "../sources/SourceDrawer";
 import ReviewRefreshDrawer from "../sources/ReviewRefreshDrawer";
+import useKnowledgeBaseChanges from "../sources/useKnowledgeBaseChanges";
 
 const SOURCE_PARAMS = ["source", "sourceTab", "at"];
 
@@ -24,6 +25,7 @@ export default function WorldToolsPanel({
 }) {
   const [params, setParams] = useSearchParams();
   const [refreshing, setRefreshing] = useState(null);
+  useKnowledgeBaseChanges(env.id);
   const reviewRefresh = locked
     ? undefined
     : (source) => setRefreshing(source.source_id);
