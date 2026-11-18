@@ -4,7 +4,14 @@ import {
   proposalItemsOf,
   readSource,
 } from "src/api/simulate-environments/_fixtures/sources";
-import { readProgress, reviewDecisions, selectionResult } from "../proposals";
+import {
+  PROPOSALS_COPY,
+  batchesOf,
+  mergePrepared,
+  readProgress,
+  reviewDecisions,
+  selectionResult,
+} from "../proposals";
 
 const read = (...names) =>
   names.map((name) =>
@@ -105,5 +112,40 @@ describe("readProgress", () => {
     expect(ids(reopened.items)).toEqual(ids(before.items));
     expect(new Set(ids(after.items)).size).toBe(after.items.length);
     expect(ids(after.items)).toEqual(expect.arrayContaining(ids(before.items)));
+  });
+});
+
+describe("the added snackbar", () => {
+  it("counts against the button: of 8 with 2 blocked, 6 were added", () => {
+    expect(PROPOSALS_COPY.added(8, 2)).toMatch(
+      /^Added 6 of 8 changes .* 2 couldn't apply/,
+    );
+  });
+});
+
+describe("mergePrepared", () => {
+  const batch = (name) => {
+    const sources = read(name);
+    return {
+      import_ref: `ref-${name}`,
+      ui: { readMs: 0, sources, items: proposalItemsOf(sources) },
+    };
+  };
+
+  it("joins a second batch to the open review without repeating items", () => {
+    const first = batch("returns-30.pdf");
+    const merged = mergePrepared(first, batch("customers.csv"));
+    const again = mergePrepared(merged, batch("returns-45.pdf"));
+
+    expect(batchesOf(again).map((one) => one.import_ref)).toEqual([
+      "ref-returns-30.pdf",
+      "ref-customers.csv",
+      "ref-returns-45.pdf",
+    ]);
+    expect(again.import_ref).toBe(first.import_ref);
+    expect(new Set(ids(again.ui.items)).size).toBe(again.ui.items.length);
+    expect(batchesOf(again).flatMap((one) => ids(one.ui.items))).toEqual(
+      ids(again.ui.items),
+    );
   });
 });

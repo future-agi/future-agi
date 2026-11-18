@@ -133,13 +133,23 @@ UsedBy.propTypes = {
   onRemove: PropTypes.func.isRequired,
 };
 
+const FIRST_NOTE = {
+  upload: "Added from Sources",
+  chat: "Attached in builder chat",
+};
+// Documents can be replaced by a newer copy; tables change through Mapping.
+const REPLACEABLE = ["pdf", "md", "txt"];
+
 function Versions({ source, readOnly, onReviewRefresh }) {
+  const fileRef = useRef(null);
   const kb = fromKb(source);
   const saved = isSaved(source);
   const changed = saved && source.ui?.changed_upstream;
+  const replaceable =
+    !readOnly && saved && !kb && REPLACEABLE.includes(source.ext);
   const firstNote = kb
     ? `Copied from the Knowledge base · ${source.origin.collection}`
-    : "Uploaded";
+    : FIRST_NOTE[source.origin?.kind] || FIRST_NOTE.upload;
   const laterNote = kb
     ? "Refreshed from the Knowledge base"
     : "Replaced with a new version";
@@ -190,6 +200,33 @@ function Versions({ source, readOnly, onReviewRefresh }) {
           </KV>
         ))}
       </Box>
+      {replaceable && (
+        <Box>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => fileRef.current?.click()}
+          >
+            Replace with a new version
+          </Button>
+          <input
+            ref={fileRef}
+            hidden
+            type="file"
+            accept={`.${source.ext}`}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (!file) return;
+              // shortcut: the sources stub can't re-read a file as a new version; wire it when the API can.
+              enqueueSnackbar(
+                `Reading ${file.name} as a new version of ${source.name} isn't available yet.`,
+                { variant: "info" },
+              );
+            }}
+          />
+        </Box>
+      )}
     </Stack>
   );
 }
@@ -240,10 +277,8 @@ export default function SourceDrawer({
 }) {
   const queryClient = useQueryClient();
   const { data: summary } = useEnvironmentSources(envId);
-  const { data: capabilities } = useSourceCapabilities(envId);
   const [usageOpen, setUsageOpen] = useState(false);
   const [picked, setPicked] = useState(at ? "preview" : tab || "preview");
-  const fileRef = useRef(null);
 
   const source = summary?.sources.find((one) => one.source_id === sourceId);
   if (!source || source.ui?.removed) return null;
@@ -271,7 +306,6 @@ export default function SourceDrawer({
   const snapshot = summary.snapshot_digest
     ?.replace(/^sha256:/, "")
     .slice(0, 12);
-  const replaceable = !readOnly && saved && source.ui?.parsed?.kind === "text";
 
   return (
     <SideDrawer open onClose={onClose} width={560}>
@@ -344,46 +378,6 @@ export default function SourceDrawer({
             onReviewRefresh={onReviewRefresh}
           />
         </Box>
-
-        {replaceable && (
-          <Stack
-            direction="row"
-            justifyContent="flex-end"
-            sx={{
-              px: 2.5,
-              py: 1.25,
-              borderTop: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => fileRef.current?.click()}
-            >
-              Replace with a new version
-            </Button>
-            <input
-              ref={fileRef}
-              hidden
-              type="file"
-              accept={capabilities?.upload.formats
-                .map((ext) => `.${ext}`)
-                .join(",")}
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = "";
-                if (!file) return;
-                setPicked("versions");
-                // shortcut: the sources stub can't re-read a file as a new version; wire it when the API can.
-                enqueueSnackbar(
-                  `Reading ${file.name} as a new version of ${source.name} isn't available yet.`,
-                  { variant: "info" },
-                );
-              }}
-            />
-          </Stack>
-        )}
       </Stack>
     </SideDrawer>
   );

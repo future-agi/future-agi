@@ -26,7 +26,7 @@ import UiOnlyFlag from "../../components/UiOnlyFlag";
 import AddSourceMenu from "./AddSourceMenu";
 import KnowledgeBasePicker from "./KnowledgeBasePicker";
 import ProposalsDrawer from "./ProposalsDrawer";
-import { PROPOSALS_COPY } from "./proposals";
+import { PROPOSALS_COPY, mergePrepared } from "./proposals";
 import {
   ROLES,
   SOURCES_COPY as COPY,
@@ -146,7 +146,10 @@ export default function SourcesSection({
     onSuccess: (response) => {
       onPrepared?.(response);
       if (!response.ui.items.length) return;
-      setReview(response);
+      // Supplying records (or uploading again) joins the open review.
+      setReview((current) =>
+        current ? mergePrepared(current, response) : response,
+      );
       setReviewOpen(true);
     },
     onError: () => enqueueSnackbar(COPY.readFailed, { variant: "error" }),
