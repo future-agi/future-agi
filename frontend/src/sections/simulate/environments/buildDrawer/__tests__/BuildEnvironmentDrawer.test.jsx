@@ -82,17 +82,16 @@ beforeEach(() => {
 });
 
 describe("BuildEnvironmentDrawer catalog", () => {
-  it("opens on every way in, Code first", () => {
+  it("opens on the live ways in, Code first", () => {
     render();
     expect(screen.getByText("Build environment")).toBeInTheDocument();
-    for (const name of [
-      "Use a prebuilt world",
-      "Connect your agent",
-      "Your agents",
-    ]) {
+    for (const name of ["Connect your agent", "Your agents"]) {
       expect(screen.getByRole("heading", { name })).toBeInTheDocument();
     }
-    expect(screen.getByRole("tab", { name: /Code 22/ })).toHaveAttribute(
+    expect(
+      screen.queryByRole("heading", { name: "Use a prebuilt world" }),
+    ).toBeNull();
+    expect(screen.getByRole("tab", { name: /Code 2/ })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -102,10 +101,14 @@ describe("BuildEnvironmentDrawer catalog", () => {
 
   it("lists each tab's ways", () => {
     render();
-    fireEvent.click(screen.getByRole("tab", { name: /Hosted platforms 9/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Hosted platforms 2/ }));
     expect(row("Vapi")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: /Other ways 7/ }));
+    expect(row("Retell AI")).toBeInTheDocument();
+    expect(screen.queryByRole("listitem", { name: "ElevenLabs" })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /Other ways 2/ }));
+    expect(row("LiveKit project")).toBeInTheDocument();
     expect(row("Phone number")).toBeInTheDocument();
+    expect(screen.queryByRole("listitem", { name: "Agent endpoint" })).toBeNull();
   });
 
   it("offers Connect only where the build API can build, named for the way", () => {
@@ -128,14 +131,12 @@ describe("BuildEnvironmentDrawer catalog", () => {
     expect(screen.getByText(/No way to connect matches/)).toBeInTheDocument();
   });
 
-  it("shows three prebuilt worlds and the SaaS sandbox, UI only", async () => {
+  it("hides the prebuilt worlds and shows the SaaS sandbox disabled", () => {
     render();
     expect(
-      await screen.findByRole("listitem", { name: "Customer Support Line" }),
-    ).toBeInTheDocument();
-    const sandbox = screen.getByRole("button", { name: "SaaS sandbox" });
-    expect(within(sandbox).getByText("UI only")).toBeInTheDocument();
-    expect(within(sandbox).queryByText("Coming soon")).toBeNull();
+      screen.queryByRole("listitem", { name: "Customer Support Line" }),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: "SaaS sandbox" })).toBeDisabled();
   });
 
   it("lists the connected agents, filtered by type", () => {
@@ -146,17 +147,9 @@ describe("BuildEnvironmentDrawer catalog", () => {
     expect(screen.queryByRole("listitem", { name: "Returns chat" })).toBeNull();
   });
 
-  it("offers every start, flagging the ones without an API as UI only", () => {
+  it("hides Build from code", () => {
     render();
-    expect(
-      screen.getByRole("button", { name: /Build from scratch/ }),
-    ).toBeEnabled();
-    const code = row("Build from code");
-    expect(within(code).getByText("UI only")).toBeInTheDocument();
-    expect(within(code).queryByText("Coming soon")).toBeNull();
-    expect(
-      within(code).getByRole("button", { name: "Open setup" }),
-    ).toBeEnabled();
+    expect(screen.queryByRole("listitem", { name: "Build from code" })).toBeNull();
   });
 
   it("closes from its own close button", () => {
@@ -195,8 +188,8 @@ describe("BuildEnvironmentDrawer setup", () => {
   it("opens a way's setup in the drawer, and its close goes back to the list", () => {
     const onClose = render();
     connect("GitHub");
-    expect(screen.getByText("Repository link")).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Connect GitHub" })).toBeEnabled();
+    expect(screen.getByText("Paste a repo link")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Find agents/ })).toBeDisabled();
     fireEvent.click(
       screen.getByRole("button", { name: "Back to build environment" }),
     );
@@ -204,14 +197,13 @@ describe("BuildEnvironmentDrawer setup", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("opens Vapi locked to Vapi, chat UI only", () => {
+  it("opens Vapi on the prod form, without the type and platform pickers", () => {
     render();
     fireEvent.click(screen.getByRole("tab", { name: /Hosted platforms/ }));
     connect("Vapi");
     expect(screen.getByText("Vapi API key")).toBeInTheDocument();
-    const chat = screen.getByRole("button", { name: /Chat/ });
-    expect(chat).toBeEnabled();
-    expect(within(chat).getByText("UI only")).toBeInTheDocument();
+    expect(screen.queryByText("Agent type")).toBeNull();
+    expect(screen.queryByText("Platform")).toBeNull();
   });
 
   it("can't be closed while the build is being created", async () => {
@@ -221,22 +213,24 @@ describe("BuildEnvironmentDrawer setup", () => {
     });
     createHarnessJob.mockReturnValue(new Promise(() => {}));
     const onClose = render();
-    connect("GitHub");
-    fireEvent.change(screen.getByRole("textbox", { name: "Repository link" }), {
-      target: { value: "acme/agent" },
+    fireEvent.click(screen.getByRole("tab", { name: /Hosted platforms/ }));
+    connect("Vapi");
+    fireEvent.change(screen.getByPlaceholderText("asst_9f2c…"), {
+      target: { value: "asst_1" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("sk-…"), {
+      target: { value: "sk-test" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Run preflight" }));
     await screen.findByText("Ready to build");
-    fireEvent.click(
-      screen.getByRole("button", { name: /Connect and build environment/ }),
-    );
-    await screen.findByText("Building the environment…");
+    fireEvent.click(screen.getByRole("button", { name: /Build environment/ }));
+    await screen.findByText("Building…");
     expect(
       screen.getByRole("button", { name: "Back to build environment" }),
     ).toBeDisabled();
     fireEvent.keyDown(screen.getByRole("presentation"), { key: "Escape" });
     await waitFor(() =>
-      expect(screen.getByText("Repository link")).toBeInTheDocument(),
+      expect(screen.getByText("Vapi API key")).toBeInTheDocument(),
     );
     expect(onClose).not.toHaveBeenCalled();
   });

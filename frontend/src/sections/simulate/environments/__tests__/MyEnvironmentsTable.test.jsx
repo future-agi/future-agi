@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -151,7 +151,7 @@ describe("MyEnvironmentsTable", () => {
     renderTab();
     await screen.findByText("Customer Support Line");
 
-    ["Ready", "Running…", "Building", "Failed"].forEach((label) =>
+    ["Ready", "Running", "Building", "Failed"].forEach((label) =>
       expect(screen.getByText(label)).toBeInTheDocument(),
     );
   });
@@ -176,7 +176,7 @@ describe("MyEnvironmentsTable", () => {
     // Real description, sub-goals count and run state for the first row. The
     // Domain column is gone: §1 sends `domain` verbatim from the submitter's
     // metadata and it is null for nearly every environment.
-    expect(row.getByText("Handles inbound billing calls")).toBeInTheDocument();
+    expect(row.queryByText("Handles inbound billing calls")).toBeNull();
     expect(screen.queryByText("Domain")).toBeNull();
     expect(row.queryByText("Logistics")).toBeNull();
     expect(row.getByText("12")).toBeInTheDocument();
@@ -363,30 +363,36 @@ describe("MyEnvironmentsTable", () => {
       "Agent type",
       "Agent",
       "Last run",
-      "Tools",
       "Scenarios",
       "Sub-goals",
       "Runs",
-      "Owner",
       "Updated",
     ]);
   });
 
-  it("runs only from the row menu, with no Run button in the row", async () => {
+  it("offers Run with the version on a ready row, and none on one still building", async () => {
     listHarnessEnvironments.mockResolvedValue({
       ...HARNESS_ENVS,
       results: [
         {
           ...HARNESS_ENVS.results[0],
-          agent_version: { id: "v", version_number: 4 },
+          environment_version: { id: "v", version_number: 2 },
         },
         ...HARNESS_ENVS.results.slice(1),
       ],
     });
     renderTab();
     await screen.findByText("Customer Support Line");
+    fireEvent.click(
+      within(rowFor("Customer Support Line")).getByRole("button", {
+        name: "Run · v2",
+      }),
+    );
+    expect(navigate).toHaveBeenCalledWith(
+      expect.stringContaining("?tab=scenarios"),
+    );
     expect(
-      within(rowFor("Customer Support Line")).queryByRole("button", {
+      within(rowFor("Repo Triage Bot")).queryByRole("button", {
         name: /^Run/,
       }),
     ).toBeNull();

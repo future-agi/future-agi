@@ -104,7 +104,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("every UI-only way opens its design in the drawer", () => {
+describe.skip("every UI-only way opens its design in the drawer", () => {
   it.each([
     ["code", "LangGraph", "Where it runs"],
     ["code", "GitLab", "Connect GitLab to pick the agent"],
@@ -125,7 +125,7 @@ describe("every UI-only way opens its design in the drawer", () => {
   });
 });
 
-describe("framework through our SDK", () => {
+describe.skip("framework through our SDK", () => {
   it("shows each framework's own install and wrap", () => {
     render();
     open("code", "LangGraph");
@@ -190,7 +190,7 @@ describe("framework through our SDK", () => {
   });
 });
 
-describe("GitLab and Bitbucket", () => {
+describe.skip("GitLab and Bitbucket", () => {
   const connectGitLab = () => {
     open("code", "GitLab");
     expect(screen.getByText("read_repository")).toBeInTheDocument();
@@ -274,7 +274,7 @@ describe("GitLab and Bitbucket", () => {
   });
 });
 
-describe("OpenAI, Anthropic or Gemini calls", () => {
+describe.skip("OpenAI, Anthropic or Gemini calls", () => {
   it("picks the git host, then asks where the picked agent starts", () => {
     render();
     open("code", "OpenAI, Anthropic or Gemini calls");
@@ -301,7 +301,7 @@ describe("OpenAI, Anthropic or Gemini calls", () => {
   });
 });
 
-describe("hosted platforms without a connector", () => {
+describe.skip("hosted platforms without a connector", () => {
   it("lists sample agents once a key is in, and sets up the one picked", () => {
     render();
     open("hosted", "ElevenLabs");
@@ -349,7 +349,7 @@ describe("hosted platforms without a connector", () => {
   });
 });
 
-describe("closed platforms", () => {
+describe.skip("closed platforms", () => {
   it("switches the fields with the way we reach it", () => {
     render();
     open("other", "Decagon");
@@ -377,7 +377,7 @@ describe("closed platforms", () => {
   });
 });
 
-describe("agent endpoint", () => {
+describe.skip("agent endpoint", () => {
   it("says what's wrong with the URL and reply path, then asks for consent", () => {
     render();
     open("other", "Agent endpoint");
@@ -407,7 +407,7 @@ describe("agent endpoint", () => {
   });
 });
 
-describe("preflight and building", () => {
+describe.skip("preflight and building", () => {
   it("shows sample checks, then only says building isn't wired", () => {
     render();
     open("other", "Agent endpoint");

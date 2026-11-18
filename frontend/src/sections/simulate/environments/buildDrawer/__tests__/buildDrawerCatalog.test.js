@@ -9,11 +9,11 @@ import {
 const inTab = (tab) => CATALOG_ITEMS.filter((it) => it.tab === tab);
 
 describe("build drawer catalog", () => {
-  it("has the design's three tabs with 22, 9 and 7 ways in", () => {
+  it("lists only the ways live in prod: two per tab", () => {
     expect(CATALOG_TABS.map((t) => t.id)).toEqual(["code", "hosted", "other"]);
-    expect(inTab("code")).toHaveLength(22);
-    expect(inTab("hosted")).toHaveLength(9);
-    expect(inTab("other")).toHaveLength(7);
+    expect(inTab("code").map((it) => it.id)).toEqual(["github", "upload"]);
+    expect(inTab("hosted").map((it) => it.id)).toEqual(["vapi", "retell"]);
+    expect(inTab("other").map((it) => it.id)).toEqual(["livekit", "phone"]);
   });
 
   it("opens a setup for every way in", () => {
@@ -32,7 +32,7 @@ describe("build drawer catalog", () => {
   it("puts every code item in a known section", () => {
     const sections = CODE_SECTIONS.map((s) => s.id);
     for (const it of inTab("code")) expect(sections).toContain(it.section);
-    expect(inTab("code").filter((it) => it.section === "sdk")).toHaveLength(17);
+    expect(inTab("code").filter((it) => it.section === "sdk")).toHaveLength(0);
   });
 
   it("gives ids once", () => {

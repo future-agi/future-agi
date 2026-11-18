@@ -73,16 +73,20 @@ describe("EnvironmentFilters", () => {
     openMenu("Status");
     expect(option("All statuses")).toHaveTextContent("37");
     expect(option("Ready")).toHaveTextContent("30");
-    for (const label of ["Building", "Running", "Failed"])
+    for (const label of ["Building", "Failed"])
       expect(option(label)).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("listbox")).queryByRole("option", {
+        name: /^Running/,
+      }),
+    ).toBeNull();
   });
 
-  it("shows a placeholder for counts the API doesn't send", () => {
+  it("lists every status without counts when the API sends none", () => {
     renderBar({ statusCounts: NOT_PROVIDED });
     openMenu("Status");
-    expect(
-      within(screen.getByRole("listbox")).getAllByText("Count soon").length,
-    ).toBe(5);
+    for (const label of ["Building", "Running", "Ready", "Failed"])
+      expect(option(label)).toHaveTextContent(new RegExp(`^${label}$`));
   });
 
   it("sends Ready as the completed status", () => {
@@ -124,14 +128,14 @@ describe("EnvironmentFilters", () => {
 
   it("offers Clear only while something is set", () => {
     renderBar();
-    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Clear/ })).toBeNull();
   });
 
   it("clears every filter at once", () => {
     const onChange = renderBar({
       value: { ...EMPTY_ENV_FILTERS, agentId: "a1", status: "failed" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Clear/ }));
     expect(onChange).toHaveBeenCalledWith(EMPTY_ENV_FILTERS);
   });
 
@@ -144,7 +148,7 @@ describe("EnvironmentFilters", () => {
 
   it("doesn't offer Clear for a search of only spaces", () => {
     renderBar({ value: { ...EMPTY_ENV_FILTERS, search: "   " } });
-    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Clear/ })).toBeNull();
   });
 
   describe("search", () => {
@@ -176,7 +180,7 @@ describe("EnvironmentFilters", () => {
         "Search by name, agent or status",
       );
       fireEvent.change(input, { target: { value: "ab" } });
-      fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+      fireEvent.click(screen.getByRole("button", { name: /^Clear/ }));
       act(() => vi.advanceTimersByTime(400));
       expect(input).toHaveValue("");
       expect(onChange).toHaveBeenCalledWith(EMPTY_ENV_FILTERS);

@@ -111,7 +111,7 @@ describe("EnvironmentsHome", () => {
     renderHome("/dashboard/simulate/environments");
 
     expect(
-      screen.getByRole("tab", { name: /^My Environments/ }),
+      screen.getByRole("tab", { name: /^My environments/ }),
     ).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByText("Billing Chat Agent")).toBeInTheDocument();
   });
@@ -129,7 +129,7 @@ describe("EnvironmentsHome", () => {
     expect(await screen.findByText("Connect your agent")).toBeInTheDocument();
     // The open drawer hides the page behind it from the accessibility tree.
     expect(
-      screen.getByRole("tab", { name: /^My Environments/, hidden: true }),
+      screen.getByRole("tab", { name: /^My environments/, hidden: true }),
     ).toHaveAttribute("aria-selected", "true");
     expect(lastSearch).toBe("?tab=my-environments");
   });
@@ -163,7 +163,7 @@ describe("EnvironmentsHome", () => {
     expect(lastSearch).toContain("tab=personas");
     expect(screen.getByText("persona-list-stub")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: /^My Environments/ }));
+    await user.click(screen.getByRole("tab", { name: /^My environments/ }));
     expect(lastSearch).toContain("tab=my-environments");
     expect(await screen.findByText("Billing Chat Agent")).toBeInTheDocument();
   });
@@ -187,7 +187,7 @@ describe("EnvironmentsHome", () => {
 
     expect(
       screen.getAllByRole("tab").map((t) => t.textContent.replace(/\d+$/, "")),
-    ).toEqual(["My Environments", "Personas"]);
+    ).toEqual(["My environments", "Personas"]);
   });
 
   it("tracks a Personas tab click with the personas navigation event", async () => {
@@ -260,7 +260,7 @@ describe("EnvironmentsHome", () => {
     expect(screen.getByText("Environments")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Set up the world your agent is tested in: seeded data, tools and rules.",
+        "Build a simulated world for your agent, then run callers against it and read the failures.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Start from scratch")).toBeNull();
@@ -269,7 +269,7 @@ describe("EnvironmentsHome", () => {
 
   it("shows how many environments there are on the My Environments tab", async () => {
     renderHome("/dashboard/simulate/environments");
-    const tab = screen.getByRole("tab", { name: /^My Environments/ });
+    const tab = screen.getByRole("tab", { name: /^My environments/ });
     expect(await within(tab).findByText("1")).toBeInTheDocument();
   });
 });
