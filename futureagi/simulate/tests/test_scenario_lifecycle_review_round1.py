@@ -144,6 +144,17 @@ def test_a_partial_validation_keeps_each_case_s_own_agent(user, workspace, stora
         return {key: view["state"] for key, view in views.items()}
 
     on_a2, on_a1 = states(a2), states(a1)
+    # Each case's proof names the versions it was made with.
+    proofs = {
+        key: view["proof"]
+        for key, view in scenario_lifecycle(
+            environment, suite_version=suite, environment_version=version
+        ).items()
+    }
+    assert proofs[KEYS[0]]["agent_version_id"] == str(a2.id)
+    assert proofs[KEYS[1]]["agent_version_id"] == str(a1.id)
+    assert proofs[KEYS[1]]["environment_version_id"] == str(version.id)
+    assert proofs[KEYS[1]]["suite_version_id"] == str(suite.id)
     assert on_a2[KEYS[0]] == "active"
     assert all(on_a2[key] == "draft" for key in KEYS[1:])
     assert on_a1[KEYS[0]] == "draft"

@@ -10,7 +10,7 @@ Active: no proof showed its checks hold. A case with no negative control is Draf
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from django.db.models import F
 
@@ -100,6 +100,10 @@ class ProofSummary(TypedDict):
     leaks: list[dict[str, Any]]
     judged_only: bool
     proved_at: str | None
+    # The versions the proof was made with; the agent is null for a proof made before it was recorded.
+    agent_version_id: NotRequired[str | None]
+    environment_version_id: NotRequired[str]
+    suite_version_id: NotRequired[str]
 
 
 class LifecycleView(TypedDict):
@@ -591,6 +595,13 @@ def scenario_lifecycle(
                     check=missing[0],
                     evidence=EVIDENCE_LABELS[missing[1]],
                 )
+        if view["proof"] is not None and entry is not None:
+            made_with = entry.get("agent_version_id") or proved_with
+            view["proof"].update(
+                agent_version_id=str(made_with) if made_with else None,
+                environment_version_id=str(environment_version.id),
+                suite_version_id=str(suite_version.id),
+            )
         views[key] = view
     return views
 
