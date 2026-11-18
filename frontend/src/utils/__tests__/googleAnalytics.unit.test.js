@@ -170,6 +170,8 @@ describe("initGoogleAnalytics unit", () => {
     await loadAndInit();
     const configCall = window.dataLayer.find((args) => args[0] === "config");
     expect(configCall[2].send_page_view).toBe(false);
+    expect(configCall[2].allow_google_signals).toBe(false);
+    expect(configCall[2].allow_ad_personalization_signals).toBe(false);
     expect(pageViews()).toEqual([
       {
         page_location: `${window.location.origin}/dashboard/develop`,

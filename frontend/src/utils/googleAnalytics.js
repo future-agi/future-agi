@@ -16,9 +16,11 @@ import { GA_ID } from "src/config-global";
 // The same values are kept on the tag configuration, so the events gtag.js
 // sends by itself (user_engagement, scroll, session_start) use them as well.
 //
-// The GA4 web stream must have Enhanced Measurement's "Page changes based on
-// browser history events" and "Site search" turned off: those read the raw
-// address on Google's side and cannot be controlled from here.
+// Use a GA4 web stream made for the app: Enhanced Measurement's "Page changes
+// based on browser history events" and "Site search" turned off (they read the
+// raw address on Google's side), and no Google Ads destination on its Google
+// tag (an Ads destination sends the raw address and title with every page
+// view). Neither can be controlled from here.
 //
 // index.html decides whether the page load may run analytics at all (no
 // one-time links or sign-in parameters in the address) and exposes that check
@@ -149,6 +151,10 @@ export function initGoogleAnalytics() {
     page_referrer: currentReferrer,
     page_title: PAGE_TITLE,
     send_page_view: false,
+    // Analytics only: no Google signals or ads personalization from the app,
+    // even when the GA4 property is linked to Google Ads.
+    allow_google_signals: false,
+    allow_ad_personalization_signals: false,
     linker: { domains: LINKER_DOMAINS, accept_incoming: true },
   });
   gtag("event", "page_view", {
