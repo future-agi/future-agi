@@ -9,6 +9,7 @@ them; an unrelated lost native session still aborts preparation.
 from uuid import uuid4
 
 from tracer.services.derived_metrics.publication import MetricVisibilityError
+from tracer.services.derived_metrics.queries import Scope
 from tracer.services.derived_metrics.unit_reads import (
     field_recipe,
     span_sampling_select,
@@ -38,11 +39,11 @@ def _needs_context(definition):
 class SpanSamplingContext:
     """Freeze all filtered sampling populations before the attempt's first page."""
 
-    def __init__(self, writer, attempt, definitions, scope, *, as_of, dirty=None):
+    def __init__(self, writer, attempt, definitions, *, as_of, dirty=None):
         self.writer = writer
         self.attempt = attempt
         self.definitions = definitions
-        self.scope = scope
+        self.scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
         self.as_of = as_of
         self.dirty = dirty
         self.name = "metric_span_sampling_" + uuid4().hex

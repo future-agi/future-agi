@@ -1382,7 +1382,6 @@ def _repair_span_quarters(
             writer,
             draft,
             [definition],
-            scope,
             as_of=as_of,
             # Scratch windows are derived afresh from the base on every retry.
             # Only real predecessor work belongs in the durable recovery ledger.

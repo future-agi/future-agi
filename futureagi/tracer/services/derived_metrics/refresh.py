@@ -1832,7 +1832,7 @@ class RefreshWriter:
             # One frozen quarter-wide context for the entire publication, shared
             # by definitions with the same filters and every identity page.
             with SpanSamplingContext(
-                self, attempt, definitions, scope, as_of=as_of
+                self, attempt, definitions, as_of=as_of
             ) as sampling:
                 for definition in definitions:
                     if definition.level == "span":

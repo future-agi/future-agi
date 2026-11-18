@@ -2011,6 +2011,16 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
             row="tracer.MetricProjectRefresh",
         ),
+        "_physical_units": filed(
+            ROW_DRIVEN,
+            why=(
+                "burst repair recovers old session owners for the page's (trace, span) "
+                "keys. Like _latest_membership, it binds the refresh row's project and "
+                "organization (or legacy NULL org); normal repair requires visible "
+                "project admission before the worker runs"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
         "_source_days": filed(
             ROW_DRIVEN,
             why=(
@@ -2207,6 +2217,41 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
             row="tracer.MetricProjectRefresh",
         ),
+        "_field_expiry": filed(
+            ROW_DRIVEN,
+            why=(
+                "compares the winning source revision only for (trace, span) keys "
+                "whose field anchors straddle the cutoff, in the leased project and "
+                "organization (or legacy NULL org). Privacy-only expiry can reach "
+                "this source read for a previously visible project's hidden head"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "_freeze_retained_buckets": filed(
+            NO_SPAN_TABLE,
+            ROW_DRIVEN,
+            why=(
+                "copies totals or rebuilds quarters from the refresh row's committed "
+                "org/project fields and frozen proposal. The retired-parts template "
+                "is WHERE 0; source-backed repairs are frozen before this fold"
+            ),
+            table=(
+                "metric_field_values, metric_field_values_checkpoint, "
+                "metric_bucket_totals, metric_bucket_totals_checkpoint "
+                "and metric_bucket_retired_parts"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "finish_unpublished_replan": filed(
+            ROW_DRIVEN,
+            why=(
+                "headless expiry or subject erasure verifies the scrub of all metric "
+                "stores, including current-list span copies, by writer org, leased "
+                "project and generation ceiling. It does not query source spans or "
+                "admit the project for calculation"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
         "finish_pending_expiry": filed(
             ROW_DRIVEN,
             why=(
@@ -2263,6 +2308,34 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "authorization. Depends on the admission repair"
             ),
             row="tracer.MetricProjectRefresh",
+        ),
+    },
+    "tracer.services.derived_metrics.span_sampling": {
+        "SpanSamplingContext.__enter__": filed(
+            ROW_DRIVEN,
+            why=(
+                "freezes collision keys for dirty quarters: the floor probe uses the "
+                "writer's project, and span_sampling_select applies its project/org "
+                "scope to the span population. Like _span_source_select this runs "
+                "in ordinary refresh and source-backed expiry repair"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
+        "SpanSamplingContext._read_rows": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "reads frozen collision keys from the attempt's connection-local "
+                "temporary table for retry verification, not from the span source"
+            ),
+            table="metric_span_sampling_",
+        ),
+        "SpanSamplingContext.select": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "selects one saved filter population by context_id from the same "
+                "attempt-local collision table, after checking its native session"
+            ),
+            table="metric_span_sampling_",
         ),
     },
     "tracer.services.derived_metrics.span_two_step": {
@@ -2347,12 +2420,14 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
             row="tracer.MetricProjectRefresh",
         ),
-        "span_values_select": filed(
+        "_span_source_select": filed(
             ROW_DRIVEN,
             why=(
-                "refresh and retention recompute complete dirty span buckets for "
-                "the refresh-row project, collapsing immutable keys before mutable "
-                "windows. Hidden-project admission remains a separate dependency"
+                "span values and sampler collisions share this source: both key "
+                "nomination and winner selection bind the refresh row's project "
+                "and org (or legacy NULL org); snapshot_select receives the same "
+                "scope. This scopes the repair but cannot exclude a hidden head "
+                "admitted for privacy-only expiry"
             ),
             row="tracer.MetricProjectRefresh",
         ),
