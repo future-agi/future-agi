@@ -92,7 +92,7 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
   );
 
   const { data: usageData, isError: usageFailed } = useAnalyticsUsage(
-    resolvedKeyId ? { ...analyticsParams, granularity: "1h" } : {},
+    resolvedKeyId ? { ...analyticsParams, granularity: "hour" } : {},
     analyticsOptions,
   );
 
