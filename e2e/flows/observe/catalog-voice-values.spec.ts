@@ -596,15 +596,21 @@ test('OBS-E2E-008: native and custom voice filters select only the current proje
       const field = c.leaf.column_id, config = c.leaf.filter_config;
       const propertyMark = captures.length;
       await page.getByPlaceholder('Search properties...').fill(field);
-      // Load-bearing sync: at dev a07b523ac, unifiedCatalogSearchLoading in
-      // frontend/src/sections/projects/LLMTracing/TraceFilterPanel.jsx:1962,2068
+      // Load-bearing sync: unifiedCatalogSearchLoading in
+      // frontend/src/sections/projects/LLMTracing/TraceFilterPanel.jsx:1968-1974,2074
       // and isRemoteCatalogSearchPending in frontend/src/hooks/useDashboards.js:769
       // cover debounce + background fetching. readCapture's cache path alone can
       // precede a replacement request; closing the picker would then abort it.
-      const propertySearch = page.getByRole('status').filter({ hasText: 'Searching property catalog' });
-      await expect(propertySearch).toBeVisible({ timeout: UI_READY });
-      await expect(propertySearch).toBeHidden({ timeout: UI_READY });
+      // Wait for the SETTLED search, never for the transient indicator to be
+      // seen: the status is derived from `search !== debounced search`, so it
+      // is committed by the fill's input event itself, and on a cached search it
+      // can appear and vanish between two polls. Settled = no search/page
+      // loading and the searched option rendered (the same contract as UI 1b's
+      // completePropertySearch).
+      await expect(page.getByPlaceholder('Search properties...')).toHaveValue(field);
+      await expect(page.getByRole('status').filter({ hasText: 'Searching property catalog' })).toBeHidden({ timeout: UI_READY });
       await expect(page.getByRole('status').filter({ hasText: 'Loading properties' })).toBeHidden({ timeout: UI_READY });
+      await expect(page.locator('[data-filter-property-page-sentinel]')).toHaveCount(0, { timeout: UI_READY });
       // Same captured All-search wire as UI 1b's checkPropertySearch below;
       // frontend/src/hooks/useDashboards.js:656-670 builds it from
       // frontend/src/sections/projects/LLMTracing/TraceFilterPanel.jsx:1838-1844
