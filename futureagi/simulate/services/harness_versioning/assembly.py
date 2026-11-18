@@ -276,11 +276,13 @@ _UNREADABLE = {"unreadable": True}
 class Seal:
     """What a ready bundle was sealed with: its contract, whether a chat's save resealed it from its tree
     (``resealed``) rather than a build sealing it, and whether it says which (``stamped``): a bundle sealed before
-    builds stamped theirs says nothing."""
+    builds stamped theirs says nothing. ``seeded``: its row holds the bundle a full build cached as it recorded the
+    version, not one a run cached."""
 
     contract: dict[str, Any]
     resealed: bool
     stamped: bool = True
+    seeded: bool = False
 
 
 def pins_bundle_key(pins: Any) -> str | None:
@@ -327,9 +329,10 @@ def _seal_at(rows: Any) -> Seal | None:
     )
     if not key:
         return None
+    seeded = key.startswith(archives.SEALED_PREFIX)
     cached = cache.get(_SEAL_CACHE + key)
     if cached is not None:
-        return _seal(cached)
+        return _seal(cached, seeded)
     try:
         found = archives.read_members(
             archives.get_archive(key),
@@ -361,10 +364,10 @@ def _seal_at(rows: Any) -> Seal | None:
         else "",
     }
     cache.set(_SEAL_CACHE + key, read, _SEAL_SECONDS)
-    return _seal(read)
+    return _seal(read, seeded)
 
 
-def _seal(read: Any) -> Seal | None:
+def _seal(read: Any, seeded: bool) -> Seal | None:
     if not isinstance(read, dict) or read == _UNREADABLE or not read.get("contract"):
         return None
     stamp = str(read.get("stamp") or "")
@@ -372,6 +375,7 @@ def _seal(read: Any) -> Seal | None:
         contract=read["contract"],
         resealed=bool(stamp) and stamp != BUILD_SEAL,
         stamped=bool(stamp),
+        seeded=seeded,
     )
 
 

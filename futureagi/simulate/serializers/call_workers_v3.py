@@ -303,6 +303,10 @@ class RouteCellSerializer(serializers.Serializer):
         child=serializers.IntegerField(), help_text="Every step's key in this cell."
     )
     count = serializers.IntegerField()
+    states = serializers.ListField(
+        child=serializers.ChoiceField(choices=get_args(RouteCellState)),
+        help_text="Each occurrence's own state, in the order the trial took them.",
+    )
 
 
 class RouteTrialSerializer(serializers.Serializer):
@@ -320,6 +324,10 @@ class RouteTrialSerializer(serializers.Serializer):
 class RouteSplitGroupSerializer(serializers.Serializer):
     state = serializers.ChoiceField(choices=get_args(RouteCellState))
     count = serializers.IntegerField()
+    states = serializers.ListField(
+        child=serializers.ChoiceField(choices=get_args(RouteCellState)),
+        help_text="Each occurrence's own state, in order; trials split when these differ.",
+    )
     trials = serializers.ListField(child=serializers.IntegerField())
 
 

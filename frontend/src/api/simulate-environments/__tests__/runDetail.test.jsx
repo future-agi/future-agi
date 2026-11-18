@@ -1898,6 +1898,48 @@ describe("useCallWorkers", () => {
     release?.();
   });
 
+  it.each([
+    ["passed", "queued"],
+    ["failed", "in_progress"],
+    ["cancelled", "queued"],
+  ])(
+    "never shows the previous attempt's record when the same call is rerun (%s to %s)",
+    async (ended, rerun) => {
+      const { useCallWorkers } = await import("../runDetail");
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const Wrapper = ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      Wrapper.propTypes = { children: PropTypes.node };
+      const record = {
+        workers: [{ id: "refund" }],
+        events: [],
+        pending: false,
+      };
+      axios.get.mockReset();
+      axios.get.mockResolvedValueOnce({ status: 200, data: record });
+      let release;
+      axios.get.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve({ status: 204, data: "" });
+          }),
+      );
+      const { result, rerender } = renderHook(
+        ({ status }) => useCallWorkers("call-1", status),
+        { wrapper: Wrapper, initialProps: { status: ended } },
+      );
+      await waitFor(() => expect(result.current.data).toEqual(record));
+      // An in-place rerun keeps the call id and has no attempt id: the new attempt's read is pending.
+      rerender({ status: rerun });
+      expect(result.current.data).toBeUndefined();
+      release?.();
+      await waitFor(() => expect(result.current.data).toBeNull());
+    },
+  );
+
   it("reads an empty answer (204) as no worker record, not a failure", async () => {
     const { useCallWorkers } = await import("../runDetail");
     axios.get.mockResolvedValueOnce({ status: 204, data: "" });
