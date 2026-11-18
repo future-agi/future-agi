@@ -1,3 +1,7 @@
+// Disabled: no module imports this file, so neither Google Ads nor the direct
+// GA4 gtag.js tag loads. Google Analytics runs through Google Tag Manager
+// (VITE_GTM_ID in index.html). Kept so the integration can be restored by
+// uncommenting its calls in main.jsx, auth-guard.jsx and jwt-register-view.jsx.
 import {
   GOOGLE_ADS_ID,
   GOOGLE_ADS_SIGNUP_LABEL,
