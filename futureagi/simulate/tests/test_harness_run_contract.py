@@ -330,7 +330,9 @@ class TestVersionRecordedBeforeItsSealedContract:
         agent_version_id=None,
         resealed=False,
         built=False,
+        seeded=False,
     ):
+        """``seeded``: the row a full build cached when it recorded the version, else one a run filled."""
         from simulate.tests.test_harness_versioning_picks import _ready
 
         row = _ready(
@@ -340,7 +342,7 @@ class TestVersionRecordedBeforeItsSealedContract:
             environment.suite_version,
         )
         if contract is not None:
-            storage.objects[row.object_key] = archives.pack_archive(
+            body = archives.pack_archive(
                 {
                     # A chat's reseal stamps the tree it sealed from, a build stamps that it is one; an older
                     # bundle says neither.
@@ -354,6 +356,12 @@ class TestVersionRecordedBeforeItsSealedContract:
                     "environment-bundle/contract.json": json.dumps(contract).encode(),
                 }
             )
+            if seeded:
+                row.object_key = archives.sealed_key(
+                    environment.organization_id, environment.id, body
+                )
+                row.save(update_fields=["object_key"])
+            storage.objects[row.object_key] = body
         return row
 
     def test_its_ready_bundle_s_sealed_contract_is_read_for_the_gate_and_the_tools_card(
@@ -1215,23 +1223,36 @@ def test_a_draft_keeps_an_unchanged_fault_on_a_tool_its_build_moved_behind_the_d
 
 
 class TestResealsSavedBeforeTheyWereStamped:
-    """A chat save resealed its bundle before reseals were stamped: no `sealed_from`, on a version a chat saved."""
+    """A chat save resealed its bundle before reseals were stamped, and full builds did not stamp theirs either: no
+    `sealed_from` on either, so where the row came from and what the save recorded say which it is."""
 
-    def test_an_unstamped_bundle_on_a_chat_saved_version_is_read_as_a_reseal(
-        self, user, workspace, monkeypatch, auth_client
-    ):
+    def _chat_saved(self, user, workspace, monkeypatch, key, *, resealed):
+        """A version a chat save made over the first build's, recording whether the chat resealed a bundle for it,
+        as each save has since drafts were kept."""
         legacy = TestVersionRecordedBeforeItsSealedContract()
         environment, version, storage = legacy._version(
-            user, workspace, "rc-unstamped", monkeypatch
+            user, workspace, key, monkeypatch
         )
-        legacy._bundle(environment, version, storage)
+        legacy._bundle(environment, version, storage, seeded=True)
         edited = {**AUTHORED, "hard_constraints": ["Never refund twice."]}
         saved = legacy._saved_edit(environment, version, edited)
         HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
-            origin="chat"
+            origin="chat",
+            documents={
+                "contract": edited,
+                "workspace_sealed": {"key": "harness-sealed/x", "resealed": resealed},
+            },
         )
         saved.refresh_from_db()
-        # The reseal carries the author's import entries and no stamp.
+        return legacy, environment, saved, storage, edited
+
+    def test_an_unstamped_bundle_a_run_replayed_from_a_chat_reseal_is_read_as_a_reseal(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        legacy, environment, saved, storage, edited = self._chat_saved(
+            user, workspace, monkeypatch, "rc-unstamped", resealed=True
+        )
+        # The reseal carries the author's import entries and no stamp; a run of the saved pair cached it.
         legacy._bundle(environment, saved, storage, contract=edited)
 
         blocked, statuses = legacy._through_the_views(auth_client, environment)
@@ -1239,22 +1260,138 @@ class TestResealsSavedBeforeTheyWereStamped:
         assert blocked == []
         assert statuses == {one["tool"]: one["status"] for one in tool_status(SEALED)}
 
+    @pytest.mark.parametrize(
+        "seeded, resealed",
+        [
+            # A later full build reused the chat's row and cached its own bundle for it.
+            (True, True),
+            # The save resealed nothing, so a run certified the pair itself.
+            (False, False),
+        ],
+    )
+    def test_an_unstamped_build_on_a_chat_saved_version_keeps_the_contract_it_sealed(
+        self, user, workspace, monkeypatch, auth_client, seeded, resealed
+    ):
+        """A build that sealed the author's production-only import keeps it, never the parent's service route."""
+        legacy, environment, saved, storage, edited = self._chat_saved(
+            user,
+            workspace,
+            monkeypatch,
+            f"rc-unstamped-build-{seeded}",
+            resealed=resealed,
+        )
+        legacy._bundle(environment, saved, storage, contract=edited, seeded=seeded)
+
+        blocked, statuses = legacy._through_the_views(auth_client, environment)
+
+        assert sorted(blocked) == sorted(TOOLS)
+        assert statuses == {one["tool"]: one["status"] for one in tool_status(AUTHORED)}
+
     def test_a_chat_saved_row_reused_by_a_stamped_build_reads_as_the_build_sealed_it(
         self, user, workspace, monkeypatch
     ):
         """A build stamps its seal, so a row a chat save made, reused by a later full build that kept the author's
         import entries, reads as that build sealed it."""
-        legacy = TestVersionRecordedBeforeItsSealedContract()
-        environment, version, storage = legacy._version(
-            user, workspace, "rc-build-stamp", monkeypatch
+        legacy, environment, saved, storage, edited = self._chat_saved(
+            user, workspace, monkeypatch, "rc-build-stamp", resealed=True
         )
-        legacy._bundle(environment, version, storage)
-        edited = {**AUTHORED, "hard_constraints": ["Never refund twice."]}
-        saved = legacy._saved_edit(environment, version, edited)
-        HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
-            origin="chat"
-        )
-        saved.refresh_from_db()
         legacy._bundle(environment, saved, storage, contract=edited, built=True)
 
         assert _blocked(environment, saved) == sorted(TOOLS)
+
+
+class TestARecordedRunContractStopsTheWalkAtAReseal:
+    """A version whose READY bundle a chat resealed, and which recorded the contract it runs with, is read from that
+    record: its ancestry is not walked again."""
+
+    def _resaves(self, user, workspace, monkeypatch, key, count):
+        """``count`` chat saves over a first version no build sealed, each with a READY stamped reseal of the
+        author's import entries and the service route it recorded running with; the newest last."""
+        from simulate.models import HarnessAssembledBundle
+
+        legacy = TestVersionRecordedBeforeItsSealedContract()
+        environment, root, storage = legacy._version(user, workspace, key, monkeypatch)
+        HarnessEnvironmentVersion._base_manager.filter(id=root.id).update(origin="chat")
+        body = archives.pack_archive(
+            {
+                "environment-bundle/manifest.json": json.dumps(
+                    {"metadata": {"sealed_from": "sha256:tree"}}
+                ).encode(),
+                "environment-bundle/contract.json": json.dumps(AUTHORED).encode(),
+            }
+        )
+        versions = []
+        parent = root
+        for number in range(1, count + 1):
+            parent = HarnessEnvironmentVersion._base_manager.create(
+                job=environment,
+                organization_id=environment.organization_id,
+                workspace_id=environment.workspace_id,
+                status="active",
+                origin="chat",
+                version_number=root.version_number + number,
+                hash=f"sha256:{number:064d}",
+                parent=parent,
+                archive_size=0,
+                documents={"contract": AUTHORED, "run_contract": SEALED},
+            )
+            versions.append(parent)
+        HarnessAssembledBundle._base_manager.bulk_create(
+            HarnessAssembledBundle(
+                job_id=environment.id,
+                organization_id=environment.organization_id,
+                agent_version_id=environment.agent_version_id,
+                environment_version_id=version.id,
+                suite_version_id=environment.suite_version_id,
+                assembly_key=f"sha256:{number:064x}",
+                state=HarnessAssembledBundle.State.READY,
+                object_key=f"harness-bundles/{number}.tar.gz",
+            )
+            for number, version in enumerate(versions, start=1)
+        )
+        for number in range(1, count + 1):
+            storage.objects[f"harness-bundles/{number}.tar.gz"] = body
+        return environment, versions
+
+    @pytest.mark.parametrize("count", [400, 1001])
+    def test_a_long_run_of_resealed_saves_reads_the_newest_one_s_record_with_one_seal_lookup(
+        self, user, workspace, monkeypatch, count
+    ):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from simulate.selectors.environment_documents import version_contract
+
+        environment, versions = self._resaves(
+            user, workspace, monkeypatch, f"rc-resaves-{count}", count
+        )
+
+        with CaptureQueriesContext(connection) as queries:
+            contract = version_contract(environment, versions[-1])
+
+        assert production_only(contract) == []
+        seal_lookups = [
+            one
+            for one in queries.captured_queries
+            if "simulate_harness_assembled_bundle" in one["sql"]
+        ]
+        assert len(seal_lookups) == 1
+        assert len(queries) < 10
+
+    def test_an_ancestor_with_a_reseal_and_a_recorded_run_contract_ends_the_walk(
+        self, user, workspace, monkeypatch
+    ):
+        """The newest save recorded nothing; its parent resealed and recorded the service route. The walk stops
+        there instead of reaching the first version, which reaches the tools by the author's import."""
+        from simulate.selectors.environment_documents import version_contract
+
+        environment, versions = self._resaves(
+            user, workspace, monkeypatch, "rc-resaves-middle", 3
+        )
+        newest = versions[-1]
+        HarnessEnvironmentVersion._base_manager.filter(id=newest.id).update(
+            documents={"contract": AUTHORED}
+        )
+        newest.refresh_from_db()
+
+        assert production_only(version_contract(environment, newest)) == []
