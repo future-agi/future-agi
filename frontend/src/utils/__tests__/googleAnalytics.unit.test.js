@@ -51,8 +51,14 @@ describe("analyticsPageLocation unit", () => {
   it.each([
     ["https://app.test/dashboard", "https://app.test/dashboard"],
     ["https://app.test/a?tab=x&q=secret#h", "https://app.test/a"],
-    ["https://app.test/a?utm_source=x&utm_campaign=y", "https://app.test/a?utm_source=x&utm_campaign=y"],
-    ["https://app.test/p/3F2C1E4B-9A7D-4C1E-8F00-1234567890AB", "https://app.test/p/:id"],
+    [
+      "https://app.test/a?utm_source=x&utm_campaign=y",
+      "https://app.test/a?utm_source=x&utm_campaign=y",
+    ],
+    [
+      "https://app.test/p/3F2C1E4B-9A7D-4C1E-8F00-1234567890AB",
+      "https://app.test/p/:id",
+    ],
     ["https://app.test/p/0123456789abcdef0123", "https://app.test/p/:id"],
     ["https://app.test/p/12345", "https://app.test/p/:id"],
     ["https://app.test/p/123", "https://app.test/p/123"],
@@ -63,6 +69,21 @@ describe("analyticsPageLocation unit", () => {
   ])("maps %s to %s", async (input, expected) => {
     const { analyticsPageLocation } = await import("../googleAnalytics");
     expect(analyticsPageLocation(input)).toBe(expected);
+  });
+});
+
+describe("analyticsInitialReferrer unit", () => {
+  it.each([
+    ["", ""],
+    ["https://www.google.com/search?q=secret", "https://www.google.com/"],
+    ["https://futureagi.com/pricing?utm_source=x", "https://futureagi.com/"],
+    ["https://app.test/shared/abc?sso_token=x", ""],
+    ["https://app.test/dashboard", ""],
+    ["android-app://com.example", ""],
+    ["not a url", ""],
+  ])("maps %j to %j", async (input, expected) => {
+    const { analyticsInitialReferrer } = await import("../googleAnalytics");
+    expect(analyticsInitialReferrer(input, "https://app.test")).toBe(expected);
   });
 });
 
@@ -78,16 +99,21 @@ describe("initGoogleAnalytics unit", () => {
     expect(window[`ga-disable-${MEASUREMENT_ID}`]).toBe(false);
   });
 
-  it.each(["", undefined, "GTM-ABC", "AW-123", "G-abc", "G-1 2", "%VITE_GA_ID%"])(
-    "loads nothing for the build value %j",
-    async (value) => {
-      config.GA_ID = value;
-      installPolicy();
-      await loadAndInit();
-      expect(gtagScripts()).toEqual([]);
-      expect(window.dataLayer).toBeUndefined();
-    },
-  );
+  it.each([
+    "",
+    undefined,
+    "GTM-ABC",
+    "AW-123",
+    "G-abc",
+    "G-1 2",
+    "%VITE_GA_ID%",
+  ])("loads nothing for the build value %j", async (value) => {
+    config.GA_ID = value;
+    installPolicy();
+    await loadAndInit();
+    expect(gtagScripts()).toEqual([]);
+    expect(window.dataLayer).toBeUndefined();
+  });
 
   it("loads nothing when the page address was blocked at load", async () => {
     installPolicy({ allowedAtLoad: false });
@@ -134,27 +160,68 @@ describe("initGoogleAnalytics unit", () => {
     );
   });
 
-  it("refreshes the page fields after in-app navigation", async () => {
+  const pageViews = () =>
+    window.dataLayer
+      .filter((args) => args[0] === "event" && args[1] === "page_view")
+      .map((args) => args[2]);
+
+  it("sends the first page view itself, not through gtag's automatic one", async () => {
     installPolicy();
     await loadAndInit();
+    const configCall = window.dataLayer.find((args) => args[0] === "config");
+    expect(configCall[2].send_page_view).toBe(false);
+    expect(pageViews()).toEqual([
+      {
+        page_location: `${window.location.origin}/dashboard/develop`,
+        page_referrer: "",
+        page_title: "Future AGI",
+      },
+    ]);
+  });
+
+  it("sends a redacted page view for each in-app navigation", async () => {
+    installPolicy();
+    await loadAndInit();
+    const origin = window.location.origin;
     window.history.pushState(null, "", "/auth/jwt/register?email=a%40b.com");
+    expect(pageViews().at(-1)).toEqual({
+      page_location: `${origin}/auth/jwt/register`,
+      page_referrer: `${origin}/dashboard/develop`,
+      page_title: "Future AGI",
+    });
     const updates = window.dataLayer.filter(
       (args) => args[0] === "config" && args[2]?.update === true,
     );
     expect(updates.at(-1)[2]).toEqual({
-      page_location: `${window.location.origin}/auth/jwt/register`,
+      page_location: `${origin}/auth/jwt/register`,
+      page_referrer: `${origin}/dashboard/develop`,
       page_title: "Future AGI",
       send_page_view: false,
       update: true,
     });
   });
 
-  it("sends no page field update for a blocked address", async () => {
+  it("does not count query-only changes as page views", async () => {
     installPolicy();
     await loadAndInit();
+    window.history.replaceState(null, "", "/dashboard/develop?tab=runs");
+    window.history.replaceState(null, "", "/dashboard/develop?search=x");
+    expect(pageViews()).toHaveLength(1);
+  });
+
+  it("sends nothing for a blocked address and never uses it as a referrer", async () => {
+    installPolicy();
+    await loadAndInit();
+    const origin = window.location.origin;
     const before = window.dataLayer.length;
     window.history.pushState(null, "", "/shared/token-1");
     expect(window.dataLayer.length).toBe(before);
+    window.history.pushState(null, "", "/settings/billing");
+    expect(pageViews().at(-1)).toEqual({
+      page_location: `${origin}/settings/billing`,
+      page_referrer: `${origin}/dashboard/develop`,
+      page_title: "Future AGI",
+    });
   });
 
   it("initializes once", async () => {
