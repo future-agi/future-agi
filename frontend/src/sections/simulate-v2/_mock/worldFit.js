@@ -112,7 +112,10 @@ export const worldFitOf = (template, agent, binding = null, scenarios = [], revi
   const extra = agentTools.filter((a) => !bound.has(a));
   const missing = rows.filter((r) => r.kind === "missing").map((r) => r.world);
   /* A case is unmeasured when it leans on a world tool nothing is bound to. */
+  /* With no world tool bound, the agent can't act in the world at all: every case is unmeasured. */
+  const noneBound = worldTools.length > 0 && missing.length === worldTools.length;
   const unmeasured = scenarios.filter((s) => {
+    if (noneBound) return true;
     const text = JSON.stringify(s).toLowerCase();
     /* By name, or by the thing the tool acts on (customer, slot, appointment). */
     return missing.some((m) => text.includes(m.toLowerCase()) || words(m).slice(1).some((w) => text.includes(w)));

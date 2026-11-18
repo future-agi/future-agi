@@ -63,7 +63,7 @@ export default function ReviewUpdateDialog({
       open
       onClose={onClose}
       PaperProps={{ sx: { maxWidth: 620 } }}
-      title={`${update.entry.id} · release ${update.to}`}
+      title={`${update.entry.name || update.entry.title || env?.name || "This environment"} · release ${update.to}`}
       content={
         <Stack spacing={1.75}>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>

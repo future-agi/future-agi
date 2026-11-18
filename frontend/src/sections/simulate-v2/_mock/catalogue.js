@@ -1718,7 +1718,7 @@ export const worldFactsOf = (entry, template) => {
     scoring:
       entry?.scoring ||
       (rules
-        ? `${rules} hard rules, checked on every scenario`
+        ? `${rules} hard rule${rules === 1 ? "" : "s"}, checked on every scenario`
         : "None — graded by your evaluations"),
     tested: untested
       ? "Not yet tested with any agent"

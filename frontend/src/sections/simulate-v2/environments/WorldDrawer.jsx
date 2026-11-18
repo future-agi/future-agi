@@ -1,6 +1,14 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { Box, Button, IconButton, Stack, Tab, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  IconButton,
+  Stack,
+  Tab,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import SideDrawer from "../components/SideDrawer";
@@ -233,16 +241,34 @@ export default function WorldDrawer({
                 flexShrink: 0,
               }}
             >
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                disabled={entry?.release?.status === "access"}
-                onClick={() => setTab("start")}
-                endIcon={<Iconify icon="solar:arrow-right-linear" width={16} />}
-              >
-                Use with my agent
-              </Button>
+              {(() => {
+                /* Listed only: it runs where it lives, never here — so the
+                   way in is off, with where to go instead. */
+                const listedOnly = entry?.host?.support === "listed";
+                const why = listedOnly
+                  ? `Listed only — it runs on ${entry.host.name}, not here.`
+                  : entry?.release?.status === "access"
+                    ? "Request access first."
+                    : "";
+                return (
+                  <Tooltip arrow title={why}>
+                    <span>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        color="primary"
+                        disabled={!!why}
+                        onClick={() => setTab("start")}
+                        endIcon={
+                          <Iconify icon="solar:arrow-right-linear" width={16} />
+                        }
+                      >
+                        Use with my agent
+                      </Button>
+                    </span>
+                  </Tooltip>
+                );
+              })()}
             </Stack>
           )}
         </Box>

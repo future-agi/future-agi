@@ -166,8 +166,13 @@ export default function DesignReview({
     : env?.builtFrom?.kind === "template" || env?.builtFrom?.worldSource
       ? "From the ready world"
       : "From the agent's code";
+  /* A ready world's records come from it, like its tools and rules. */
   const tableSrc = (t) =>
-    t.fromFile || t.source ? `From ${t.fromFile || t.source}` : "Generated";
+    t.fromFile || t.source
+      ? `From ${t.fromFile || t.source}`
+      : origin === "From the ready world" && !t.fromRequest
+        ? origin
+        : "Generated";
   const ruleSrc = scratch
     ? "From your description"
     : origin === "From the agent's code"
@@ -636,7 +641,7 @@ export default function DesignReview({
     const bf = env?.builtFrom || {};
     /* Built for an agent: what to test is its description, and the agent
        is named — only a scratch build has none yet. */
-    const flow = (bf.intake?.flow || bf.testRequest || "").trim();
+    const flow = (bf.intake?.flow || bf.testRequest || bf.request || "").trim();
     const agentName = bf.agentName || bf.connectedAgent?.name || null;
     const agentVersion = bf.agentVersion?.label || bf.agentVersion || null;
     const brief = [

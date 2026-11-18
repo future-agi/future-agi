@@ -352,7 +352,13 @@ export default function PrebuiltWorldsView({
             flexShrink: 0,
           }}
         >
-          {`${listed.length + (withSandbox ? 1 : 0)} of ${total} worlds`}
+          {(() => {
+            const shown = listed.length + (withSandbox ? 1 : 0);
+            /* "of N" only when a filter hides some. */
+            return shown === total
+              ? `${total} environments`
+              : `${shown} of ${total} environments`;
+          })()}
         </Typography>
       </Stack>
 

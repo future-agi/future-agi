@@ -14,6 +14,7 @@ import { getAgentType, agentTypesForSurface } from "./agentTypes";
 import { argsSignatureLine } from "./rlContract";
 import { worldFor, worldToolsOf, seededRowsOf } from "./agentWorlds";
 import { proofKindOf } from "./rsiModel";
+import { designDetailPatch } from "./scratchDesign";
 
 /**
  * The providers come off the voice_platform agent type rather than a second
@@ -479,7 +480,11 @@ const STAGES = {
             ),
           ];
     return {
-      title: "Understanding the agent",
+      /* A customized copy has no agent: it reads the ready world instead. */
+      title:
+        ws?.kind === "template" && !source?.connectedAgent && !source?.agentName
+          ? "Reading the ready world"
+          : "Understanding the agent",
       steps: [
         ...opening,
         ...fromWorld,
@@ -825,12 +830,15 @@ const agentLabelOf = (source) =>
 export const derivedEnvironment = (source, { id } = {}) => {
   /* The world the agent's own tools act on — read from what it is. */
   const world = worldFor(source);
-  return {
+  const base = {
     id: id || "env-returns-line",
     /* A chat agent on a voice platform (Vapi chat, ElevenLabs chat) is
        still reached in chat — what it was connected as decides, before the
        platform's usual modality. */
-    ...(REACH_BY_MODALITY[source?.channel] ||
+    ...((!source?.connectedAgent &&
+      source?.worldSource?.kind === "template" &&
+      REACH_BY_MODALITY[source.worldSource.surface]) ||
+      REACH_BY_MODALITY[source?.channel] ||
       REACH_BY_MODALITY[soleChannelOf(source)] ||
       REACH_BY_MODALITY[source?.agentType] ||
       REACH_BY_MODALITY[detectedStack(source).modality] ||
@@ -853,4 +861,31 @@ export const derivedEnvironment = (source, { id } = {}) => {
     rules: world.rules,
     evalPreset: ["task_success", "policy_adherence"],
   };
+  /* Customize a ready environment: the change asked for joins the copy's
+     design — its records, tools and limits — before anything is built. */
+  if (!source?.request) return base;
+  const asked = designDetailPatch(base, source.request);
+  return asked
+    ? {
+        ...base,
+        /* What the change added says so; the rest came from the ready world. */
+        seed: {
+          ...asked.envPatch.seed,
+          tables: asked.envPatch.seed.tables.map((t) =>
+            asked.added.tables.some((x) => x.name === t.name)
+              ? { ...t, fromRequest: true }
+              : t,
+          ),
+        },
+        tools: asked.envPatch.tools.map((t) =>
+          asked.added.tools.some((x) => x.name === t.name)
+            ? { ...t, designSrc: "From your change" }
+            : t,
+        ),
+        rules: asked.envPatch.rules,
+        ...(asked.envPatch.starterScenarios && {
+          starterScenarios: asked.envPatch.starterScenarios,
+        }),
+      }
+    : base;
 };

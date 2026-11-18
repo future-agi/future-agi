@@ -24,8 +24,7 @@ import { MODALITY_FOR } from "../_mock/fidelity";
  */
 export const buildableAgentsOf = (agents = []) =>
   agents.filter(
-    (a) =>
-      !a.placeholder && agentStatusOf(a).status === "connected",
+    (a) => !a.placeholder && agentStatusOf(a).status === "connected",
   );
 
 /** The channel a prebuilt world is for — "voice" or "chat". */
@@ -51,6 +50,8 @@ export const templateWorldSource = (template) => ({
   kind: "template",
   id: template.id,
   label: template.name,
+  /* A copy with no agent is reached the way the world is (chat or voice). */
+  surface: template.surface || null,
   world: worldFromTemplate(template),
 });
 
