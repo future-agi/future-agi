@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict
 
 import structlog
 from django.db import transaction
@@ -26,6 +26,9 @@ from simulate.services.canonical_json import canonical_digest
 from simulate.services.hosted_harness import HostedHarnessError
 
 logger = structlog.get_logger(__name__)
+
+if TYPE_CHECKING:
+    from simulate.services.harness_scenario_lifecycle import LifecycleView
 
 REVISIONS_MAX = 50
 NO_RESULTS = "Validation finished but recorded no results; try again."
@@ -120,9 +123,74 @@ def _last_change(
     return max((one for one in (proved, archived) if one is not None), default=None)
 
 
+class ValidateAnswer(TypedDict, total=False):
+    """Validate scenarios' answer: `validating` with its job, `ready` when proofs are fresh, or `unavailable`."""
+
+    state: Required[Literal["validating", "ready", "unavailable"]]
+    job_id: str | None
+    deadline_at: str | None
+    finished_at: str
+    message: str
+
+
+class ValidationStatus(TypedDict):
+    state: Literal["validating", "finished", "failed", "unavailable"]
+    job_id: str
+    deadline_at: str
+    finished_at: str | None
+    proofs_recorded: bool
+    message: str | None
+
+
+class LifecycleAnswer(TypedDict):
+    """An archive's or a restore's answer: the case's lifecycle after it, and on restore whether it runs at once."""
+
+    scenario_key: str
+    lifecycle: LifecycleView
+    live: NotRequired[bool]
+
+
+class ScenarioRevision(TypedDict):
+    revision: int
+    digest: str
+    suite_versions: list[int]
+    first_suite_version: int
+    changed_fields: list[str]
+    lifecycle_on_default_environment: NotRequired[LifecycleView | None]
+
+
+class ScenarioRevisions(TypedDict):
+    scenario_key: str
+    revisions: list[ScenarioRevision]
+    truncated: bool
+
+
+class NotActiveCase(TypedDict):
+    scenario_key: str
+    reason: str | None
+    reason_text: str | None
+
+
+class SourceChange(TypedDict):
+    """One cited rule or file that changed, its text before and after, and the cases that cite it."""
+
+    kind: str
+    ref: str
+    before: str | None
+    after: str | None
+    cited_by: list[str]
+
+
+class SourceChanges(TypedDict):
+    from_version: int | None
+    to_version: int
+    changes: list[SourceChange]
+    truncated: bool
+
+
 def validate_scenarios(
     environment: HostedHarnessJob, body: Mapping[str, Any]
-) -> tuple[dict[str, Any], int]:
+) -> tuple[ValidateAnswer, int]:
     """Start proving every scenario of the pair; ``(body, status)``. A live job is reported, never
     refused; "proofs already exist" never skips one, unless the caller asks with ``if_fresh``."""
     from simulate.services.harness_versioning import validation
@@ -166,11 +234,11 @@ def validate_scenarios(
         )
         changed = _last_change(environment, suite_version, environment_version)
         if newest is not None and (changed is None or newest.updated_at >= changed):
-            return {
-                "state": "ready",
-                "job_id": str(newest.id),
-                "finished_at": newest.updated_at.isoformat(),
-            }, 200
+            return ValidateAnswer(
+                state="ready",
+                job_id=str(newest.id),
+                finished_at=newest.updated_at.isoformat(),
+            ), 200
     started = validation.start_validation(
         environment,
         agent,
@@ -186,14 +254,16 @@ def validate_scenarios(
             422,
         )
     if started.state == validation.CHECK_UNAVAILABLE:
-        return {"state": "unavailable", "message": validation.UNAVAILABLE_REASON}, 200
+        return ValidateAnswer(
+            state="unavailable", message=validation.UNAVAILABLE_REASON
+        ), 200
     job = started.job
     deadline = validation.check_deadline(job) if job is not None else None
-    return {
-        "state": "validating",
-        "job_id": str(job.id) if job is not None else None,
-        "deadline_at": deadline.isoformat() if deadline is not None else None,
-    }, 202
+    return ValidateAnswer(
+        state="validating",
+        job_id=str(job.id) if job is not None else None,
+        deadline_at=deadline.isoformat() if deadline is not None else None,
+    ), 202
 
 
 def check_ending(job: HostedHarnessJob) -> tuple[Literal["unavailable", "failed"], str]:
@@ -205,7 +275,7 @@ def check_ending(job: HostedHarnessJob) -> tuple[Literal["unavailable", "failed"
     return "failed", validation.failed_reason(job.failure or {})
 
 
-def validation_status(environment: HostedHarnessJob, job_id: Any) -> dict[str, Any]:
+def validation_status(environment: HostedHarnessJob, job_id: Any) -> ValidationStatus:
     from simulate.services.harness_versioning import validation
 
     job = HostedHarnessJob.no_workspace_objects.filter(
@@ -217,7 +287,8 @@ def validation_status(environment: HostedHarnessJob, job_id: Any) -> dict[str, A
         )
     metadata = (job.payload or {}).get("metadata") or {}
     recorded = metadata.get("scenario_proofs_recorded") is True
-    if job.state in validation._LIVE_STATES:
+    state: Literal["validating", "finished", "failed", "unavailable"]
+    if validation.is_live(job):
         state, message, finished = "validating", None, None
         recorded = False
     elif job.state == HostedHarnessJob.State.COMPLETED:
@@ -225,14 +296,14 @@ def validation_status(environment: HostedHarnessJob, job_id: Any) -> dict[str, A
         message = None if recorded else NO_RESULTS
     else:
         (state, message), finished = check_ending(job), job.updated_at.isoformat()
-    return {
-        "state": state,
-        "job_id": str(job.id),
-        "deadline_at": validation.check_deadline(job).isoformat(),
-        "finished_at": finished,
-        "proofs_recorded": recorded,
-        "message": message,
-    }
+    return ValidationStatus(
+        state=state,
+        job_id=str(job.id),
+        deadline_at=validation.check_deadline(job).isoformat(),
+        finished_at=finished,
+        proofs_recorded=recorded,
+        message=message,
+    )
 
 
 def _row(environment: HostedHarnessJob, key: str) -> HostedHarnessScenario | None:
@@ -258,7 +329,7 @@ def _suite_now(environment: HostedHarnessJob) -> list[dict[str, Any]]:
     return [dict(one) for one in suite_documents(edit_sides(environment)["suite"])]
 
 
-def _lifecycle_of(environment: HostedHarnessJob, key: str) -> Any:
+def _lifecycle_of(environment: HostedHarnessJob, key: str) -> LifecycleView:
     from simulate.services.harness_scenario_lifecycle import (
         in_draft_view,
         scenario_lifecycle,
@@ -276,7 +347,7 @@ def _lifecycle_of(environment: HostedHarnessJob, key: str) -> Any:
 
 def archive_scenario(
     environment: HostedHarnessJob, key: str, *, reason: str, user: Any
-) -> dict[str, Any]:
+) -> LifecycleAnswer:
     """Take a case out of future selection, keeping its identity, runs and evidence."""
     from simulate.services.harness_starting_records import scenario_token
     from simulate.services.harness_versioning import read as version_reads
@@ -345,15 +416,15 @@ def archive_scenario(
         environment_id=str(environment.id),
         scenario_key=row.scenario_key,
     )
-    return {
-        "scenario_key": row.scenario_key,
-        "lifecycle": _lifecycle_of(environment, row.scenario_key),
-    }
+    return LifecycleAnswer(
+        scenario_key=row.scenario_key,
+        lifecycle=_lifecycle_of(environment, row.scenario_key),
+    )
 
 
 def restore_scenario(
     environment: HostedHarnessJob, key: str, *, user: Any
-) -> dict[str, Any]:
+) -> LifecycleAnswer:
     """Bring an archived case back. One still in the saved suite runs again at once with its own
     lifecycle; one a Save already left out goes back into the suite draft and reads Draft until saved."""
     from simulate.services.harness_scenario_lifecycle import in_draft_view
@@ -403,16 +474,16 @@ def restore_scenario(
         scenario_key=row.scenario_key,
         live=live,
     )
-    return {
-        "scenario_key": row.scenario_key,
-        "live": live,
-        "lifecycle": _lifecycle_of(environment, row.scenario_key)
+    return LifecycleAnswer(
+        scenario_key=row.scenario_key,
+        live=live,
+        lifecycle=_lifecycle_of(environment, row.scenario_key)
         if live
         else in_draft_view(),
-    }
+    )
 
 
-def scenario_revisions(environment: HostedHarnessJob, key: str) -> dict[str, Any]:
+def scenario_revisions(environment: HostedHarnessJob, key: str) -> ScenarioRevisions:
     """Each distinct content of a case across the environment's active suite versions, newest first."""
     from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
 
@@ -430,7 +501,9 @@ def scenario_revisions(environment: HostedHarnessJob, key: str) -> dict[str, Any
         raise _error(
             "scenario_not_found", "No scenario of that key in this environment", 404
         )
-    revisions: list[dict[str, Any]] = []
+    revisions: list[ScenarioRevision] = []
+    # The suite version each revision first appeared in, read back below.
+    first_suites: list[Any] = []
     previous: Mapping[str, Any] | None = None
     for number, suite_id, content in members:
         content = content if isinstance(content, Mapping) else {}
@@ -444,21 +517,19 @@ def scenario_revisions(environment: HostedHarnessJob, key: str) -> dict[str, Any
             if previous is not None and content.get(name) != previous.get(name)
         )
         revisions.append(
-            {
-                "revision": len(revisions) + 1,
-                "digest": digest,
-                "suite_versions": [number],
-                "first_suite_version": number,
-                "changed_fields": changed,
-                "_suite_id": suite_id,
-            }
+            ScenarioRevision(
+                revision=len(revisions) + 1,
+                digest=digest,
+                suite_versions=[number],
+                first_suite_version=number,
+                changed_fields=changed,
+            )
         )
+        first_suites.append(suite_id)
         previous = content
     environment_version = environment.environment_version
-    for one in revisions:
-        suite = HarnessSuiteVersion._base_manager.filter(
-            id=one.pop("_suite_id")
-        ).first()
+    for one, suite_id in zip(revisions, first_suites, strict=True):
+        suite = HarnessSuiteVersion._base_manager.filter(id=suite_id).first()
         views = scenario_lifecycle(
             environment,
             suite_version=suite,
@@ -467,14 +538,14 @@ def scenario_revisions(environment: HostedHarnessJob, key: str) -> dict[str, Any
         )
         one["lifecycle_on_default_environment"] = views.get(key)
     revisions.reverse()
-    return {
-        "scenario_key": key,
-        "revisions": revisions[:REVISIONS_MAX],
-        "truncated": len(revisions) > REVISIONS_MAX,
-    }
+    return ScenarioRevisions(
+        scenario_key=key,
+        revisions=revisions[:REVISIONS_MAX],
+        truncated=len(revisions) > REVISIONS_MAX,
+    )
 
 
-def not_active(environment: HostedHarnessJob) -> list[dict[str, Any]]:
+def not_active(environment: HostedHarnessJob) -> list[NotActiveCase]:
     """The cases of the default suite that are not Active on the new defaults, for the Save response."""
     from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
 
@@ -485,11 +556,9 @@ def not_active(environment: HostedHarnessJob) -> list[dict[str, Any]]:
         environment_version=environment.environment_version,
     )
     return [
-        {
-            "scenario_key": key,
-            "reason": view["reason"],
-            "reason_text": view["reason_text"],
-        }
+        NotActiveCase(
+            scenario_key=key, reason=view["reason"], reason_text=view["reason_text"]
+        )
         for key, view in views.items()
         if view["state"] not in ("active", "archived")
     ]
@@ -529,14 +598,14 @@ def _reworded(
     return best[1] if best[0] >= 0.6 else None
 
 
-def source_changes(environment: HostedHarnessJob, version_id: Any) -> dict[str, Any]:
+def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChanges:
     """What changed between an environment version and its parent in the rules and files the
     default suite cites, each with the cases that cite it."""
     from simulate.services.harness_scenario_lifecycle import (
-        _matched_rule,
-        _parent_documents,
-        _rules_of,
         changed_refs,
+        matched_rule,
+        parent_version_documents,
+        rules_of,
     )
 
     version = HarnessEnvironmentVersion._base_manager.filter(
@@ -544,7 +613,7 @@ def source_changes(environment: HostedHarnessJob, version_id: Any) -> dict[str, 
     ).first()
     if version is None:
         raise _error("version_not_found", "no such version in this environment", 404)
-    parent_documents = _parent_documents(version) or {}
+    parent_documents = parent_version_documents(version) or {}
     parent = (
         HarnessEnvironmentVersion._base_manager.filter(id=version.parent_id).first()
         if version.parent_id
@@ -561,10 +630,10 @@ def source_changes(environment: HostedHarnessJob, version_id: Any) -> dict[str, 
         else {}
     )
     new_rules, old_rules = (
-        _rules_of(version.documents or {}),
-        _rules_of(parent_documents),
+        rules_of(version.documents or {}),
+        rules_of(parent_documents),
     )
-    by_change: dict[tuple[str, str], dict[str, Any]] = {}
+    by_change: dict[tuple[str, str], SourceChange] = {}
     files: set[str] = set()
     for key, refs in changed.items():
         for source in (contents.get(key) or {}).get("sources") or []:
@@ -576,20 +645,14 @@ def source_changes(environment: HostedHarnessJob, version_id: Any) -> dict[str, 
             kind, ref = str(source.get("kind")), str(source.get("ref") or "")
             entry = by_change.setdefault(
                 (kind, ref),
-                {
-                    "kind": kind,
-                    "ref": ref,
-                    "before": None,
-                    "after": None,
-                    "cited_by": [],
-                },
+                SourceChange(kind=kind, ref=ref, before=None, after=None, cited_by=[]),
             )
             if key not in entry["cited_by"]:
                 entry["cited_by"].append(key)
             if kind == "rule":
                 quote = str(source.get("quote") or "")
-                entry["before"] = _matched_rule(quote, old_rules)
-                entry["after"] = _matched_rule(quote, new_rules) or _reworded(
+                entry["before"] = matched_rule(quote, old_rules)
+                entry["after"] = matched_rule(quote, new_rules) or _reworded(
                     entry["before"], old_rules, new_rules
                 )
             else:
@@ -602,9 +665,9 @@ def source_changes(environment: HostedHarnessJob, version_id: Any) -> dict[str, 
             entry["before"] = before_texts.get(path)
             entry["after"] = after_texts.get(path)
     changes = sorted(by_change.values(), key=lambda one: (one["kind"], one["ref"]))
-    return {
-        "from_version": getattr(parent, "version_number", None),
-        "to_version": version.version_number,
-        "changes": changes[:SOURCE_CHANGES_MAX],
-        "truncated": len(changes) > SOURCE_CHANGES_MAX,
-    }
+    return SourceChanges(
+        from_version=getattr(parent, "version_number", None),
+        to_version=version.version_number,
+        changes=changes[:SOURCE_CHANGES_MAX],
+        truncated=len(changes) > SOURCE_CHANGES_MAX,
+    )

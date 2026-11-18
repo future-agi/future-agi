@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import Iterable, Mapping
+from datetime import datetime
 from typing import Any, TypedDict
 
 import structlog
@@ -29,6 +30,22 @@ QUOTE_MAX = 500
 FILE_READ_MAX = 1024 * 1024
 FILE_CHANGED = "the file changed; validate again"
 FILE_UNCHECKED = "not checked yet; validate to check the quote"
+
+
+class FileResult(TypedDict):
+    """A file source resolved once: whether its quote is in the file, and the file's digest when it was read."""
+
+    ref: str
+    resolved: bool
+    matched_digest: str | None
+
+
+class SeedRecords(TypedDict):
+    """Up to 50 rows of one seeded table; `available` false when the world's records live only in the agent."""
+
+    table: str
+    rows: list[dict[str, Any]]
+    available: bool
 
 
 class SourceView(TypedDict):
@@ -137,7 +154,7 @@ SEED_STATE = "state.json"
 SEED_ROWS_MAX = 50
 
 
-def seed_records(environment: Any, table: str) -> dict[str, Any]:
+def seed_records(environment: Any, table: str) -> SeedRecords:
     """Up to 50 rows of one table as the default environment version's seeded world holds them,
     read from its stored archive (never the live database). `available` is false for a world whose
     records live only in the agent's own service."""
@@ -150,11 +167,11 @@ def seed_records(environment: Any, table: str) -> dict[str, Any]:
         else None
     )
     if body is None:
-        return {"table": table, "rows": [], "available": False}
+        return SeedRecords(table=table, rows=[], available=False)
     try:
         state = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
-        return {"table": table, "rows": [], "available": False}
+        return SeedRecords(table=table, rows=[], available=False)
     tables = (
         state.get("tables")
         if isinstance(state, Mapping) and isinstance(state.get("tables"), Mapping)
@@ -172,7 +189,7 @@ def seed_records(environment: Any, table: str) -> dict[str, Any]:
         rows = [one if isinstance(one, Mapping) else {"value": one} for one in found]
     else:
         rows = []
-    return {"table": table, "rows": rows[:SEED_ROWS_MAX], "available": True}
+    return SeedRecords(table=table, rows=rows[:SEED_ROWS_MAX], available=True)
 
 
 def _sub_goal_names(sub_goals: object) -> set[str]:
@@ -294,13 +311,13 @@ def _digest_for(path: str, digests: Mapping[str, str]) -> str | None:
     return None
 
 
-def resolve_file_text(path: str, text: str, quote: str, digest: str) -> dict[str, Any]:
+def resolve_file_text(path: str, text: str, quote: str, digest: str) -> FileResult:
     """The stored result for one file source: whether the quote is in the file, with its digest."""
-    return {
-        "ref": f"file:{path}",
-        "resolved": normalise(quote) in normalise(text),
-        "matched_digest": digest,
-    }
+    return FileResult(
+        ref=f"file:{path}",
+        resolved=normalise(quote) in normalise(text),
+        matched_digest=digest,
+    )
 
 
 def stored_file_results(
@@ -308,7 +325,7 @@ def stored_file_results(
     *,
     archive_key: str | None,
     proof_sources: Iterable[Mapping[str, Any]] = (),
-) -> list[dict[str, Any]]:
+) -> list[FileResult]:
     """Resolve each `file` source once: from ALK's own result when it carries a digest, else by
     reading the file from the environment archive. Never raises; an unreadable file is unresolved."""
     from simulate.services.harness_versioning import archives
@@ -320,7 +337,7 @@ def stored_file_results(
         and one.get("kind") == "file"
         and one.get("matched_digest")
     }
-    results: list[dict[str, Any]] = []
+    results: list[FileResult] = []
     wanted = [
         one for one in sources if isinstance(one, Mapping) and one.get("kind") == "file"
     ]
@@ -339,26 +356,25 @@ def stored_file_results(
         alk = by_ref.get(ref)
         if alk is not None:
             results.append(
-                {
-                    "ref": ref,
-                    "resolved": alk.get("resolved") is not False,
-                    "matched_digest": bare_digest(alk["matched_digest"]),
-                }
+                FileResult(
+                    ref=ref,
+                    resolved=alk.get("resolved") is not False,
+                    matched_digest=bare_digest(alk["matched_digest"]),
+                )
             )
             continue
         body = texts.get(path) or texts.get(f"knowledge/{path}")
         if body is None:
-            results.append({"ref": ref, "resolved": False, "matched_digest": None})
+            results.append(FileResult(ref=ref, resolved=False, matched_digest=None))
             continue
-        results.append(
-            resolve_file_text(
-                path,
-                body.decode("utf-8", errors="replace"),
-                str(one.get("quote") or ""),
-                archives.sha256_hex(body),
-            )
-            | {"ref": ref}
+        result = resolve_file_text(
+            path,
+            body.decode("utf-8", errors="replace"),
+            str(one.get("quote") or ""),
+            archives.sha256_hex(body),
         )
+        result["ref"] = ref
+        results.append(result)
     return results
 
 
@@ -407,7 +423,7 @@ def resolve(
         for one in sources
         if isinstance(one, Mapping) and one.get("kind") == "chat_message"
     }
-    messages: dict[str, Any] = {}
+    messages: dict[str, datetime] = {}
     if chat_ids:
         valid = []
         for one in chat_ids:

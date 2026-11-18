@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, NotRequired, TypedDict, cast
 from uuid import UUID
 
 from simulate.models import (
@@ -464,6 +464,8 @@ class RunSelection(Scope):
     # Each holding row's reason, in plain words.
     reasons: dict[str, str]
     next: validation.UnprovedNext | None
+    # Set when cases held only for validation run anyway, because validation cannot run here.
+    validation: NotRequired[Literal["not_enforced"]]
 
 
 @dataclass(frozen=True)

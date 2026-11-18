@@ -187,6 +187,13 @@ MOVE_TRIES_KEY = "validation_move_tries"
 MOVE_TRIES = 3
 # A move still not made this long after its validation settled is made by the nudge tick.
 MOVE_RETRY_AFTER = timedelta(minutes=2)
+
+
+def is_live(job: HostedHarnessJob) -> bool:
+    """Whether a validation job is still running."""
+    return job.state in _LIVE_STATES
+
+
 _LIVE_STATES = frozenset(
     set(HostedHarnessJob.State)
     - {

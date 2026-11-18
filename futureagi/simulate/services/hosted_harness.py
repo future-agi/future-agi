@@ -8,7 +8,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from django.conf import settings
@@ -56,6 +56,9 @@ from tracer.services.observability_switch import (
     refusal_body,
     set_agent_observability,
 )
+
+if TYPE_CHECKING:
+    from simulate.services.harness_readiness.selection import RunSelection
 
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
 _JOB_SCHEMA_VERSION = "futureagi.harness-job.v1"
@@ -1071,8 +1074,8 @@ def _validate_unproved_pair(
 
 
 def _released_view(
-    view: dict[str, Any], held: frozenset[str], released: set[str]
-) -> dict[str, Any]:
+    view: RunSelection, held: frozenset[str], released: set[str]
+) -> RunSelection:
     """The run's selection view once cases held only for validation are released because
     validation cannot run here: they run, and the view says validation was not enforced."""
     freed = set(held) & set(released)
@@ -1080,22 +1083,23 @@ def _released_view(
         return view
     from simulate.services.harness_readiness.selection import NOT_VALIDATED_ROW
 
-    still = [key for key in view["held_back"].get("keys") or [] if key not in freed]
-    by = dict(view["held_back"].get("by") or {})
+    still = [key for key in view["held_back"]["keys"] if key not in freed]
+    by = dict(view["held_back"]["by"])
     left = by.pop(NOT_VALIDATED_ROW, 0) - len(freed)
     if left > 0:
         by[NOT_VALIDATED_ROW] = left
-    reasons = dict(view.get("reasons") or {})
+    reasons = dict(view["reasons"])
     if NOT_VALIDATED_ROW not in by:
         reasons.pop(NOT_VALIDATED_ROW, None)
     count = view["held_back"]["count"] - len(freed)
-    return {
+    released_view: RunSelection = {
         **view,
         "running": view["requested"] - count,
         "held_back": {**view["held_back"], "count": count, "keys": still, "by": by},
         "reasons": reasons,
         "validation": "not_enforced",
     }
+    return released_view
 
 
 def _held_back_checked(

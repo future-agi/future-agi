@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from datetime import datetime
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from django.db.models import F
 
@@ -26,7 +26,7 @@ from simulate.models import (
 )
 from simulate.models.harness_versioning import VersionStatus
 from simulate.services.canonical_json import canonical_digest
-from simulate.services.harness_scenario_sources import file_path
+from simulate.services.harness_scenario_sources import SourceView, file_path
 from simulate.services.harness_seed_joins import (
     broken_join_text,
     environment_broken_joins,
@@ -93,12 +93,44 @@ UNCAPTURED_STATUSES = frozenset({"blocked", "unavailable"})
 LEGACY_TEXT = "Validated before checks were recorded. Validate again to confirm."
 
 
+class ProofControl(TypedDict):
+    """One negative control as the proof ran it: `failed` true when the checks failed it, as they should."""
+
+    name: str | None
+    why: str | None
+    failed: bool | None
+    assumed: list[str]
+
+
+class ProofLeak(TypedDict, total=False):
+    """Grading material a simulated person or the agent could see: who, through which field, and an excerpt."""
+
+    who: str
+    field: str
+    grader_field: str
+    excerpt: str
+
+
+class ControlStep(TypedDict, total=False):
+    tool: str
+    arguments: dict[str, Any]
+
+
+class NegativeControl(TypedDict, total=False):
+    """A wrong behaviour as the case writes it: the steps, and the checks that must fail it."""
+
+    name: str
+    why: str
+    steps: list[ControlStep]
+    must_fail: list[str]
+
+
 class ProofSummary(TypedDict):
     proved: bool
     outcome: str | None
     assumed: list[str]
-    controls: list[dict[str, Any]]
-    leaks: list[dict[str, Any]]
+    controls: list[ProofControl]
+    leaks: list[ProofLeak]
     judged_only: bool
     proved_at: str | None
     # The versions the proof was made with; the agent is null for a proof made before it was recorded.
@@ -115,7 +147,7 @@ class LifecycleView(TypedDict):
     warning_text: str | None
     legacy: bool
     proof: ProofSummary | None
-    sources: list[dict[str, Any]]
+    sources: list[SourceView]
     source_changed: list[str]
     # The environment version the cited sources changed in, when any did.
     source_changed_version: int | None
@@ -123,7 +155,7 @@ class LifecycleView(TypedDict):
     source_changed_version_id: str | None
     # From the case's content on this pair: a must-pass case, and its negative controls as written.
     must_pass: bool
-    negative_controls: list[dict[str, Any]]
+    negative_controls: list[NegativeControl]
 
 
 class _Safe(dict):
@@ -203,17 +235,20 @@ def _summary(entry: Mapping[str, Any] | None) -> ProofSummary | None:
         outcome=entry.get("outcome"),
         assumed=list(entry.get("assumed") or []),
         controls=[
-            {
-                "name": one.get("name"),
-                "why": one.get("why"),
-                "failed": one.get("failed"),
-                "assumed": one.get("assumed") or [],
-            }
+            ProofControl(
+                name=one.get("name"),
+                why=one.get("why"),
+                failed=one.get("failed"),
+                assumed=list(one.get("assumed") or []),
+            )
             for one in entry.get("controls") or []
             if isinstance(one, Mapping)
         ],
+        # Stored as the harness wrote them; shown as they are.
         leaks=[
-            dict(one) for one in entry.get("leaks") or [] if isinstance(one, Mapping)
+            cast(ProofLeak, dict(one))
+            for one in entry.get("leaks") or []
+            if isinstance(one, Mapping)
         ],
         judged_only=bool(entry.get("judged_only")),
         proved_at=entry.get("proved_at"),
@@ -525,12 +560,13 @@ def scenario_lifecycle(
             view = _view("draft", reason="not_validated")
         content = contents.get(key) or {}
         view["must_pass"] = content.get("must_pass") is True
+        # As the case writes them.
         view["negative_controls"] = [
-            dict(one)
+            cast(NegativeControl, dict(one))
             for one in content.get("negative_controls") or []
             if isinstance(one, Mapping)
         ]
-        view["sources"] = [dict(one) for one in resolved.get(key) or []]
+        view["sources"] = [SourceView(**one) for one in resolved.get(key) or []]
         view["source_changed"] = changed.get(key, [])
         if view["source_changed"]:
             view["source_changed_version"] = environment_version.version_number
@@ -686,9 +722,19 @@ def uncaptured(
 WORKFLOW_KINDS = ("success", "refusal", "wrong_result")
 
 
+class WorkflowProof(TypedDict):
+    """Per release-critical workflow: proved cases per kind, and the kinds no case proves yet."""
+
+    workflow: str
+    success: int
+    refusal: int
+    wrong_result: int
+    missing: list[str]
+
+
 def workflow_proof(
     views: Mapping[str, LifecycleView], contents: Mapping[str, Any]
-) -> list[dict[str, Any]]:
+) -> list[WorkflowProof]:
     """Per release-critical workflow, how many cases prove a success, a refusal and a wrong result.
 
     A workflow is a `use_case` with at least one must-pass case; while no case is must-pass, every
@@ -705,7 +751,7 @@ def workflow_proof(
         for name, keys in by_workflow.items()
         if any((contents.get(key) or {}).get("must_pass") is True for key in keys)
     }
-    rows: list[dict[str, Any]] = []
+    rows: list[WorkflowProof] = []
     for name in sorted(critical or by_workflow):
         counts = dict.fromkeys(WORKFLOW_KINDS, 0)
         for key in by_workflow[name]:
@@ -724,16 +770,18 @@ def workflow_proof(
             ):
                 counts["wrong_result"] += 1
         rows.append(
-            {
-                "workflow": name,
-                **counts,
-                "missing": [kind for kind in WORKFLOW_KINDS if not counts[kind]],
-            }
+            WorkflowProof(
+                workflow=name,
+                success=counts["success"],
+                refusal=counts["refusal"],
+                wrong_result=counts["wrong_result"],
+                missing=[kind for kind in WORKFLOW_KINDS if not counts[kind]],
+            )
         )
     return rows
 
 
-def workflow_proofs(environment: HostedHarnessJob) -> list[dict[str, Any]]:
+def workflow_proofs(environment: HostedHarnessJob) -> list[WorkflowProof]:
     """`workflow_proof` over the environment's default pair; empty when it is not versioned."""
     if environment.suite_version is None or environment.environment_version is None:
         return []
@@ -793,7 +841,7 @@ def archived_view(archived_at: datetime, archive_reason: str) -> LifecycleView:
     return view
 
 
-def _parent_documents(
+def parent_version_documents(
     environment_version: HarnessEnvironmentVersion,
 ) -> Mapping[str, Any] | None:
     if environment_version.parent_id is None:
@@ -806,13 +854,13 @@ def _parent_documents(
     return parent if isinstance(parent, Mapping) else {}
 
 
-def _rules_of(documents: Mapping[str, Any]) -> list[str]:
+def rules_of(documents: Mapping[str, Any]) -> list[str]:
     contract = documents.get("contract")
     rules = contract.get("hard_constraints") if isinstance(contract, Mapping) else None
     return [str(one) for one in rules or []]
 
 
-def _matched_rule(quote: str, rules: list[str]) -> str | None:
+def matched_rule(quote: str, rules: list[str]) -> str | None:
     from simulate.services.harness_scenario_sources import normalise
 
     wanted = normalise(quote)
@@ -844,12 +892,12 @@ def changed_refs(
     parent = (
         parent_documents
         if parent_documents is not None
-        else _parent_documents(environment_version)
+        else parent_version_documents(environment_version)
     )
     if parent is None:
         return {}
     documents = environment_version.documents or {}
-    new_rules, old_rules = _rules_of(documents), _rules_of(parent)
+    new_rules, old_rules = rules_of(documents), rules_of(parent)
     new_files = documents.get("file_digests")
     old_files = parent.get("file_digests")
     by_text: dict[str, bool] = {}
@@ -865,8 +913,8 @@ def changed_refs(
             if source.get("kind") == "rule":
                 quote = str(source.get("quote") or "")
                 now, before = (
-                    _matched_rule(quote, new_rules),
-                    _matched_rule(quote, old_rules),
+                    matched_rule(quote, new_rules),
+                    matched_rule(quote, old_rules),
                 )
                 if now is None or now != before:
                     refs.append(ref)
@@ -924,7 +972,7 @@ class DroppedCase(TypedDict):
     key: str
     name: str
     # The capabilities the case needed that the agent version no longer has, by kind (tools, sub-goals).
-    missing: dict[str, Any]
+    missing: dict[str, list[str]]
     agent_version: str
     reason: str
     # Why restoring it did not prove it, when a rebuild brought it back unproved.
@@ -952,7 +1000,8 @@ def dropped_cases(
         {
             "key": str(key),
             "name": str(record.get("name") or key),
-            "missing": dict(record.get("missing") or {}),
+            # As the harness wrote it: names by kind.
+            "missing": cast(dict[str, list[str]], dict(record.get("missing") or {})),
             "agent_version": str(record.get("agent_version") or ""),
             "reason": str(record.get("reason") or ""),
             "restore_failed": str(record.get("restore_failed") or ""),

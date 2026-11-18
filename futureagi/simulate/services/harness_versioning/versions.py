@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from django.conf import settings
 from django.db import transaction
@@ -171,7 +171,21 @@ def _sub_goals(files: Mapping[str, bytes]) -> list[dict[str, Any]]:
     return [goal for goal in value or [] if isinstance(goal, dict) and goal.get("name")]
 
 
-def dropped_documents(suite: Mapping[str, bytes]) -> dict[str, dict[str, Any]]:
+class DroppedRecord(TypedDict):
+    """A scenario a rebuild dropped, as the suite version keeps it."""
+
+    name: str
+    # As the harness wrote them: names by kind (tools, sub-goals).
+    capabilities: dict[str, list[str]]
+    missing: dict[str, list[str]]
+    agent_version: str
+    reason: str
+    last_suite_version: str
+    restore_failed: str
+    content_digest: str
+
+
+def dropped_documents(suite: Mapping[str, bytes]) -> dict[str, DroppedRecord]:
     """Each scenario a rebuild dropped for a removed capability, by key: what it needed, what was
     gone, the agent version, the reason and the last suite version that held it. Its last content
     stays in the archive; a digest of it tells two records apart."""
@@ -181,20 +195,20 @@ def dropped_documents(suite: Mapping[str, bytes]) -> dict[str, dict[str, Any]]:
     held = body.get("scenarios") if isinstance(body, dict) else None
     if not isinstance(held, dict):
         return {}
-    found: dict[str, dict[str, Any]] = {}
+    found: dict[str, DroppedRecord] = {}
     for key, record in held.items():
         if not isinstance(record, dict):
             continue
-        found[str(key)] = {
-            "name": str(record.get("name") or key),
-            "capabilities": record.get("capabilities") or {},
-            "missing": record.get("missing") or {},
-            "agent_version": str(record.get("agent_version") or ""),
-            "reason": str(record.get("reason") or ""),
-            "last_suite_version": str(record.get("last_suite_version") or ""),
-            "restore_failed": str(record.get("restore_failed") or ""),
-            "content_digest": canonical_digest(record.get("content") or {}),
-        }
+        found[str(key)] = DroppedRecord(
+            name=str(record.get("name") or key),
+            capabilities=record.get("capabilities") or {},
+            missing=record.get("missing") or {},
+            agent_version=str(record.get("agent_version") or ""),
+            reason=str(record.get("reason") or ""),
+            last_suite_version=str(record.get("last_suite_version") or ""),
+            restore_failed=str(record.get("restore_failed") or ""),
+            content_digest=canonical_digest(record.get("content") or {}),
+        )
     return found
 
 

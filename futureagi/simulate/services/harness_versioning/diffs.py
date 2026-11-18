@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 from simulate.services.harness_versioning.hashing import (
     ACTOR_LIMITS_KEY,
@@ -189,15 +189,24 @@ def suite_diff(
     }
 
 
-def _removed(key: str, record: Any, reason: str) -> dict[str, Any]:
+class RemovedScenario(TypedDict):
+    """A scenario a suite version no longer has, and why; a rebuild's drop names what the agent lost."""
+
+    key: str
+    reason: str
+    capabilities: NotRequired[dict[str, list[str]]]
+    agent_version: NotRequired[str | None]
+
+
+def _removed(key: str, record: Any, reason: str) -> RemovedScenario:
     if not isinstance(record, Mapping) or not record.get("reason"):
-        return {"key": key, "reason": reason}
-    return {
-        "key": key,
-        "reason": str(record["reason"]),
-        "capabilities": record.get("missing") or {},
-        "agent_version": record.get("agent_version") or None,
-    }
+        return RemovedScenario(key=key, reason=reason)
+    return RemovedScenario(
+        key=key,
+        reason=str(record["reason"]),
+        capabilities=record.get("missing") or {},
+        agent_version=record.get("agent_version") or None,
+    )
 
 
 def agent_diff(

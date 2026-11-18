@@ -34,10 +34,38 @@ from simulate.services.hosted_harness_conversation import serialize_conversation
 from tfc.utils.api_errors import build_error_envelope
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from simulate.models import HarnessSuiteVersion
     from simulate.services.harness_actor_rules import ActorRecord
+    from simulate.services.harness_scenario_lifecycle import LifecycleView
+    from simulate.services.harness_scenario_sources import SourceView
     from simulate.services.scenario_faults import FaultProblem, FaultTarget
 
 logger = logging.getLogger(__name__)
+
+
+class ListLifecycle(TypedDict):
+    """The lifecycle the scenarios list reads, on the pair in view: what it filters by, each case's view, the
+    archived cases, and how an unsaved case's sources resolve."""
+
+    wanted: str
+    suite: HarnessSuiteVersion
+    resolve_sources: Callable[[dict[str, list[Any]]], dict[str, list[SourceView]]]
+    views: dict[str, LifecycleView]
+    archived: list[LifecycleView]
+    archived_rows: list[HostedHarnessScenario]
+    archived_views: dict[str, LifecycleView]
+
+
+class UncoveredLevel(TypedDict):
+    axis: str
+    level: str
+
+
+class UncoveredLevels(TypedDict):
+    uncovered: list[UncoveredLevel]
+    coverage_recorded: bool
 
 
 class AmendReceipt(TypedDict):
@@ -3412,7 +3440,7 @@ def _version_of(
 
 def _lifecycle_for_list(
     job: HostedHarnessJob, params: Any
-) -> dict[str, Any] | Response | None:
+) -> ListLifecycle | Response | None:
     """The lifecycle of every case on the pair in view (the defaults unless the query names
     versions), or ``None`` for an environment that is not versioned."""
     from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
@@ -3463,26 +3491,28 @@ def _lifecycle_for_list(
     from simulate.services.harness_scenario_sources import resolve
     from simulate.services.harness_versioning.drafts import open_draft
 
-    def resolve_draft_sources(by_key: dict[str, list[Any]]) -> dict[str, Any]:
+    def resolve_draft_sources(
+        by_key: dict[str, list[Any]],
+    ) -> dict[str, list[SourceView]]:
         # An unsaved case may cite a file the unsaved environment adds (a policy upload).
         return resolve(
             job, open_draft(job, "environment") or environment_version, by_key
         )
 
-    return {
-        "wanted": wanted,
-        "suite": suite,
-        "resolve_sources": resolve_draft_sources,
-        "views": {key: view for key, view in views.items() if key not in archived_keys},
-        "archived": archived,
-        "archived_rows": archived_rows,
-        "archived_views": dict(
+    return ListLifecycle(
+        wanted=wanted,
+        suite=suite,
+        resolve_sources=resolve_draft_sources,
+        views={key: view for key, view in views.items() if key not in archived_keys},
+        archived=archived,
+        archived_rows=archived_rows,
+        archived_views=dict(
             zip([row.scenario_key for row in archived_rows], archived, strict=True)
         ),
-    }
+    )
 
 
-def _matches(view: Any, wanted: str) -> bool:
+def _matches(view: LifecycleView, wanted: str) -> bool:
     if wanted == "source_changed":
         return bool(view["source_changed"])
     return view["state"] == wanted
@@ -3536,7 +3566,7 @@ def _narrow_by_lifecycle(job, queryset, drafted, lifecycle, params):
 
 def _with_lifecycle(
     row: dict[str, Any],
-    lifecycle: dict[str, Any] | None,
+    lifecycle: ListLifecycle | None,
     *,
     draft_sources: list[Any] | None = None,
 ) -> dict[str, Any]:
@@ -3554,11 +3584,9 @@ def _with_lifecycle(
         view = in_draft_view()
         if draft_sources:
             # An unsaved case still shows what it cites, read against the version in view.
-            view["sources"] = [
-                dict(one)
-                for one in lifecycle["resolve_sources"]({key: draft_sources}).get(key)
-                or []
-            ]
+            view["sources"] = list(
+                lifecycle["resolve_sources"]({key: draft_sources}).get(key) or []
+            )
     else:
         view = lifecycle["views"].get(key) or in_draft_view()
     return {**row, "lifecycle": view}
@@ -3587,7 +3615,7 @@ def _store_edited_sources(
     )
 
 
-def uncovered_levels(job: HostedHarnessJob) -> dict[str, Any]:
+def uncovered_levels(job: HostedHarnessJob) -> UncoveredLevels:
     """The levels the build planned that no scenario uses, from the default suite's coverage.json."""
     from simulate.models import HarnessSuiteVersion
 
@@ -3601,13 +3629,13 @@ def uncovered_levels(job: HostedHarnessJob) -> dict[str, Any]:
     coverage = documents.get("coverage") if isinstance(documents, dict) else None
     axes = coverage.get("axes") if isinstance(coverage, dict) else None
     if not isinstance(axes, dict):
-        return {"uncovered": [], "coverage_recorded": False}
-    return {
-        "uncovered": [
-            {"axis": str(axis), "level": str(level)}
+        return UncoveredLevels(uncovered=[], coverage_recorded=False)
+    return UncoveredLevels(
+        uncovered=[
+            UncoveredLevel(axis=str(axis), level=str(level))
             for axis, entry in axes.items()
             if isinstance(entry, dict)
             for level in entry.get("unused") or []
         ],
-        "coverage_recorded": True,
-    }
+        coverage_recorded=True,
+    )
