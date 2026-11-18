@@ -2,13 +2,12 @@ from decimal import Decimal, InvalidOperation
 
 from rest_framework import serializers
 
-from tfc.utils.serializer_fields import JsonValueField
-
 from tfc.utils.api_serializers import (
     ApiErrorResponseSerializer,
     EmptyRequestSerializer,
     StrictInputSerializer,
 )
+from tfc.utils.serializer_fields import JsonValueField
 
 API_FORMAT_HELP_TEXT = (
     "Gateway protocol adapter name. This intentionally remains a string because "
