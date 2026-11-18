@@ -1,4 +1,25 @@
-"""What run readiness reads: its rows, their panel areas and gates, and its shapes."""
+"""What run readiness reads: its rows, their panel areas and gates, and its shapes.
+
+What the Run dialog and the Ready to run panel read, from ``GET``/``POST capabilities/`` (and a run's
+``capability_snapshot``, the same shape less ``selection``):
+
+=====================  ==========================================================================================
+Field                  Meaning
+=====================  ==========================================================================================
+``rows[]``             One row per capability: ``status``, ``reason``, ``evidence[]``, ``fix``, ``consequence``.
+``rows[].affected``    Selected cases the row holds back, with ``count``, ``of`` and the first keys.
+``rows[].fix``         The repair: ``category``, ``action`` and what it ``would`` change.
+``workers[]``          One per declared worker: ``status``, ``tools[]`` each Allowed, Blocked or Not enforced,
+                       ``bypassed[]`` and ``bypassed_count``. Never Supported.
+``children`` row       ``evidence[]`` holds the sub-agent checklist, one result per item.
+``hidden_material``    Supported only when the check ran each process as its own user and the door apart.
+``blockers``           Blocked rows plus blocked workers.
+``selection.held_by``  Each row or ``worker:<id>`` holding selected cases back: ``count``, ``reason``, ``text``.
+=====================  ==========================================================================================
+
+``GET capabilities/cases/`` pages the cases of one bucket or one row; ``POST capabilities/recheck/`` re-validates
+the pairing without a run; ``GET capabilities/history/`` lists certified pairings.
+"""
 
 from __future__ import annotations
 
