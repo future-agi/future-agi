@@ -123,6 +123,23 @@ def _scenarios(environment: Any, *, base: bool = False) -> dict[str, dict[str, A
     }
 
 
+def _saved_actors(environment: Any) -> dict[str, dict[str, Any]]:
+    """The actors by id, as the saved environment version (the open draft's parent) has them."""
+    draft = open_draft(environment, "environment")
+    version = (
+        draft.parent if draft is not None and draft.parent_id else None
+    ) or environment.environment_version
+    if version is None:
+        return {}
+    return {
+        item.key: item.value
+        for item in item_index(
+            piece_files(environment, "environment", version)
+        ).values()
+        if item.kind == "actor" and isinstance(item.value, dict)
+    }
+
+
 def draft_review(environment: Any) -> dict[str, Any]:
     """Every change the open drafts make, each with the decision taken on it.
 
@@ -160,9 +177,16 @@ def draft_review(environment: Any) -> dict[str, Any]:
             changes.append(change)
     scenarios = _scenarios(environment)
     base = _scenarios(environment, base=True)
+    actors = (
+        _saved_actors(environment)
+        if any(one["kind"] == "tool" and one["action"] == "removed" for one in changes)
+        else {}
+    )
     for change in changes:
         change["affects"] = affects(change, scenarios, base)
-        change["depends_on"] = depends_on(change, changes, scenarios, base)
+        change["depends_on"] = depends_on(
+            change, changes, scenarios, base, base_actors=actors
+        )
         change["graded"] = graded(change)
         touched = sorted(scenarios) if change["affects"] == ALL else change["affects"]
         change["revalidate"] = touched if change["graded"] else []
