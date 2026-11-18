@@ -22,7 +22,7 @@ import EvidenceSummary from '../components/EvidenceSummary';
 import TechnicalDetails from '../components/TechnicalDetails';
 import { suggestedEvidence } from './evidenceSuggestions';
 import { useStickyFooterHeight } from '../components/stickyFooter';
-import { counted, responsiveEvidenceSx } from './reviewPresentation';
+import { counted, responsiveEvidenceSx, unchangedUntilRelease } from './reviewPresentation';
 import { skillsRouteSx } from '../components/routeGutter';
 import ReleaseRuleNote from '../components/ReleaseRuleNote';
 import { COMPOSER_CONTINUE, RENEW_REQUEST, requestReleaseFor } from '../utils/terms';
@@ -41,8 +41,9 @@ PageButtons.propTypes = { query: PropTypes.object.isRequired, page: PropTypes.nu
 // becomes workspace-visible and every result attached. Nothing private is
 // shared implicitly; cancelling shares and attaches nothing. Opened for one
 // row when a private row is ticked, or for every selected result from the one
-// bulk button.
-export function ShareConsentDialog({ open, share = [], attach = [], onShare, onShared, onClose, candidateNumber, baselineNumber }) {
+// bulk button. Opened from Continue (onSkip given), it also offers the explicit
+// second choice of continuing without the private results; that shares nothing.
+export function ShareConsentDialog({ open, share = [], attach = [], onShare, onShared, onClose, onSkip, candidateNumber, baselineNumber }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const all = [...share, ...attach.filter((ref) => !share.some((item) => evidenceKey(item) === evidenceKey(ref)))];
@@ -58,17 +59,22 @@ export function ShareConsentDialog({ open, share = [], attach = [], onShare, onS
       </Stack>)}
       {error && <Alert severity="error">{error}</Alert>}
     </Stack>}
-    action={<Button variant="contained" color="primary" disabled={busy || !share.length} onClick={async () => {
-      setBusy(true);
-      setError('');
-      try {
-        for (const ref of share) await onShare({ ...evidenceSelection(ref), acknowledgeSnapshotSharing: true });
-        await onShared(all);
-        onClose();
-      } catch { setError('Could not confirm sharing for every result. Refresh the evidence state; nothing was attached.'); } finally { setBusy(false); }
-    }}>Share and attach</Button>} />;
+    action={<>
+      {onSkip && <Button size="small" variant="outlined" color="inherit" disabled={busy} onClick={() => { setError(''); onSkip(); }}>
+        {share.length === 1 ? 'Continue without it' : 'Continue without them'}
+      </Button>}
+      <Button variant="contained" color="primary" disabled={busy || !share.length} onClick={async () => {
+        setBusy(true);
+        setError('');
+        try {
+          for (const ref of share) await onShare({ ...evidenceSelection(ref), acknowledgeSnapshotSharing: true });
+          await onShared(all);
+          onClose();
+        } catch { setError('Could not confirm sharing for every result. Refresh the evidence state; nothing was attached.'); } finally { setBusy(false); }
+      }}>Share and attach</Button>
+    </>} />;
 }
-ShareConsentDialog.propTypes = { open: PropTypes.bool.isRequired, share: PropTypes.array, attach: PropTypes.array, onShare: PropTypes.func.isRequired, onShared: PropTypes.func.isRequired, onClose: PropTypes.func.isRequired, candidateNumber: PropTypes.number, baselineNumber: PropTypes.number };
+ShareConsentDialog.propTypes = { open: PropTypes.bool.isRequired, share: PropTypes.array, attach: PropTypes.array, onShare: PropTypes.func.isRequired, onShared: PropTypes.func.isRequired, onClose: PropTypes.func.isRequired, onSkip: PropTypes.func, candidateNumber: PropTypes.number, baselineNumber: PropTypes.number };
 
 // Two numbered steps; the current one is bold and marked for assistive technology.
 function RequestSteps({ step }) {
@@ -164,7 +170,6 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
   const evidenceItems = (options.data?.evidence || []);
   // One explanation per table, never one per row; the run the author came from gets its own line when it is private.
   const hasPrivate = evidenceItems.some((ref) => ref.visibility === 'private');
-  const carriedPrivate = evidenceItems.some((ref) => carriedKeys.has(evidenceKey(ref)) && ref.visibility === 'private');
   // Available = a settled result for this exact content that could be attached now (a private one after sharing).
   const availableRefs = candidate ? evidenceItems.filter((ref) => evidenceProblems(ref, packet).every((reason) => reason.startsWith('Private'))) : [];
   const pendingRefs = evidenceItems.filter((ref) => pendingShare.includes(evidenceKey(ref)));
@@ -190,7 +195,9 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
   };
   const protectedNames = [subject?.protected_label_names, subject?.protectedLabelNames].find(Array.isArray) || null;
   const requestTitle = candidate?.number != null ? requestReleaseFor(candidate.number) : 'Request release';
-  const header = <ObjectHeader crumbs={prefill?.kind === 'agent_context' ? [{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: prefill.name || 'Agent context', to: paths.dashboard.skills.contextDetail(prefill.subjectId) }, { label: 'Request release' }] : [{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: 'New request' }]} title={renewal ? RENEW_REQUEST : prepared ? 'Confirm and send' : requestTitle} purpose={prepared ? "Inspect the changes and confirm before sending. Production stays unchanged until approval and release." : "Choose a reviewer and inspect the changes. Production stays unchanged until approval and release."} />;
+  // The label the request moves names itself in the lead ("Staging stays unchanged…"), never a fixed "Production".
+  const unchanged = labelValid ? ` ${unchangedUntilRelease(label)}` : '';
+  const header = <ObjectHeader crumbs={prefill?.kind === 'agent_context' ? [{ label: 'Agent contexts', to: paths.dashboard.skills.contexts }, { label: prefill.name || subject?.name || 'Agent context', to: paths.dashboard.skills.contextDetail(prefill.subjectId) }, { label: 'Request release' }] : [{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: 'New request' }]} title={renewal ? RENEW_REQUEST : prepared ? 'Confirm and send' : requestTitle} purpose={prepared ? `Inspect the changes and confirm before sending.${unchanged}` : `Choose a reviewer and inspect the changes.${unchanged}`} />;
   const formState = state && state !== 'ready' ? state : failed ? 'error' : subjects.isLoading ? 'loading' : resourceId && !carried && versions.data?.results.length === 0 ? 'empty' : null;
   if (formState) return <Stack spacing={3} sx={{ ...skillsRouteSx, width: 1 }}>{header}{formState === 'loading' ? <ContentSkeleton variant="panel" label="Loading request form" rows={4} /> : formState === 'error' ? <ErrorState title="Couldn't load the request form." onRetry={refresh} /> : formState === 'empty' ? <EmptyState title="No published versions yet" description="Publish a version before requesting a review." secondaryAction={<Button variant="contained" color="primary" href={paths.dashboard.skills.root}>Go to Skills</Button>} /> : <ReviewState state={formState} onRetry={refresh} />}</Stack>;
   // UXF-17: Continue waits for a reviewer; no evidence is a warning beside it, never a block.
@@ -204,8 +211,40 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
     const attached = (fresh?.evidence || []).filter((ref) => keys.has(evidenceKey(ref)) && !evidenceProblems(ref, packet).length).map(evidenceSelection);
     setSelected((previous) => [...previous.filter((ref) => !keys.has(evidenceKey(ref))), ...attached]);
     setPendingShare((previous) => previous.filter((key) => !keys.has(key)));
+    return attached;
+  };
+  // UXF-17: a ticked private row is never sent unshared. Continue with ticked private rows opens the
+  // same share consent for them, with "Continue without" as the explicit second choice; closing it does
+  // neither. Only a confirmed share attaches them, and the request is prepared with what is attached.
+  const continueRequest = () => {
+    if (!pendingRefs.length) { preparePacket(); return; }
+    setConsent({ share: pendingRefs, attach: options.data.evidence.filter((ref) => selected.some((item) => evidenceKey(item) === evidenceKey(ref))), proceed: true });
+  };
+  const sharedThenContinue = async (refs) => {
+    const keys = new Set(refs.map(evidenceKey));
+    const attached = await attachShared(refs);
+    const attachedKeys = new Set(attached.map(evidenceKey));
+    // A shared result that can no longer be attached (expired, changed) keeps the person on this step.
+    if (consent?.share.some((ref) => !attachedKeys.has(evidenceKey(ref)))) {
+      setError('A shared result could not be attached. Check the evidence below, then continue.');
+      return;
+    }
+    await preparePacket([...selected.filter((ref) => !keys.has(evidenceKey(ref))), ...attached]);
+  };
+  const continueWithout = () => {
+    // The skipped rows are unticked, so the page shows exactly what the request carries.
+    setPendingShare([]);
+    setConsent(null);
+    preparePacket(selected);
   };
   const selectedCount = selected.length + pendingRefs.filter((ref) => !selected.some((item) => evidenceKey(item) === evidenceKey(ref))).length;
+  const carriedPending = pendingRefs.some((ref) => carriedKeys.has(evidenceKey(ref)));
+  // One reading of the evidence for the footer, the helper line and Continue (UXF-17): ticked but
+  // private rows are named as not attached; no evidence is a warning beside Continue, never a block.
+  const evidenceState = !candidate || !options.data ? { text: '' }
+    : pendingRefs.length ? { warning: true, text: `${counted(pendingRefs.length, 'ticked result')} not attached until shared${selected.length ? ` · ${counted(selected.length, 'test result')} attached` : ''}. Continue asks you to share ${pendingRefs.length === 1 ? 'it' : 'them'}.` }
+      : selected.length === 0 ? { warning: true, text: 'No test evidence attached' }
+        : { text: `${counted(selected.length, 'test result')} attached.${prepareReady ? ' Next, inspect the changes and confirm before sending.' : ''}` };
   const testsUrl = resourceId ? `${kind === 'agent_context' ? paths.dashboard.skills.contextDetail(resourceId) : paths.dashboard.skills.detail(resourceId)}?version=${candidate?.number}&tab=tests` : paths.dashboard.skills.root;
   return <Stack spacing={3} sx={{ ...skillsRouteSx, width: 1, ...responsiveEvidenceSx }}>
     {header}
@@ -249,7 +288,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
         </Box>
         {options.isFetching && !options.data && <ReviewState state="loading" />}
         {/* The release this request asks for, in one visible line: what moves, from which version, and where it was verified. */}
-        {carried && <Stack role="group" aria-label="Carried release candidate" spacing={0.5} sx={{ minWidth: 0 }}><Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{(prefill.name || subject?.name) ? `${prefill.name || subject.name} · ` : ''}{label} {previousVersion != null ? `v${previousVersion}` : '(current version not loaded)'} → v{candidate.number}</Typography><Typography variant="s3" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{target ? `Application test on ${targetOption?.name || 'the selected target'} · configuration r${target.revision}` : 'Compare instructions; no application target'}</Typography></Stack>}
+        {carried && <Stack role="group" aria-label="Carried release candidate" spacing={0.5} sx={{ minWidth: 0 }}><Typography variant="s1" sx={{ overflowWrap: 'anywhere' }}>{(prefill.name || subject?.name) ? `${prefill.name || subject.name} · ` : ''}{label} {previousVersion != null ? `v${previousVersion}` : Array.isArray(subject?.labels) ? '(no release yet)' : '(current version not loaded)'} → v{candidate.number}</Typography><Typography variant="s3" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{target ? `Application test on ${targetOption?.name || 'the selected target'}` : 'Compare instructions; no application target'}</Typography></Stack>}
         {alreadyCurrent && <Typography variant="s1" role="status">{currentReason}</Typography>}
       </Stack></Section>
       {candidate && <PeoplePicker label="Assigned reviewer" people={options.data?.recipients || []} value={recipientId} onChange={setRecipientId} loading={options.isFetching} error={options.error} onRetry={options.refetch} disabled={busy} helperText="An independent reviewer approves this release." />}
@@ -260,7 +299,7 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
           {/* UXF-17: one line above the table; each row has a checkbox and a neutral Private tag. */}
           {hasPrivate && <Stack spacing={0.5}>
             <Typography variant="s3" color="text.secondary">{PRIVATE_RESULTS_NOTE}</Typography>
-            {carriedPrivate && <Typography variant="s3" color="text.secondary">Your test result from Tests is private. It&apos;s ticked; share it to attach it.</Typography>}
+            {carriedPending && <Typography variant="s3" color="text.secondary">Your test result from Tests is ticked but private, so it isn&apos;t attached until you share it.</Typography>}
           </Stack>}
           {/* The one bulk button: share the ticked private results and attach everything selected. */}
           {pendingRefs.length > 0 && <Button variant="outlined" size="small" sx={{ alignSelf: 'flex-start' }} disabled={busy}
@@ -289,7 +328,8 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
               }
             }} />
           <ShareConsentDialog open={Boolean(consent)} share={consent?.share} attach={consent?.attach} candidateNumber={candidate.number} baselineNumber={previousVersion}
-            onShare={(input) => share.mutateAsync(input)} onShared={attachShared} onClose={() => setConsent(null)} />
+            onShare={(input) => share.mutateAsync(input)} onShared={consent?.proceed ? sharedThenContinue : attachShared} onClose={() => setConsent(null)}
+            onSkip={consent?.proceed ? continueWithout : undefined} />
           {!options.data.evidence.length && <Button variant="outlined" size="small" href={testsUrl} sx={{ alignSelf: 'flex-start' }}>Run tests on v{candidate.number}</Button>}
           {inspecting && <TypedEvidenceList showPrivateNote={false} packet={packet} evidence={options.data.evidence.filter((ref) => evidenceKey(ref) === inspecting)} selected={[]} />}
           {selected.filter((ref) => !options.data.evidence.some((item) => evidenceKey(item) === evidenceKey(ref))).map((ref) => <Alert key={evidenceKey(ref)} severity="warning">Selected evidence {ref.sourceId} is unavailable. Refresh and review again.</Alert>)}
@@ -302,12 +342,10 @@ export default function ReleaseRequestComposer({ scopeKey, renewal, prefill, sta
         <TextField size="small" label="Recorded pipeline decision" value={pipelineDecision} onChange={(event) => setPipelineDecision(event.target.value)} disabled={busy} inputProps={{ maxLength: 2000 }} />
       </Stack></TechnicalDetails>
       <ComposerActions><DecisionFooterRow
-        left={candidate && options.data && selected.length === 0
-          ? <Typography variant="s3" role="status" sx={{ color: 'warning.main', minWidth: 0 }}>No test evidence attached</Typography>
-          : <Typography variant="s3" color="text.secondary" sx={{ minWidth: 0 }}>{prepareReady ? 'Next, inspect the changes and confirm before sending.' : ''}</Typography>}
+        left={<Typography variant="s3" role="status" sx={{ color: evidenceState.warning ? 'warning.main' : 'text.secondary', minWidth: 0 }}>{evidenceState.text}</Typography>}
         reason={<ActionReason id="prepare-review-reason" reason={prepareReason} sx={{ textAlign: { sm: 'right' } }} />}
         secondary={<Button variant="outlined" disabled={busy} onClick={() => navigate(paths.dashboard.skills.reviews)}>Cancel</Button>}
-        primary={<Button variant="contained" color="primary" {...reasonProps('prepare-review-reason', prepareReason)} disabled={!prepareReady} onClick={() => preparePacket()}>{COMPOSER_CONTINUE}</Button>} /></ComposerActions>
+        primary={<Button variant="contained" color="primary" {...reasonProps('prepare-review-reason', prepareReason)} disabled={!prepareReady} onClick={continueRequest}>{COMPOSER_CONTINUE}</Button>} /></ComposerActions>
     </>}
   </Stack>;
 }

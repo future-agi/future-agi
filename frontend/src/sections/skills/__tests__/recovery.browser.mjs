@@ -108,11 +108,11 @@ try {
           assert.equal(await page.getByLabel('Purpose').inputValue(), 'Preserved purpose');
         } else {
           const head = screen === 'head';
-          await page.getByRole('button', { name: head ? 'Review against current latest' : 'Preview dependency changes' }).click();
+          await page.getByRole('button', { name: head ? 'Compare with latest version' : 'Preview changes to linked skills' }).click();
           await page.getByRole('checkbox').check();
           await page.getByRole('button', { name: head ? 'Acknowledge reviewed head' : 'Apply selected updates to draft' }).click();
           await page.getByRole('button', { name: head ? 'Retry head acknowledgment' : 'Retry dependency update' }).waitFor();
-          assert(await page.getByRole('button', { name: head ? 'Review against current latest' : 'Preview dependency changes' }).isDisabled());
+          assert(await page.getByRole('button', { name: head ? 'Compare with latest version' : 'Preview changes to linked skills' }).isDisabled());
         }
         await page.evaluate(() => document.fonts.ready);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${screen} overflows at ${width}`);

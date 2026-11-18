@@ -31,7 +31,7 @@ export default function ArchiveConfirmContent({ labels, protectedLabelNames, res
   return (
     <Stack spacing={1}>
       <Typography variant="s1" color="text.secondary">Agents can no longer fetch it, including through labels.</Typography>
-      {named.length > 0 && <Typography variant="s1" color="text.secondary">{`${labelNames(named)}. Agents following ${named.length > 2 ? "these labels" : following} will stop receiving this skill.`}</Typography>}
+      {named.length > 0 && <Typography variant="s1" color="text.secondary">{`${labelDisplayName(labelNames(named))}. Agents following ${named.length > 2 ? "these labels" : following} will stop receiving this skill.`}</Typography>}
       {protectedSentence && <Typography variant="s1" color="text.secondary" data-testid="archive-protected-rule">{protectedSentence}</Typography>}
       <Typography variant="s1" color="text.secondary">
         {canRestore ? "You can restore it from More → Archived skills." : restoreGate ? "A workspace admin can restore it from More → Archived skills." : "Restoring an archived skill isn't available in this workspace; contact support to restore it."}

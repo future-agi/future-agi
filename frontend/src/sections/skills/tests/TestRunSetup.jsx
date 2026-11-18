@@ -5,7 +5,9 @@ import {
   Box,
   Button,
   Checkbox,
+  FormControl,
   FormControlLabel,
+  FormLabel,
   MenuItem,
   Pagination,
   Stack,
@@ -62,8 +64,8 @@ function CompetitorPicker({ skillId, value, onChange, limit, disabled }) {
   );
   return (
     <Section
-      title="Selected competing skills"
-      description="Pins the chosen production versions. No other workspace skills are silently included."
+      title="Compare with other skills"
+      description="Adds the chosen skills' production versions to the comparison. No other workspace skills are included."
     >
       <Stack spacing={1}>
         <TextField
@@ -484,13 +486,29 @@ export default function TestRunSetup({
         available.
       </Alert>
     );
+  // The same names and order as the context answer check (UXF-03, UXF-14): one name for the test,
+  // the model and cost ceiling, what to compare with, then "Preview answer check". Profile, model
+  // parameters, how the result may be used and other skills to compare are under More options.
+  const testName = settings.profile === "quick" ? "answer check" : "repeated answer check";
+  const providers = plan
+    ? [plan.preview.providerDisclosure.taskProvider, plan.preview.providerDisclosure.judgeProvider]
+        .filter(Boolean)
+        .map(providerName)
+        .filter((name, index, all) => all.indexOf(name) === index)
+    : [];
+  const fileCount = plan ? plan.preview.inventory.reduce((total, bundle) => total + bundle.files.length, 0) : 0;
+  const runReason = !submitted && allowanceOff
+    ? "Paid runs are off for this workspace."
+    : !submitted && plan && !stale && !sendReady
+      ? (review?.review.reviewedAllFiles ? "Classify the flagged files and check any secret findings to run." : "Tick the box above to run.")
+      : null;
   return (
     <Stack spacing={2} sx={{ minWidth: 0 }}>
-      <Typography variant="m3">
+      <Typography variant="s1">
         {candidate
-          ? `Version v${candidate.version}`
-          : `Your saved draft r${draft?.revision ?? 0}`}{" "}
-        · {caseIds.length} selected examples
+          ? `Testing v${candidate.version}`
+          : `Testing your saved draft (revision ${draft?.revision ?? 0})`}{" "}
+        · {plural(caseIds.length, "test case")}
       </Typography>
       <Typography variant="s3" color="text.secondary">
         Test cases run text only — no scripts or tools.
@@ -547,119 +565,42 @@ export default function TestRunSetup({
         sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}
       >
         <Stack spacing={2}>
-          <TextField
-            select
-            size="small"
-            label="Comparison profile"
-            value={settings.profile}
-            onChange={(event) =>
-              change({
-                profile: event.target.value,
-                maxOutputTokens: "",
-                maxTotalTokens: "",
-              })
-            }
-          >
-            <MenuItem value="quick">Quick check</MenuItem>
-            <MenuItem value="repeated">Repeated comparison</MenuItem>
-          </TextField>
-          <Typography variant="s3" color="text.secondary">
-            Up to {plural(profileLimits.maxCases, "test case")} ·{" "}
-            {plural(profileLimits.repetitions, "attempt")} per version ·{" "}
-            stops after {profileLimits.deadlineSeconds} seconds
-          </Typography>
-          {!production && (
-            <Alert severity="info">
-              No production version yet. Compare without this skill instead.
-            </Alert>
-          )}
-          <Stack>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  disabled={!production || locked}
-                  checked={settings.baselines.includes("production")}
-                  onChange={(event) =>
-                    change({
-                      baselines: event.target.checked
-                        ? [...settings.baselines, "production"]
-                        : settings.baselines.filter(
-                            (item) => item !== "production",
-                          ),
-                    })
-                  }
-                />
-              }
-              label={
-                production
-                  ? `Compare with production v${production.version}`
-                  : "Production unavailable"
-              }
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  disabled={locked}
-                  checked={settings.baselines.includes("without_target")}
-                  onChange={(event) =>
-                    change({
-                      baselines: event.target.checked
-                        ? [...settings.baselines, "without_target"]
-                        : settings.baselines.filter(
-                            (item) => item !== "without_target",
-                          ),
-                    })
-                  }
-                />
-              }
-              label={
-                settings.competitors.length
-                  ? "Compare without this skill (keep selected competitors)"
-                  : "Compare without this skill · without any skills"
-              }
+          <Stack direction={{ xs: "column", sm: compact ? "column" : "row" }} spacing={1}>
+            <TextField
+              select
+              size="small"
+              label="Task model"
+              value={settings.modelId}
+              onChange={(event) => change({ modelId: event.target.value })}
+              sx={{ minWidth: 200 }}
+            >
+              {options.data.models.map((item) => (
+                <MenuItem
+                  key={item.modelId}
+                  value={item.modelId}
+                  disabled={!item.canRun}
+                >
+                  {item.modelId}
+                  {!item.canRun ? ` · ${item.disabledReason}` : ""}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              size="small"
+              label="Maximum estimated cost (USD)"
+              value={settings.cost}
+              inputProps={{ inputMode: "decimal" }}
+              helperText={<>Up to <Money value={limits.maxEstimatedCostUsd} round="down" />. A provider estimate, not an invoice.</>}
+              onChange={(event) => change({ cost: event.target.value })}
             />
           </Stack>
-          {settings.baselines.length + 1 > profileLimits.maxVariants && (
-            <Alert severity="warning">
-              Choose one baseline for a quick check, or choose repeated
-              comparison.
-            </Alert>
-          )}
-          {selectedCases.some((item) => !item.reviewed) && (
-            <Alert severity="warning">
-              Approve every selected test case before running.
-            </Alert>
-          )}
-          {caseIds.length > profileLimits.maxCases && (
-            <Alert severity="warning">
-              Select at most {plural(profileLimits.maxCases, "test case")} for this profile.
-            </Alert>
-          )}
-          <TextField
-            select
-            size="small"
-            label="Task model"
-            value={settings.modelId}
-            onChange={(event) => change({ modelId: event.target.value })}
-          >
-            {options.data.models.map((item) => (
-              <MenuItem
-                key={item.modelId}
-                value={item.modelId}
-                disabled={!item.canRun}
-              >
-                {item.modelId}
-                {!item.canRun ? ` — ${item.disabledReason}` : ""}
-              </MenuItem>
-            ))}
-          </TextField>
           {needsJudge && (
             <TextField
               select
               size="small"
               label="AI judge for plain-language checks"
               value={settings.judgeId}
-              helperText="An explicit, separately billed judge call. Temperature 0; output allowance shown in preview."
+              helperText="A separately billed judge call at temperature 0."
               onChange={(event) => change({ judgeId: event.target.value })}
             >
               {options.data.models.map((item) => (
@@ -676,11 +617,99 @@ export default function TestRunSetup({
               ))}
             </TextField>
           )}
-          <Box component="details">
-            <Typography component="summary" variant="s3">
-              Model parameters and token stop
-            </Typography>
-            <Stack spacing={1.5} sx={{ mt: 1.5 }}>
+          <FormControl component="fieldset" sx={{ minWidth: 0 }}>
+            <FormLabel component="legend" sx={{ color: "text.primary", typography: "s1" }}>Compare with</FormLabel>
+            {!production && (
+              <Typography variant="s3" color="text.secondary">
+                No production version yet. Compare without this skill instead.
+              </Typography>
+            )}
+            <Stack direction={{ xs: "column", sm: "row" }} columnGap={2}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    disabled={!production || locked}
+                    checked={settings.baselines.includes("production")}
+                    onChange={(event) =>
+                      change({
+                        baselines: event.target.checked
+                          ? [...settings.baselines, "production"]
+                          : settings.baselines.filter(
+                              (item) => item !== "production",
+                            ),
+                      })
+                    }
+                  />
+                }
+                label={
+                  production
+                    ? `Production v${production.version}`
+                    : "Production (not released yet)"
+                }
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    disabled={locked}
+                    checked={settings.baselines.includes("without_target")}
+                    onChange={(event) =>
+                      change({
+                        baselines: event.target.checked
+                          ? [...settings.baselines, "without_target"]
+                          : settings.baselines.filter(
+                              (item) => item !== "without_target",
+                            ),
+                      })
+                    }
+                  />
+                }
+                label={
+                  settings.competitors.length
+                    ? "Without this skill (the other chosen skills stay)"
+                    : "Without this skill"
+                }
+              />
+            </Stack>
+          </FormControl>
+          {settings.baselines.length + 1 > profileLimits.maxVariants && (
+            <Alert severity="warning">
+              An answer check compares with one version. Untick one, or choose
+              Repeated answer check under More options.
+            </Alert>
+          )}
+          {selectedCases.some((item) => !item.reviewed) && (
+            <Alert severity="warning">
+              Approve every selected test case before running.
+            </Alert>
+          )}
+          {caseIds.length > profileLimits.maxCases && (
+            <Alert severity="warning">
+              Select at most {plural(profileLimits.maxCases, "test case")} for this test.
+            </Alert>
+          )}
+          <TechnicalDetails title="More options">
+            <Stack spacing={1.5}>
+              <TextField
+                select
+                size="small"
+                label="Test"
+                value={settings.profile}
+                onChange={(event) =>
+                  change({
+                    profile: event.target.value,
+                    maxOutputTokens: "",
+                    maxTotalTokens: "",
+                  })
+                }
+              >
+                <MenuItem value="quick">Answer check</MenuItem>
+                <MenuItem value="repeated">Repeated answer check</MenuItem>
+              </TextField>
+              <Typography variant="s3" color="text.secondary">
+                Up to {plural(profileLimits.maxCases, "test case")} ·{" "}
+                {plural(profileLimits.repetitions, "attempt")} per version ·{" "}
+                stops after {profileLimits.deadlineSeconds} seconds
+              </Typography>
               <Stack
                 direction={{ xs: "column", sm: compact ? "column" : "row" }}
                 spacing={1.5}
@@ -721,37 +750,23 @@ export default function TestRunSetup({
                   change({ maxTotalTokens: event.target.value })
                 }
               />
-            </Stack>
-          </Box>
-          <TextField
-            size="small"
-            label="Estimated-cost stop (USD)"
-            value={settings.cost}
-            inputProps={{ inputMode: "decimal" }}
-            helperText={<>Enter a positive amount up to <Money value={limits.maxEstimatedCostUsd} round="down" />. This is a provider estimate, not an invoice.</>}
-            onChange={(event) => change({ cost: event.target.value })}
-          />
-          <TextField
-            select
-            size="small"
-            label="Evidence purpose"
-            value={settings.purpose}
-            disabled={Boolean(parentRunId)}
-            onChange={(event) => change({ purpose: event.target.value })}
-          >
-            <MenuItem value="regression">
-              Reviewed regression comparison
-            </MenuItem>
-            <MenuItem value="diagnostic">
-              Diagnostic · no independent improvement claim
-            </MenuItem>
-          </TextField>
-          <Box component="details">
-            <Typography component="summary" variant="s3">
-              {settings.competitors.length} selected competitors · manage
-              comparison context
-            </Typography>
-            <Box sx={{ mt: 1.5 }}>
+              {/* The run's purpose decides whether the send tick attests "no answer keys"; it is kept,
+                  in plain words, because a flagged file can only run as a diagnostic. */}
+              <TextField
+                select
+                size="small"
+                label="Use of the result"
+                value={settings.purpose}
+                disabled={Boolean(parentRunId)}
+                onChange={(event) => change({ purpose: event.target.value })}
+              >
+                <MenuItem value="regression">
+                  Compare versions (can support a release)
+                </MenuItem>
+                <MenuItem value="diagnostic">
+                  Diagnostic only (no improvement claim)
+                </MenuItem>
+              </TextField>
               <CompetitorPicker
                 skillId={skill.id}
                 value={settings.competitors}
@@ -759,8 +774,8 @@ export default function TestRunSetup({
                 limit={limits.maxCompetitors}
                 disabled={locked}
               />
-            </Box>
-          </Box>
+            </Stack>
+          </TechnicalDetails>
         </Stack>
       </Box>
       {parentRunId && (
@@ -771,92 +786,72 @@ export default function TestRunSetup({
       )}
       <Box>
         <Button
-          variant="outlined"
+          color="primary"
+          variant={compact || plan ? "outlined" : "contained"}
           disabled={!valid || locked}
           onClick={preview}
         >
-          {busy && !submitted ? "Preparing preview…" : "Preview work and spend"}
+          {busy && !submitted ? "Preparing preview…" : `Preview ${testName}`}
         </Button>
       </Box>
       {plan && (
-        <Section title="Confirm the reviewed plan">
-          <Stack spacing={2}>
-            <Typography variant="s1">
-              {plural(plan.preview.caseCount, "test case")} ×{" "}
-              {plural(plan.preview.variantCount, "version")} ×{" "}
-              {plural(plan.preview.repetitions, "attempt")} per version ={" "}
-              {plural(plan.preview.attemptCount, "attempt")}
-            </Typography>
-            <Typography variant="s3" color="text.secondary">
-              At most {plan.preview.maxTaskCalls} task calls and{" "}
-              {plan.preview.maxJudgeCalls} judge calls · task provider{" "}
-              {plan.preview.providerDisclosure.taskProvider}
-              {plan.preview.providerDisclosure.judgeProvider
-                ? ` · judge provider ${plan.preview.providerDisclosure.judgeProvider}`
-                : ""}
-            </Typography>
-            <Typography variant="s1">
-              Upper-bound estimate{" "}
-              <Money value={plan.preview.estimate.upperBoundUsd} round="up" /> ·
-              stop at{" "}
-              <Money value={plan.configuration.limits.maxEstimatedCostUsd} round="up" />
-            </Typography>
-            <Typography variant="s3" color="text.secondary">
-              Uses your workspace model connection. Provider billing may differ
-              from this estimate.
-            </Typography>
-            <TechnicalDetails title="Technical details">
-              <Stack spacing={0.5}>
-                <Typography variant="s3" color="text.secondary">
-                  Upper-bound estimate: USD{" "}
-                  {plan.preview.estimate.upperBoundUsd} · stop: USD{" "}
-                  {plan.configuration.limits.maxEstimatedCostUsd}
-                </Typography>
-                <Typography variant="s3" color="text.secondary">
-                  Price source: {plan.preview.estimate.pricingSource}
-                </Typography>
-              </Stack>
-            </TechnicalDetails>
-            <Box component="details">
-              <Typography component="summary" variant="s3">
-                Effective execution limits
+        <Stack spacing={1.5}>
+          <Typography variant="m3">
+            Up to {plural(plan.preview.attemptCount, "run")} · at most{" "}
+            <Money value={plan.preview.estimate.upperBoundUsd} round="up" />
+          </Typography>
+          <Typography variant="s3">
+            Test runs are private and don’t change production.{" "}
+            {providers.length > 1
+              ? `The providers, ${providers.join(" and ")}, receive`
+              : `The task provider, ${providers[0]}, receives`}{" "}
+            the files and test cases below. The run stops if its estimate
+            reaches <Money value={plan.configuration.limits.maxEstimatedCostUsd} round="up" />.
+          </Typography>
+          <TechnicalDetails title="Technical details">
+            <Stack spacing={0.5}>
+              <Typography variant="s3" color="text.secondary">
+                {plural(plan.preview.caseCount, "test case")} ×{" "}
+                {plural(plan.preview.variantCount, "version")} ×{" "}
+                {plural(plan.preview.repetitions, "attempt")} per version ={" "}
+                {plural(plan.preview.attemptCount, "attempt")}
               </Typography>
-              <Typography variant="s3" component="p">
+              <Typography variant="s3" color="text.secondary">
+                At most {plan.preview.maxTaskCalls} task calls and{" "}
+                {plan.preview.maxJudgeCalls} judge calls · task provider{" "}
+                {plan.preview.providerDisclosure.taskProvider}
+                {plan.preview.providerDisclosure.judgeProvider
+                  ? ` · judge provider ${plan.preview.providerDisclosure.judgeProvider}`
+                  : ""}
+              </Typography>
+              <Typography variant="s3" color="text.secondary">
+                Upper-bound estimate: USD{" "}
+                {plan.preview.estimate.upperBoundUsd} · stop: USD{" "}
+                {plan.configuration.limits.maxEstimatedCostUsd}
+              </Typography>
+              <Typography variant="s3" color="text.secondary">
+                Price source: {plan.preview.estimate.pricingSource}. Uses your
+                workspace model connection; provider billing may differ from
+                this estimate.
+              </Typography>
+              <Typography variant="s3" color="text.secondary">
                 Task phase{" "}
-                {
-                  plan.preview.limits.profiles[settings.profile]
-                    .taskPhaseSeconds
-                }
+                {plan.preview.limits.profiles[settings.profile].taskPhaseSeconds}
                 s · judge phase{" "}
-                {
-                  plan.preview.limits.profiles[settings.profile]
-                    .judgePhaseSeconds
-                }
+                {plan.preview.limits.profiles[settings.profile].judgePhaseSeconds}
                 s · provider call{" "}
-                {
-                  plan.preview.limits.profiles[settings.profile]
-                    .providerCallSeconds
-                }
+                {plan.preview.limits.profiles[settings.profile].providerCallSeconds}
                 s maximum
               </Typography>
-              <Typography variant="s3" component="p">
-                {
-                  plan.preview.limits.profiles[settings.profile]
-                    .maxTaskTurnsPerAttempt
-                }{" "}
+              <Typography variant="s3" color="text.secondary">
+                {plan.preview.limits.profiles[settings.profile].maxTaskTurnsPerAttempt}{" "}
                 task turns and{" "}
-                {
-                  plan.preview.limits.profiles[settings.profile]
-                    .maxToolCallsPerAttempt
-                }{" "}
+                {plan.preview.limits.profiles[settings.profile].maxToolCallsPerAttempt}{" "}
                 tool calls per attempt ·{" "}
-                {
-                  plan.preview.limits.profiles[settings.profile]
-                    .maxDeliveredBytesPerAttempt
-                }{" "}
+                {plan.preview.limits.profiles[settings.profile].maxDeliveredBytesPerAttempt}{" "}
                 delivered UTF-8 bytes per attempt
               </Typography>
-              <Typography variant="s3" component="p">
+              <Typography variant="s3" color="text.secondary">
                 {plan.preview.limits.maxActiveAttemptsPerRun} active attempts
                 per run ·{" "}
                 {plan.preview.limits.maxActiveProviderCallsPerOrganization}{" "}
@@ -865,94 +860,78 @@ export default function TestRunSetup({
                 jobs per organization ·{" "}
                 {plan.preview.limits.maxQueueWaitSeconds}s maximum queue wait
               </Typography>
-            </Box>
-            {plan.preview.warnings.map((warning, index) => (
-              <Alert key={`${warning.code}:${index}`} severity="warning">
-                {warning.message}
-              </Alert>
-            ))}
-            {stale && (
-              <Alert severity="warning">
-                For earlier content. Preview again before starting.
-              </Alert>
-            )}
-            {review.review.reviewedAllFiles && review.diagnostic && settings.purpose !== "diagnostic" && (
-              <Alert severity="warning">
-                A flagged file is marked as evaluation material or overlaps a test
-                case, so this can only run as a diagnostic check. Edit the draft, or
-                choose Diagnostic and preview again.
-              </Alert>
-            )}
-            <TestInventoryReview
-              preview={plan.preview}
-              value={review.review}
-              onChange={setReview}
-              disabled={locked}
-              sendLabel={sendSentence({
-                fileCount: plan.preview.inventory.reduce((total, bundle) => total + bundle.files.length, 0),
-                what: plural(plan.preview.caseCount, "test case"),
-                provider: [plan.preview.providerDisclosure.taskProvider, plan.preview.providerDisclosure.judgeProvider]
-                  .filter(Boolean)
-                  .map(providerName)
-                  .filter((name, index, all) => all.indexOf(name) === index)
-                  .join(" and "),
-                upTo: centsUp(plan.preview.estimate.upperBoundUsd),
-                attestsNoAnswerKeys: settings.purpose !== "diagnostic",
-              })}
-              attestsNoAnswerKeys={settings.purpose !== "diagnostic"}
-              consentDisabled={consentHeld}
-              consentReason={consentHeld ? "Set an allowance first" : null}
-            />
-            {submitted && error && (
-              <Alert severity="warning">
-                The request may already have been accepted. Retry this same
-                submission; do not start a new paid run to discover its status.
-              </Alert>
-            )}
-            <Stack
-              direction={{ xs: "column", sm: "row" }}
-              spacing={1.5}
-              alignItems={{ xs: "flex-start", sm: "center" }}
-            >
-              <Button
-                variant={compact ? "outlined" : "contained"}
-                color="primary"
-                disabled={
-                  !permitted ||
-                  busy ||
-                  (!submitted &&
-                    (allowanceOff ||
-                      stale ||
-                      !sendReady ||
-                      (review.diagnostic && settings.purpose !== "diagnostic")))
-                }
-                {...reasonProps(
-                  "skill-run-reason",
-                  !submitted && allowanceOff
-                    ? "Paid runs are off for this workspace."
-                    : null,
-                )}
-                onClick={start}
-              >
-                {busy && submitted
-                  ? "Starting…"
-                  : submitted
-                    ? "Retry same submission"
-                    : settings.profile === "quick"
-                      ? "Run quick check"
-                      : "Run repeated comparison"}
-              </Button>
-              <ActionReason
-                id="skill-run-reason"
-                reason={
-                  !submitted && allowanceOff
-                    ? "Paid runs are off for this workspace."
-                    : null
-                }
-              />
             </Stack>
+          </TechnicalDetails>
+          {plan.preview.warnings.map((warning, index) => (
+            <Alert key={`${warning.code}:${index}`} severity="warning">
+              {warning.message}
+            </Alert>
+          ))}
+          {stale && (
+            <Alert severity="warning">
+              For earlier content. Preview again before starting.
+            </Alert>
+          )}
+          {review.review.reviewedAllFiles && review.diagnostic && settings.purpose !== "diagnostic" && (
+            <Alert severity="warning">
+              A flagged file is marked as evaluation material or overlaps a test
+              case, so this can only run as a diagnostic. Edit the draft, or set
+              Use of the result to Diagnostic only under More options and
+              preview again.
+            </Alert>
+          )}
+          <TestInventoryReview
+            preview={plan.preview}
+            value={review.review}
+            onChange={setReview}
+            disabled={locked}
+            consentHeading="Before this runs"
+            sendLabel={sendSentence({
+              fileCount,
+              what: plural(plan.preview.caseCount, "test case"),
+              provider: providers.join(" and "),
+              upTo: centsUp(plan.preview.estimate.upperBoundUsd),
+              attestsNoAnswerKeys: settings.purpose !== "diagnostic",
+            })}
+            attestsNoAnswerKeys={settings.purpose !== "diagnostic"}
+            consentDisabled={consentHeld}
+            consentReason={consentHeld ? "Set an allowance first" : null}
+          />
+          {submitted && error && (
+            <Alert severity="warning">
+              The request may already have been accepted. Retry this same
+              submission; do not start a new paid run to discover its status.
+            </Alert>
+          )}
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1.5}
+            alignItems={{ xs: "flex-start", sm: "center" }}
+          >
+            <Button
+              variant={compact ? "outlined" : "contained"}
+              color="primary"
+              disabled={
+                !permitted ||
+                busy ||
+                (!submitted &&
+                  (allowanceOff ||
+                    stale ||
+                    !sendReady ||
+                    (review.diagnostic && settings.purpose !== "diagnostic")))
+              }
+              {...reasonProps("skill-run-reason", runReason)}
+              onClick={start}
+            >
+              {busy && submitted
+                ? "Starting…"
+                : submitted
+                  ? "Retry same submission"
+                  : `Run ${testName}`}
+            </Button>
+            <ActionReason id="skill-run-reason" reason={runReason} />
           </Stack>
-        </Section>
+        </Stack>
       )}
     </Stack>
   );

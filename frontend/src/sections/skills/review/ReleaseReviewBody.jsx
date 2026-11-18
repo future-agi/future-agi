@@ -30,7 +30,7 @@ import ChecksList from "../components/ChecksList";
 import CapabilityChanges from "./CapabilityChanges";
 import SummaryTable from "./SummaryTable";
 import VersionLabel from "../components/VersionLabel";
-import { counted, responsiveEvidenceSx } from "./reviewPresentation";
+import { counted, deliveryTab, responsiveEvidenceSx, unchangedUntilRelease } from "./reviewPresentation";
 
 // Said once above a list of results, never on every row (UX iteration 5, REV3; UXF-17).
 export const PRIVATE_RESULTS_NOTE = 'Private results are visible only to you; sharing lets the reviewer see them.';
@@ -549,15 +549,15 @@ export default function ReleaseReviewBody({
       <Stack spacing={1.5} sx={{ minWidth: 0 }}>
         <Stack spacing={0.5}>
           <Typography variant="s1" sx={{ fontWeight: 600 }}>{packet.transition.label.charAt(0).toUpperCase() + packet.transition.label.slice(1)} moves {packet.transition.expectedVersion == null ? 'from no release' : `v${packet.transition.expectedVersion}`} → v{packet.transition.version}</Typography>
-          <Typography variant="s3" color="text.secondary">Production stays unchanged until approval and release. Check {isContext ? 'Connected apps' : 'Consumers'} to confirm delivery.</Typography>
+          <Typography variant="s3" color="text.secondary">{unchangedUntilRelease(labelName)} After the move, check {deliveryTab(packet.subjectKind)} to confirm delivery.</Typography>
         </Stack>
         <SummaryTable label="Release summary" rows={[
           { label: 'Evidence', value: evidenceFact },
           { label: 'Who is affected', value: impact ? impactSentence(impact, packet.transition) : 'Application impact has not been measured.' },
           { label: 'Permissions', value: capabilities ? (capabilities.changes.length ? counted(capabilities.changes.length, 'change') : 'No permission changes found.') : 'Comparison unavailable. Review the file changes before deciding.' },
           { label: 'Files', value: filesFact },
-          // The full configuration digest is one hover or focus away, never primary text; Technical details holds the copyable value and the revision.
-          packet.target && { label: 'Application target', value: <Tooltip title={packet.target.configurationDigest || ''} describeChild><span tabIndex={0}>App configuration</span></Tooltip> },
+          // The application target has no readable name in the packet; its binding, configuration digest and
+          // revision are under Technical details below, so no row says only "App configuration".
         ]} />
       </Stack>
       {(evidence.length > 0 || selected.some((ref) => !evidence.some((item) => evidenceKey(item) === evidenceKey(ref)))) && <Section id="review-evidence" title="Test results">

@@ -85,8 +85,8 @@ try {
       for (const scene of ["library", "detail", "links", "head", "recovery", "migration", "archived", "import", "safety"]) {
         await page.goto(`${origin}/l8-authoring?theme=${theme}&scene=${scene}`);
         await page.getByText("Synthetic component fixture · no backend or publication").waitFor({ state: "attached" });
-        if (scene === "head") { await page.getByRole("button", { name: "Review against current latest" }).click(); await page.getByText(/v4-derived/).waitFor(); }
-        if (scene === "links") { await page.getByRole("button", { name: "Preview dependency changes" }).click(); await page.getByText(/Compiled candidate/).waitFor(); }
+        if (scene === "head") { await page.getByRole("button", { name: "Compare with latest version" }).click(); await page.getByText(/v4-derived/).waitFor(); }
+        if (scene === "links") { await page.getByRole("button", { name: "Preview changes to linked skills" }).click(); await page.getByText(/Compiled candidate/).waitFor(); }
         if (scene === "migration") { await page.getByRole("combobox", { name: "Review item" }).click(); await page.getByRole("option", { name: "refund-policy" }).click(); await page.getByRole("listbox").waitFor({ state: "hidden" }); }
         await page.evaluate(() => document.fonts.ready);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `Page overflow: ${scene}/${theme}/${width}`);

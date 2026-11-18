@@ -276,7 +276,7 @@ describe("Skills library", () => {
     const dialog = within(screen.getByRole("dialog"));
     expect(dialog.getByText("Archive support-policy?")).toBeInTheDocument();
     expect(dialog.getByText("Agents can no longer fetch it, including through labels.")).toBeInTheDocument();
-    expect(dialog.getByText("production points at v2. Agents following production will stop receiving this skill.")).toBeInTheDocument();
+    expect(dialog.getByText("Production points at v2. Agents following production will stop receiving this skill.")).toBeInTheDocument();
     expect(dialog.getByText("Restoring an archived skill isn't available in this workspace; contact support to restore it.")).toBeInTheDocument();
     expect(dialog.queryByText(/More → Archived skills/)).not.toBeInTheDocument();
     expect(dialog.getByRole("button", { name: "Archive" })).toHaveClass("MuiButton-contained");

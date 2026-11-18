@@ -144,7 +144,7 @@ function HeadReview({ scopeKey, session, onPreview, onAcknowledge, onAcknowledge
     <Typography variant="s1">Based on {session.baseVersion == null ? "an unpublished draft" : `v${session.baseVersion}`}. If a newer version was published, compare it before publishing; nothing is copied into your draft.</Typography>
     <AuthoringError error={operation.error} />
     {session.mutationError && operation.error && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const result = await operation.retry(); if (result) { setPreview(null); setConfirmed(false); onAcknowledged?.(result); } }}>Retry head acknowledgment</Button>}
-    <Button variant="outlined" onClick={prepare} disabled={!onPreview || operation.pending || Boolean(session.mutationError)}>Review against current latest</Button>
+    <Button variant="outlined" onClick={prepare} disabled={!onPreview || operation.pending || Boolean(session.mutationError)}>Compare with latest version</Button>
     {review && <>
       <Alert severity="warning">Publishing this {review.baseVersion == null ? "new" : `v${review.baseVersion}-derived`} candidate will make a new latest version after {review.expectedHeadVersion == null ? "the unpublished head" : `v${review.expectedHeadVersion}`}. Production does not move.</Alert>
       <TechnicalDetails title="Exact identities"><IdentityChip label="Saved draft" value={review.candidateDigest} /></TechnicalDetails>

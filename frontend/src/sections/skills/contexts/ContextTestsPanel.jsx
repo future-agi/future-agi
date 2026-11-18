@@ -353,7 +353,10 @@ function WholeContextTests({ contextName, contextId, candidate, scopeKey, identi
         sendLabel={sendSentence({ fileCount, what: mode === 'saved' ? 'the test case' : 'the request', provider: providerName(preview.providerDisclosure.taskProvider), upTo: centsUp(preview.estimate.upperBoundUsd) })} />
       {inventory.review.reviewedAllFiles && inventory.diagnostic && <Alert severity="warning">A flagged file is marked as evaluation material or overlaps the test case, so this answer check cannot run. Edit the context so it is no longer sent, then preview again.</Alert>}
       <Button color="primary" sx={{ alignSelf: 'flex-start' }} variant={primary ? "contained" : "outlined"} disabled={locked || !currentCandidate || !currentSelection || !sendReady} onClick={launch}>Run answer check</Button>
-      {!sendReady && <Typography variant="s3" color="text.secondary">Classify any flagged files and check any secret findings, then tick to send this test.</Typography>}
+      {/* The one thing still missing, not a list of everything that could be. */}
+      {!sendReady && <Typography variant="s3" color="text.secondary">{!(inventory.review.reviewedAllFiles && inventory.review.fingerprint === preview.fingerprint) ? 'Tick the box above to run.'
+        : inventory.diagnostic ? 'Edit the context so the flagged file is no longer sent, then preview again.'
+          : 'Classify the flagged files and check the secret findings to run.'}</Typography>}
     </Stack>}
     {operation.uncertain && <Button variant="outlined" disabled={operation.pending} onClick={async () => { const receipt = await operation.retry(); if (receipt) { onStarted(receipt.id); invalidate(); } }}>Recover original context test</Button>}
 

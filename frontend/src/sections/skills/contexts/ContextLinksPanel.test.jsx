@@ -150,7 +150,7 @@ describe('locked draft editor (read-only, no rowOpensSkill)', () => {
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Hide technical details']);
     // No editing control appears in a locked editor.
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Add skill|Preview dependency changes|Remove/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add skill|Preview changes to linked skills|Remove/ })).not.toBeInTheDocument();
   });
 
   it('renders outside a router, without the actions that navigate', () => {
@@ -186,7 +186,7 @@ describe('draft editor', () => {
     expect(rowOf(table, 'refund-policy')).toContainElement(ticks[0]);
     expect(within(rowOf(table, 'refund-policy')).getByText('Check for update')).toBeVisible();
     fireEvent.click(ticks[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Preview dependency changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview changes to linked skills' }));
     await waitFor(() => expect(onPreview).toHaveBeenCalledOnce());
     expect(onPreview.mock.calls[0][0]).toEqual({ revision: 3, links, refreshSkillIds: ['follow'] });
   });
@@ -197,7 +197,7 @@ describe('draft editor', () => {
     const session = draftSession();
     const view = render(<ContextLinksPanel scopeKey="scope" session={session} onPreview={onPreview} onApply={vi.fn()} />);
     fireEvent.click(screen.getByRole('checkbox', { name: 'Check for update: refund-policy' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Preview dependency changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview changes to linked skills' }));
     await waitFor(() => expect(screen.getByRole('checkbox', { name: /Accept these skill versions/ })).toBeEnabled());
     // Upstream production is now the locked version: the row is up to date and loses its tick.
     state.upstream = { ...upstream(), follow: { data: { name: 'refund-policy', labels: [{ name: 'production', version: 1, versionId: 'id-follow' }] } } };
@@ -205,7 +205,7 @@ describe('draft editor', () => {
     expect(screen.queryByRole('checkbox', { name: /Check for update/ })).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /Accept these skill versions/ })).toBeDisabled();
     expect(screen.getByText('The draft changed. Preview again before applying.')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Preview dependency changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview changes to linked skills' }));
     await waitFor(() => expect(onPreview).toHaveBeenCalledTimes(2));
     expect(onPreview.mock.calls[1][0].refreshSkillIds).toEqual([]);
   });
@@ -215,7 +215,7 @@ describe('draft editor', () => {
     const onApply = vi.fn(async () => ({ revision: 4, contextSpec: { links } }));
     render(<ContextLinksPanel scopeKey="scope" session={draftSession()} onPreview={vi.fn(async () => previewResult)} onApply={onApply} />);
     fireEvent.click(screen.getByRole('checkbox', { name: 'Check for update: refund-policy' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Preview dependency changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview changes to linked skills' }));
     const accept = await screen.findByRole('checkbox', { name: /Accept these skill versions/ });
     await waitFor(() => expect(accept).toBeEnabled());
     expect(screen.getByRole('button', { name: 'Apply selected updates to draft' })).toBeDisabled();
@@ -244,7 +244,7 @@ describe('draft editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add skill' }));
     pick('Add a published skill', 'three');
     fireEvent.click(screen.getByRole('button', { name: 'Add skill' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Preview dependency changes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview changes to linked skills' }));
     await waitFor(() => expect(onPreview).toHaveBeenCalledOnce());
     expect(onPreview.mock.calls[0][0].links).toEqual([
       { skillId: 'one', selector: { version: 7 } },

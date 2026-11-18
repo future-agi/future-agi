@@ -25,7 +25,7 @@ it('uses one calm summary and one waiting message for an unreported app', () => 
   expect(within(table).queryByText('No report from this app yet')).toBeNull();
   expect(within(table).getByRole('columnheader', { name: 'App or repository' })).toBeVisible();
   expect(within(table).queryByRole('columnheader', { name: 'Consumer' })).toBeNull();
-  expect(within(table).getByText('App · Target v2 · Follow production')).toBeInTheDocument();
+  expect(within(table).getByText('App · Should receive v2 · Follow production')).toBeInTheDocument();
   // The report state is said once (the badge), not again in a second line or an all-dash column.
   expect(within(table).queryByText('Waiting for first report')).toBeNull();
   expect(within(table).queryByRole('columnheader', { name: 'Last delivered' })).toBeNull();
@@ -40,7 +40,7 @@ it('keeps the long tag when some apps have reported, so rows stay distinguishabl
   const table = screen.getByRole('table', { name: 'Context delivery observations' });
   expect(within(table).getByText('No report from this app yet')).toBeVisible();
   expect(within(table).queryByText('No report')).toBeNull();
-  expect(within(table).getByText('App · Target v2 · Delivered v2 · Follow production')).toBeInTheDocument();
+  expect(within(table).getByText('App · Should receive v2 · Delivered v2 · Follow production')).toBeInTheDocument();
 });
 
 it('keeps pin and stale evidence distinct and pluralizes the delivery summary', () => {

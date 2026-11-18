@@ -198,7 +198,7 @@ it('adds every remaining published skill in one reviewed set, keeping a delibera
   // The pin must not leak into the batch: the policy returns to its default.
   expect(screen.getByRole('combobox', { name: 'Update rule' })).toHaveTextContent('Follows production');
   fireEvent.click(screen.getByRole('button', { name: 'Add all 2 remaining published skills' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Preview dependency changes' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Preview changes to linked skills' }));
   await waitFor(() => expect(preview).toHaveBeenCalledOnce());
   expect(preview.mock.calls[0][0].links).toEqual([{ skillId: 'one', selector: { version: 7 } }, { skillId: 'two', selector: { label: 'production' } }, { skillId: 'three', selector: { label: 'production' } }]);
 });

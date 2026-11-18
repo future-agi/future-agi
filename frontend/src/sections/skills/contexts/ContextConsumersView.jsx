@@ -110,7 +110,7 @@ function ConsumerRows({ data, windowDays, onWindowChange, onPageChange, versionN
             const pinned = row.binding.selector.version ? `Pinned v${row.binding.selector.version}` : `Follow ${row.binding.selector.label}`;
             const number = (stage) => (stage && versionNumbers?.[stage.versionId] !== undefined ? `v${versionNumbers[stage.versionId]}` : null);
             // At 390 the kind, target, delivery and pin collapse into one line under the name.
-            const facts = [kind, number(row.desired) && `Target ${number(row.desired)}`, number(row.loaded) && `Delivered ${number(row.loaded)}`, pinned].filter(Boolean).join(' · ');
+            const facts = [kind, number(row.desired) && `Should receive ${number(row.desired)}`, number(row.loaded) && `Delivered ${number(row.loaded)}`, pinned].filter(Boolean).join(' · ');
             // UXF-12: the row opens Inspect; Inspect and every other action sit in the trailing ⋯.
             const primary = { label: 'Inspect', onClick: () => setSelectedId(row.binding.id) };
             const { sx: linkSx, ...linkProps } = rowLinkProps(primary);

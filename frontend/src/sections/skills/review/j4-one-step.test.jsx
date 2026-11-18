@@ -221,8 +221,8 @@ it('explains label movement and keeps the release write bound to its reviewed id
   const execute = vi.fn().mockResolvedValue({});
   const packet = { subjectKind: 'agent_context', candidateVersionId: 'v2', candidateDigest: 'digest', evidence: [], target: null, transition: { label: 'production', expectedVersion: 1, version: 2 } };
   render(<ReleaseRequestPanel scopeKey="reviewer" state="ready" preview={{ packet, fingerprint: 'fp', current: true }} review={{ complete: true }} request={{ id: 'request', name: 'support-agent', revision: 3, status: 'approved' }} permissions={{ canExecute: true }} reviewedIdentity="3:fp" onExecute={execute} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Release to production' }));
-  expect(screen.getByText("Production for support-agent will point to v2. Apps that follow production pick it up the next time they fetch it; check Connected apps to confirm delivery. Running conversations aren't changed. Approval is checked again before the move.")).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: /^Move production to v\d+$/ }));
+  expect(screen.getByText("Production for support-agent will point to v2. Apps that follow production pick it up the next time they fetch it; check Connected apps to confirm delivery. Running conversations aren't changed. If the request changed after it was approved, the move is refused and nothing moves.")).toBeVisible();
   expect(execute).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Move production' }));
   await waitFor(() => expect(execute).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'request', revision: 3, expectedFingerprint: 'fp' })));
@@ -334,7 +334,9 @@ it('marks and lists the carried private run first, pre-ticks it without attachin
   // A carried private result is selected for a possible share, not attached.
   expect(within(rows[0]).getByRole('checkbox')).toBeChecked();
   expect(within(rows[1]).getByRole('checkbox')).not.toBeChecked();
-  expect(screen.getByText('No test evidence attached')).toBeVisible();
+  // UXF-17: the footer names the ticked row as not attached instead of "No test evidence attached".
+  expect(screen.getByText('1 ticked result not attached until shared. Continue asks you to share it.')).toBeVisible();
+  expect(screen.queryByText('No test evidence attached')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Attach all' })).not.toBeInTheDocument();
   expect(screen.getAllByText('Private results are visible only to you; sharing lets the reviewer see them.')).toHaveLength(1);
   fireEvent.click(screen.getByRole('button', { name: 'Share and attach 1 selected' }));
@@ -342,9 +344,15 @@ it('marks and lists the carried private run first, pre-ticks it without attachin
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   expect(useShareReleaseEvidence.mock.results.at(-1).value.mutateAsync).not.toHaveBeenCalled();
+  // Continue never sends a ticked private row unshared: it asks again, and only the explicit
+  // "Continue without it" sends the request without that result.
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+  expect(within(screen.getByRole('dialog')).getByText('Share 1 private result with the workspace?')).toBeVisible();
+  expect(prepare).not.toHaveBeenCalled();
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue without it' }));
   await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
   expect(prepare.mock.calls[0][0].evidence).toEqual([]);
+  expect(useShareReleaseEvidence.mock.results.at(-1).value.mutateAsync).not.toHaveBeenCalled();
 });
 it('shows two numbered steps with the current one marked, and plain headings', () => {
   useReviewSubjects.mockReturnValue({ data: { results: [], total_pages: 1 } });
@@ -387,7 +395,7 @@ it('titles a released request by its outcome with no badge, and names only the r
   useReleaseRequest.mockReturnValue({ data: { request: { id: 'request', name: 'support-agent', authorId: 'author', revision: 1, status: 'pending' }, preview: { packet, fingerprint: 'fp', current: true } }, refetch: vi.fn() });
   rerender(<MemoryRouter><RequestReviewController scopeKey="org:ws:reviewer" requestId="request" View={View} /></MemoryRouter>);
   expect(screen.getByRole('heading', { name: 'Move production from v1 to v2' })).toBeVisible();
-  expect(screen.getByText('In review')).toBeVisible();
+  expect(screen.getByText('Waiting for approval')).toBeVisible();
 });
 
 it('offers Attach on the confirm step when results were available but none is attached, and goes back to the evidence', async () => {

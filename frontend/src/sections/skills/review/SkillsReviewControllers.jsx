@@ -12,7 +12,7 @@ import axios from 'src/utils/axios';
 import { apiPath } from 'src/api/contracts/api-surface';
 import { operationStatus } from 'src/api/skills/operation-errors';
 import CapabilityNotice from '../components/CapabilityNotice';
-import { releaseTitle } from './reviewPresentation';
+import { releaseTitle, WAITING_FOR_APPROVAL } from './reviewPresentation';
 import { skillsRouteSx } from '../components/routeGutter';
 import StatusBadge from 'src/components/status-badge';
 import { reviewComposerUrl } from '../utils/review-links';
@@ -58,7 +58,7 @@ export function RequestReviewController({ scopeKey, requestId, contextId, viewSt
   const movedLabel = display.receipt?.postMoveState?.label || transition?.label;
   const movedTo = display.receipt?.postMoveState?.version ?? transition?.version;
   const movedTitle = released && movedLabel && movedTo != null ? `${movedLabel.charAt(0).toUpperCase()}${movedLabel.slice(1)} moved ${movedFrom != null ? `from v${movedFrom} ` : ''}to v${movedTo}` : null;
-  const header = <ObjectHeader crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: resourceName }]} badge={released ? undefined : paused ? <StatusBadge status="stale" label="Paused" /> : request?.status ? <StatusBadge status={request.status === 'pending' ? 'in_review' : request.status} /> : undefined} title={movedTitle || (transition ? releaseTitle(transition) : resourceName)} purpose={query.data?.renewalRequired ? `Revision ${request.revision} · Current candidate shown for renewal. The previous approval does not carry forward.` : undefined} actions={author && request.status !== 'released' ? <Button variant="outlined" onClick={revise}>Revise request</Button> : undefined} />;
+  const header = <ObjectHeader crumbs={[{ label: 'Reviews', to: paths.dashboard.skills.reviews }, { label: resourceName }]} badge={released ? undefined : paused ? <StatusBadge status="stale" label="Paused" /> : request?.status ? <StatusBadge status={request.status === 'pending' ? 'in_review' : request.status} label={request.status === 'pending' ? WAITING_FOR_APPROVAL : undefined} /> : undefined} title={movedTitle || (transition ? releaseTitle(transition) : resourceName)} purpose={query.data?.renewalRequired ? `Revision ${request.revision} · Current candidate shown for renewal. The previous approval does not carry forward.` : undefined} actions={author && request.status !== 'released' ? <Button variant="outlined" onClick={revise}>Revise request</Button> : undefined} />;
 
   // The dialog approval attests only the changes it showed; the renewed packet
   // itself is attested on the page before release. One stable parent keeps

@@ -131,7 +131,7 @@ try {
         // wait for that transition rather than racing the previous checked box.
         await page.waitForFunction(() => document.querySelector('input[type="checkbox"]')?.checked === false);
         await acknowledge.check();
-        await page.getByRole('button', { name: 'Release to production' }).click();
+        await page.getByRole('button', { name: /^Move production to v\d+$/ }).click();
         await page.getByRole('button', { name: 'Move production', exact: true }).click();
         await page.waitForFunction(() => window.__reviewEvents.some((event) => event.url.endsWith('/execute/')));
         const events = await page.evaluate(() => window.__reviewEvents.filter((event) => /\/(decisions|execute)\/$/.test(event.url)));

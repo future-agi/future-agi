@@ -23,7 +23,7 @@ import { visuallyHidden } from '@mui/utils';
 import CapabilityNotice from '../components/CapabilityNotice';
 import { CustomTabs } from 'src/components/tabs/tabs';
 import When from '../components/When';
-import { releaseTitle } from './reviewPresentation';
+import { releaseTitle, WAITING_FOR_APPROVAL } from './reviewPresentation';
 import { reviewPersonName } from '../utils/review-display';
 import PageHeader from "src/components/page-header";
 import ListToolbar from "src/components/list-toolbar";
@@ -96,7 +96,7 @@ function InboxRows({
         >
           <MenuItem value="">All</MenuItem>
           {[
-            ["pending", "Pending"],
+            ["pending", WAITING_FOR_APPROVAL],
             ["approved", "Approved"],
             ["changes_requested", "Changes requested"],
             ["released", "Released"],
@@ -123,7 +123,7 @@ function InboxRows({
               <Stack spacing={0.5} sx={{ minWidth: 0 }}>
                 <Stack direction="row" gap={1} alignItems="center" justifyContent="space-between" sx={{ minWidth: 0 }}>
                   <Stack direction="row" alignItems="center" sx={{ minWidth: 0 }}>{item.unread && item.status === 'pending' && <><Box component="span" aria-hidden="true" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0, mr: 1 }} /><Box component="span" sx={visuallyHidden}>Unread</Box></>}<Typography variant="s1" color={settled(item) ? 'text.secondary' : undefined} sx={{ overflowWrap: 'anywhere' }}>{item.name}</Typography></Stack>
-                  <Box sx={{ flexShrink: 0 }}><StatusBadge status={item.status === 'pending' ? 'in_review' : item.status === 'changes_requested' ? 'needs_changes' : item.status} label={item.status === 'changes_requested' ? 'Changes requested' : undefined} /></Box>
+                  <Box sx={{ flexShrink: 0 }}><StatusBadge status={item.status === 'pending' ? 'in_review' : item.status === 'changes_requested' ? 'needs_changes' : item.status} label={item.status === 'changes_requested' ? 'Changes requested' : item.status === 'pending' ? WAITING_FOR_APPROVAL : undefined} /></Box>
                 </Stack>
                 {item.transition && <Typography variant="s1" color={settled(item) ? 'text.secondary' : undefined}>{releaseTitle(item.transition)}</Typography>}
                 <Typography variant="s3" color="text.secondary">{reviewPersonName(item.authorName)} · <When value={item.updatedAt} fallback="Time not reported" /></Typography>
@@ -173,7 +173,7 @@ function InboxRows({
                       {item.status === 'pending' && <Typography variant="s3" color="text.secondary">{currentUserId && item.recipients?.some((person) => person.id === currentUserId) ? 'Waiting for your approval' : `Waiting on ${item.recipients?.map((person) => reviewPersonName(person.name)).join(', ') || 'the assigned reviewer'}`}</Typography>}
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={item.status === "pending" ? "in_review" : item.status === "changes_requested" ? "needs_changes" : item.status} label={item.status === "changes_requested" ? "Changes requested" : undefined} />
+                      <StatusBadge status={item.status === "pending" ? "in_review" : item.status === "changes_requested" ? "needs_changes" : item.status} label={item.status === "changes_requested" ? "Changes requested" : item.status === "pending" ? WAITING_FOR_APPROVAL : undefined} />
                     </TableCell>
                     <TableCell sx={{ color: 'text.secondary', width: { xs: '70%', sm: 'auto' }, pt: { xs: 0, sm: 1 } }}><When value={item.updatedAt} fallback="Time not reported" /></TableCell>
                     <RowActionsCell name={item.name} primary={primary(item)} actions={secondary(item)} inline="primary" />
@@ -225,7 +225,7 @@ export default function ReleaseInbox({
     <Box sx={skillsRouteSx}>
       <PageHeader
         title="Reviews"
-        description="Review changes before they reach production."
+        description="Release requests for every label. Nothing moves until a request is approved and released."
         sx={{ mb: 1.5, flexDirection: { xs: 'column', sm: 'row' }, gap: 1.5, '& > .MuiStack-root + .MuiStack-root': { ml: { xs: 0, sm: 2 } } }}
         actions={scopeKey && !["off", "denied", "forbidden", "unavailable"].includes(state) && <>
           {onCompose && <Button variant="contained" color="primary" onClick={onCompose}>Request release</Button>}

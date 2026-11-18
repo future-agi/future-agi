@@ -36,7 +36,7 @@ export default function ReleaseReceipt({ receipt, request }) {
         { label: 'Approved by', value: reviewPersonName(receipt.approvedByName) },
         { label: 'Released by', value: reviewPersonName(receipt.executedByName) },
       ]} />
-      <Typography variant="s3" color="text.secondary">Recorded at release time — production may have moved since.</Typography>
+      <Typography variant="s3" color="text.secondary">Recorded at release time — {label} may have moved since.</Typography>
       <Stack direction="row" flexWrap="wrap" alignItems="center" gap={1}>
         {/* The next job for an agent context is confirming apps picked the release up; a skill has no apps to check. */}
         {kind === 'agent_context' && <Button variant="contained" color="primary" href={resourceUrl ? `${resourceUrl}?tab=consumers` : undefined} disabled={!resourceUrl}>Check apps picked up v{after.version}</Button>}

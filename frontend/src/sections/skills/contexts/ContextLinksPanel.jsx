@@ -184,7 +184,7 @@ function Links({ scopeKey, session, availableSkills = [], upstream = {}, onPrevi
       {/* Batch add: one decision over every remaining published skill, using the update rule shown above. */}
       {remaining.length > 1 && <Button variant="outlined" disabled={!validSelector || blocked || links.length + remaining.length > MAX_LINKS} onClick={() => { const next = chosenSelector(); setLinks([...links, ...remaining.map((skill) => ({ skillId: skill.id, selector: { ...next } }))]); setSelected(""); invalidate(); }}>{`Add all ${remaining.length} remaining published skills`}</Button>}
       {remaining.length > 1 && links.length + remaining.length > MAX_LINKS && <Typography variant="s3">A context holds at most {MAX_LINKS} linked skills; add fewer at a time.</Typography>}
-      <Button variant="outlined" disabled={!onPreview || blocked} onClick={prepare}>Preview dependency changes</Button>
+      <Button variant="outlined" disabled={!onPreview || blocked} onClick={prepare}>Preview changes to linked skills</Button>
       {preview && <>
         <IdentityChip value={preview.candidateDigest} label="Compiled candidate" />
         {(preview.changes || []).map((change) => <Typography key={change.skillId} variant="s1">{change.mount} · {change.change} · {change.before ? `v${change.before.version}` : "absent"} → {change.after ? `v${change.after.version}` : "removed"}</Typography>)}
