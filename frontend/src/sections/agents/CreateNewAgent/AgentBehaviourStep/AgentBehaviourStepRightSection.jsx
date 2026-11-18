@@ -209,11 +209,9 @@ const AgentBehaviourStepRightSection = ({ control }) => {
       if (value === AGENT_TYPES.VOICE) return "Voice";
     }
 
-    if (field === "livekitApiKey") {
-      if (!value) return "-";
-      // Show first/last two chars; the actual secret is never rendered.
-      if (value.length <= 6) return "••••••";
-      return `${value.slice(0, 2)}••••${value.slice(-2)}`;
+    if (field === "apiKey" || field === "livekitApiKey") {
+      // Review is not a reveal surface. Keep the credential in form state only.
+      return value ? "••••••" : "-";
     }
 
     if (field === "livekitConfigJson") {

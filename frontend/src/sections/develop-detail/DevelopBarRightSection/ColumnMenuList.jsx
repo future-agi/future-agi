@@ -192,7 +192,7 @@ const ColumnMenuItem = ({
         </IconButton>
 
         <Typography
-          fontSize={13}
+          fontSize={12}
           fontWeight={400}
           color="text.primary"
           marginLeft="4px"

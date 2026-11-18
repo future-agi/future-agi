@@ -162,6 +162,7 @@ export const STATUS_CHIPS = [
   { id: "failed", label: "Failed", role: "danger" },
   { id: "error", label: "Error", role: "warning" },
   { id: "inconclusive", label: "Inconclusive", role: null },
+  { id: "no_score", label: STATUS_META.no_score.label, role: null },
   { id: "passed", label: "Passed", role: "success" },
 ];
 

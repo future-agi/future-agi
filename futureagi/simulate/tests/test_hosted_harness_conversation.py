@@ -12,18 +12,26 @@ from types import SimpleNamespace
 import pytest
 from rest_framework.test import APIClient
 
-from simulate.models import HostedHarnessConversationMessage, HostedHarnessJob
+from simulate.models import (
+    HarnessNudge,
+    HostedHarnessBuilderTurnUsage,
+    HostedHarnessConversationMessage,
+    HostedHarnessJob,
+)
+from simulate.services import harness_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
     create_hosted_job,
     create_selected_harness_run,
+    register_attempt,
 )
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
     issue_conversation_capability,
     serialize_conversation,
 )
+from tfc.ee_loader import has_ee
 
 BASE = "/simulate/api/harness/conversations"
 
@@ -350,6 +358,358 @@ def test_an_answered_question_stops_blocking_at_once(organization):
     assert conversation.blocking_input is None
 
 
+def _deliver(conversation, capability, sequence: int, kind: str, payload: dict) -> None:
+    """One conversation event, sent as the chat process sends it."""
+    event = {
+        "schema_version": "futureagi.harness-conversation-event.v1",
+        "event_id": f"ce-metered-{uuid.uuid4()}",
+        "conversation_id": str(conversation.id),
+        "sequence": sequence,
+        "kind": kind,
+        "message_id": None,
+        "stage": "builder",
+        "invocation_id": "turn-1",
+        "function_call_id": None,
+        "emitted_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "payload": payload,
+    }
+    event["digest"] = canonical_digest(event)
+    response = APIClient().post(
+        f"{BASE}/{conversation.id}/events/",
+        {
+            "schema_version": "futureagi.harness-conversation-event.v1",
+            "acknowledged_through": 1,
+            "events": [event],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert response.status_code == 200, response.content
+
+
+_TURN_USAGE = {
+    "tokens_in": 1200,
+    "tokens_out": 300,
+    "tokens_cached": 100,
+    "usd": 0.0123,
+    "unpriced_turns": 0,
+    "models": ["gemini-3.7-flash"],
+}
+
+requires_cloud_billing = pytest.mark.skipif(
+    not has_ee("ee.cloud"), reason="requires ee/cloud billing.yaml (OSS lane)"
+)
+
+
+def _post_build_turn(organization, key):
+    """A command and a capability for a chat sandbox of its own: no attempt covers it."""
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key=key)
+    conversation, command, _ = enqueue_message(
+        job, content="Check it against the agent", client_request_id=f"{key}-1"
+    )
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-chat",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    return job, conversation, command, capability
+
+
+def _turn_rows(command):
+    return list(
+        HostedHarnessBuilderTurnUsage.no_workspace_objects.filter(
+            command_message_id=command.id
+        )
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+@pytest.mark.parametrize("outcome", ["success", "interrupted", "failed"])
+def test_a_post_build_turn_is_billed_once_priced_as_a_build_stage(
+    organization, monkeypatch, django_capture_on_commit_callbacks, outcome
+):
+    from ee.usage.services import emitter
+
+    billed = []
+    monkeypatch.setattr(emitter, "emit", billed.append)
+    job, conversation, command, capability = _post_build_turn(
+        organization, f"billed-turn-{outcome}"
+    )
+    ending = {
+        "command_message_id": str(command.id),
+        "outcome": outcome,
+        "usage": {**_TURN_USAGE, "stages": "not kept"},
+    }
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(conversation, capability, 2, "turn_completed", ending)
+    # A restart replays the same ending, with a later reading of the ledger.
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.bill_builder_turn(
+            str(conversation.id),
+            {**ending, "replayed": True, "usage": {**_TURN_USAGE, "usd": 9.0}},
+        )
+
+    expected = harness_usage._authoring_stage_record(
+        {
+            "stage": "builder-turn",
+            "tokens_in": 1200,
+            "tokens_out": 300,
+            "tokens_cached": 100,
+            "models": ["gemini-3.7-flash"],
+        }
+    )
+    [turn] = _turn_rows(command)
+    assert turn.job_id == job.id
+    assert turn.outcome == outcome
+    assert turn.usage == _TURN_USAGE
+    assert turn.report["records"] == [expected]
+    # The replay re-sends the one event under the same id, which the consumer drops as
+    # counted: the turn is billed once.
+    assert len(billed) == 2
+    assert {event.event_id for event in billed} == {
+        str(uuid.uuid5(uuid.UUID(str(command.id)), "authoring:builder-turn"))
+    }
+    event = billed[0]
+    assert event.event_type == "harness_authoring"
+    assert event.amount == expected["credits"] > 0
+    assert event.properties["command_message_id"] == str(command.id)
+    assert event.properties["turn_outcome"] == outcome
+    assert event.properties["authoring_stage"] == "builder-turn"
+    assert "attempt_id" not in event.properties
+    job.refresh_from_db()
+    assert "builder_turn_usage" not in job.payload["metadata"]
+    assert harness_usage.harness_consumption(job)["ai_credits"] == pytest.approx(
+        expected["credits"]
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_a_turn_on_a_selected_run_counts_in_its_consumption(
+    organization, monkeypatch, django_capture_on_commit_callbacks
+):
+    """A selected run is simulation-only, yet its chat turn is billed: so it is consumed."""
+    from ee.usage.services import emitter
+
+    billed = []
+    monkeypatch.setattr(emitter, "emit", billed.append)
+    job, conversation, command, capability = _post_build_turn(
+        organization, "selected-run-turn"
+    )
+    payload = dict(job.payload)
+    payload["metadata"] = {**(payload.get("metadata") or {}), "simulation_only": True}
+    job.payload = payload
+    job.save(update_fields=["payload"])
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(
+            conversation,
+            capability,
+            2,
+            "turn_completed",
+            {"command_message_id": str(command.id), "usage": _TURN_USAGE},
+        )
+
+    [event] = billed
+    assert event.amount > 0
+    job.refresh_from_db()
+    assert harness_usage.harness_consumption(job)["ai_credits"] == pytest.approx(
+        event.amount
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_a_post_build_turn_that_cannot_be_priced_keeps_its_usage_and_bills_nothing(
+    organization, monkeypatch, django_capture_on_commit_callbacks, caplog
+):
+    """As a build stage: a stage must name exactly one priced model."""
+    from ee.usage.services import emitter
+
+    billed = []
+    monkeypatch.setattr(emitter, "emit", billed.append)
+    _job, conversation, command, capability = _post_build_turn(
+        organization, "unpriceable-turn"
+    )
+    usage = {**_TURN_USAGE, "models": ["gemini-3.7-flash", "gemini-3.1-flash-lite"]}
+    with caplog.at_level("ERROR", logger="simulate.services.harness_usage"):
+        with django_capture_on_commit_callbacks(execute=True):
+            _deliver(conversation, capability, 1, "turn_started", {})
+            _deliver(
+                conversation,
+                capability,
+                2,
+                "turn_completed",
+                {"command_message_id": str(command.id), "usage": usage},
+            )
+
+    [turn] = _turn_rows(command)
+    assert turn.usage == usage
+    assert turn.report is None
+    assert billed == []
+    assert any(str(command.id) in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"models": 7},
+        {"models": [None, {}]},
+    ],
+    ids=["models not a list", "model not a string"],
+)
+def test_a_post_build_turn_with_a_malformed_usage_keeps_the_row_and_bills_nothing(
+    organization, monkeypatch, django_capture_on_commit_callbacks, bad
+):
+    """The chat process sends the six fields of ``_TURN_USAGE``; any other shape bills nothing."""
+    from ee.usage.services import emitter
+
+    billed = []
+    monkeypatch.setattr(emitter, "emit", billed.append)
+    usage = {**_TURN_USAGE, **bad}
+    _job, conversation, command, capability = _post_build_turn(
+        organization, "malformed-turn"
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(
+            conversation,
+            capability,
+            2,
+            "turn_completed",
+            {"command_message_id": str(command.id), "usage": usage},
+        )
+
+    [turn] = _turn_rows(command)
+    assert turn.usage == usage
+    assert turn.report is None
+    assert billed == []
+    # The shape the chat process sends is still billed.
+    _job, conversation, command, capability = _post_build_turn(
+        organization, "well-formed-turn"
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(
+            conversation,
+            capability,
+            2,
+            "turn_completed",
+            {"command_message_id": str(command.id), "usage": _TURN_USAGE},
+        )
+    assert len(billed) == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_a_command_from_another_conversation_is_not_billed(
+    organization, monkeypatch, django_capture_on_commit_callbacks
+):
+    """A chat sandbox's capability must not bill a turn against someone else's command."""
+    from ee.usage.services import emitter
+
+    billed = []
+    monkeypatch.setattr(emitter, "emit", billed.append)
+    _job, conversation, _command, capability = _post_build_turn(organization, "mine")
+    _other_job, _other_conversation, other_command, _ = _post_build_turn(
+        organization, "theirs"
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(
+            conversation,
+            capability,
+            2,
+            "turn_completed",
+            {"command_message_id": str(other_command.id), "usage": _TURN_USAGE},
+        )
+
+    assert _turn_rows(other_command) == []
+    assert billed == []
+
+
+@pytest.mark.django_db
+def test_an_oss_post_build_turn_keeps_its_usage_unpriced(
+    organization, monkeypatch, django_capture_on_commit_callbacks
+):
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: True)
+    job, conversation, command, capability = _post_build_turn(organization, "oss-turn")
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(
+            conversation,
+            capability,
+            2,
+            "turn_completed",
+            {"command_message_id": str(command.id), "usage": _TURN_USAGE},
+        )
+
+    [turn] = _turn_rows(command)
+    assert turn.usage == _TURN_USAGE
+    assert turn.report is None
+    job.refresh_from_db()
+    assert "builder_turn_usage" not in job.payload["metadata"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("case", ["no usage", "attempt sandbox", "rebuild turn"])
+def test_a_turn_is_not_billed_without_usage_inside_an_attempt_or_for_a_rebuild(
+    organization, django_capture_on_commit_callbacks, case
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"unbilled-{case}"
+    )
+    conversation, command, _ = enqueue_message(
+        job, content="Add a rider", client_request_id="ask"
+    )
+    attempt = None
+    if case == "attempt sandbox":
+        # Its spend is in that attempt's ledger, which bills the build.
+        attempt = register_attempt(
+            job.id, endpoint_base_url="https://platform.example", provider_ref="sb-1"
+        ).attempt
+    if case == "rebuild turn":
+        # A rebuild's turn is metered on its nudge.
+        nudge = HarnessNudge.no_workspace_objects.create(
+            job=job,
+            organization=job.organization,
+            workspace=job.workspace,
+            target="suite",
+            state="pending",
+            command_message=command,
+        )
+        HostedHarnessConversationMessage.no_workspace_objects.filter(
+            id=command.id
+        ).update(payload={**command.payload, "nudge_id": str(nudge.id)})
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sb-1",
+        attempt=attempt,
+        ttl_seconds=600,
+    )
+    completed = {"command_message_id": str(command.id)}
+    if case != "no usage":
+        completed["usage"] = _TURN_USAGE
+
+    with django_capture_on_commit_callbacks(execute=True):
+        _deliver(conversation, capability, 1, "turn_started", {})
+        _deliver(conversation, capability, 2, "turn_completed", completed)
+
+    assert _turn_rows(command) == []
+
+
 @pytest.mark.django_db
 def test_conversation_agent_can_request_active_run_adjustment(
     organization, monkeypatch
@@ -483,6 +843,7 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
     conversation = job.conversation
     uploads = {}
     commands = []
+    exports = []
     preparation_commands = []
     process_checks = []
 
@@ -506,6 +867,7 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
         def execute_session_command(self, name, request):
             assert name == "alk-chat"
             commands.append(request.command)
+            exports.append(request.env)
             return SimpleNamespace(cmd_id="chat-command")
 
         def get_session_command(self, name, command_id, request_timeout):
@@ -589,6 +951,9 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
     assert lease.control_only is True
     assert gateway.client.created == 1
     assert "fi.alk.harness.hosted_chat_entrypoint" in commands[0]
+    assert exports[0]["ALK_HARNESS_MODEL"] == "gemini-3.7-flash"
+    # The chat keeps its spend ledger outside the workspace its checkpoints carry.
+    assert exports[0]["ALK_SPEND_JOURNAL"] == "/work/builder-cost.json"
     assert "tar -xzf /work/source.tar.gz -C /work" in preparation_commands[0]
     assert (
         "tar -xzf /work/conversation.tar.gz -C /work/authoring"
@@ -832,7 +1197,9 @@ def test_completed_chat_turn_publishes_its_checkpoint_to_the_environment(
         client, conversation, headers, _chat_checkpoint(NAMES, one_liner="halfway")
     )
     with django_capture_on_commit_callbacks(execute=True):
-        _send_events(client, conversation, headers, (1, "checkpoint_committed", halfway))
+        _send_events(
+            client, conversation, headers, (1, "checkpoint_committed", halfway)
+        )
     environment.refresh_from_db()
     assert environment.scenario_count == 2
 
@@ -873,7 +1240,9 @@ def test_completed_chat_turn_publishes_its_checkpoint_to_the_environment(
     )
     promoted = _archive_paths(storage.objects[new_key])
     assert f"scenarios/{NAMES[2]}/ready.py" in promoted
-    assert not [path for path in promoted if path.startswith(".") or path == "cost.json"]
+    assert not [
+        path for path in promoted if path.startswith(".") or path == "cost.json"
+    ]
 
     run, created = create_selected_harness_run(
         environment,
@@ -1095,9 +1464,9 @@ def test_stale_workspace_basis_is_rejected_even_for_a_later_message(
     assert conversation.latest_workspace_object_key != key
     rebased = storage.objects[conversation.latest_workspace_object_key]
     assert (
-        authoring_basis(rebased) == environment.payload["metadata"]["authoring_revision"]
+        authoring_basis(rebased)
+        == environment.payload["metadata"]["authoring_revision"]
     )
-
 
 
 @pytest.mark.django_db
@@ -1208,6 +1577,120 @@ def test_recovery_abandons_old_commands_without_redelivering_on_resend(
         f"{BASE}/{conversation.id}/commands/?after=0", **_headers(capability)
     )
     assert [row["message_id"] for row in response.json()["commands"]] == [str(retry.id)]
+
+
+def _started_turn(organization, key, *, queued_ago, polled_ago):
+    """A chat turn running on its command, whose sandbox last polled ``polled_ago``."""
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessConversationLease
+
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key=key)
+    job.state = HostedHarnessJob.State.COMPLETED
+    job.save(update_fields=["state", "updated_at"])
+    conversation, command, _ = enqueue_message(
+        job, content="Add 30 more scenarios", client_request_id=key
+    )
+    # What the turn_started event leaves behind.
+    command.created_at = timezone.now() - queued_ago
+    command.state = HostedHarnessConversationMessage.State.DELIVERED
+    command.save(update_fields=["created_at", "state"])
+    conversation.state = "responding"
+    conversation.active_invocation_id = "turn-1"
+    conversation.save()
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox",
+        attempt=None,
+        ttl_seconds=1800,
+    )
+    HostedHarnessConversationLease.no_workspace_objects.filter(
+        id=capability.lease.id
+    ).update(state="active", heartbeat_at=timezone.now() - polled_ago)
+    return conversation, command
+
+
+@pytest.mark.django_db
+def test_recovery_restarts_a_long_turn_that_just_went_quiet(organization):
+    from simulate.services.hosted_harness_conversation import (
+        recover_stalled_conversations,
+    )
+
+    # Worked for 14 minutes, then stopped polling: past the stale mark, not the give-up.
+    conversation, command = _started_turn(
+        organization,
+        "long-turn",
+        queued_ago=timedelta(minutes=16),
+        polled_ago=timedelta(minutes=2),
+    )
+    scheduled = []
+    counts = recover_stalled_conversations(scheduled.append)
+
+    command.refresh_from_db()
+    assert counts["abandoned"] == 0
+    assert command.state == HostedHarnessConversationMessage.State.DELIVERED
+    assert scheduled == [str(conversation.id)]
+
+
+@pytest.mark.django_db
+def test_recovery_gives_up_a_turn_whose_restarts_keep_stopping(organization):
+    from simulate.services.hosted_harness_conversation import (
+        recover_stalled_conversations,
+    )
+
+    # Each restart polled once and stopped: recent polls, but an hour since the command.
+    conversation, command = _started_turn(
+        organization,
+        "restart-loop",
+        queued_ago=timedelta(minutes=61),
+        polled_ago=timedelta(minutes=2),
+    )
+    scheduled = []
+    counts = recover_stalled_conversations(scheduled.append)
+
+    command.refresh_from_db()
+    assert counts["abandoned"] == 1
+    assert command.state == HostedHarnessConversationMessage.State.FAILED
+    assert scheduled == []
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("started", [True, False])
+def test_give_up_reply_says_whether_the_turn_started(organization, started):
+    from django.utils import timezone
+
+    from simulate.services.hosted_harness_conversation import (
+        recover_stalled_conversations,
+    )
+
+    if started:
+        conversation, command = _started_turn(
+            organization,
+            "gave-up-started",
+            queued_ago=timedelta(minutes=40),
+            polled_ago=timedelta(minutes=16),
+        )
+    else:
+        job, _ = create_hosted_job(
+            organization, _payload(), idempotency_key="gave-up-cold"
+        )
+        conversation, command, _ = enqueue_message(
+            job, content="Add 30 more scenarios", client_request_id="gave-up-cold"
+        )
+        command.created_at = timezone.now() - timedelta(minutes=16)
+        command.save(update_fields=["created_at"])
+
+    counts = recover_stalled_conversations(lambda _conversation_id: None)
+
+    assert counts["abandoned"] == 1
+    reply = conversation.messages.filter(role="assistant").latest("sequence")
+    if started:
+        assert "stopped responding" in reply.content
+        assert "could not start" not in reply.content
+        assert "not delivered" not in reply.content
+    else:
+        assert reply.content.startswith("The environment chat could not start")
 
 
 @pytest.mark.django_db
@@ -1485,8 +1968,12 @@ def _stamped(body, revision):
 
 
 @pytest.mark.django_db
-def test_chat_publish_applies_now_and_names_changes_by_tab_number(user, workspace, storage):
-    from simulate.services.hosted_harness_conversation import environment_authoring_revision
+def test_chat_publish_applies_now_and_names_changes_by_tab_number(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness_conversation import (
+        environment_authoring_revision,
+    )
     from simulate.tests.test_harness_amend_archive import NAMES, _run_environment
 
     environment = _run_environment(user, workspace, "chat-publish-now")
@@ -1511,10 +1998,15 @@ def test_chat_publish_applies_now_and_names_changes_by_tab_number(user, workspac
         headers,
         _stamped(_chat_checkpoint(NAMES, one_liner="added"), basis),
     )
-    _send_events(client, conversation, headers, (1, "tool_started", {"tool": "save_changes"}))
+    _send_events(
+        client, conversation, headers, (1, "tool_started", {"tool": "save_changes"})
+    )
 
     response = client.post(
-        f"{BASE}/{conversation.id}/publish/", {"digest": first["digest"]}, format="json", **headers
+        f"{BASE}/{conversation.id}/publish/",
+        {"digest": first["digest"]},
+        format="json",
+        **headers,
     )
 
     assert response.status_code == 200, response.content
@@ -1531,11 +2023,18 @@ def test_chat_publish_applies_now_and_names_changes_by_tab_number(user, workspac
         client,
         conversation,
         headers,
-        _stamped(_chat_checkpoint(NAMES[1:], one_liner="dropped"), published["revision"]),
+        _stamped(
+            _chat_checkpoint(NAMES[1:], one_liner="dropped"), published["revision"]
+        ),
     )
-    _send_events(client, conversation, headers, (2, "tool_started", {"tool": "save_changes"}))
+    _send_events(
+        client, conversation, headers, (2, "tool_started", {"tool": "save_changes"})
+    )
     again = client.post(
-        f"{BASE}/{conversation.id}/publish/", {"digest": second["digest"]}, format="json", **headers
+        f"{BASE}/{conversation.id}/publish/",
+        {"digest": second["digest"]},
+        format="json",
+        **headers,
     ).json()
     assert again["applied"] is True, again
     assert [one["name"] for one in again["removed"]] == [NAMES[0]]
@@ -1557,7 +2056,9 @@ def test_chat_publish_applies_now_and_names_changes_by_tab_number(user, workspac
 
 @pytest.mark.django_db
 def test_chat_publish_takes_suites_larger_than_two_hundred(user, workspace, storage):
-    from simulate.services.hosted_harness_conversation import environment_authoring_revision
+    from simulate.services.hosted_harness_conversation import (
+        environment_authoring_revision,
+    )
     from simulate.tests.test_harness_amend_archive import NAMES, _run_environment
 
     environment = _run_environment(user, workspace, "chat-publish-large")
@@ -1585,10 +2086,15 @@ def test_chat_publish_takes_suites_larger_than_two_hundred(user, workspace, stor
             environment_authoring_revision(environment),
         ),
     )
-    _send_events(client, conversation, headers, (1, "tool_started", {"tool": "save_changes"}))
+    _send_events(
+        client, conversation, headers, (1, "tool_started", {"tool": "save_changes"})
+    )
 
     published = client.post(
-        f"{BASE}/{conversation.id}/publish/", {"digest": checkpoint["digest"]}, format="json", **headers
+        f"{BASE}/{conversation.id}/publish/",
+        {"digest": checkpoint["digest"]},
+        format="json",
+        **headers,
     ).json()
 
     assert published["applied"] is True, published
@@ -1603,7 +2109,9 @@ def test_chat_publish_takes_suites_larger_than_two_hundred(user, workspace, stor
 
 
 @pytest.mark.django_db
-def test_chat_publish_refuses_a_checkpoint_that_is_not_the_latest(user, workspace, storage):
+def test_chat_publish_refuses_a_checkpoint_that_is_not_the_latest(
+    user, workspace, storage
+):
     from simulate.tests.test_harness_amend_archive import NAMES, _run_environment
 
     environment = _run_environment(user, workspace, "chat-publish-old")
@@ -1618,7 +2126,9 @@ def test_chat_publish_refuses_a_checkpoint_that_is_not_the_latest(user, workspac
         ttl_seconds=600,
     )
     client, headers = APIClient(), _headers(capability)
-    _commit_checkpoint(client, conversation, headers, _chat_checkpoint(NAMES, one_liner="x"))
+    _commit_checkpoint(
+        client, conversation, headers, _chat_checkpoint(NAMES, one_liner="x")
+    )
 
     refused = client.post(
         f"{BASE}/{conversation.id}/publish/",
@@ -1648,7 +2158,10 @@ def test_new_chat_sandbox_starts_from_the_environment_and_keeps_only_chat_state(
     accepted = _chat_checkpoint(NAMES[:2], one_liner="accepted")
     _prime_environment_archive(environment, storage, accepted)
     payload = dict(environment.payload)
-    payload["metadata"] = {**payload["metadata"], "authoring_revision": "sha256:current"}
+    payload["metadata"] = {
+        **payload["metadata"],
+        "authoring_revision": "sha256:current",
+    }
     environment.payload = payload
     environment.save(update_fields=["payload"])
     # A turn that died left an unsaved third scenario in the chat's copy.
@@ -1711,10 +2224,15 @@ def test_publishing_from_a_runs_chat_leaves_that_runs_scenarios_as_they_ran(
             environment_authoring_revision(run),
         ),
     )
-    _send_events(client, conversation, headers, (1, "tool_started", {"tool": "save_changes"}))
+    _send_events(
+        client, conversation, headers, (1, "tool_started", {"tool": "save_changes"})
+    )
 
     published = client.post(
-        f"{BASE}/{conversation.id}/publish/", {"digest": edited["digest"]}, format="json", **headers
+        f"{BASE}/{conversation.id}/publish/",
+        {"digest": edited["digest"]},
+        format="json",
+        **headers,
     ).json()
 
     assert published["applied"] is True, published
@@ -1733,7 +2251,9 @@ def test_a_retried_chat_run_start_keeps_one_run_and_one_workflow(
     from simulate.tests.test_harness_amend_archive import NAMES, _key, _run_environment
 
     environment = _run_environment(user, workspace, f"run-start-{first_dispatch}")
-    _prime_environment_archive(environment, storage, _chat_checkpoint(NAMES[:2], one_liner="x"))
+    _prime_environment_archive(
+        environment, storage, _chat_checkpoint(NAMES[:2], one_liner="x")
+    )
     HostedHarnessScenario.no_workspace_objects.filter(
         job=environment, scenario_key=_key(NAMES[0])
     ).update(number=1)
@@ -1759,8 +2279,12 @@ def test_a_retried_chat_run_start_keeps_one_run_and_one_workflow(
     client, headers = APIClient(raise_request_exception=False), _headers(capability)
     body = {"numbers": [1], "trials": 1, "operation_id": "start-1"}
 
-    first = client.post(f"{BASE}/{conversation.id}/runs/start/", body, format="json", **headers)
-    retried = client.post(f"{BASE}/{conversation.id}/runs/start/", body, format="json", **headers)
+    first = client.post(
+        f"{BASE}/{conversation.id}/runs/start/", body, format="json", **headers
+    )
+    retried = client.post(
+        f"{BASE}/{conversation.id}/runs/start/", body, format="json", **headers
+    )
 
     assert retried.status_code == 200, retried.content
     runs = HostedHarnessJob.no_workspace_objects.filter(environment=environment)
@@ -1782,8 +2306,12 @@ def test_a_finished_builder_session_build_asks_its_builder_to_check_it(
         "simulate.tasks.hosted_harness_conversation.schedule_conversation_runtime",
         lambda conversation_id, base_url: scheduled.append((conversation_id, base_url)),
     )
-    built, _ = create_hosted_job(organization, _payload(), idempotency_key="built-in-session")
-    staged, _ = create_hosted_job(organization, _payload(), idempotency_key="built-in-stages")
+    built, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="built-in-session"
+    )
+    staged, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="built-in-stages"
+    )
     attempt_id = str(uuid.uuid4())
     enqueue_message(built, content="Build it", client_request_id=f"build-{attempt_id}")
 
@@ -1797,6 +2325,87 @@ def test_a_finished_builder_session_build_asks_its_builder_to_check_it(
     assert not HostedHarnessConversationMessage.no_workspace_objects.filter(
         conversation__job=staged
     ).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "state, kind, refused",
+    [
+        (HostedHarnessJob.State.COMPLETED, "user_message", True),
+        (HostedHarnessJob.State.FAILED, "user_message", True),
+        (HostedHarnessJob.State.RUNNING, "user_message", False),
+        (HostedHarnessJob.State.COMPLETED, "interrupt", False),
+        (HostedHarnessJob.State.COMPLETED, "cancel_operation", False),
+    ],
+    ids=["finished build", "failed build", "running build", "a stop", "a cancel"],
+)
+def test_a_message_after_the_build_is_refused_over_the_authoring_cap(
+    organization, settings, monkeypatch, state, kind, refused
+):
+    """A message on a finished job starts a builder turn of its own, billed as authoring, so it
+    gets the build's own 402 over the cap. A running build was admitted already, and a stop runs
+    no turn: neither is refused."""
+    from ee.usage.exceptions import UsageLimitExceeded
+    from ee.usage.schemas.events import CheckResult
+    from simulate.services.harness_provider import HostedHarnessProvider
+
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example.com"
+    monkeypatch.setattr(
+        "simulate.tasks.hosted_harness_conversation.schedule_conversation_runtime",
+        lambda conversation_id, base_url: None,
+    )
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"cap-{state}-{kind}"
+    )
+    job.state = state
+    job.payload["metadata"]["authoring_object_key"] = (
+        "harness-authoring/org/saved.tar.gz"
+    )
+    job.save()
+    checked = []
+
+    def over_the_cap(organization_id):
+        checked.append(organization_id)
+        raise UsageLimitExceeded(
+            CheckResult(
+                allowed=False,
+                error_code="BUDGET_PAUSED",
+                dimension="ai_credits",
+                reason="Authoring is paused by your budget",
+                current_usage=12,
+                limit=12,
+            )
+        )
+
+    monkeypatch.setattr(
+        "simulate.services.harness_usage.require_harness_authoring", over_the_cap
+    )
+    provider = HostedHarnessProvider()
+    provider._job = lambda _request, _pk: job
+    request = SimpleNamespace(
+        validated_data={
+            "content": "one more change",
+            "client_request_id": "over-cap",
+            "kind": kind,
+            "payload": {},
+        },
+        build_absolute_uri=lambda _path: "https://platform.example.com/",
+        user=SimpleNamespace(id="author-1"),
+    )
+
+    response = provider.send_message(request, job.id)
+
+    queued = HostedHarnessConversationMessage.no_workspace_objects.filter(
+        conversation__job=job, client_request_id="over-cap"
+    ).exists()
+    if refused:
+        assert response.status_code == 402
+        assert not queued
+        assert checked == [str(job.organization_id)]
+    else:
+        assert response.status_code == 202
+        assert queued
+        assert checked == []
 
 
 @pytest.mark.django_db
@@ -1828,3 +2437,207 @@ def test_a_person_cannot_mark_their_message_as_sent_by_the_platform(
     message = job.conversation.messages.get(client_request_id="spoof")
     assert "from_platform" not in message.payload
     assert message.payload["note"] == "kept"
+
+
+@pytest.mark.django_db
+def test_a_question_asked_again_under_a_new_id_takes_the_answer_and_never_holds_the_old_one(
+    organization,
+):
+    from simulate.services.hosted_harness_conversation import pending_commands
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="conversation-asked-again"
+    )
+    conversation, _command, _ = enqueue_message(
+        job, content="Rework a scenario", client_request_id="rework"
+    )
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-1",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    sent = iter(range(1, 10))
+
+    def ask(message_id):
+        event = {
+            "schema_version": "futureagi.harness-conversation-event.v1",
+            "event_id": f"ce-asked-again-{uuid.uuid4()}",
+            "conversation_id": str(conversation.id),
+            "sequence": next(sent),
+            "kind": "question_requested",
+            "message_id": message_id,
+            "stage": "builder",
+            "invocation_id": "turn-1",
+            "function_call_id": None,
+            "emitted_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "payload": {
+                "prompt": "Confirm this change",
+                "options": ["Yes, make this change", "No"],
+            },
+        }
+        event["digest"] = canonical_digest(event)
+        response = APIClient().post(
+            f"{BASE}/{conversation.id}/events/",
+            {
+                "schema_version": "futureagi.harness-conversation-event.v1",
+                "acknowledged_through": 0,
+                "events": [event],
+            },
+            format="json",
+            **_headers(capability),
+        )
+        assert response.status_code == 200, response.content
+
+    first, again = str(uuid.uuid4()), str(uuid.uuid4())
+    ask(first)
+    _c, late, _ = enqueue_message(
+        job,
+        content="Yes, make this change",
+        client_request_id="late",
+        kind="user_response",
+        reply_to=uuid.UUID(first),
+    )
+    # The turn was stopped before the answer reached it, and the builder asks the same question again.
+    ask(again)
+
+    conversation.refresh_from_db()
+    late.refresh_from_db()
+    assert late.state == "failed"
+    assert late.payload["failure_reason"].startswith("Not taken as the answer")
+    assert (conversation.state, conversation.blocking_input["message_id"]) == (
+        "waiting_for_user",
+        again,
+    )
+
+    _c, answer, _ = enqueue_message(
+        job,
+        content="Yes, make this change",
+        client_request_id="answer",
+        kind="user_response",
+        reply_to=uuid.UUID(again),
+    )
+    conversation.refresh_from_db()
+    assert (conversation.state, conversation.blocking_input) == ("responding", None)
+    served = pending_commands(conversation, after=0)["commands"]
+    assert [
+        one["payload"]["reply_to"] for one in served if one["payload"]["reply_to"]
+    ] == [again]
+    assert answer.id in {uuid.UUID(one["message_id"]) for one in served}
+
+
+@pytest.mark.django_db
+def test_a_question_whose_turn_ended_stops_blocking_once_another_turn_runs(
+    organization,
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="conversation-question-outlived"
+    )
+    conversation, rework, _ = enqueue_message(
+        job, content="Rework a scenario", client_request_id="rework"
+    )
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-1",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    sent = iter(range(1, 20))
+
+    def emit(kind, *, acknowledged_through, message_id=None, payload=None):
+        event = {
+            "schema_version": "futureagi.harness-conversation-event.v1",
+            "event_id": f"ce-outlived-{uuid.uuid4()}",
+            "conversation_id": str(conversation.id),
+            "sequence": next(sent),
+            "kind": kind,
+            "message_id": message_id,
+            "stage": "builder",
+            "invocation_id": "turn-1",
+            "function_call_id": None,
+            "emitted_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "payload": payload or {},
+        }
+        event["digest"] = canonical_digest(event)
+        response = APIClient().post(
+            f"{BASE}/{conversation.id}/events/",
+            {
+                "schema_version": "futureagi.harness-conversation-event.v1",
+                "acknowledged_through": acknowledged_through,
+                "events": [event],
+            },
+            format="json",
+            **_headers(capability),
+        )
+        assert response.status_code == 200, response.content
+
+    question = str(uuid.uuid4())
+    emit(
+        "turn_started",
+        acknowledged_through=1,
+        payload={"resumed": False, "command_message_id": str(rework.id)},
+    )
+    emit(
+        "question_requested",
+        acknowledged_through=1,
+        message_id=question,
+        payload={"prompt": "Confirm this change"},
+    )
+    # The turn that asked ends unanswered (stopped), so the question stays open for now.
+    emit(
+        "turn_completed",
+        acknowledged_through=1,
+        payload={"command_message_id": str(rework.id)},
+    )
+    conversation.refresh_from_db()
+    assert (conversation.state, conversation.blocking_input["message_id"]) == (
+        "waiting_for_user",
+        question,
+    )
+
+    # The person writes in the chat instead of answering; that message runs a turn of its own.
+    _c, typed, _ = enqueue_message(
+        job, content="No, not this one", client_request_id="typed"
+    )
+    emit(
+        "turn_started",
+        acknowledged_through=2,
+        payload={"resumed": False, "command_message_id": str(typed.id)},
+    )
+    emit(
+        "turn_completed",
+        acknowledged_through=2,
+        payload={"command_message_id": str(typed.id)},
+    )
+
+    conversation.refresh_from_db()
+    assert (conversation.state, conversation.blocking_input) == ("warm_idle", None)
+
+
+@pytest.mark.django_db
+def test_a_resumed_turn_keeps_the_question_it_asks_again(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="conversation-question-resumed"
+    )
+    conversation, command, _ = enqueue_message(
+        job, content="Rework a scenario", client_request_id="rework"
+    )
+    conversation.state = "waiting_for_user"
+    conversation.blocking_input = {
+        "message_id": str(uuid.uuid4()),
+        "kind": "question_requested",
+    }
+    conversation.save(update_fields=["state", "blocking_input"])
+    from simulate.services.hosted_harness_conversation import _project_event
+
+    _project_event(
+        conversation,
+        {
+            "kind": "turn_started",
+            "payload": {"resumed": True, "command_message_id": str(command.id)},
+        },
+    )
+
+    assert conversation.blocking_input is not None

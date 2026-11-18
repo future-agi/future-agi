@@ -5,6 +5,7 @@ import os
 import re
 import traceback
 from decimal import Decimal
+from functools import partial
 from itertools import chain
 from typing import Any
 from uuid import UUID, uuid4
@@ -149,6 +150,7 @@ except ImportError:
     ConversationMetricsCalculator = None
     PhoneNumberService = None
     decide_processing_skip = None
+from simulate.services.evaluation_denials import record_evaluation_denial
 from simulate.temporal.activities.xl import (
     PATH_MISSING,
     TRANSCRIPT_DOT_ALIASES,
@@ -164,16 +166,19 @@ from simulate.utils.processing_outcomes import (
     set_processing_skip_metadata,
 )
 from simulate.utils.test_execution_utils import (
+    accrue_check_run_eval_cost,
     eval_source,
     generate_simulator_agent_prompt,
+    is_fix_check_run,
 )
 from simulate.utils.verdicts import has_stored_verdict
-from tfc.constants.api_calls import APICallStatusChoices
+from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE, APICallStatusChoices
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.temporal.drop_in import temporal_activity
 
 # Note: run_eval_summary_task imported lazily to avoid circular imports
 from tfc.utils.error_codes import get_specific_error_message
+from tfc.utils.evaluation_denials import EvaluationDenied
 
 try:
     from ee.usage.models.usage import APICallType
@@ -4443,7 +4448,11 @@ class TestExecutor:
                 # the judge when enable_tool_evaluation is on -- but only for
                 # an explicit (harness) dispatch, not a native run test's
                 # undispatched call.
-                if run_test.enable_tool_evaluation and eval_config_ids is not None:
+                if (
+                    run_test.enable_tool_evaluation
+                    and eval_config_ids is not None
+                    and not is_fix_check_run(call_execution.test_execution_id)
+                ):
                     try:
                         mark_eval_progress(call_execution)
                         self._run_tool_evaluation(
@@ -4573,12 +4582,17 @@ class TestExecutor:
                             f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
                             f"on call execution {call_execution.id}"
                         )
+                except EvaluationDenied as denial:
+                    logger.warning("simulation_evaluation_denied", code=denial.code)
                 except Exception as e:
                     logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
                     traceback.print_exc()
 
-            # Run tool evaluation before marking as completed (only if enabled)
-            if test_execution.run_test.enable_tool_evaluation:
+            # Run tool evaluation before marking as completed (only if enabled). Nobody
+            # reads the tool-call judge on a fix's check run, so it is not paid for there.
+            if test_execution.run_test.enable_tool_evaluation and not is_fix_check_run(
+                test_execution.id
+            ):
                 try:
                     mark_eval_progress(call_execution)
                     self._run_tool_evaluation(call_execution, test_execution)
@@ -5394,6 +5408,9 @@ class TestExecutor:
                 f"Running evaluation {eval_config.id} for call {call_execution.id}"
             )
 
+            source = eval_source(call_execution.test_execution_id)
+            # A fix's check run counts what its evals bill, and nobody reads its localizer.
+            check_run = source == FIX_CHECK_RUN_EVAL_SOURCE
             eval_result = run_eval_func(
                 config=config,
                 mappings=updated_mapping,
@@ -5401,10 +5418,17 @@ class TestExecutor:
                 org=organization,
                 model=eval_config.model,
                 kb_id=eval_config.kb_id,
-                error_localizer=eval_config.error_localizer,
+                error_localizer=eval_config.error_localizer and not check_run,
                 workspace=call_execution.test_execution.run_test.workspace,
-                source=eval_source(call_execution.test_execution_id),
+                source=source,
                 call_context=_call_context,
+                on_billed=(
+                    partial(
+                        accrue_check_run_eval_cost, call_execution.test_execution_id
+                    )
+                    if check_run
+                    else None
+                ),
             )
 
             if isinstance(eval_result, str):
@@ -5442,7 +5466,7 @@ class TestExecutor:
                 )
 
                 el_enabled = error_localizer_enabled(eval_config)
-                if el_enabled and eval_output is not None:
+                if el_enabled and not check_run and eval_output is not None:
                     try:
                         trigger_error_localization_for_simulate(
                             eval_template=eval_template,
@@ -5488,6 +5512,9 @@ class TestExecutor:
                     eval_config_id=str(eval_config.id),
                 )
 
+        except EvaluationDenied as denial:
+            record_evaluation_denial(call_execution, eval_config, denial)
+            raise
         except Exception as e:
             logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
 

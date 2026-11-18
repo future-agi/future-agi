@@ -54,7 +54,11 @@ def test_a_fix_its_workflow_still_drives_is_left_alone(source_run, workflows):
     fix_run = _aged(_fix_run(source_run))
     workflows.running.add(str(fix_run.id))
 
-    assert sweep_lost_fix_runs() == {"checked": 1, "closed": 0}
+    assert sweep_lost_fix_runs() == {
+        "checked": 1,
+        "closed": 0,
+        "variation_rows_left": 0,
+    }
 
     fix_run.refresh_from_db()
     assert fix_run.state == State.RUNNING
@@ -79,7 +83,11 @@ def test_a_fix_whose_workflow_is_gone_ends_and_frees_its_sandbox(
         fix_run.refresh_from_db()
     fix_run = _aged(fix_run)
 
-    assert sweep_lost_fix_runs() == {"checked": 1, "closed": 1}
+    assert sweep_lost_fix_runs() == {
+        "checked": 1,
+        "closed": 1,
+        "variation_rows_left": 0,
+    }
 
     fix_run.refresh_from_db()
     assert fix_run.state == ended
@@ -95,7 +103,11 @@ def test_a_fix_past_its_deadline_ends_even_while_its_workflow_runs(
     fix_run = _aged(_fix_run(source_run), OVERDUE)
     workflows.running.add(str(fix_run.id))
 
-    assert sweep_lost_fix_runs() == {"checked": 1, "closed": 1}
+    assert sweep_lost_fix_runs() == {
+        "checked": 1,
+        "closed": 1,
+        "variation_rows_left": 0,
+    }
 
     fix_run.refresh_from_db()
     assert (fix_run.state, fix_run.failure["code"]) == (State.FAILED, "fix_deadline")
@@ -103,10 +115,37 @@ def test_a_fix_past_its_deadline_ends_even_while_its_workflow_runs(
     workflows.asked.assert_not_called()
 
 
+def test_a_queued_fix_is_swept_only_after_its_queue_wait_and_the_grace(
+    source_run, workflows, settings
+):
+    # A 30-minute fix waits the hour the setting gives, so its sweep comes at 70 minutes.
+    settings.AGENT_FIX_MAX_QUEUED_SECONDS = 3600
+    fix_run = _fix_run(source_run, state=State.QUEUED)
+    AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(started_at=None)
+    fix_run.refresh_from_db()
+    workflows.running.add(str(fix_run.id))
+
+    _aged(fix_run, OVERDUE)
+    waiting = sweep_lost_fix_runs()
+    _aged(fix_run, timedelta(minutes=60 + 10 + 1))
+    late = sweep_lost_fix_runs()
+
+    fix_run.refresh_from_db()
+    assert (waiting["closed"], late["closed"]) == (0, 1)
+    assert (fix_run.state, fix_run.failure["code"]) == (
+        State.FAILED,
+        "fix_dispatch_failed",
+    )
+
+
 def test_a_new_fix_is_given_time_to_start(source_run, workflows):
     _fix_run(source_run, state=State.QUEUED)
 
-    assert sweep_lost_fix_runs() == {"checked": 0, "closed": 0}
+    assert sweep_lost_fix_runs() == {
+        "checked": 0,
+        "closed": 0,
+        "variation_rows_left": 0,
+    }
 
     workflows.asked.assert_not_called()
 
@@ -115,7 +154,11 @@ def test_a_fix_the_sweep_cannot_check_is_left_for_the_next_pass(source_run, work
     fix_run = _aged(_fix_run(source_run))
     workflows.asked.side_effect = RuntimeError("temporal unavailable")
 
-    assert sweep_lost_fix_runs() == {"checked": 1, "closed": 0}
+    assert sweep_lost_fix_runs() == {
+        "checked": 1,
+        "closed": 0,
+        "variation_rows_left": 0,
+    }
 
     fix_run.refresh_from_db()
     assert fix_run.state == State.RUNNING

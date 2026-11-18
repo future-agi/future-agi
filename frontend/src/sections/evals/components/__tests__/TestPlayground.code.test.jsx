@@ -59,6 +59,51 @@ beforeEach(() => {
 });
 
 describe("Code playground model suppression", () => {
+  it("sends the current decision rubric as a runtime override without mutating the template", async () => {
+    const ref = React.createRef();
+    const model = "decision/openrouter/openai/gpt-6-luna-decisions";
+    const initial = {
+      model,
+      jev_mapping: { score: { levels: ["Old", "Rubric"] } },
+    };
+    const next = {
+      model,
+      output_type: "score",
+      jev_mapping: {
+        revision: "jev-map-v1",
+        question_type: "score",
+        score: { levels: ["Incorrect", "Correct"] },
+      },
+    };
+    const view = render(
+      <TestPlayground
+        ref={ref}
+        templateId="eval"
+        evalType="llm"
+        model={model}
+        runConfig={initial}
+      />,
+    );
+    view.rerender(
+      <TestPlayground
+        ref={ref}
+        templateId="eval"
+        evalType="llm"
+        model={model}
+        runConfig={next}
+      />,
+    );
+    await act(async () => ref.current.runTest());
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    expect(axios.post).toHaveBeenCalledWith(
+      endpoints.develop.eval.evalPlayground,
+      expect.objectContaining({
+        model,
+        config: expect.objectContaining({ run_config: next }),
+      }),
+    );
+  });
+
   it("ignores a stale Jev model when running a Code evaluation", async () => {
     const ref = React.createRef();
     render(
@@ -119,5 +164,43 @@ describe("Code playground model suppression", () => {
     });
     await waitFor(() => expect(axios.post).toHaveBeenCalled());
     expect(axios.post.mock.calls[0][1].model).toBe("turing_large");
+  });
+});
+
+describe("Test Evaluation refused by the rate limit", () => {
+  const limit =
+    "Evaluation rate limit reached. Wait for the usage window to reset before retrying.";
+
+  it("shows the server's 429 message instead of asking for a retry", async () => {
+    // The app's axios interceptor rejects with the flattened response body.
+    axios.post.mockRejectedValueOnce({
+      status: false,
+      type: "rate_limit",
+      code: "rate_limited",
+      detail: limit,
+      message: limit,
+      error: limit,
+      result: limit,
+      statusCode: 429,
+    });
+    const ref = React.createRef();
+    const onTestResult = vi.fn();
+    render(
+      <TestPlayground
+        ref={ref}
+        templateId="eval"
+        evalType="llm"
+        model="turing_large"
+        onTestResult={onTestResult}
+      />,
+    );
+    await act(async () => {
+      ref.current.runTest();
+    });
+    expect(await screen.findByText(limit)).toBeInTheDocument();
+    expect(onTestResult).toHaveBeenCalledWith(false, limit);
+    expect(
+      screen.queryByText("Failed to run evaluation. Please retry."),
+    ).not.toBeInTheDocument();
   });
 });
