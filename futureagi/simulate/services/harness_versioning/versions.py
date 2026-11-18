@@ -832,7 +832,7 @@ def record_proofs(
                 and _legacy_validated(merged.get(key), certified)
             ):
                 # The case was not reached: it keeps the fact that legacy validated it on this pair
-                # (section 4.15 reads it). A re-proof that ran and failed ends it.
+                # (the lifecycle reads it as legacy validated). A re-proof that ran and failed ends it.
                 entry = {**entry, "legacy_validated": True}
             merged[key] = entry
         validation.proofs = merged

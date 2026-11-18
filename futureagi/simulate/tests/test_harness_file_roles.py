@@ -1,4 +1,4 @@
-"""Each attached file's role (TH-8919): a policy, seed records, or evaluator-only, kept in the draft as
+"""Each attached file's role: a policy, seed records, or evaluator-only, kept in the draft as
 `knowledge/roles.json` for the harness to seal. An evaluator-only file is never offered to an actor."""
 
 from __future__ import annotations
@@ -138,7 +138,7 @@ def test_an_unknown_or_unreadable_roles_file_hides_or_ignores_as_the_harness_doe
 
 
 def test_a_role_path_is_read_as_the_harness_spells_it():
-    """Review round 1 nit: surrounding spaces and a leading `./` are not part of the path, on both sides."""
+    """Surrounding spaces and a leading `./` are not part of the path, on both sides."""
     files = {
         harness_actor_rules.KNOWLEDGE_ROLES: json.dumps(
             {" knowledge/a.md ": "policy", "./knowledge/b.md": "evaluator_only"}

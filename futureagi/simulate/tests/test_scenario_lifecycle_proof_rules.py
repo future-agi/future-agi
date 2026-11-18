@@ -1,4 +1,4 @@
-"""Regression tests for round 1 of the Feature 3 review: each reproduces a finding on the head it was raised on."""
+"""How a case's proof decides its lifecycle: a failed re-proof, a known defect, the agent a proof was made with, an older entry's holds, and validation on the pairing's own agent."""
 
 import uuid
 from unittest.mock import patch
@@ -226,7 +226,7 @@ def test_a_known_defect_never_runs_as_unvalidated(user, workspace, storage):
 
 
 def test_a_legacy_holds_entry_never_counts_as_proved(user, workspace, storage):
-    """Review round 1, SF4: an older entry's `holds` reads Kept as written, so its proof summary and counts never say
+    """An older entry's `holds` reads Kept as written, so its proof summary and counts never say
     proved."""
     from simulate.services.harness_scenario_lifecycle import lifecycle_counts
     from simulate.services.harness_versioning.versions import proof_passes
@@ -244,7 +244,7 @@ def test_a_legacy_holds_entry_never_counts_as_proved(user, workspace, storage):
 def test_validation_unavailable_is_read_for_the_pairing_s_own_agent(
     user, workspace, storage
 ):
-    """Review round 1, SF2: whether a case may run unvalidated depends on the pairing's agent, not the default."""
+    """Whether a case may run unvalidated depends on the pairing's agent, not the default."""
     environment, a2 = _with_a2(user, workspace, storage, "rv1-unavailable-agent")
     _suite(environment, _ten(), proved=False)
     suite, version = environment.suite_version, environment.environment_version
