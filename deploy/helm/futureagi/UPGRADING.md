@@ -27,6 +27,16 @@ Kubernetes transition: storage, controllers and recovery procedures differ.
    Pin the chart digest and the target release's signing identity together. Retain
    the verification record beside the reviewed change, without credentials.
 
+### Check the collector admin address
+
+Before upgrading the collector, check `fiCollector.extraEnv.FI_ADMIN_ADDR` in
+both your saved release values and your new values. Older collectors ignored
+this override. Remove it or set it to the chart default (`:9464`): the pod
+readiness probe, Service and optional GKE health check all expect `/healthz`
+to be reachable on the pod IP at port 9464. A different port or a loopback-only
+bind leaves new pods unready. `HEALTHCHECK_URL` changes the Docker image check,
+not the chart's probes.
+
 ## Prepare a signed release without changing the cluster
 
 From a trusted checkout of this repository, use Python 3.9+ with PyYAML, Helm 4,
