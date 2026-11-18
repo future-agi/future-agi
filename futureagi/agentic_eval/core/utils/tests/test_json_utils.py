@@ -32,6 +32,17 @@ def test_extract_dict_preserves_json_strings(text, wrapper):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("indent", [r"\t", r"\r"])
+def test_extract_dict_recovers_escaped_indentation_without_changing_strings(indent):
+    expected = {
+        "result": "Pass",
+        "explanation": 'it\'s "ready"\tC:\\temp\\report.txt\r',
+    }
+    reply = "{" + indent + json.dumps(expected)[1:-1] + indent + "}"
+    assert extract_dict_from_string(reply) == expected
+
+
+@pytest.mark.unit
 def test_extract_dict_keeps_single_quoted_object_fallback():
     assert extract_dict_from_string("Response: {'score': 0.75}") == {"score": 0.75}
 

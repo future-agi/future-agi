@@ -5,6 +5,26 @@ from typing import Any
 from agentic_eval.core_evals.fi_utils.json import JsonHelper
 
 
+def _recover_escaped_indentation(text: str) -> str:
+    """Treat literal \\t and \\r between tokens as spaces, never as part of a token."""
+    chars = list(text)
+    quote = None
+    escaped = False
+    for i, char in enumerate(text):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in ('"', "'"):
+            quote = char
+        elif char == "\\" and text[i + 1 : i + 2] in ("t", "r"):
+            chars[i : i + 2] = "  "
+    return "".join(chars)
+
+
 def extract_dict_from_string(input_str: str) -> dict[str, Any]:
     """Extract the first JSON object from text and return it as a dictionary."""
     match = re.search(r"\{.*\}", input_str, re.DOTALL)
@@ -20,10 +40,17 @@ def extract_dict_from_string(input_str: str) -> dict[str, Any]:
     try:
         value = json.loads(json_str)
     except json.JSONDecodeError:
-        try:
-            value = json.loads(json_str.replace("'", '"'))
-        except json.JSONDecodeError:
-            value = JsonHelper.extract_json_from_text(json_str)
+        recovered = _recover_escaped_indentation(json_str)
+        for candidate in (recovered, recovered.replace("'", '"')):
+            if candidate == json_str:
+                continue  # Already tried above.
+            try:
+                value = json.loads(candidate)
+                break
+            except json.JSONDecodeError:
+                continue
+        else:
+            value = JsonHelper.extract_json_from_text(recovered)
 
     if not isinstance(value, dict):
         raise ValueError("Extracted string is not valid Response.")
