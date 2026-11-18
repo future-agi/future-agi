@@ -466,6 +466,12 @@ export default function useRunPlayer({
     verdict it was always going to reach, and the run finishes normally —
     recorded, published and handed to the Runs tab like any other.
   */
+  /* Hold every scenario where it is — nothing new starts, nothing moves on —
+     while a platform confirms its calls ended. */
+  const freeze = useCallback(() => {
+    clearTimers();
+    clearHold();
+  }, []);
   const finishNow = useCallback(() => {
     clearTimers();
     clearHold();
@@ -582,6 +588,7 @@ export default function useRunPlayer({
     setPhase,
     start,
     finishNow,
+    freeze,
     tasks,
     focus,
     focusId,

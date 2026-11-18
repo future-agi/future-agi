@@ -68,6 +68,27 @@ export const staleForAgentOf = (row, agentLabel, env, envState) => {
   return { stale: true, capability: rule.capability, reason: rule.reason || `Needs ${rule.capability}` };
 };
 
+/**
+ * A scenario that was stale on an earlier agent version and isn't any more,
+ * because a later version has the tool again (T21). It keeps its name, its id
+ * and its past results — nothing was retired or re-made.
+ * null, or { capability, droppedIn, backIn }
+ */
+export const backForAgentOf = (row, agentLabel, env, envState) => {
+  if (!row?.id || !agentLabel) return null;
+  const tools = manifestOf(env, envState, agentLabel).tools;
+  const n = (envState?.nudges || [])
+    .filter((x) => x.kind === "remove" && x.capability && x.agentVersion !== agentLabel
+      && (x.scenarioIds || []).includes(row.id) && tools.includes(x.capability))
+    .pop();
+  if (!n || !requiredCapsOf(row, env, envState).includes(n.capability)) return null;
+  const list = agentVersions(envState);
+  const from = list.findIndex((v) => v.label === n.agentVersion);
+  const backIn = list.slice(from + 1)
+    .find((v) => manifestOf(env, envState, v.label).tools.includes(n.capability))?.label || agentLabel;
+  return { capability: n.capability, droppedIn: n.agentVersion, backIn };
+};
+
 /* ── scenario versions: major.minor.patch ─────────────────────────────────── */
 
 export const SCENARIO_BUMPS = {

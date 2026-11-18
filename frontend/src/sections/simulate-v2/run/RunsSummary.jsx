@@ -12,6 +12,7 @@ import {
   sharedDeltaOf,
   sameEnvVersion,
 } from "../_mock/runCompare";
+import { gradedRunOf } from "../_mock/gradedRun";
 import {
   Box,
   Stack,
@@ -230,16 +231,21 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
   const listed = useMemo(() => {
     const when = (r) =>
       new Date(r.finishedAt || r.startedAt || Date.now()).getTime();
-    return [
-      /* A fix's first step is today's agent, unchanged — a run of the
+    return (
+      [
+        /* A fix's first step is today's agent, unchanged — a run of the
          agent like any other. Only its trials are the improvement's. */
-      ...mergedRaw.filter(
-        (r) =>
-          !isCandidateRun(r, envState) ||
-          improvementOf(r, envState)?.role === "baseline",
-      ),
-    ].sort((a, b) => when(a) - when(b));
-  }, [mergedRaw, envState]);
+        ...mergedRaw.filter(
+          (r) =>
+            !isCandidateRun(r, envState) ||
+            improvementOf(r, envState)?.role === "baseline",
+        ),
+      ]
+        /* Scored the way the run's own page scores it. */
+        .map((r) => gradedRunOf(env, envState, r))
+        .sort((a, b) => when(a) - when(b))
+    );
+  }, [mergedRaw, env, envState]);
   /* The improvements started from each run, newest first. */
   const improvementsByRun = useMemo(() => {
     const m = new Map();

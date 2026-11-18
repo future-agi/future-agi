@@ -42,6 +42,7 @@ import {
   withFixPr,
 } from "./commitHistorySeed";
 import { withProjectLinkRepair } from "./projectLinkRepair";
+import { withToolHistory } from "./toolHistorySeed";
 
 /*
   Bumped whenever the seed gains an environment.
@@ -53,7 +54,7 @@ import { withProjectLinkRepair } from "./projectLinkRepair";
   has are left exactly as they are, and an environment someone deliberately
   removed stays removed because the marker moves on regardless.
 */
-export const SEED_VERSION = 38;
+export const SEED_VERSION = 39;
 /* Environments a seed version added, so a later top-up adds only those —
    never one someone removed since the last. */
 const ADDED_AT = { 21: ["env-clinic-line"], 37: ["env-refunds-desk"] };
@@ -754,7 +755,11 @@ const topUpSeedVersions = (stored) => {
   const withTies =
     (stored.seedVersion || 0) < 34 ? withCommitTies(withLinks) : withLinks;
   /* Seed 35: Pickup dispatch's fix branch opened as its own draft PR. */
-  return (stored.seedVersion || 0) < 35 ? withFixPr(withTies) : withTies;
+  const withPr = (stored.seedVersion || 0) < 35 ? withFixPr(withTies) : withTies;
+  /* Seed 39: a dropped tool on the returns line, dropped and back on the travel line (T21). */
+  return (stored.seedVersion || 0) < 39
+    ? { ...withPr, byEnv: withToolHistory(withPr.byEnv, withPr.myEnvironments) }
+    : withPr;
 };
 
 /*

@@ -158,9 +158,35 @@ const COLUMNS = [
   Its action is the first item in the row's ⋯ menu.
 */
 function StatusCell({ state }) {
+  if (state?.back && (state.id === "valid" || state.id === "active"))
+    return <BackMark back={state.back} />;
   if (!state || state.id === "valid") return null;
   return <StateChip state={state} iconOnly />;
 }
+
+/* Blocked on an earlier agent version; its tool is back (T21). */
+function BackMark({ back }) {
+  return (
+    <Tooltip
+      arrow
+      title={
+        <Stack spacing={0.375} sx={{ py: 0.25, maxWidth: 300 }}>
+          <Typography sx={{ typography: "s3", fontWeight: 600, color: "inherit" }}>
+            {`Back — ${back.capability} returned in ${back.backIn}`}
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "inherit" }}>
+            {`Blocked on ${back.droppedIn}, which didn't have ${back.capability}. Same scenario, same name, past results kept.`}
+          </Typography>
+        </Stack>
+      }
+    >
+      <Box role="img" aria-label="Back" sx={{ display: "inline-flex", flexShrink: 0 }}>
+        <Iconify icon="solar:history-linear" width={16} sx={{ color: "text.secondary" }} />
+      </Box>
+    </Tooltip>
+  );
+}
+BackMark.propTypes = { back: PropTypes.object };
 StatusCell.propTypes = { state: PropTypes.object };
 
 /* Every row action in one ⋯ menu: the state's fix first, then edit,
@@ -209,6 +235,7 @@ function RowMenu({
       </IconButton>
       <Menu anchorEl={menuEl} open={!!menuEl} onClose={close}>
         {fix &&
+          fix !== "restore" &&
           onStateAction &&
           item(
             "fix",

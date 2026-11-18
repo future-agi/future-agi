@@ -543,6 +543,7 @@ function LiveRun() {
     phase,
     start,
     finishNow,
+    freeze,
     tasks,
     focus,
     focusId,
@@ -1772,7 +1773,16 @@ function LiveRun() {
                    up (runs.md) — a platform's calls end on its side, ours
                    reset their world and save their evidence. */
                 /* A run with a spend limit says it in its own banner. */
-                if (envState?.agent?.values?.provider || !spend?.cap) {
+                /* A platform's calls end on its side: hold the run while
+                   it confirms, say so, then show the results. */
+                if (envState?.agent?.values?.provider) {
+                  freeze();
+                  setCancelState("cancelling");
+                  setTimeout(() => setCancelState("confirmed"), 2500);
+                  setTimeout(() => finishNow(), 4500);
+                  return undefined;
+                }
+                if (!spend?.cap) {
                   setCancelState("cancelling");
                   setTimeout(() => setCancelState("confirmed"), 2500);
                 }

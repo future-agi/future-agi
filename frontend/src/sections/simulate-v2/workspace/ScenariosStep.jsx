@@ -452,7 +452,21 @@ export default function ScenariosStep({
   /* Archived rows stay listed but don't run or count. */
   const live = liveScenarios(selected);
   const archivedCount = selected.length - live.length;
+  /* Proved only when its solution really ran here; a case saved as written
+     without a proof run is counted apart from one whose proof failed. */
+  const proofCounts = live.reduce(
+    (c, r) => {
+      if (r.proposed) return c;
+      const id = stateOf(r).id;
+      if (id === "valid" || id === "active") c.proved += 1;
+      else if (!r.provedAt && !(r.provedOn || []).length) c.kept += 1;
+      else c.notProved += 1;
+      return c;
+    },
+    { proved: 0, kept: 0, notProved: 0 },
+  );
   const staleCount = live.filter((r) => stateOf(r).id === "stale").length;
+  const backCount = live.filter((r) => stateOf(r).back).length;
   /* Drafts from production traces are reviewed in their own drawer, never added in bulk. */
   const proposed = live.filter((r) => r.proposed && !r.traceImport);
   const traceDrafts = live.filter((r) => r.proposed && r.traceImport);
@@ -1855,6 +1869,23 @@ export default function ScenariosStep({
                   <>
                     {barFit !== "narrow" && (
                       <>
+                        <Tooltip
+                          arrow
+                          title="A case counts as proved only when its solution really ran on this environment version. Kept as written: saved as written, never proved. Not proved: its proof failed or no longer holds."
+                        >
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s3",
+                              color: "text.secondary",
+                              flexShrink: 0,
+                              cursor: "default",
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {`${proofCounts.proved} proved · ${proofCounts.kept} kept as written · ${proofCounts.notProved} not proved`}
+                          </Typography>
+                        </Tooltip>
                         {/* Coverage — the three numbers on hover, the full breakdown
                     (axes, forced overlays, pairwise grid) in the drawer. */}
                         <Tooltip
@@ -2433,7 +2464,9 @@ export default function ScenariosStep({
               {`${live.length} scenario${live.length === 1 ? "" : "s"}`}
               {[
                 staleCount > 0 &&
-                  ` · ${staleCount} stale for agent ${agentLabel}`,
+                  ` · ${staleCount} blocked on agent ${agentLabel}`,
+                backCount > 0 &&
+                  ` · ${backCount} back on agent ${agentLabel}`,
                 archivedCount > 0 && ` · ${archivedCount} archived`,
                 viewing && ` · viewing environment ${envDisplay}, read-only`,
               ]

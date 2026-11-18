@@ -33,7 +33,7 @@ import {
   evidenceGateOf,
   failedAdmissionGate,
 } from "./admissionGates";
-import { staleForAgentOf } from "./decoupled";
+import { backForAgentOf, staleForAgentOf } from "./decoupled";
 
 /* Outdated is the one state that earns colour — the existing red, used
    sparingly. Everything else stays neutral. */
@@ -148,6 +148,15 @@ export const ruleChangesOnFlow = (row, { env, envState, tools } = {}) => {
  * agentLabel }.
  */
 export const scenarioStateFor = (row, status, ctx = {}) => {
+  const state = baseStateFor(row, status, ctx);
+  /* Blocked on an earlier agent version, and its tool is back: say so on
+     the row, with the history it kept. */
+  if (!["valid", "active", "recheck"].includes(state.id) || !ctx.agentLabel || !ctx.env || !ctx.envState) return state;
+  const back = backForAgentOf(row, ctx.agentLabel, ctx.env, ctx.envState);
+  return back ? { ...state, back } : state;
+};
+
+const baseStateFor = (row, status, ctx = {}) => {
   const archived = archivedOf(row);
   if (archived) {
     return {

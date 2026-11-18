@@ -11,6 +11,7 @@
  * someone actually did.
  */
 
+import { withToolHistory } from "./toolHistorySeed";
 import { getEnvironment } from "./environments";
 import { getRows } from "./scenarios";
 import { derivedEnvironment } from "./builder";
@@ -736,5 +737,6 @@ export function seededState() {
      reproduced and one with no safe improvement. Added last, after every run
      and every other improvement, so none of those change. */
   const fixed = withErrorFeedFixes(seeded, seeded.myEnvironments);
-  return { ...fixed, byEnv: withAirlineTracing(fixed.byEnv, daysAgo(9)) };
+  /* Seed 39: a tool dropped on the returns line, and dropped then back on the travel line (T21). */
+  return { ...fixed, byEnv: withToolHistory(withAirlineTracing(fixed.byEnv, daysAgo(9)), fixed.myEnvironments) };
 }
