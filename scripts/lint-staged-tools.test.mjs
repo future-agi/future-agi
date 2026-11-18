@@ -105,4 +105,15 @@ for (const [tool, script, file] of [
     assert.match(result.stderr, /yarn --cwd frontend install/);
     assert.doesNotMatch(result.stderr, /SyntaxError/);
   });
+
+  test(`${tool}: a directory in place of the declared script gives the installation hint`, (t) => {
+    const f = fixture(t);
+    const entry = path.join(f.packages, tool, "cli.cjs");
+    rmSync(entry);
+    mkdirSync(entry);
+    const result = f.run(script, file);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /yarn --cwd frontend install/);
+    assert.doesNotMatch(result.stderr, /MODULE_NOT_FOUND/);
+  });
 }

@@ -69,7 +69,7 @@ const prettierFiles = uniqueFiles.filter((file) =>
 
 const run = (bin, args) => {
   const script = resolveFrontendTool(frontendDir, bin);
-  if (!script || !existsSync(script)) {
+  if (!script) {
     console.error(
       `Missing ${bin}. Run "yarn --cwd frontend install" before committing.`,
     );

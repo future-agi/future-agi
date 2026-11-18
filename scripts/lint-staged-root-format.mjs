@@ -14,7 +14,7 @@ const prettier = resolveFrontendTool(
   "prettier",
 );
 
-if (!prettier || !existsSync(prettier)) {
+if (!prettier) {
   console.error('Missing prettier. Run "yarn --cwd frontend install" first.');
   process.exit(1);
 }
