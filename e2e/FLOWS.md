@@ -3174,7 +3174,7 @@
 
 **Goal:** Read production adoption and the reason an agent stays on v1
 
-**Spec:** `flows/skills/skill-traces.spec.ts:259`
+**Spec:** `flows/skills/skill-traces.spec.ts:261`
 
 **Tags:** —
 
@@ -3209,7 +3209,7 @@
 
 **Goal:** Understand missing loads for an opted-out application
 
-**Spec:** `flows/skills/skill-traces.spec.ts:105`
+**Spec:** `flows/skills/skill-traces.spec.ts:107`
 
 **Tags:** —
 
@@ -3243,7 +3243,7 @@
 
 **Goal:** Load a skill without installing a telemetry stack
 
-**Spec:** `flows/skills/skill-traces.spec.ts:116`
+**Spec:** `flows/skills/skill-traces.spec.ts:118`
 
 **Tags:** —
 
@@ -3260,7 +3260,7 @@
 
 **Goal:** Keep native test runs out of production attribution
 
-**Spec:** `flows/skills/skill-traces.spec.ts:404`
+**Spec:** `flows/skills/skill-traces.spec.ts:406`
 
 **Tags:** —
 
@@ -3278,7 +3278,7 @@
 
 **Goal:** Return to a saved skill cohort from its Runtime metric
 
-**Spec:** `flows/skills/skill-traces.spec.ts:147`
+**Spec:** `flows/skills/skill-traces.spec.ts:149`
 
 **Tags:** —
 
@@ -3295,7 +3295,7 @@
 
 **Goal:** Read the score and coverage on the skill version cohort
 
-**Spec:** `flows/skills/skill-traces.spec.ts:332`
+**Spec:** `flows/skills/skill-traces.spec.ts:334`
 
 **Tags:** —
 
@@ -3313,7 +3313,7 @@
 
 **Goal:** Open failing requests after a production change
 
-**Spec:** `flows/skills/skill-traces.spec.ts:259`
+**Spec:** `flows/skills/skill-traces.spec.ts:261`
 
 **Tags:** —
 
@@ -3331,7 +3331,7 @@
 
 **Goal:** Open the exact per-project cohort, without a dialog
 
-**Spec:** `flows/skills/skill-traces.spec.ts:169`
+**Spec:** `flows/skills/skill-traces.spec.ts:171`
 
 **Tags:** —
 
@@ -3348,7 +3348,7 @@
 
 **Goal:** Inspect a failed integrity check separately from verified loads
 
-**Spec:** `flows/skills/skill-traces.spec.ts:188`
+**Spec:** `flows/skills/skill-traces.spec.ts:190`
 
 **Tags:** —
 
@@ -3365,7 +3365,7 @@
 
 **Goal:** Diagnose first-day fetches without suggesting a runtime load
 
-**Spec:** `flows/skills/skill-traces.spec.ts:204`
+**Spec:** `flows/skills/skill-traces.spec.ts:206`
 
 **Tags:** —
 
@@ -3382,7 +3382,7 @@
 
 **Goal:** Verify the skill that changed across two reviewed context releases
 
-**Spec:** `flows/skills/skill-traces.spec.ts:362`
+**Spec:** `flows/skills/skill-traces.spec.ts:364`
 
 **Tags:** —
 
@@ -3400,7 +3400,7 @@
 
 **Goal:** Distinguish an unreleased follower from a pinned skill
 
-**Spec:** `flows/skills/skill-traces.spec.ts:259`
+**Spec:** `flows/skills/skill-traces.spec.ts:261`
 
 **Tags:** —
 
@@ -3418,7 +3418,7 @@
 
 **Goal:** Inspect the same agent and its skills from Runtime and Observe
 
-**Spec:** `flows/skills/skill-traces.spec.ts:218`
+**Spec:** `flows/skills/skill-traces.spec.ts:220`
 
 **Tags:** —
 
@@ -3435,7 +3435,7 @@
 
 **Goal:** Confirm a new application load reaches the project
 
-**Spec:** `flows/skills/skill-traces.spec.ts:123`
+**Spec:** `flows/skills/skill-traces.spec.ts:125`
 
 **Tags:** —
 
@@ -3452,7 +3452,7 @@
 
 **Goal:** See the SDK version that fetched the skill and context
 
-**Spec:** `flows/skills/skill-traces.spec.ts:133`
+**Spec:** `flows/skills/skill-traces.spec.ts:135`
 
 **Tags:** —
 
