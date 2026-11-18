@@ -1463,11 +1463,11 @@ def require_agent_pick(
     environment: HostedHarnessJob, version_id: Any, *, refusal: str, lock: bool = False
 ) -> None:
     """Refuse a version a run may not pick or a move may not make the default."""
-    from simulate.services.hosted_harness import _not_pickable, agent_version_pickable
+    from simulate.services.hosted_harness import agent_version_pickable, not_pickable
 
     runtime = _side_row(version_id, lock=lock)
     if not agent_version_pickable(environment, version_id):
-        raise _not_pickable("agent")
+        raise not_pickable("agent")
     if not agent_pick_allowed(environment, version_id, runtime):
         # TODO: run a legacy agent version from the payload it was recorded with;
         # until then it would run the current payload under its older label.
@@ -1736,9 +1736,8 @@ def _activate_on(
     and is not yet, the move waits for it: ``validating``."""
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
     from simulate.services.harness_versioning.validation import (
-        agent_move,
         drop_waiting_moves,
-        start_validation,
+        gate_agent_move,
     )
     from simulate.services.harness_versioning.versions import move_agent
     from simulate.services.hosted_harness import agent_version_pickable
@@ -1775,17 +1774,10 @@ def _activate_on(
         if _busy(locked):
             # Moved by rebuild.retry_deferred_activations once it finishes.
             return "environment_busy"
-        validation = start_validation(
-            locked,
-            version,
-            locked.environment_version,
-            locked.suite_version,
-            purpose="agent_move",
-            move=agent_move(
-                "activation", locked, version, user=user, explicit=explicit
-            ),
+        pending = gate_agent_move(
+            "activation", locked, version, user=user, explicit=explicit
         )
-        if validation is not None and not validation.ready:
+        if pending is not None:
             # Moved by the validation once the pairing passes.
             return "validating"
         outgoing = locked.agent_version_id

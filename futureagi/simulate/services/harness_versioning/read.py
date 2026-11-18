@@ -218,6 +218,27 @@ def in_workspace(job: HostedHarnessJob) -> Q:
     return Q(workspace_id=job.workspace_id) | Q(workspace__isnull=True)
 
 
+def agent_in_lineage(job: HostedHarnessJob, agent_id: Any) -> bool:
+    """Whether ``agent_id`` is a version of the environment's agent, in its workspace and organization, and, for an
+    agent environments share, one this environment made or asked for. Every path that takes an agent version id
+    from a request scopes it here."""
+    from simulate.services.harness_agent_versions import lineage_version_ids
+
+    definition_id = _agent_definition_id(job)
+    if (
+        definition_id is None
+        or not AgentVersion.no_workspace_objects.filter(
+            in_workspace(job),
+            id=agent_id,
+            organization_id=job.organization_id,
+            agent_definition_id=definition_id,
+        ).exists()
+    ):
+        return False
+    allowed = lineage_version_ids(job, definition_id)
+    return allowed is None or str(agent_id) in allowed
+
+
 def _agent_versions(
     job: HostedHarnessJob, ids: list[Any] | None = None
 ) -> list[AgentVersion]:
