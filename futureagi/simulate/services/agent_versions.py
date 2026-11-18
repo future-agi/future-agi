@@ -78,8 +78,18 @@ def environment_of(
     return environment
 
 
+def _versions_of(definition: AgentDefinition):
+    return AgentVersion.no_workspace_objects.filter(
+        agent_definition_id=definition.id
+    ).order_by("-version_number")
+
+
 def production_version(definition: AgentDefinition) -> AgentVersion | None:
-    return definition.active_version
+    return _versions_of(definition).filter(status="active").first()
+
+
+def latest_version(definition: AgentDefinition) -> AgentVersion | None:
+    return _versions_of(definition).first()
 
 
 def _runtime(version: AgentVersion | None) -> HarnessAgentVersionRuntime | None:
@@ -93,7 +103,7 @@ def _runtime(version: AgentVersion | None) -> HarnessAgentVersionRuntime | None:
 
 
 def _parent(definition: AgentDefinition) -> AgentVersion:
-    parent = production_version(definition) or definition.latest_version
+    parent = production_version(definition) or latest_version(definition)
     if parent is None:
         raise HostedHarnessError(
             "agent_has_no_version",
@@ -839,7 +849,7 @@ def build_preflight(
     from simulate.services.harness_versioning.archives import archive_exists
     from simulate.services.hosted_harness_gateway import _source_object_key
 
-    version = version or production_version(definition) or definition.latest_version
+    version = version or production_version(definition) or latest_version(definition)
     checks: list[dict[str, Any]] = []
 
     def check(name: str, ok: bool, message: str) -> None:

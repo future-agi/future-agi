@@ -610,6 +610,7 @@ class TestAgentVersionResponseSerializer:
             "preflight_status",
             "check_step",
             "check_failure",
+            "check_started_at",
             "environments_count",
             "api_key",
             "created_at",

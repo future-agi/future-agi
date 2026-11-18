@@ -1609,7 +1609,8 @@ class TestRefsAndBudget:
         assert len(gh.calls) == 1
         assert seen.call_args.kwargs["heads"] == {}
 
-    def test_the_poller_goes_round_the_oldest_checked_first(self):
+    def test_the_poller_goes_round_the_oldest_checked_first(self, settings):
+        settings.HARNESS_GITHUB_POLL_BUDGET = 5
         sources = [_source("main", f"acme/r{n:02d}", n) for n in range(12)]
         read = []
 
@@ -1661,7 +1662,8 @@ class TestRefsAndBudget:
 
         assert read[0] == "acme/r11"
 
-    def test_one_organizations_pushes_cannot_hold_every_poll_slot(self):
+    def test_one_organizations_pushes_cannot_hold_every_poll_slot(self, settings):
+        settings.HARNESS_GITHUB_POLL_BUDGET = 5
         busy = [
             dataclasses.replace(
                 _source("main", f"busy/r{n}", n), organization_id=uuid.UUID(int=501)
