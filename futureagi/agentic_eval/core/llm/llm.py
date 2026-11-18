@@ -770,6 +770,8 @@ class LLM:
                     self._set_last_finish_reason_from_response(response)
                     self._update_token_usage(response)
                     self._update_cost(response)
+                    if not response.choices:
+                        raise ValueError("Empty response from model")
                     content = response.choices[0].message.content
                     return content if content is not None else ""
 
@@ -780,6 +782,8 @@ class LLM:
                         self._set_last_finish_reason_from_response(gw_response)
                         self._update_token_usage(gw_response)
                         self._update_cost(gw_response)
+                        if not gw_response.choices:
+                            raise ValueError("Empty response from model")
                         content = gw_response.choices[0].message.content
                         return content if content is not None else ""
 
@@ -1082,6 +1086,8 @@ class LLM:
                     )
                     self._update_token_usage(response)
                     self._update_cost(response)
+                    if not response.choices:
+                        raise ValueError("Empty response from model")
                     content = response.choices[0].message.content
                     return content if content is not None else ""
 
@@ -1094,6 +1100,8 @@ class LLM:
                         if gw_response is not None:
                             self._update_token_usage(gw_response)
                             self._update_cost(gw_response)
+                            if not gw_response.choices:
+                                raise ValueError("Empty response from model")
                             content = gw_response.choices[0].message.content
                             return content if content is not None else ""
 
@@ -2243,6 +2251,8 @@ class LLM:
                     response = gateway.chat.completions.create(**gateway_kwargs)
                     self._update_token_usage(response)
                     self._update_cost(response)
+                    if not response.choices:
+                        raise ValueError("Empty response from model")
                     content = response.choices[0].message.content
                     logger.info(
                         "llm_call_complete",
@@ -2322,6 +2332,8 @@ class LLM:
 
             self._update_token_usage(response)
             self._update_cost(response)
+            if not response.choices:
+                raise ValueError("Empty response from model")
             content = response.choices[0].message.content
             logger.info(
                 "llm_call_complete",

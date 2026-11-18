@@ -480,7 +480,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
-          version: "0.11.16"
+          version: "0.11.33"
           enable-cache: true
           cache-dependency-glob: futureagi/uv.lock
 

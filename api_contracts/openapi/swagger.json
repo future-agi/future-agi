@@ -12456,7 +12456,7 @@
         "/agentcc/guardrail-policies/{id}/apply/": {
             "post": {
                 "operationId": "agentcc_guardrail-policies_apply",
-                "description": "Apply this policy to specific keys or projects.",
+                "description": "Apply to dashboard key UUIDs, or persist a project-only assignment.",
                 "parameters": [
                     {
                         "name": "data",
@@ -64255,7 +64255,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/EvalTaskUnpauseRequest"
+                            "$ref": "#/definitions/EmptyRequest"
                         }
                     },
                     {
@@ -64274,12 +64274,6 @@
                         }
                     },
                     "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
-                        }
-                    },
-                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -95318,6 +95312,11 @@
                 "applied_projects": {
                     "title": "Applied projects",
                     "type": "object"
+                },
+                "runs_on_gateway": {
+                    "title": "Runs on gateway",
+                    "type": "boolean",
+                    "readOnly": true
                 },
                 "created_at": {
                     "title": "Created at",
@@ -169504,10 +169503,6 @@
                     ],
                     "x-nullable": true
                 },
-                "can_start": {
-                    "title": "Can start",
-                    "type": "boolean"
-                },
                 "filters_applied": {
                     "title": "Filters applied",
                     "type": "object",
@@ -171362,15 +171357,6 @@
                 },
                 "result": {
                     "$ref": "#/definitions/SamplingPreviewResult"
-                }
-            }
-        },
-        "EvalTaskUnpauseRequest": {
-            "type": "object",
-            "properties": {
-                "start": {
-                    "title": "Start",
-                    "type": "boolean"
                 }
             }
         },
