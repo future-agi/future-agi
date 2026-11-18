@@ -439,9 +439,7 @@ def _picked_agent_frameworks(pairing: Pairing) -> dict[str, str]:
     return release.frameworks(certificate)
 
 
-def _stale_reason(
-    stale: StaleBecause, pairing: Pairing, evidence: Evidence
-) -> tuple[str, str]:
+def _stale_reason(stale: str, pairing: Pairing, evidence: Evidence) -> tuple[str, str]:
     if stale == "harness_version":
         moved = release.harness_outdated(
             evidence.certificate, pairing.environment.organization_id
