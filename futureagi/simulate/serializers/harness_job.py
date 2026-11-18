@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, get_args
 
 from django.conf import settings
 from rest_framework import serializers
@@ -12,6 +12,7 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
 from simulate.services.harness_credentials import agent_version_secret_ref
+from simulate.types import UnprovedNext
 from tfc.utils.serializer_fields import JsonValueField
 
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
@@ -934,7 +935,7 @@ class HarnessRunReadinessSelectionSerializer(HarnessCapabilityScopeSerializer):
         help_text="Each holding row's reason, in plain words.",
     )
     next = serializers.ChoiceField(
-        choices=("validate_first", "run_unvalidated"),
+        choices=get_args(UnprovedNext),
         allow_null=True,
         required=False,
         help_text="As the run preview's selection.next.",

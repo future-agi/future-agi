@@ -33,7 +33,12 @@ from simulate.serializers.requests.run_test_evals import (
 )
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
-from simulate.types import WorkerBinding, WorkerEnforcement
+from simulate.types import (
+    LifecycleState,
+    UnprovedNext,
+    WorkerBinding,
+    WorkerEnforcement,
+)
 from tfc.utils.api_serializers import StrictInputSerializer
 
 
@@ -996,7 +1001,7 @@ class HarnessScenarioCoverageSerializer(serializers.Serializer):
     overlay_intensity = serializers.CharField(required=False, allow_null=True)
 
 
-_LIFECYCLE_STATES = ("draft", "validated", "active", "kept_as_written", "archived")
+_LIFECYCLE_STATES = get_args(LifecycleState)
 
 
 class HarnessProofControlSerializer(serializers.Serializer):
@@ -2195,7 +2200,7 @@ class HarnessCapabilitySelectionCountsSerializer(HarnessCapabilityScopeSerialize
         help_text="Every selected case's needs were read from its stored documents."
     )
     next = serializers.ChoiceField(
-        choices=("validate_first", "run_unvalidated"),
+        choices=get_args(UnprovedNext),
         allow_null=True,
         help_text="When every selected case is held back only for not being validated on the pairing: a run"
         " validates the pairing first (validate_first) or runs them unvalidated because the check cannot run here"

@@ -44,6 +44,7 @@ from simulate.services.hosted_harness import (
     overlay_stage_outputs,
     pinned_stage_outputs,
 )
+from simulate.types import UnprovedNext
 
 logger = structlog.get_logger(__name__)
 
@@ -1328,7 +1329,6 @@ def require_pair_runnable(
 
 
 # What a run does with cases held back only because they are not validated on its pairing.
-UnprovedNext = Literal["validate_first", "run_unvalidated"]
 
 
 def unproved_next(
