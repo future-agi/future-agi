@@ -201,9 +201,9 @@ func TestChatCostUnderTheNameTheProviderStates(t *testing.T) {
 			db := endpointDB()
 			p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
 			var asked [2]string
-			p.SetPriceTables(func(orgID, providerID string) string {
-				asked = [2]string{orgID, providerID}
-				return tables[providerID]
+			p.SetPriceTables(func(rc *models.RequestContext) string {
+				asked = [2]string{rc.Metadata[tenant.MetadataKeyOrgID], rc.Provider}
+				return tables[rc.Provider]
 			})
 			rc := endpointRC("chat", "gemini-4-argon")
 			rc.Provider = tc.provider

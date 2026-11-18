@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Mapping
 from typing import Any
 
 from django.db.models import (
@@ -45,7 +46,10 @@ GOAL_OUTCOMES = (
     "error",
     "escalated",
     "inconclusive",
+    "no_score",
 )
+# Any call with one of these outcomes keeps "passed" as the goal breakdown's headline.
+_OUTRANK_NO_SCORE = ("passed", "failed", "error", "queued", "in_progress")
 # Provider-agnostic end reasons (metric list v1 §5.1), first match wins. The hosted ALK
 # reasons are listed explicitly: none of them appear in any provider's vocabulary.
 END_REASONS = [
@@ -167,12 +171,16 @@ def _breakdown(
         segments = [
             by_label.get(value, {"label": value, "count": 0, "share": 0})
             for value in order
+            if value != "no_score" or value in by_label
         ]
-    if key == "goal_outcome":
+    if key == "goal_outcome" and order:
         for segment in segments:
             if segment["label"] in order:
                 segment["statuses"] = [segment["label"]]
     preferred = {"goal_outcome": "passed"}.get(key)
+    if key == "goal_outcome" and _only_unscored(segments):
+        # "Passed 0%" misreads calls that ran with no pass or fail and nothing left to run.
+        preferred = "no_score"
     headline = next(
         (segment for segment in segments if segment["label"] == preferred), None
     )
@@ -184,6 +192,15 @@ def _breakdown(
         "segments": segments,
         "headline": headline,
     }
+
+
+def _only_unscored(segments: list[dict[str, Any]]) -> bool:
+    """Whether some calls have no score and none passed, failed, errored or is still to run: the run, as the
+    runs list reads it, has no score."""
+    counts = {segment["label"]: segment["count"] for segment in segments}
+    return bool(counts.get("no_score")) and not any(
+        counts.get(label) for label in _OUTRANK_NO_SCORE
+    )
 
 
 def _tool_verdict(tool: dict) -> bool | None:
@@ -385,43 +402,48 @@ def build_run_dashboard(
     evaluations: list,
     risk: list,
     comparison: dict | None = None,
+    trials: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     total = summary["total"]
-    queryset = annotate_goal_outcome(queryset).annotate(
-        # Provider-reported only: the platform does not compute sentiment (v1 D1).
-        dashboard_sentiment=Lower(
-            Coalesce(
-                _json_text("analysis_data", "user_sentiment"),
-                _json_text(
-                    "provider_call_data",
-                    "retell",
-                    "call_analysis",
-                    "user_sentiment",
-                ),
-            )
-        ),
-        dashboard_success_raw=Lower(
-            Coalesce(
-                _json_text("analysis_data", "call_successful"),
-                _json_text(
-                    "provider_call_data",
-                    "retell",
-                    "call_analysis",
-                    "call_successful",
-                ),
-                _json_text("analysis_data", "successEvaluation"),
-            )
-        ),
-    ).annotate(
-        dashboard_provider_success=Case(
-            When(
-                dashboard_success_raw__in=["true", "false"],
-                then=F("dashboard_success_raw"),
+    queryset = (
+        annotate_goal_outcome(queryset)
+        .annotate(
+            # Provider-reported only: the platform does not compute sentiment (v1 D1).
+            dashboard_sentiment=Lower(
+                Coalesce(
+                    _json_text("analysis_data", "user_sentiment"),
+                    _json_text(
+                        "provider_call_data",
+                        "retell",
+                        "call_analysis",
+                        "user_sentiment",
+                    ),
+                )
             ),
-            default=None,
-            output_field=TextField(),
-        ),
-        dashboard_csat=F("result_csat"),
+            dashboard_success_raw=Lower(
+                Coalesce(
+                    _json_text("analysis_data", "call_successful"),
+                    _json_text(
+                        "provider_call_data",
+                        "retell",
+                        "call_analysis",
+                        "call_successful",
+                    ),
+                    _json_text("analysis_data", "successEvaluation"),
+                )
+            ),
+        )
+        .annotate(
+            dashboard_provider_success=Case(
+                When(
+                    dashboard_success_raw__in=["true", "false"],
+                    then=F("dashboard_success_raw"),
+                ),
+                default=None,
+                output_field=TextField(),
+            ),
+            dashboard_csat=F("result_csat"),
+        )
     )
     voice = queryset.filter(simulation_call_type="voice")
     # A run is one modality in practice; a mixed run counts as voice.
@@ -472,7 +494,9 @@ def build_run_dashboard(
     )
     metrics = []
 
-    def metric(key, label, value, unit="number", measured=None, note=""):
+    def metric(
+        key, label, value, unit="number", measured=None, note="", no_score=False
+    ):
         metrics.append(
             {
                 "key": key,
@@ -482,6 +506,7 @@ def build_run_dashboard(
                 "measured": measured,
                 "total": total,
                 "note": note,
+                "no_score": no_score,
             }
         )
 
@@ -495,8 +520,35 @@ def build_run_dashboard(
         summary["measured"],
         # pass^1's range belongs to the run header: this rate pools trials, so
         # the range need not bracket it.
-        f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded.",
+        f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded."
+        + (
+            f" {outcomes['no_score']} with no score are excluded too."
+            if outcomes["no_score"]
+            else ""
+        ),
+        # Nothing was scored and some calls ran with no pass or fail: no score, which is not missing data.
+        no_score=summary["pass_rate"] is None and bool(outcomes["no_score"]),
     )
+    if trials is not None:
+        # The run's one trial pass, as its header and the runs list read it; distinct from the calls rate above.
+        left_out = (
+            trials["trials_inconclusive"] + trials["trials_excluded_not_comparable"]
+        )
+        metric(
+            "trial_pass",
+            "Trials passed",
+            trials["trial_pass_rate"],
+            "percent",
+            trials["trials_evaluated"],
+            "Passed, out of trials that passed or failed."
+            + (
+                f" {trials['trials_inconclusive']} errored or inconclusive and"
+                f" {trials['trials_excluded_not_comparable']} not started from the seeded records are left out."
+                if left_out
+                else ""
+            ),
+            no_score=trials["trial_pass_rate"] is None and bool(outcomes["no_score"]),
+        )
     metric("total", f"Total {noun}s", total, measured=total)
     metric(
         "ran_cleanly",
@@ -722,6 +774,7 @@ def build_run_dashboard(
                 "failed": row["outcomes"]["failed"],
                 "error": row["outcomes"]["error"],
                 "inconclusive": row["outcomes"]["inconclusive"],
+                "no_score": row["outcomes"]["no_score"],
             }
             for row in risk[:7]
         ],

@@ -517,9 +517,7 @@ def calculate_column_average(column_id, row_ids=None):
                                             scores = json.loads(
                                                 cell.value.replace("'", '"')
                                             )
-                                            if isinstance(
-                                                scores, (float, int)
-                                            ):  # noqa: UP038
+                                            if isinstance(scores, (float, int)):  # noqa: UP038
                                                 scores = {"single_score": scores}
                                         except json.JSONDecodeError:
                                             if cell.value in ["Passed", "Failed"]:

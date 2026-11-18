@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import Chip from "@mui/material/Chip";
 import PropTypes from "prop-types";
+import { enqueueSnackbar } from "notistack";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import TextField from "@mui/material/TextField";
@@ -25,6 +26,17 @@ import { uploadFile } from "../hooks/useFalconAPI";
 import ContextSelector from "./ContextSelector";
 import SlashCommandPicker from "./SlashCommandPicker";
 import AttachedFileChip from "./AttachedFileChip";
+import { paths } from "src/routes/paths";
+
+function notifyUploadError(error) {
+  enqueueSnackbar(
+    typeof error?.detail === "string" && error.detail
+      ? error.detail
+      : "File upload failed. Please try again.",
+    { variant: "error" },
+  );
+}
+
 export default function ChatInput({ onSend, onStop }) {
   const [text, setText] = useState("");
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -95,7 +107,7 @@ export default function ChatInput({ onSend, onStop }) {
 
   const placeholder = currentConversationId
     ? "Ask a follow-up..."
-    : "Message Falcon AI...";
+    : "Ask anything...";
 
   const MAX_LENGTH = 10000;
 
@@ -124,9 +136,11 @@ export default function ChatInput({ onSend, onStop }) {
         const resp = await uploadFile(file);
         if (resp.status && resp.result) {
           addAttachedFile(resp.result);
+        } else {
+          notifyUploadError(resp);
         }
-      } catch {
-        // silent — upload error handled by UI state
+      } catch (error) {
+        notifyUploadError(error);
       } finally {
         setIsUploading(false);
       }
@@ -210,10 +224,14 @@ export default function ChatInput({ onSend, onStop }) {
             result.value.result
           ) {
             addAttachedFile(result.value.result);
+          } else {
+            notifyUploadError(
+              result.status === "rejected" ? result.reason : result.value,
+            );
           }
         }
-      } catch {
-        // silent — upload error handled by UI state
+      } catch (error) {
+        notifyUploadError(error);
       } finally {
         setIsUploading(false);
       }
@@ -374,7 +392,7 @@ export default function ChatInput({ onSend, onStop }) {
             pt: 1.5,
             pb: 0.5,
             "& .MuiInputBase-input": {
-              fontSize: 13,
+              fontSize: 12,
               lineHeight: 1.6,
               color: "text.primary",
               "&::placeholder": {
@@ -469,7 +487,7 @@ export default function ChatInput({ onSend, onStop }) {
                 />
                 <ListItemText
                   primary={isUploading ? "Uploading..." : "Attach files"}
-                  primaryTypographyProps={{ fontSize: 13 }}
+                  primaryTypographyProps={{ fontSize: 12 }}
                 />
               </MenuItem>
 
@@ -483,7 +501,7 @@ export default function ChatInput({ onSend, onStop }) {
                     width={16}
                     sx={{ color: "text.secondary" }}
                   />
-                  <Typography sx={{ fontSize: 13 }}>Connectors</Typography>
+                  <Typography sx={{ fontSize: 12 }}>Connectors</Typography>
                 </Box>
                 <Iconify
                   icon="solar:alt-arrow-right-linear"
@@ -527,7 +545,7 @@ export default function ChatInput({ onSend, onStop }) {
                             : "text.disabled",
                         }}
                       />
-                      <Typography sx={{ fontSize: 13 }}>{c.name}</Typography>
+                      <Typography sx={{ fontSize: 12 }}>{c.name}</Typography>
                     </Box>
                     <Switch size="small" checked={c.is_active !== false} />
                   </MenuItem>
@@ -536,7 +554,7 @@ export default function ChatInput({ onSend, onStop }) {
                 <MenuItem disabled sx={{ py: 1 }}>
                   <Typography
                     sx={{
-                      fontSize: 13,
+                      fontSize: 12,
                       fontStyle: "italic",
                       color: "text.disabled",
                     }}
@@ -549,7 +567,7 @@ export default function ChatInput({ onSend, onStop }) {
               <MenuItem
                 onClick={() => {
                   handlePlusClose();
-                  router.push("/dashboard/settings/falcon-ai-connectors");
+                  router.push(paths.dashboard.settings.falconAIConnectors);
                 }}
                 sx={{ gap: 1.5, py: 1 }}
               >
@@ -558,7 +576,7 @@ export default function ChatInput({ onSend, onStop }) {
                   width={16}
                   sx={{ color: "text.secondary" }}
                 />
-                <Typography sx={{ fontSize: 13 }}>Manage connectors</Typography>
+                <Typography sx={{ fontSize: 12 }}>Manage connectors</Typography>
               </MenuItem>
             </Menu>
           </Box>
@@ -623,7 +641,7 @@ export default function ChatInput({ onSend, onStop }) {
           userSelect: "none",
         }}
       >
-        Falcon AI can make mistakes. Check important info.
+        AI can make mistakes. Check important info.
       </Typography>
     </Box>
   );

@@ -308,6 +308,7 @@ def write_mui(tokens, semantic, shadows):
             "status": {role: {k: s[f"status.{role}.{k}"] for k in ("fg", "bg", "border", "solid", "onSolid")}
                        for role in ("success", "warning", "danger", "info", "neutral", "discovery")},
             "data": [s[f"data.{i}"] for i in range(1, 9)],
+            "dataMono": [s[f"dataMono.{i}"] for i in range(1, 9)],
             "control": {k: s[f"control.{k}"] for k in ("checked", "onChecked", "track", "thumb")},
         }
 

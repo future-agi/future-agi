@@ -31,9 +31,7 @@ class HarnessCredentialFile(BaseModel):
     )
     environment_name = models.CharField(max_length=255)
     filename = models.CharField(max_length=255, default="credential")
-    content_type = models.CharField(
-        max_length=255, default="application/octet-stream"
-    )
+    content_type = models.CharField(max_length=255, default="application/octet-stream")
     encrypted_content = models.TextField()
     size = models.PositiveIntegerField()
 
@@ -42,7 +40,9 @@ class HarnessCredentialFile(BaseModel):
         ordering = ("-created_at",)
 
     def set_content(self, content: bytes) -> None:
-        self.encrypted_content = encrypt_token(base64.b64encode(content).decode("ascii"))
+        self.encrypted_content = encrypt_token(
+            base64.b64encode(content).decode("ascii")
+        )
         self.size = len(content)
 
     def get_content(self) -> bytes:

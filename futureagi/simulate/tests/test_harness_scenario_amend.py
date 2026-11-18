@@ -63,34 +63,60 @@ def _post(user, job, changes, rework=True):
 
 def test_a_descriptive_edit_lands_on_the_suite(user, workspace):
     job = _job(user, workspace, SUITE)
-    with patch(
-        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
-        return_value=False,
-    ), patch(
-        "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
-        return_value=None,
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            return_value=False,
+        ),
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            return_value=None,
+        ),
     ):
-        response = _post(user, job, [
-            {"op": "set_field", "scenario": "one", "field": "tests", "value": "reworded"}
-        ])
+        response = _post(
+            user,
+            job,
+            [
+                {
+                    "op": "set_field",
+                    "scenario": "one",
+                    "field": "tests",
+                    "value": "reworded",
+                }
+            ],
+        )
     assert response.status_code == 200, response.content
     assert response.json()["receipts"][0]["outcome"] == "applied"
-    output = HostedHarnessStageOutput.no_workspace_objects.get(job=job, kind="scenarios")
+    output = HostedHarnessStageOutput.no_workspace_objects.get(
+        job=job, kind="scenarios"
+    )
     assert output.data[0]["tests"] == "reworded"
 
 
 def test_a_field_that_is_proved_rather_than_described_is_refused(user, workspace):
     job = _job(user, workspace, SUITE)
-    with patch(
-        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
-        return_value=False,
-    ), patch(
-        "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
-        return_value=None,
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            return_value=False,
+        ),
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            return_value=None,
+        ),
     ):
-        response = _post(user, job, [
-            {"op": "set_field", "scenario": "one", "field": "instruction", "value": "x"}
-        ])
+        response = _post(
+            user,
+            job,
+            [
+                {
+                    "op": "set_field",
+                    "scenario": "one",
+                    "field": "instruction",
+                    "value": "x",
+                }
+            ],
+        )
     receipt = response.json()["receipts"][0]
     assert receipt["outcome"] == "refused"
     assert "not editable" in receipt["why"]
@@ -98,33 +124,48 @@ def test_a_field_that_is_proved_rather_than_described_is_refused(user, workspace
 
 def test_declining_a_reproof_keeps_the_run_unchanged(user, workspace):
     job = _job(user, workspace, SUITE)
-    with patch(
-        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
-        return_value=False,
-    ), patch(
-        "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
-        return_value=None,
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            return_value=False,
+        ),
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            return_value=None,
+        ),
     ):
-        response = _post(
-            user, job, [{"op": "drop", "scenario": "two"}], rework=False
-        )
+        response = _post(user, job, [{"op": "drop", "scenario": "two"}], rework=False)
     assert response.json()["receipts"][0]["outcome"] == "refused"
-    output = HostedHarnessStageOutput.no_workspace_objects.get(job=job, kind="scenarios")
+    output = HostedHarnessStageOutput.no_workspace_objects.get(
+        job=job, kind="scenarios"
+    )
     assert len(output.data) == 2
 
 
 def test_an_edit_reaching_a_live_guest_is_queued_not_applied(user, workspace):
     job = _job(user, workspace, SUITE)
-    with patch(
-        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
-        return_value=True,
-    ) as pushed, patch(
-        "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
-        return_value=None,
-    ) as sealed:
-        response = _post(user, job, [
-            {"op": "set_field", "scenario": "one", "field": "tests", "value": "reworded"}
-        ])
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            return_value=True,
+        ) as pushed,
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            return_value=None,
+        ) as sealed,
+    ):
+        response = _post(
+            user,
+            job,
+            [
+                {
+                    "op": "set_field",
+                    "scenario": "one",
+                    "field": "tests",
+                    "value": "reworded",
+                }
+            ],
+        )
     assert response.json()["receipts"][0]["outcome"] == "queued"
     pushed.assert_called_once()
     sealed.assert_called_once()
@@ -162,7 +203,9 @@ class TestScenarioNumbersSurviveADeletion:
     def test_survivors_keep_their_number(self, user, workspace):
         from simulate.services.harness_scenarios import index_scenarios
 
-        suite = [{"name": name, "tests": "t"} for name in ("one", "two", "three", "four")]
+        suite = [
+            {"name": name, "tests": "t"} for name in ("one", "two", "three", "four")
+        ]
         job = _job(user, workspace, suite)
         index_scenarios(job, suite)
         assert self._numbers(job) == {"one": 1, "two": 2, "three": 3, "four": 4}
@@ -185,7 +228,9 @@ class TestScenarioNumbersSurviveADeletion:
         suite = [{"name": name, "tests": "t"} for name in ("one", "two", "three")]
         job = _job(user, workspace, suite)
         index_scenarios(job, suite)
-        index_scenarios(job, [suite[0], suite[2], {"name": "four", "tests": "t"}], prune=True)
+        index_scenarios(
+            job, [suite[0], suite[2], {"name": "four", "tests": "t"}], prune=True
+        )
         assert self._numbers(job) == {"one": 1, "three": 3, "four": 4}
 
     def test_a_new_scenario_under_a_renamed_ones_old_name_gets_its_own_row(
@@ -407,7 +452,9 @@ class TestScenarioNumbersSurviveADeletion:
         from simulate.services.harness_provider import scenarios_meant
         from simulate.services.harness_scenarios import index_scenarios
 
-        suite = [{"name": name, "tests": "t"} for name in ("one", "two", "three", "four")]
+        suite = [
+            {"name": name, "tests": "t"} for name in ("one", "two", "three", "four")
+        ]
         job = _job(user, workspace, suite)
         index_scenarios(job, suite)
         left = [one for one in suite if one["name"] != "two"]
@@ -476,12 +523,16 @@ def _gate_refusing(name):
 
 
 def _amend_with_gate(user, job, refusing, changes):
-    with _gate_refusing(refusing), patch(
-        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
-        return_value=False,
-    ), patch(
-        "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
-        return_value=None,
+    with (
+        _gate_refusing(refusing),
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            return_value=False,
+        ),
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            return_value=None,
+        ),
     ):
         return _post(user, job, changes)
 
@@ -509,7 +560,9 @@ def test_an_edit_that_breaks_the_gates_is_still_refused(user, workspace):
         [{"op": "set_field", "scenario": "one", "field": "tests", "value": "reworded"}],
     )
     assert response.json()["receipts"][0]["outcome"] == "refused"
-    output = HostedHarnessStageOutput.no_workspace_objects.get(job=job, kind="scenarios")
+    output = HostedHarnessStageOutput.no_workspace_objects.get(
+        job=job, kind="scenarios"
+    )
     assert output.data[0]["tests"] == "the agent holds the line"
 
 
@@ -519,18 +572,23 @@ def test_an_archive_that_cannot_take_the_edit_leaves_everything_unchanged(
     from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
 
     job = _job(user, workspace, SUITE)
-    with patch(
-        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
-        return_value=False,
-    ) as pushed, patch(
-        "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
-        side_effect=AuthoringArchiveKept("the change would lose files a run needs"),
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            return_value=False,
+        ) as pushed,
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            side_effect=AuthoringArchiveKept("the change would lose files a run needs"),
+        ),
     ):
         response = _post(user, job, [{"op": "drop", "scenario": "two"}])
     receipt = response.json()["receipts"][0]
     assert receipt["outcome"] == "refused"
     assert "nothing changed" in receipt["why"]
-    output = HostedHarnessStageOutput.no_workspace_objects.get(job=job, kind="scenarios")
+    output = HostedHarnessStageOutput.no_workspace_objects.get(
+        job=job, kind="scenarios"
+    )
     assert [one["name"] for one in output.data] == ["one", "two"]
     pushed.assert_not_called()
 

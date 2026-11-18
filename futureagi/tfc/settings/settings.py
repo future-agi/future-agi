@@ -164,7 +164,8 @@ REDIS_CACHE_SOCKET_TIMEOUT_SECONDS = float(
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DEBUG", "True" if _IS_LOCAL else "False").lower() in (
+# Technical error pages require an explicit DEBUG opt-in in every environment.
+DEBUG = os.getenv("DEBUG", "False").lower() in (
     "true",
     "1",
     "t",
@@ -290,17 +291,22 @@ if has_ee("ee.cloud.control_plane") and is_cloud_env():
 # Site ID for django.contrib.sites
 SITE_ID = 1
 
+STARTUP_SCHEMA_GUARD_ENABLED = os.getenv(
+    "STARTUP_SCHEMA_GUARD_ENABLED", "false"
+).strip().lower() in ("true", "1", "yes")
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",  #
     "tfc.middleware.cors_origin.OriginCheckMiddleware",
+    "tfc.middleware.schema_readiness.SchemaReadinessMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "tfc.telemetry.middleware.OTelContextMiddleware",  # OpenTelemetry context enrichment (after auth)
-    "django_structlog.middlewares.RequestMiddleware",  # Structured logging - adds request_id, ip, etc.
+    "tfc.logging.middleware.CallbackRequestMiddleware",  # Request-event formatting for OAuth callbacks.
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # 'tfc.middleware.debug_middleware.DebugMiddleware',
@@ -1015,6 +1021,19 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
     for domain in os.getenv("ALK_HOSTED_BASE_EGRESS_DOMAINS", "").split(",")
     if domain.strip()
 ]
+# Sandbox snapshots whose hook may export a hosted run's spans. Empty means no run exports.
+ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS = [
+    name.strip()
+    for name in os.getenv("ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS", "").split(",")
+    if name.strip()
+]
+# Of those, the snapshots whose hook measures an agent that traces nothing itself
+# (deploy/env-reference.toml says when a snapshot may be listed).
+ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS = [
+    name.strip()
+    for name in os.getenv("ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS", "").split(",")
+    if name.strip()
+]
 # Hosted simulator credentials are platform configuration, not customer job input. Values are
 # resolved only while launching the sandbox and are never persisted on HostedHarnessJob. Model
 # and speech calls go through AgentCC, so no model or speech vendor's credential is listed here.
@@ -1121,9 +1140,13 @@ AGENT_FIX_CHECK_RUN_PARALLELISM = int(os.getenv("AGENT_FIX_CHECK_RUN_PARALLELISM
 AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
     os.getenv("AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS", "600")
 )
-# A check run reserves this much of a fix's budget for each scenario execution.
+# A check run reserves this much of a fix's budget for each scenario execution, for its
+# simulation, and the second for each platform eval a winner's grading may run on it.
 AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = os.getenv(
     "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"
+)
+AGENT_FIX_WORST_CASE_USD_PER_EVAL = os.getenv(
+    "AGENT_FIX_WORST_CASE_USD_PER_EVAL", "0.02"
 )
 # Failing cases a fix needs at launch. A third are held back, and a fix proven only on the
 # cases it was made on can pass by chance, so this leaves the 4 that verifying it takes.
@@ -1436,6 +1459,7 @@ AUTH0_ALGORITHM = "RS256"
 GITHUB_API_ENDPOINT = "https://api.github.com"
 GITHUB_OAUTH_URL = "https://github.com/login/oauth"
 GOOGLE_USERINFO_API = "https://www.googleapis.com/oauth2/v1/userinfo"
+GOOGLE_OAUTH_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 MICROSOFT_OAUTH_URL = "https://login.microsoftonline.com/common/oauth2/v2.0"
 MICROSOFT_GRAPH_API = "https://graph.microsoft.com/v1.0"
 
@@ -1647,6 +1671,17 @@ del _runtime_numeric_settings
 # CH-direct stacks set it to `tracer_eval_logger_v2`). See
 # tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
 CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
+
+# Operational SQL workbench budgets, not edition/pricing entitlements.
+from .sql_workbench import (  # noqa: E402,F401
+    SQL_WORKBENCH_AUDIT_RETENTION_DAYS,
+    SQL_WORKBENCH_ESTIMATES_PER_MINUTE,
+    SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H,
+    SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H,
+    SQL_WORKBENCH_MAX_ORG_QUERIES_24H,
+    SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H,
+    SQL_WORKBENCH_RESULT_CACHE_SECONDS,
+)
 
 # Where the eval runner reads span data from.
 #   "postgres"   — current behavior; reads from tracer_observation_span (Django ORM)
