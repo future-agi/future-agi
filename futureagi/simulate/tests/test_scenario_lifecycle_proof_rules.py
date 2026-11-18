@@ -264,3 +264,42 @@ def test_validation_unavailable_is_read_for_the_pairing_s_own_agent(
     ):
         assert reason(environment.agent_version) == "not_validated"
         assert reason(a2) == "validation_unavailable"
+
+
+@pytest.mark.parametrize(
+    "entry, certified, verdict",
+    [
+        ({"holds": True}, False, "entry"),
+        (
+            {
+                "format": 2,
+                "legacy_validated": True,
+                "blocked_reason": "validation_incomplete",
+            },
+            False,
+            "entry",
+        ),
+        (
+            {"format": 2, "proved": False, "blocked_reason": "not_solvable"},
+            True,
+            "decided",
+        ),
+        ({"format": 2, "proved": True}, True, "decided"),
+        ({"format": 2, "blocked_reason": "validation_incomplete"}, True, "certified"),
+        ({"format": 2, "blocked_reason": "validation_incomplete"}, False, "none"),
+        (None, True, "certified"),
+        (None, False, "none"),
+        ({"holds": False}, True, "none"),
+    ],
+)
+def test_one_legacy_rule_decides_what_a_legacy_pair_says_about_a_key(
+    entry, certified, verdict
+):
+    """The lifecycle's legacy keys and the proof recorder's legacy mark read this one rule."""
+    from simulate.services.harness_versioning.versions import (
+        _legacy_validated,
+        legacy_verdict,
+    )
+
+    assert legacy_verdict(entry, certified) == verdict
+    assert _legacy_validated(entry, certified) is (verdict in ("entry", "certified"))

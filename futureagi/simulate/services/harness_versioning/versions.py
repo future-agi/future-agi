@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from django.conf import settings
 from django.db import transaction
@@ -751,16 +751,29 @@ def _validation_status(proofs: Mapping[str, Any], keys: list[str]) -> str:
     return HarnessSuiteValidation.Status.FAILED
 
 
+LegacyVerdict = Literal["entry", "certified", "decided", "none"]
+
+
+def legacy_verdict(entry: object, certified: bool) -> LegacyVerdict:
+    """What a legacy pair's record says about one key, the one rule for it: validated by its entry (`entry`: an
+    older proof that held, or a mark an unreached re-proof kept), validated by the pair's certification with no proof
+    of its own (`certified`: none, or one the validation never reached), ended by a format-2 proof that ran
+    (`decided`, whatever it found), or not validated (`none`)."""
+    if not isinstance(entry, Mapping):
+        return "certified" if certified else "none"
+    if entry.get("legacy_validated") is True:
+        return "entry"
+    incomplete = entry.get("blocked_reason") == "validation_incomplete"
+    if entry.get("format") == 2 and not incomplete:
+        return "decided"
+    if entry.get("format") != 2 and entry.get("holds") is True:
+        return "entry"
+    return "certified" if certified and incomplete else "none"
+
+
 def _legacy_validated(entry: object, certified: bool) -> bool:
-    """Whether a legacy pair validated this key before a format-2 proof: its old proof held, an
-    earlier re-proof kept the mark, or the pair was certified with no proof for it."""
-    if isinstance(entry, Mapping):
-        if entry.get("legacy_validated") is True:
-            return True
-        if entry.get("format") != 2:
-            return entry.get("holds") is True
-        return certified and entry.get("blocked_reason") == "validation_incomplete"
-    return certified
+    """Whether a legacy pair validated this key before a format-2 proof."""
+    return legacy_verdict(entry, certified) in ("entry", "certified")
 
 
 def record_proofs(

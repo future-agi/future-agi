@@ -32,7 +32,7 @@ from simulate.services.harness_seed_joins import (
     broken_join_text,
     environment_broken_joins,
 )
-from simulate.services.harness_versioning.versions import proof_passes
+from simulate.services.harness_versioning.versions import legacy_verdict, proof_passes
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.types import LifecycleState
 
@@ -397,24 +397,13 @@ def _legacy_keys(
             continue
         proofs = proofs_by_suite.get(suite_id) or {}
         entry = proofs.get(key) if isinstance(proofs, Mapping) else None
-        incomplete = (
-            isinstance(entry, Mapping)
-            and entry.get("blocked_reason") == "validation_incomplete"
-        )
-        if isinstance(entry, Mapping) and entry.get("legacy_validated") is True:
-            # Only an unreached case keeps the mark (record_proofs): legacy still holds for it.
+        verdict = legacy_verdict(entry, suite_id in certified)
+        if verdict == "entry" and isinstance(entry, Mapping):
             found[key] = entry
-        elif isinstance(entry, Mapping) and entry.get("format") == 2 and not incomplete:
-            decided.add(key)
-        elif (
-            isinstance(entry, Mapping)
-            and entry.get("format") != 2
-            and entry.get("holds") is True
-        ):
-            found[key] = entry
-        elif suite_id in certified and (entry is None or incomplete):
-            # A `validation_incomplete` entry counts as no format-2 proof: the case was never reached.
+        elif verdict == "certified":
             found.setdefault(key, None)
+        elif verdict == "decided":
+            decided.add(key)
     return found
 
 
