@@ -68,6 +68,7 @@ export default function ModalWrapper({
             {title}
           </Typography>
           <IconButton
+            aria-label="Close"
             disabled={isLoading}
             onClick={onClose}
             sx={{

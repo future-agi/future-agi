@@ -31,7 +31,8 @@ func TestStandaloneComposeAuth(t *testing.T) {
 			Condition string `yaml:"condition"`
 		} `yaml:"depends_on"`
 		Healthcheck struct {
-			Test []string `yaml:"test"`
+			Disable bool     `yaml:"disable"`
+			Test    []string `yaml:"test"`
 		} `yaml:"healthcheck"`
 	}
 	var compose struct {
@@ -41,6 +42,9 @@ func TestStandaloneComposeAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	collector := compose.Services["fi-collector"]
+	if collector.Healthcheck.Disable || slices.Contains(collector.Healthcheck.Test, "NONE") {
+		t.Fatal("standalone smoke test needs a ready collector before export")
+	}
 	cfg := Config{PGWrite: collector.Environment["FI_PG_WRITE"], PGRead: collector.Environment["FI_PG_READ"]}
 	if !cfg.IsEnabled() {
 		t.Fatal("standalone compose must configure PostgreSQL authentication")

@@ -74,7 +74,15 @@ import {
   hasExtraJevMessages,
   orderChoiceScores,
 } from "../utils/jevMapping";
-import { FAGI_MODEL_VALUES, JEV_MODEL_VALUES } from "./ModelSelector";
+import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import { getEvalTags } from "./evalTags";
+import useDecisionModels from "src/api/evaluations/decision-models";
+import {
+  findDecisionGroup,
+  isDecisionModel,
+  isJevDecisionModel,
+  isNativeJevModel,
+} from "../utils/decisionModels";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
@@ -415,7 +423,7 @@ const EvalDetailPage = () => {
               config.error_localizer_enabled ??
               false,
           );
-          setTags(evalData.tags || evalData.eval_tags || []);
+          setTags(getEvalTags(evalData));
           if (config.messages && config.messages.length > 0) {
             setMessages(config.messages);
           } else if (evalData.eval_type === "llm" && promptText) {
@@ -435,10 +443,14 @@ const EvalDetailPage = () => {
       // Load version config into the form
       isPopulatingRef.current = true;
       setViewingVersion(versionToLoad);
+      setTags(getEvalTags(evalData));
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
-          next.set("v", String(versionToLoad.version_number));
+          next.set(
+            "v",
+            String(versionToLoad.version_number ?? versionToLoad.versionNumber),
+          );
           return next;
         },
         { replace: true },
@@ -682,7 +694,7 @@ const EvalDetailPage = () => {
             config.error_localizer_enabled ??
             false,
         );
-        setTags(evalData.tags || evalData.eval_tags || []);
+        setTags(getEvalTags(evalData));
         if (config.messages && config.messages.length > 0) {
           setMessages(config.messages);
         } else if (evalData.eval_type === "llm" && promptText) {
@@ -808,7 +820,14 @@ const EvalDetailPage = () => {
     return [...new Set([...requiredKeys, ...templateVars])];
   }, [instructions, evalData, evalType, isComposite, compositeDetail]);
 
-  const isJevModel = JEV_MODEL_VALUES.has(model);
+  // The existing mapping/editor props retain their legacy names on the wire.
+  const isJevModel = isDecisionModel(model);
+  const decisionCatalog = useDecisionModels(isJevModel);
+  const decisionGroup = findDecisionGroup(decisionCatalog.data || [], model);
+  const decisionLabel = isNativeJevModel(model)
+    ? "Jev"
+    : decisionGroup?.label || "This decision model";
+  const decisionLocked = isJevDecisionModel(model) && jevLocked;
   const effectiveConfig = useMemo(
     () =>
       viewingVersion
@@ -827,6 +846,8 @@ const EvalDetailPage = () => {
     evalType === "llm" ? messages : effectiveConfig.messages || [];
   const jevErrors = isJevModel
     ? getJevValidationErrors({
+        modelLabel: decisionLabel,
+        modelGroup: decisionGroup,
         mapping: jevPayload.jev_mapping,
         config: {
           ...effectiveConfig,
@@ -851,7 +872,7 @@ const EvalDetailPage = () => {
       })
     : [];
   const jevError = jevErrors[0];
-  const jevTestBlocked = Boolean(jevError || (isJevModel && jevLocked));
+  const jevTestBlocked = Boolean(jevError || decisionLocked);
 
   // Save version
   const handleSaveVersion = useCallback(async () => {
@@ -1555,6 +1576,8 @@ const EvalDetailPage = () => {
                 {!isComposite && evalType === "agent" && (
                   <InstructionEditor
                     openModelMenuSignal={openModelMenuSignal}
+                    outputType={outputType}
+                    choiceCount={Object.keys(choiceScores || {}).length}
                     value={instructions}
                     onChange={(v) => {
                       setInstructions(v);
@@ -1611,6 +1634,8 @@ const EvalDetailPage = () => {
                   <>
                     <LLMPromptEditor
                       openModelMenuSignal={openModelMenuSignal}
+                      outputType={outputType}
+                      choiceCount={Object.keys(choiceScores || {}).length}
                       messages={messages}
                       onMessagesChange={(msgs) => {
                         setMessages(msgs);
@@ -1632,6 +1657,7 @@ const EvalDetailPage = () => {
                     />
                     <FewShotExamples
                       isJevModel={isJevModel}
+                      modelLabel={decisionLabel}
                       selectedDatasets={fewShotExamples}
                       onChange={(v) => {
                         setFewShotExamples(v);
@@ -1672,7 +1698,8 @@ const EvalDetailPage = () => {
                     errors={jevErrors}
                     hasExtraMessages={hasExtraJevMessages(jevMessages)}
                     disabled={isSystemEval}
-                    locked={jevLocked}
+                    locked={decisionLocked}
+                    modelLabel={decisionLabel}
                   />
                 )}
 
@@ -1723,6 +1750,7 @@ const EvalDetailPage = () => {
                   ) : (
                     <OutputTypeConfig
                       isJevModel={isJevModel}
+                      modelLabel={decisionLabel}
                       outputType={outputType}
                       onOutputTypeChange={(v) => {
                         setOutputType(v);

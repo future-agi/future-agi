@@ -29,7 +29,9 @@ AUDIT_JSON = (
     '"violation_exist": false}'
 )
 SUMMARY_RULE = "Responde SOLO con el enunciado. Sin JSON, sin markdown, sin comillas."
-SUMMARY_OUT = "No se alcanzó compromiso ni transferencia, la llamada finalizó por corte."
+SUMMARY_OUT = (
+    "No se alcanzó compromiso ni transferencia, la llamada finalizó por corte."
+)
 
 
 def _span(sid, name, inp="", out="", kind_key="span.kind", kind=""):
@@ -60,9 +62,17 @@ def _call_platform_trace(n_padding=55):
         _span("summary-1", "Summary", inp=SUMMARY_RULE, out=SUMMARY_OUT, kind="LLM")
     )
     children.append(
-        _span("audit-57", "Adherence", inp="audita la verbalización", out=AUDIT_JSON, kind="LLM")
+        _span(
+            "audit-57",
+            "Adherence",
+            inp="audita la verbalización",
+            out=AUDIT_JSON,
+            kind="LLM",
+        )
     )
-    root = _span("root-1", "call.session", inp="llamada saliente", out=TRANSCRIPT, kind="CHAIN")
+    root = _span(
+        "root-1", "call.session", inp="llamada saliente", out=TRANSCRIPT, kind="CHAIN"
+    )
     root["child_spans"] = children
     return {"trace_id": "trace-call", "spans": [root]}
 
@@ -76,7 +86,9 @@ class TestEverySpanReachesThePrompt:
         """The regression itself: the audit verdicts at index ~57 must reach
         the model — before, everything past span 40 silently vanished."""
         prompt = build_prompt_v8([_payload(_call_platform_trace())])
-        assert AUDIT_JSON in prompt, "the exonerating audit output was hidden from the model"
+        assert AUDIT_JSON in prompt, (
+            "the exonerating audit output was hidden from the model"
+        )
         assert SUMMARY_RULE in prompt
         assert SUMMARY_OUT in prompt
 
@@ -115,18 +127,32 @@ class TestSpansArriveRawAndAddressable:
 
     def test_negations_survive_verbatim(self):
         """Raw means raw: no stopword stripping of the sentence on trial."""
-        trace = {"trace_id": "t", "spans": [
-            _span("s1", "tool", inp="fetch it", out="the tool did not return any data")
-        ]}
+        trace = {
+            "trace_id": "t",
+            "spans": [
+                _span(
+                    "s1", "tool", inp="fetch it", out="the tool did not return any data"
+                )
+            ],
+        }
         assert "the tool did not return any data" in build_prompt_v8([_payload(trace)])
 
     def test_kind_is_read_through_vendor_prefixes(self):
         """Kind lives under vendor prefixes (openinference.span.kind); the old
         payload read the bare key and labelled every such span CHAIN."""
-        trace = {"trace_id": "t", "spans": [
-            _span("s1", "generate", inp="q", out="a",
-                  kind_key="openinference.span.kind", kind="LLM")
-        ]}
+        trace = {
+            "trace_id": "t",
+            "spans": [
+                _span(
+                    "s1",
+                    "generate",
+                    inp="q",
+                    out="a",
+                    kind_key="openinference.span.kind",
+                    kind="LLM",
+                )
+            ],
+        }
         payload = _payload(trace)
         assert payload["spans"][0]["kind"] == "LLM"
 
@@ -139,9 +165,10 @@ class TestSpansArriveRawAndAddressable:
 
 class TestPromptRunawayGuard:
     def test_a_pathological_trace_is_cut_visibly_not_silently(self):
-        trace = {"trace_id": "t", "spans": [
-            _span("s1", "blob", out="x" * (PROMPT_RUNAWAY_BUDGET + 100_000))
-        ]}
+        trace = {
+            "trace_id": "t",
+            "spans": [_span("s1", "blob", out="x" * (PROMPT_RUNAWAY_BUDGET + 100_000))],
+        }
         prompt = build_prompt_v8([_payload(trace)])
         assert len(prompt) <= PROMPT_RUNAWAY_BUDGET + 200
         assert "truncated by the scanner" in prompt

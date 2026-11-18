@@ -300,7 +300,7 @@ class CustomPromptEvaluator(LLM):
         )
 
         # Create template context from kwargs with context windowing for large values
-        from .context_window import fit_to_context
+        from .context_window import fit_to_context_with_metadata
 
         template_context = {}
         for key in required_keys:
@@ -308,15 +308,23 @@ class CustomPromptEvaluator(LLM):
                 raise ValueError(f"Missing required key in kwargs: {key}")
             value = kwargs[key]
             # Apply context windowing for large values (traces, spans, JSON blobs)
-            if isinstance(value, str) and len(value) > _MAX_CONTEXT_CHARS:
-                value = fit_to_context(
+            original_length = 0
+            if isinstance(value, str):
+                original_length = len(value)
+            elif isinstance(value, (dict, list)):
+                original_length = len(json.dumps(value, default=str))
+            if original_length > _MAX_CONTEXT_CHARS:
+                formatted = fit_to_context_with_metadata(
                     value, max_total_chars=_MAX_CONTEXT_CHARS, label=key
                 )
-            elif isinstance(value, (dict, list)):
-                serialized = json.dumps(value, default=str)
-                if len(serialized) > _MAX_CONTEXT_CHARS:
-                    value = fit_to_context(
-                        value, max_total_chars=_MAX_CONTEXT_CHARS, label=key
+                value = formatted.text
+                if formatted.truncated:
+                    logger.warning(
+                        "custom_prompt_eval_input_truncated",
+                        field=key,
+                        original_length=original_length,
+                        truncated_length=len(value),
+                        limit=_MAX_CONTEXT_CHARS,
                     )
             template_context[key] = value
 
@@ -397,20 +405,25 @@ class CustomPromptEvaluator(LLM):
         # Inject row_context when data injection is enabled (no mapping required)
         row_context = kwargs.get("row_context")
         if row_context and not required_keys:
-            from .context_window import fit_row_to_context
-
             rendered_prompt += "\n\n## Data\n"
             if isinstance(row_context, (dict, list)):
-                rendered_prompt += fit_row_to_context(
-                    row_context, max_chars=_MAX_CONTEXT_CHARS
-                )
+                original_length = len(json.dumps(row_context, default=str))
             else:
-                ctx_str = str(row_context)
-                if len(ctx_str) > _MAX_CONTEXT_CHARS:
-                    ctx_str = fit_to_context(
-                        ctx_str, max_total_chars=_MAX_CONTEXT_CHARS, label="data"
-                    )
-                rendered_prompt += ctx_str
+                row_context = str(row_context)
+                original_length = len(row_context)
+            formatted = fit_to_context_with_metadata(
+                row_context, max_total_chars=_MAX_CONTEXT_CHARS
+            )
+            ctx_str = formatted.text
+            if formatted.truncated:
+                logger.warning(
+                    "custom_prompt_eval_input_truncated",
+                    field="row_context",
+                    original_length=original_length,
+                    truncated_length=len(ctx_str),
+                    limit=_MAX_CONTEXT_CHARS,
+                )
+            rendered_prompt += ctx_str
 
         logger.info(
             "custom_prompt_eval_template_rendered",
@@ -523,9 +536,9 @@ class CustomPromptEvaluator(LLM):
             provider=self.provider,
             message_count=len(messages),
             has_media=bool(media_blocks),
-            detected_modalities=list(detected_media_types.values())
-            if detected_media_types
-            else [],
+            detected_modalities=(
+                list(detected_media_types.values()) if detected_media_types else []
+            ),
         )
 
         try:
@@ -596,9 +609,9 @@ class CustomPromptEvaluator(LLM):
                 output_type=self._output_type,
                 message_count=len(messages),
                 has_media=bool(media_blocks),
-                detected_modalities=list(detected_media_types.values())
-                if detected_media_types
-                else [],
+                detected_modalities=(
+                    list(detected_media_types.values()) if detected_media_types else []
+                ),
                 required_keys=required_keys,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,

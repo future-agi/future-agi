@@ -88,22 +88,7 @@ services:
       - "127.0.0.1:9464:9464"
     volumes:
       - fi-dead-letter:/var/lib/fi-collector
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "/usr/local/bin/fi-collector",
-          "-config",
-          "/etc/fi-collector/config.yaml",
-          "--healthcheck-noop",
-        ]
-      interval: 10s
-      timeout: 2s
-      retries: 5
-      # The distroless image has no shell so we'd usually need a separate
-      # health-probe binary. For MVP just rely on the admin /healthz being
-      # scraped from the host side.
-      disable: true
+    # Inherit the image's /healthz probe so `up --wait` waits for the collector.
 
 volumes:
   ch-data:

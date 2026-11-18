@@ -23,6 +23,7 @@ CREATE TABLE accounts_orgapikey (
     workspace_id uuid REFERENCES accounts_workspace (id),
     user_id uuid,
     type varchar(50) NOT NULL,
+    expires_at timestamptz,
     enabled boolean NOT NULL,
     deleted boolean NOT NULL
 );
