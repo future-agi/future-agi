@@ -659,6 +659,7 @@ def test_a_call_still_being_read_says_whether_its_version_declares_any_participa
     assert multi.status_code == 202, multi.content
     assert multi.json()["participants_declared"] is True
 
+
 @pytest.mark.django_db
 def test_another_workspace_or_organization_cannot_read_a_call_s_workers(
     user, workspace, storage, settings, auth_client
@@ -4708,12 +4709,12 @@ def test_each_worker_says_how_the_world_held_it_in_the_trial_and_in_the_contract
                 else {}
             ),
             **({"notices": list(notices)} if notices else {}),
-            # And the workers the harness stopped, kept beside them as the trial sealed them.
-            **(
-                {"stopped_workers": world["stopped_workers"]}
-                if world.get("stopped_workers")
-                else {}
-            ),
+            # And the workers the harness stopped, or whose deadline did not hold, kept beside them as sealed.
+            **{
+                key: world[key]
+                for key in ("stopped_workers", "unenforced_deadlines")
+                if world.get(key)
+            },
         }
         workers = harness_worker_states.served_workers(
             None, timeline, {"harness_trial_state": trial}, bindings
@@ -4742,7 +4743,12 @@ def test_each_worker_says_how_the_world_held_it_in_the_trial_and_in_the_contract
     stopped = {
         **only_lookup,
         "stopped_workers": [
-            {"worker": "refund", "process": "refund", "at": 1794988795.067226, "reason": "deadline_passed"}
+            {
+                "worker": "refund",
+                "process": "refund",
+                "at": 1794988795.067226,
+                "reason": "deadline_passed",
+            }
         ],
     }
     assert served(stopped) == {
@@ -4750,6 +4756,23 @@ def test_each_worker_says_how_the_world_held_it_in_the_trial_and_in_the_contract
         "refund": "held_at_world",
         "audit": "not_enforced",
     }
+    # A separate worker that kept running after its cancel (Rishav, #4137 1379): its deadline did not hold, so its limits
+    # read not enforced even though its calls reached the door; by the notice or the sealed list alike.
+    ran_on = {"worker": "refund", "reason": "it kept running after its cancel"}
+    by_notice = {
+        "code": "worker_deadline_not_enforced",
+        "message": "Not held.",
+        "workers": ["refund"],
+    }
+    for trial_shape, notices in (
+        ({**proxied, "unenforced_deadlines": [ran_on]}, ()),
+        (proxied, [by_notice]),
+    ):
+        assert served(trial_shape, notices) == {
+            "order_lookup": "held_at_world",
+            "refund": "not_enforced",
+            "audit": "not_enforced",
+        }
     # The harness could not read which workers it stopped (ALK `world_actors.stopped_workers_unreadable`): every
     # separate worker's limits are not confirmed, even one seen at the door, never "enforced" or "none stopped".
     unreadable = {**proxied, "stopped_workers_unreadable": True}
@@ -4793,7 +4816,10 @@ def test_each_worker_says_how_the_world_held_it_in_the_trial_and_in_the_contract
         "not_enforced",
     )
     # Said in product words: no channel, door or world in what the card shows.
-    assert separate["enforcement_label"] == "Not confirmed yet: no run has shown this participant's own calls"
+    assert (
+        separate["enforcement_label"]
+        == "Not confirmed yet: no run has shown this participant's own calls"
+    )
     assert shared["enforcement_label"] == (
         "Limits can't be enforced: this participant runs inside the app, so its calls can't be told apart"
     )
@@ -4923,6 +4949,47 @@ def test_a_read_in_flight_when_the_call_is_rerun_never_writes_onto_the_new_attem
     # A failed-read note for the replaced attempt is dropped the same way.
     harness_workers.mark_read(call.id, failed=True, attempt=None)
     call.refresh_from_db()
+    assert harness_workers.READ_KEY not in call.call_metadata
+
+
+@pytest.mark.django_db
+def test_a_rerun_while_the_read_lists_the_call_s_traces_never_lets_the_old_attempt_through(
+    user, workspace, storage, settings
+):
+    """The rerun lands during the trace list, before any span is read: the read stays attempt 1's, so its record and
+    read note never land on attempt 2."""
+    from unittest.mock import patch
+
+    from simulate.models import CallExecution
+    from simulate.services import harness_workers
+    from simulate.services.call_rerun import clear_call_for_rerun
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-fence-list", storage), key="g")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+
+    def rerun_while_listing(*args, **kwargs):
+        clear_call_for_rerun(
+            CallExecution.objects.get(id=call.id), clear_metadata=False
+        )
+        return _traced()
+
+    with (
+        patch(
+            "simulate.services.harness_workers.list_run_traces",
+            side_effect=rerun_while_listing,
+        ),
+        patch(
+            "simulate.services.harness_workers.get_reader", return_value=_Reader(SPANS)
+        ),
+    ):
+        written = harness_workers.record_call_workers(str(call.id))
+
+    call.refresh_from_db()
+    assert written is None
+    assert harness_workers.WORKERS_KEY not in call.call_metadata
     assert harness_workers.READ_KEY not in call.call_metadata
 
 

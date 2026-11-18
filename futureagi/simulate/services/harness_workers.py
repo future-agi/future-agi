@@ -489,11 +489,18 @@ def attempt_timeline(
 
 
 def record_call_workers(
-    call_execution_id: str, *, second_read: bool = False
+    call_execution_id: str, *, second_read: bool = False, attempt: object = _ANY_ATTEMPT
 ) -> WorkerTimeline | None:
-    """Keep one call's worker timeline on the call and return it; None when it has no worker or hand-off to keep."""
+    """Keep one call's worker timeline on the call and return it; None when it has no worker or hand-off to keep.
+    `attempt` is the reset time of the attempt the read was scheduled for, read before anything else."""
     call = CallExecution.objects.select_related("test_execution").get(
         id=call_execution_id
+    )
+    # The attempt this read is for, fixed before any read: a rerun during the trace or span read is never this one.
+    reset = (
+        attempt_reset(call.id)
+        if attempt is _ANY_ATTEMPT
+        else cast("datetime | None", attempt)
     )
     sealed = _sealed_calls(call.provider_call_data)
     traced_calls = _with_workers(sealed)
@@ -511,8 +518,6 @@ def record_call_workers(
             exc_info=True,
         )
         traces = RunTraces(project_id=None, traces=[])
-    # The attempt this read is for: a rerun that resets the call before the read writes leaves the new attempt alone.
-    reset = attempt_reset(call.id)
     job = job_for_call(call)
     declared = declared_workers(job) if job is not None else []
     # A declared team with no evidence is still recorded, so the call never reads like a single-agent one.

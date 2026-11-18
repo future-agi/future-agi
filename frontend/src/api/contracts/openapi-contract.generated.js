@@ -57838,7 +57838,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     CallWorkersPending: {
-      required: ["pending", "next_read_at"],
+      required: ["pending", "next_read_at", "participants_declared"],
       type: "object",
       properties: {
         pending: {
@@ -57849,6 +57849,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Next read at",
           type: "string",
           minLength: 1,
+        },
+        participants_declared: {
+          title: "Participants declared",
+          description:
+            "The run's agent version declares at least one participant, so this call's record is worth waiting for; false for a single-agent app.",
+          type: "boolean",
         },
       },
     },
@@ -99175,13 +99181,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         shared_records_truncated: {
           title: "Shared records truncated",
           description:
-            "More records were touched by more than one participant than the trial kept; null for a trial sealed before the harness said so.",
+            "More records were touched by more than one participant than the trial kept; null for a trial recorded before this was reported.",
           type: "boolean",
           "x-nullable": true,
         },
         stopped_workers: {
           description:
-            "Workers whose own process the harness ended when their deadline passed.",
+            "Participants running on their own that the run stopped when their deadline passed.",
           type: "array",
           items: {
             $ref: "#/definitions/StoppedWorker",
@@ -99363,7 +99369,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         enforcement: {
           title: "Enforcement",
           description:
-            "How the world held it to its limits in this trial: on its own channel (only when the trial shows it), not at all, bypassed, or not known.",
+            "How its limits were enforced in this trial: enforced (only when the trial shows its own calls), not enforced, skipped, or not known.",
           type: "string",
           enum: ["held_at_world", "not_enforced", "bypassed", "unknown"],
         },
@@ -99375,7 +99381,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         channel_bypassed: {
           title: "Channel bypassed",
           description:
-            "It reached the world on the shared address instead of its own channel in this trial, so its limits were not held there and its own checks were not graded.",
+            "Its calls went through the main app in this trial, so its limits were not enforced and its own checks were not graded.",
           type: "boolean",
           default: false,
         },
@@ -99485,7 +99491,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         refusal_code: {
           title: "Refusal code",
-          description: "The world's refusal code, as the harness sealed it.",
+          description: "Why the world refused the call, as a code.",
           type: "string",
         },
         launch: {
@@ -125189,14 +125195,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         actions_truncated: {
           title: "Actions truncated",
           description:
-            "This record's own actions were cut; null for a trial sealed before the harness said so.",
+            "This record's own actions were cut; null for a trial recorded before this was reported.",
           type: "boolean",
           "x-nullable": true,
         },
         truncation: {
           title: "Truncation",
           description:
-            "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial sealed before the harness said which; null when nothing was cut.",
+            "Which bound cut it: its own actions, the trial's list of records, or unknown on a trial recorded before this was reported; null when nothing was cut.",
           type: "string",
           enum: ["actions", "records", "unknown"],
           "x-nullable": true,
@@ -125205,7 +125211,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     StoppedWorker: {
       description:
-        "Workers whose own process the harness ended when their deadline passed.",
+        "Participants running on their own that the run stopped when their deadline passed.",
       required: ["worker", "process", "at", "reason"],
       type: "object",
       properties: {
@@ -125221,7 +125227,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         at: {
           title: "At",
-          description: "When the harness ended it, seconds since the epoch.",
+          description: "When the run stopped it, in seconds since the epoch.",
           type: "number",
         },
         reason: {
@@ -125600,7 +125606,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         refusal_code: {
           title: "Refusal code",
-          description: "The world's refusal code, as the harness sealed it.",
+          description: "Why the world refused the call, as a code.",
           type: "string",
         },
         launch: {
@@ -140038,7 +140044,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         code: {
           title: "Code",
-          description: "The world's refusal code, as the harness sealed it.",
+          description: "Why the world refused the call, as a code.",
           type: "string",
         },
         reason: {

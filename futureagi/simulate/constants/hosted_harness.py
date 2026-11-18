@@ -13,6 +13,8 @@ WORKER_ENFORCEMENT_LABELS = {
 }
 # The trial notice ALK seals when a scenario relies on worker limits this environment cannot hold.
 WORKER_LIMITS_NOT_ENFORCED = "worker_limits_not_enforced"
+# The trial notice ALK seals naming each worker whose deadline did not hold (e.g. it kept running after its cancel).
+WORKER_DEADLINE_NOT_ENFORCED = "worker_deadline_not_enforced"
 # The trial notice ALK seals when some of a trial's hand-offs could not be recorded.
 HAND_OFFS_INCOMPLETE = "hand_offs_incomplete"
 # Failure codes of a trial the harness held as the scenario's problem, not the agent's: its checks were never graded,

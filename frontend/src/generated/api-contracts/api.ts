@@ -70834,7 +70834,7 @@ export const getSimulateV3CallExecutionWorkersUrl = (
 };
 
 /**
- * Which of a multi-agent app's workers did what in this trial, read from the spans the app exported.
+ * Which of a multi-agent app's participants did what in this trial, read from the traces the app sent.
  */
 export const simulateV3CallExecutionWorkers = async (
   callExecutionId: string,
