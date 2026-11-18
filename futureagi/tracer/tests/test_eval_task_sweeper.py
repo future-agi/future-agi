@@ -563,6 +563,37 @@ class TestSweepActivity:
         assert result["errors"] == 1
         assert result["restarted"] == 0
 
+    @pytest.mark.parametrize("conflict", [False, True])
+    def test_last_capped_claim_stays_sweepable_until_start_ack(
+        self, make_task, make_entry, temporal, monkeypatch, conflict
+    ):
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
+        task = make_task()
+        entry = make_entry(task, status=EvalEntryStatus.RUNNING, age_seconds=10_000)
+        EvalLogger.all_objects.filter(pk=entry.pk).update(attempts=3)
+
+        def rejected(_task):
+            if conflict:
+                raise WorkflowAlreadyStartedError(str(task.pk), "historical")
+            raise TimeoutError("acknowledgement lost")
+
+        tick = sweeper.sweep_stranded_eval_tasks._original_func
+        with monkeypatch.context() as patch:
+            patch.setattr(eval_task_client, "start_recovery_workflow_sync", rejected)
+            first = tick()
+        assert first["deferred" if conflict else "errors"] == 1
+        assert first["entries_poisoned"] == first["restarted"] == 0
+        second = tick()  # Must be found through the real candidate selector.
+        assert (
+            second["candidates"]
+            == second["entries_poisoned"]
+            == second["restarted"]
+            == 1
+        )
+        entry.refresh_from_db()
+        assert entry.status == EvalEntryStatus.ERRORED
+
     def test_the_sweep_can_be_turned_off_without_a_deploy_of_its_own(
         self, make_task, make_entry, temporal, settings
     ):

@@ -133,8 +133,8 @@ def start_eval_task_workflow_sync(
     task's workflow id found nothing draining, because the first thing a fresh
     run does is reap: see ``_describe_says_nothing_is_draining``. The starter
     takes that describe itself unless the caller passes the answer of one it
-    has just taken. Only a coalescing
-    start may bring its own answer. A coalescing start that finds a live
+    has just taken. Only a coalescing start may bring its own answer here.
+    A coalescing start that finds a live
     execution is absorbed by it, input and all, so the answer only ever
     reaches a run that started with nothing draining. A replacing start
     terminates whatever it finds, and whether that was a live drain is exactly

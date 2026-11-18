@@ -17,8 +17,8 @@ from tracer.selectors.eval_tasks.stranded import (
     only_unreclaimable_claims_remain,
 )
 from tracer.services.eval_tasks.reaper import (
+    StaleRunningClaims,
     effective_stale_seconds,
-    reap_stale_running,
 )
 
 logger = structlog.get_logger(__name__)
@@ -123,7 +123,7 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         outcome["progressing"] = True
         return outcome
 
-    outcome["requeued"], outcome["failed"] = reap_stale_running(
+    claims = StaleRunningClaims(
         task,
         # Through the same helper as the workflow's own reap, carrying the
         # same evidence: the describe above just answered that no execution
@@ -138,16 +138,11 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         max_attempts=_MAX_ENTRY_ATTEMPTS,
     )
 
+    # A requeue remains selectable even if the start fails; it is real work
+    # done by this tick. Poisoning the last claim instead removes the task from
+    # the selector, so commit terminal entry writes with the generation handoff.
+    outcome["requeued"] = claims.requeue_retryable()
     try:
-        # Checked before the FAILED flip below, so an opted-in failed task that
-        # has to wait is left failed rather than made pending with nothing to
-        # run.
-        if only_unreclaimable_claims_remain(
-            task, reclaimable_after_seconds=RESTART_REAP_SECONDS
-        ):
-            outcome["deferred"] = True
-            return outcome
-
         with transaction.atomic():
             current = (
                 EvalTask.no_workspace_objects.select_for_update()
@@ -160,14 +155,21 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
             )
             if current is None:
                 return outcome  # A committed handoff, pause or delete won the race.
-            # Preserve a running task's activation time: this repairs its drain,
-            # not its lifecycle. Failed tasks, like manual Resume, return to pending.
-            current.prepare_workflow_replacement(
-                status=EvalTaskStatus.RUNNING
-                if current.status == EvalTaskStatus.RUNNING
-                else EvalTaskStatus.PENDING
-            )
-            start_recovery_workflow_sync(current)
+            failed = claims.fail_exhausted()
+            if only_unreclaimable_claims_remain(
+                current, reclaimable_after_seconds=RESTART_REAP_SECONDS
+            ):
+                # At least one fresh RUNNING entry remains for a later tick.
+                outcome["deferred"] = True
+            else:
+                # Preserve a running task's activation time: this repairs its drain,
+                # not its lifecycle. Failed tasks, like manual Resume, return to pending.
+                current.prepare_workflow_replacement(
+                    status=EvalTaskStatus.RUNNING
+                    if current.status == EvalTaskStatus.RUNNING
+                    else EvalTaskStatus.PENDING
+                )
+                start_recovery_workflow_sync(current)
     except WorkflowAlreadyStartedError:
         # Outside atomic: keep the previous generation and diagnostic. If the
         # existing execution lost its start ack it will exit at admission; the
@@ -176,7 +178,8 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         return outcome
     except Exception as exc:
         raise RecoveryInterrupted(outcome, exc) from exc
-    outcome["restarted"] = True
+    outcome["failed"] = failed
+    outcome["restarted"] = not outcome["deferred"]
     return outcome
 
 
