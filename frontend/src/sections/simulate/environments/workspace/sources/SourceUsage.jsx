@@ -24,7 +24,7 @@ function Question({ children }) {
 
 Question.propTypes = { children: PropTypes.node };
 
-function Option({ checked, disabled, onPick, label, note, name }) {
+export function Option({ checked, disabled, onPick, label, note, name }) {
   return (
     <Stack
       component="label"
@@ -66,7 +66,7 @@ Option.propTypes = {
   checked: PropTypes.bool,
   disabled: PropTypes.bool,
   onPick: PropTypes.func,
-  label: PropTypes.string,
+  label: PropTypes.node,
   note: PropTypes.string,
   name: PropTypes.string,
 };
