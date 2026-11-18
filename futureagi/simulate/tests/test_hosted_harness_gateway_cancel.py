@@ -201,3 +201,42 @@ def test_stop_closes_a_run_whose_sandbox_never_started_with_no_sandbox_provider_
         HostedHarnessJob.State.CANCELED,
         "user_canceled",
     )
+
+
+@pytest.mark.django_db
+def test_stop_closes_a_run_whose_attempt_never_made_a_sandbox_with_no_sandbox_provider_configured(
+    organization, monkeypatch
+):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+    from simulate.services.hosted_sandbox import SandboxProviderConfigurationError
+
+    def unconfigured():
+        raise SandboxProviderConfigurationError("DAYTONA_API_KEY is required")
+
+    monkeypatch.setattr(gateway_module, "get_sandbox_provider", unconfigured)
+    job, _ = create_hosted_job(
+        organization, hosted_job_payload(), idempotency_key="cancel-no-provider-attempt"
+    )
+    # An attempt the platform recorded, with no sandbox behind it yet.
+    attempt = HostedHarnessAttempt.no_workspace_objects.create(
+        job=job,
+        attempt_number=job.current_attempt_number,
+        token_hash="t" * 64,
+        fence_hash="f" * 64,
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+    canceled = HostedHarnessGateway(require_provider=False).cancel(
+        job, reason="user_canceled"
+    )
+
+    attempt.refresh_from_db()
+    assert attempt.cleanup_verified_at is not None
+    assert (canceled.state, canceled.cancel_reason) == (
+        HostedHarnessJob.State.CANCELED,
+        "user_canceled",
+    )
