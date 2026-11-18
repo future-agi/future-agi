@@ -570,9 +570,9 @@ export default function RepoAgentFlow({
         !initial?.host || initial?.direct
           ? "Pick the git host, the repository and the agent in it."
           : host === "github"
-            ? "Connect GitHub to pick from your repositories, or paste a repository link and start."
-            : `Connect ${hostLabel} to pick the repository and the agent in it.`
-      } We read the code when you connect — then confirm or correct what we found in Finish setting up, on the agent's Overview.`}
+            ? "Pick a repository or paste a link."
+            : `Pick a ${hostLabel} repository and the agent in it.`
+      } We read the code when you connect.`}
       steps={STEPS}
       active={0}
       next={next}
