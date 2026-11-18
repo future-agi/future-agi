@@ -1,10 +1,7 @@
 import PropTypes from "prop-types";
 import { Box, ButtonBase, Stack, Tooltip, Typography } from "@mui/material";
-import { STATUS_META } from "../runs.constants";
-import {
-  STATUS_ROLE_COLOR as ROLE_COLOR,
-  TRIAL_PICKER_COPY as C,
-} from "./callTraces.constants";
+import { TRIAL_PICKER_COPY as C } from "./callTraces.constants";
+import { runOutcome } from "./trace/traceTable.constants";
 
 export default function TrialPicker({ trials, currentId, onPick }) {
   if (!trials || trials.length < 2) return null;
@@ -19,17 +16,18 @@ export default function TrialPicker({ trials, currentId, onPick }) {
         {C.label}
       </Typography>
       {trials.map((trial) => {
-        const meta = STATUS_META[trial.status] || STATUS_META.unmeasured;
+        // Named and coloured as the run's calls table names a call's outcome.
+        const outcome = runOutcome(trial.status);
         const on = trial.id === currentId;
         return (
           <Tooltip
             key={trial.id}
             arrow
-            title={C.tooltip(trial.trialIndex, meta.label)}
+            title={C.tooltip(trial.trialIndex, outcome.label)}
           >
             <ButtonBase
               aria-pressed={on}
-              aria-label={C.tooltip(trial.trialIndex, meta.label)}
+              aria-label={C.tooltip(trial.trialIndex, outcome.label)}
               onClick={() => onPick(trial.id)}
               sx={{
                 height: 22,
@@ -48,7 +46,7 @@ export default function TrialPicker({ trials, currentId, onPick }) {
                   width: 6,
                   height: 6,
                   borderRadius: "50%",
-                  bgcolor: ROLE_COLOR[meta.role] || ROLE_COLOR.neutral,
+                  bgcolor: outcome.color,
                 }}
               />
               {trial.trialIndex}

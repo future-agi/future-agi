@@ -35,6 +35,22 @@ describe("TrialPicker", () => {
     { id: "c2", trialIndex: 2, status: "failed" },
   ];
 
+  it("names a trial's verdict as the rest of the run page does", () => {
+    render(
+      <TrialPicker
+        trials={[
+          { id: "c1", trialIndex: 1, status: "unmeasured" },
+          { id: "c2", trialIndex: 2, status: "cancelled" },
+        ]}
+        currentId="c1"
+        onPick={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Trial 1, Inconclusive" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows each trial with its verdict and marks the open one", () => {
     render(<TrialPicker trials={trials} currentId="c2" onPick={vi.fn()} />);
     expect(

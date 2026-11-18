@@ -3,11 +3,8 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { useTrialRoutes } from "src/api/simulate-environments/runDetail";
-import { STATUS_META } from "../../runs.constants";
-import {
-  STATUS_ROLE_COLOR,
-  TRIAL_ROUTES_COPY as C,
-} from "../callTraces.constants";
+import { TRIAL_ROUTES_COPY as C } from "../callTraces.constants";
+import { runOutcome } from "../trace/traceTable.constants";
 import { Toggle } from "./SequenceParts";
 
 const linkSx = {
@@ -203,10 +200,8 @@ export default function TrialRoutes({
               </thead>
               <tbody>
                 {trials.map((one) => {
-                  const meta =
-                    STATUS_META[one.result] || STATUS_META.unmeasured;
-                  const color =
-                    STATUS_ROLE_COLOR[meta.role] || STATUS_ROLE_COLOR.neutral;
+                  // Named and coloured as the run's calls table names a call's outcome.
+                  const { label, color } = runOutcome(one.result);
                   const isCurrent = one.call_execution_id === currentId;
                   return (
                     <tr key={one.call_execution_id}>
@@ -246,7 +241,7 @@ export default function TrialRoutes({
                           component="span"
                           sx={{ typography: "s3", fontWeight: 600, color }}
                         >
-                          {meta.label}
+                          {label}
                         </Typography>
                       </td>
                       {one.cells ? (

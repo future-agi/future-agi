@@ -124,15 +124,6 @@ export const TRIAL_PICKER_COPY = {
   tooltip: (n, verdict) => `Trial ${n}, ${verdict}`,
 };
 
-// A run status's colour, by the role STATUS_META gives it.
-export const STATUS_ROLE_COLOR = {
-  success: "success.main",
-  danger: "error.main",
-  warning: "warning.main",
-  info: "info.main",
-  neutral: "text.disabled",
-};
-
 // A scenario's trials lined up by route, as the trial-routes API serves them.
 export const TRIAL_ROUTES_COPY = {
   trials: (count) => `${count} trials`,
