@@ -3,33 +3,34 @@
     "Compressed MB (10^6 bytes) per linux/<arch>, read from registry manifests: what `docker pull` downloads. Read by scripts/image_size_budget.py.",
     "Checked before any tag moves (build-image-multiarch.yml, on release and on the per-image dispatch builds) and on pull requests (standalone-ci.yml). An image without an entry fails the check.",
     "budget_mb = max(measured, projected) + 10% where measured_mb is present (the arm64 measurement can undercount amd64, e.g. Go binaries) (measured 2026-09-25 on a linux/arm64 from-source build of this branch, `docker save | gzip -6`, which tracks the registry's gzip layer sizes); otherwise the docker-size plan's projection (projected_mb) plus ~15% headroom. Lower budgets as further slimming lands. Raise one only in a reviewed pull request that says why.",
+    "TH-8685 (PR #3577): add 50 MB only to the slim backend and the standalone image/install that inherit it, for core PyArrow Parquet export and SQLGlot compilation. This preserves existing headroom instead of resetting it to 10%. CI run 39617644021 (2026-10-21, ebba647f0ce709d1806c0f506d6f347371ed35e0) measured +49.9 MB amd64 / +47.5 MB arm64 over :latest-slim after the existing test/stub/debug pruning. Updated measured_mb values below are the larger architecture; per-architecture measurements are in each note. All other budgets and the standalone 10% growth gate are unchanged.",
+    "TH-10230 (PR #4040): the standard image adds the `pii` extra so evidence imports and PII redaction run on Presidio. Measured on a linux/amd64 dev-box build of one commit, with and without the extra (`docker save | gzip -6`): 1004.3 -> 1078.7 MB, +74.3 MB, over the old 1015 budget. The budget becomes 1078.7 + 10% = 1187. The simulation runner, built FROM this image, grows by the same amount and stays within its report-only budget.",
     "Before the patches (v1.41, amd64, measured): future-agi 770.5, frontend 89.0, serving 3613 (arm64 650), code-executor 331 (arm64 319), fi-collector 22.6, agentcc-gateway 7.2; postgres:16 160.3, clickhouse-server:25.3-alpine 175.3.",
     "enforce=false: measured and reported, never fails."
   ],
-  "arches": [
-    "amd64",
-    "arm64"
-  ],
+  "arches": ["amd64", "arm64"],
   "images": [
     {
       "image": "futureagi/future-agi",
-      "budget_mb": 1015,
+      "budget_mb": 1187,
       "projected_mb": 882,
-      "note": "The default, feature-complete variant (IMAGE_VARIANT=standard): the dependency set, uv, git, Debian ffmpeg, full NLTK data and untrimmed site-packages of the releases before the variants, so projected at v1.42.0's 881.8 (amd64, from the registry: v1.41.3's 782.0 plus claude-agent-sdk, ~100 MB, now the `localizer` extra) until a release measures it. Distributed, Helm, the simulation runner and the EE and cloud builds use it."
+      "measured_mb": 1078.7,
+      "note": "The default, feature-complete variant (IMAGE_VARIANT=standard): the dependency set, uv, git, Debian ffmpeg, full NLTK data and untrimmed site-packages of the releases before the variants, projected at v1.42.0's 881.8 (amd64, from the registry: v1.41.3's 782.0 plus claude-agent-sdk, ~100 MB, now the `localizer` extra). TH-10230 adds the `pii` extra (Presidio, spaCy and the en_core_web_sm model): measured on a linux/amd64 build of one commit, with and without it, 1004.3 -> 1078.7 MB (+74.3; unpacked 3101.3 -> 3348.0 MB). Budget: 1078.7 + 10%. Distributed, Helm, the simulation runner and the EE and cloud builds use it."
     },
     {
       "image": "futureagi/future-agi",
       "tag_suffix": "-slim",
-      "budget_mb": 376,
-      "projected_mb": 341,
-      "measured_mb": 341,
-      "note": "IMAGE_VARIANT=slim, the base of futureagi/standalone."
+      "budget_mb": 426,
+      "projected_mb": 421,
+      "measured_mb": 420.7,
+      "note": "IMAGE_VARIANT=slim, the base of futureagi/standalone. TH-8685: 376 + 50 MB for PyArrow 22.0.0 and SQLGlot 28.10.1, kept in core so Parquet export and SQL compilation work in both variants. Run 39617644021: amd64 420.7 MB, arm64 410.6 MB. No Arrow shared libraries or runtime features are pruned to meet this budget."
     },
     {
       "image": "futureagi/standalone",
-      "budget_mb": 549,
-      "projected_mb": 499,
-      "measured_mb": 479
+      "budget_mb": 599,
+      "projected_mb": 573,
+      "measured_mb": 573,
+      "note": "TH-8685: 549 + 50 MB, inherited once from the slim backend's Parquet/SQL dependencies. Run 39617644021: amd64 573.0 MB, arm64 554.0 MB; growth over :latest is 9.5% / 9.4%, below the unchanged 10% gate."
     },
     {
       "image": "futureagi/frontend",
@@ -45,10 +46,10 @@
     },
     {
       "image": "futureagi/agentcc-gateway",
-      "budget_mb": 9,
-      "projected_mb": 8.0,
-      "measured_mb": 6.5,
-      "note": "projected 7.2 + 0.8: the static HEALTHCHECK probe (/usr/local/bin/healthcheck, 0.79 MB gzip on amd64; scratch has no shell or wget). fi-collector carries the same probe within its budget."
+      "budget_mb": 12,
+      "projected_mb": 10.1,
+      "measured_mb": 10.1,
+      "note": "TH-10227 (PR #4085): 9 -> 12 MB, ceil(10.1 + 10%), for native HTTPS. The static HEALTHCHECK probe (/usr/local/bin/healthcheck; scratch has no shell or wget) now speaks TLS so an HTTPS-only gateway can be probed (HEALTHCHECK_URL=https://127.0.0.1:8443/healthz); linking crypto/tls and crypto/x509 took its layer from 0.91 to 1.97 MB on amd64 and from 0.83 to 1.78 MB on arm64. The gateway binary already linked crypto/tls through net/http: +0.01 MB on both architectures (the arm64 binary is the same byte size), with the same 9 modules and the same CGO_ENABLED=0 -trimpath -ldflags='-s -w' build. Measured 2026-11-14 from source builds of the PR pushed to a local registry and read with this script: amd64 10.1 MB (dev 9.0), arm64 9.0 MB (dev 8.1). Before: projected 7.2 + 0.8 for the plain-HTTP probe. fi-collector carries the same probe within its budget."
     },
     {
       "image": "futureagi/serving",
@@ -64,9 +65,7 @@
     {
       "image": "futureagi/serving",
       "tag_suffix": "-gpu",
-      "arches": [
-        "amd64"
-      ],
+      "arches": ["amd64"],
       "budget_mb": 3800,
       "projected_mb": 3340
     },
@@ -77,9 +76,7 @@
     },
     {
       "image": "futureagi/future-agi-simulation-runner",
-      "arches": [
-        "amd64"
-      ],
+      "arches": ["amd64"],
       "budget_mb": 1525,
       "projected_mb": 1325,
       "enforce": false,
@@ -88,12 +85,10 @@
   ],
   "standalone_install": {
     "app": "futureagi/standalone",
-    "with": [
-      "postgres:16",
-      "clickhouse/clickhouse-server:25.3-alpine"
-    ],
-    "budget_mb": 884,
-    "projected_mb": 835,
-    "measured_mb": 803
+    "with": ["postgres:16", "clickhouse/clickhouse-server:25.3-alpine"],
+    "budget_mb": 934,
+    "projected_mb": 909,
+    "measured_mb": 908.6,
+    "note": "TH-8685: 884 + 50 MB, the same slim-backend dependency layer counted once in the fresh-install total, not a datastore allowance. Run 39617644021: amd64 908.6 MB, arm64 877.9 MB. Postgres and ClickHouse images are unchanged."
   }
 }

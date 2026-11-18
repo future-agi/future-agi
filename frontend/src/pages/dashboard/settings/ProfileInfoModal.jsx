@@ -13,6 +13,7 @@ import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import logger from "src/utils/logger";
 import { useMutation } from "@tanstack/react-query";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const ProfileInfoModal = ({ open, onClose, fullName, setRefreshData }) => {
   const theme = useTheme();
@@ -72,38 +73,36 @@ const ProfileInfoModal = ({ open, onClose, fullName, setRefreshData }) => {
     editFullName(formValues);
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
-          width: "570px",
-          position: "fixed",
-          zIndex: 1000,
-          borderRadius: theme.spacing(1),
-          backgroundColor: "background.paper",
+          width: "480px",
         },
       }}
     >
       <form
         onSubmit={handleSubmit(handleEditFullName)}
-        style={{ width: "100%" }}
+        style={{
+          width: "100%",
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+        }}
       >
         <Box
           sx={{
             display: open ? "flex" : "none",
-            position: "fixed",
-            right: 0,
-            top: 0,
-            height: "100vh",
+            flex: 1,
             width: "100%",
-            backgroundColor: "background.paper",
             padding: theme.spacing(2),
-            boxShadow: 3,
-            zIndex: 1000,
             flexDirection: "column",
             gap: theme.spacing(2),
           }}
@@ -123,7 +122,7 @@ const ProfileInfoModal = ({ open, onClose, fullName, setRefreshData }) => {
               Update Name
             </Typography>
             <Iconify
-              icon="mingcute:close-line"
+              icon="solar:close-linear"
               onClick={onClose}
               color="text.primary"
               sx={{
@@ -145,12 +144,14 @@ const ProfileInfoModal = ({ open, onClose, fullName, setRefreshData }) => {
               sx={{
                 display: "flex",
                 justifyContent: "space-between",
-                gap: theme.spacing(2),
-                position: "fixed",
-                bottom: 0,
-                left: 0,
-                right: 0,
-                padding: theme.spacing(2),
+                gap: theme.spacing(1),
+                mt: "auto",
+                mx: -2,
+                mb: -2,
+                px: 2,
+                py: 1.5,
+                borderTop: "1px solid",
+                borderColor: "divider",
               }}
             >
               <Button

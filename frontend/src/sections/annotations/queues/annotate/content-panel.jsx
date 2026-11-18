@@ -20,7 +20,6 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import {
@@ -72,13 +71,10 @@ const ANNOTATION_WORKSPACE_HIDDEN_VOICE_ACTION_IDS = ["queue", "tags"];
 function neutralChipSx(theme, height = 22) {
   return {
     height,
-    fontSize: height <= 18 ? 10 : 11,
-    fontWeight: 700,
-    borderColor: alpha(theme.palette.text.primary, 0.12),
-    bgcolor: alpha(
-      theme.palette.text.primary,
-      theme.palette.mode === "dark" ? 0.04 : 0.025,
-    ),
+    fontSize: 12,
+    fontWeight: 600,
+    borderColor: "divider",
+    bgcolor: "background.neutral",
     color: "text.secondary",
     "& .MuiChip-label": { px: 0.75 },
   };
@@ -215,7 +211,7 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
       {
         id: "trace",
         label: "Trace",
-        icon: "mdi:link-variant",
+        icon: "solar:link-linear",
         isDefault: true,
       },
     ];
@@ -225,7 +221,9 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
       tabs.push({
         id: v.id,
         label: v.name,
-        icon: isImagine ? "mdi:creation" : "mdi:link-variant",
+        icon: isImagine
+          ? "solar:stars-minimalistic-linear"
+          : "solar:link-linear",
         isDefault: false,
         config: v.config,
         visibility: v.visibility,
@@ -236,7 +234,7 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
       tabs.push({
         id: "__new_imagine__",
         label: "Imagine",
-        icon: "mdi:creation",
+        icon: "solar:stars-minimalistic-linear",
         isDefault: false,
         tabType: "imagine",
       });
@@ -392,14 +390,10 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
             size="small"
             variant="text"
             color="inherit"
-            startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
+            startIcon={<Iconify icon="solar:arrow-left-linear" width={16} />}
             onClick={() => setShowSession(false)}
             sx={{
-              fontSize: 12,
-              fontWeight: 500,
-              textTransform: "none",
               minWidth: 0,
-              px: 0.75,
             }}
           >
             Back to trace
@@ -445,7 +439,7 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
         rightSlot={
           sessionId ? (
             <ToolbarPill
-              icon="mdi:forum-outline"
+              icon="solar:chat-round-line-linear"
               label="View session"
               onClick={() => setShowSession(true)}
             />
@@ -601,7 +595,7 @@ function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
                     mt: 8,
                   }}
                 >
-                  <Typography variant="body2" fontSize={13}>
+                  <Typography variant="body2" fontSize={12}>
                     Select a span to view details
                   </Typography>
                 </Box>
@@ -909,7 +903,7 @@ function ImageValue({ value }) {
             sx={{
               maxWidth: "100%",
               maxHeight: 300,
-              borderRadius: 0.5,
+              borderRadius: "4px",
               cursor: "pointer",
               objectFit: "contain",
               border: 1,
@@ -922,7 +916,8 @@ function ImageValue({ value }) {
       <Dialog
         open={!!expanded}
         onClose={() => setExpanded(false)}
-        maxWidth="lg"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 960 } }}
       >
         <Box sx={{ position: "relative" }}>
           <IconButton
@@ -935,7 +930,7 @@ function ImageValue({ value }) {
             }}
             size="small"
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
           <Box
             component="img"
@@ -1004,7 +999,7 @@ function DocumentValue({ value }) {
           height: 500,
           border: 1,
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
         }}
       />
     );
@@ -1013,7 +1008,7 @@ function DocumentValue({ value }) {
   // Other documents — download link
   return (
     <Stack direction="row" spacing={1} alignItems="center">
-      <Iconify icon="mingcute:file-line" width={20} />
+      <Iconify icon="solar:document-text-linear" width={20} />
       <Typography
         component="a"
         href={src}
@@ -1134,10 +1129,9 @@ function ContentSection({ title, children, dataType, copyValue }) {
               size="small"
               aria-label={`Copy ${title || "content"}`}
               onClick={handleCopy}
-              sx={{ p: 0.25 }}
             >
               <Iconify
-                icon={copied ? "eva:checkmark-fill" : "eva:copy-fill"}
+                icon={copied ? "solar:check-linear" : "solar:copy-linear"}
                 width={14}
                 sx={{ color: copied ? "success.main" : "text.disabled" }}
               />
@@ -1148,9 +1142,9 @@ function ContentSection({ title, children, dataType, copyValue }) {
       <Box
         sx={{
           bgcolor: "background.neutral",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           p: 2,
-          fontSize: 13,
+          fontSize: 12,
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
           maxHeight: 500,
@@ -1537,7 +1531,7 @@ function SessionContent({ content }) {
           {sessionMetadata.duration != null && (
             <Chip
               size="small"
-              icon={<Iconify icon="radix-icons:clock" width={14} />}
+              icon={<Iconify icon="solar:clock-circle-linear" width={14} />}
               label={`Duration: ${formatMs(sessionMetadata.duration * 1000)}`}
               variant="outlined"
             />

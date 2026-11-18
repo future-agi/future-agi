@@ -6,6 +6,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useCancelExecution } from "src/sections/common/simulation/hooks/useCancelExecution";
+import { refusalText } from "../evals/refusalText";
+
+const STOP_FALLBACK = "Couldn't stop the run. Try again";
 
 /**
  * Stop a live simulation run, from the runs table or the run-detail header.
@@ -15,7 +18,7 @@ import { useCancelExecution } from "src/sections/common/simulation/hooks/useCanc
  * the same one the product test-run pages use) and refreshes the runs list and
  * this run's detail so the status moves on the next read.
  *
- * Sized to the StatusChip it sits beside (22px). `label` is "Stop" in the tight
+ * Small button beside the StatusChip. `label` is "Stop" in the tight
  * table cell; the run-detail header has room for "Stop simulation".
  */
 export default function StopRunControl({ executionId, stoppable = false, label = "Stop" }) {
@@ -33,7 +36,7 @@ StopRunControl.propTypes = {
 function StopRunButton({ executionId, label }) {
   const [confirming, setConfirming] = useState(false);
   const queryClient = useQueryClient();
-  const cancel = useCancelExecution();
+  const cancel = useCancelExecution({ errorHandled: true });
 
   const onConfirm = () => {
     setConfirming(false);
@@ -43,7 +46,14 @@ function StopRunButton({ executionId, label }) {
         queryClient.invalidateQueries({ queryKey: ["simulation-run-results-v3", executionId] });
         enqueueSnackbar("Cancelling the run", { variant: "success" });
       },
-      onError: () => enqueueSnackbar("Couldn't stop the run. Try again", { variant: "error" }),
+      // A 409 is the server declining to stop this run (a finished run whose
+      // evals are being graded again) and says why; any other failure keeps
+      // the generic line.
+      onError: (e) =>
+        enqueueSnackbar(
+          e?.statusCode === 409 ? refusalText(e, STOP_FALLBACK) : STOP_FALLBACK,
+          { variant: "error" },
+        ),
     });
   };
 
@@ -52,7 +62,7 @@ function StopRunButton({ executionId, label }) {
     // so stop them at the root — a click inside must never open the table row.
     <span onClick={(e) => e.stopPropagation()} role="presentation" style={{ display: "inline-flex" }}>
       {/* Shaped like the product test-runs grid's Stop (TestRunsGrid StatusCell),
-          at the StatusChip's height, in red since it cancels the run. */}
+          in red since it cancels the run. */}
       <Button
         variant="outlined"
         color="error"
@@ -60,17 +70,11 @@ function StopRunButton({ executionId, label }) {
         aria-label="Stop simulation"
         disabled={cancel.isPending}
         onClick={() => setConfirming(true)}
-        startIcon={<Iconify icon="bi:stop-circle" width={12} />}
+        startIcon={<Iconify icon="solar:stop-circle-linear" width={12} />}
         sx={{
           flexShrink: 0,
           whiteSpace: "nowrap",
-          borderRadius: "4px",
-          px: 1,
           minWidth: 0,
-          height: 22,
-          textTransform: "none",
-          fontSize: 12,
-          "& .MuiButton-startIcon": { mr: 0.5 },
         }}
       >
         {cancel.isPending ? "Stopping…" : label}

@@ -1,4 +1,4 @@
-"""The one predicate a typed (number/boolean) Users walk is decided on.
+"""The predicate and certification mode a typed Users walk is decided on.
 
 A span-attribute-filtered Users page walks witnessed spans newest-first and
 certifies each user on the page enrichment (``users_matching_walk``). For a
@@ -19,8 +19,10 @@ narrowing and the order key can never disagree:
 
 Only shapes whose Python and SQL comparisons are provably the same qualify:
 ``equals``/``in`` on real booleans; ``equals``/``in`` and the four orderings
-on finite numbers, without a storage-type picker. Everything else keeps the
-seeded page.
+on finite numbers, without a storage-type picker. Canonical picked strings
+instead discover by string-key presence and certify their values and newest
+matching timestamp with the existing Python comparator. Everything else keeps
+the seeded page.
 """
 
 from __future__ import annotations
@@ -53,6 +55,36 @@ class WalkedTypedFilter:
     witness_params: dict[str, Any]
     order_clause: str
     order_params: dict[str, Any]
+    canonical_values: tuple[str, ...] = ()
+
+
+def canonical_picked_text_values(item: dict[str, Any]) -> tuple[str, ...]:
+    """Picked ASCII strings requiring Users' canonical comparison, not raw IN."""
+    config = item.get("filter_config") or item.get("filterConfig") or {}
+    raw = config.get("filter_value", config.get("filterValue"))
+    values = raw if isinstance(raw, list) else [raw]
+    types = config.get("attribute_value_types", config.get("attributeValueTypes"))
+    if (
+        (config.get("filter_type") or config.get("filterType"))
+        not in {"text", "string"}
+        or (config.get("filter_op") or config.get("filterOp")) not in {"equals", "in"}
+        or not values
+        or not isinstance(types, list)
+        or len(types) != len(values)
+        or any(kind != "string" for kind in types)
+        or any(
+            not isinstance(value, str) or not value or not value.isascii()
+            for value in values
+        )
+    ):
+        return ()
+    if not any(
+        value.strip().startswith(("{", "["))
+        or value.strip().lower() in {"true", "false"}
+        for value in values
+    ):
+        return ()
+    return tuple(values)
 
 
 def _finite_number(value: Any) -> float | None:
@@ -72,6 +104,19 @@ def typed_walk_filter(
 
     key, kind = witness.key, witness.kind
     witness_sql, witness_params = witness.sql, witness.params
+    if kind == "canonical_text":
+        canonical_values = canonical_picked_text_values(item)
+        if not canonical_values:
+            return None
+        return WalkedTypedFilter(
+            key=key,
+            kind=kind,
+            witness_sql=witness_sql,
+            witness_params=dict(witness_params),
+            order_clause="",
+            order_params={},
+            canonical_values=canonical_values,
+        )
     if kind not in {"number", "boolean"}:
         return None
     config = item.get("filter_config") or item.get("filterConfig") or {}

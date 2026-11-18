@@ -122,6 +122,11 @@ _EXPECTED_HEADER = [
     "Evals Pass Rate (%)",
     "Input Tokens",
     "Output Tokens",
+    "Project",
+    "Cost coverage",
+    "Known cost subtotal ($)",
+    "Known cost fact count",
+    "Unknown cost fact count",
 ]
 
 
@@ -556,7 +561,10 @@ class TestUsersExportStreaming:
     def test_export_columns_match_serializer_fields(self):
         # The CSV columns must stay a subset of the JSON contract's serializer
         # fields, so the export can't silently drift from the list response.
-        serializer_fields = set(UsersTableRowSerializer().fields.keys())
-        export_fields = {field for _, field in USERS_EXPORT_COLUMNS}
-        missing = export_fields - serializer_fields
-        assert not missing, f"export columns not on serializer: {missing}"
+        serializer = UsersTableRowSerializer()
+        for _, field_path in USERS_EXPORT_COLUMNS:
+            fields = serializer.fields
+            for index, field in enumerate(field_path.split(".")):
+                assert field in fields, f"export column not on serializer: {field_path}"
+                if index < len(field_path.split(".")) - 1:
+                    fields = fields[field].fields

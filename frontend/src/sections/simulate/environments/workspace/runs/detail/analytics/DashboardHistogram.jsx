@@ -21,16 +21,16 @@ export default function DashboardHistogram({ data, kind }) {
       <Box
         sx={{ px: 2, py: 1.5, borderTop: "1px solid", borderColor: "divider" }}
       >
-        <Typography sx={{ fontSize: 11 }}>
+        <Typography sx={{ typography: "s3" }}>
           {csat
             ? data.agreement?.percent == null
-              ? "Read: Provider/evaluation agreement is not measured. Both verdicts are required."
+              ? "Read: The provider's own success flag was not reported, so it cannot be compared with your evals."
               : `Read: The provider's own success judgement (its analysis) agrees with your evals on ${format(data.agreement.percent, "percent")} of comparable calls (${data.agreement.agreed}/${data.agreement.compared}).`
             : data.measured
-              ? `Read: ${format(data.at_or_above_target_percent, "percent")} of measured calls were at or over the ${format(data.target_ms, "ms")} target. p50 ${format(data.p50, "ms")}, p95 ${format(data.p95, "ms")}.`
+              ? `Read: ${format(data.at_or_above_target_percent, "percent")} of measured calls averaged at or over the ${format(data.target_ms, "ms")} target. p50 ${format(data.p50, "ms")}, p95 ${format(data.p95, "ms")} of per-call averages.`
               : "Read: No agent response-time measurements were recorded."}
         </Typography>
-        <Typography sx={{ mt: 0.5, fontSize: 10, color: "text.secondary" }}>
+        <Typography sx={{ mt: 0.5, typography: "s3", color: "text.secondary" }}>
           {data.measured} / {data.total} calls measured.
           {csat
             ? " Fractional scores are rounded to the nearest score; missing/out-of-range scores are excluded."

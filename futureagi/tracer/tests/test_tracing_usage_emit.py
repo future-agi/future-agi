@@ -13,6 +13,7 @@ from __future__ import annotations
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
+
 pytest.importorskip("ee.usage.schemas.event_types")
 from ee.usage.schemas.event_types import BillingEventType
 

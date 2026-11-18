@@ -787,7 +787,6 @@ STANDALONE_OWN_BACKEND_ENV = {
     "CODE_EXECUTOR_URL": "bin/start points it at the nsjail executor when asked",
     # Choices of the setup.
     "FI_CDC_MODE": "Standalone syncs through the outbox, Distributed through PeerDB",
-    "FUTURE_AGI_TELEMETRY_BUFFER_DIR": "/tmp is writable by the in-app sandbox",
     "CODE_EXECUTOR_LOCAL_FALLBACK": "the API process holds every secret and /data",
     "CH_ENABLED": "the app always has its ClickHouse",
     "CH_USE_REPLICATED_ENGINES": "one ClickHouse node",

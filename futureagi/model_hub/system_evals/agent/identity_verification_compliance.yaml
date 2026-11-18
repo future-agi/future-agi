@@ -34,6 +34,7 @@ eval_tags:
 - Audio
 - Compliance
 - Data Leakage
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

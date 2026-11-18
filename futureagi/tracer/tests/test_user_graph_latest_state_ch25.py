@@ -62,6 +62,7 @@ def user_graph_tables(ch_client):
             start_time DateTime64(6, 'UTC'),
             trace_id String,
             id String,
+            name String DEFAULT '',
             parent_span_id String,
             end_user_id Nullable(UUID),
             trace_session_id Nullable(UUID),
@@ -71,6 +72,7 @@ def user_graph_tables(ch_client):
             completion_tokens Int32,
             cost Float64,
             status String,
+            attrs_string Map(String, String) DEFAULT map(),
             created_at DateTime64(6, 'UTC'),
             -- MATERIALIZED as deployed (a trace_dict lookup there): the FINAL
             -- snapshot names it after ``*``, which omits it.
@@ -128,7 +130,9 @@ def _execute(ch_client, query, params):
     return [dict(zip(names, row, strict=True)) for row in rows]
 
 
-def test_user_rollup_cursor_keeps_string_tie_order_across_pages(ch_client, user_graph_tables):
+def test_user_rollup_cursor_keeps_string_tie_order_across_pages(
+    ch_client, user_graph_tables
+):
     """ORDER BY and keyset continuation use the same public String domain."""
 
     table = f"_test_user_rollup_cursor_{uuid.uuid4().hex[:8]}"
@@ -187,16 +191,34 @@ def test_user_rollup_cursor_keeps_string_tie_order_across_pages(ch_client, user_
             },
         )
 
-        ch_client.execute(f"ALTER TABLE {user_graph_tables[0]} ADD COLUMN end_time Nullable(DateTime64(6, 'UTC'))")
+        ch_client.execute(
+            f"ALTER TABLE {user_graph_tables[0]} ADD COLUMN end_time Nullable(DateTime64(6, 'UTC'))"
+        )
         # The current dimension reader certifies rollup candidates against the
         # typed user dimension and latest physical spans before pagination.
         ch_client.execute(
             f"INSERT INTO {curated_table} (project_id, end_user_id, organization_id, user_id, first_seen, version) VALUES",
-            [(project_id, user_id, organization_id, user_id, first_seen, 1) for user_id in end_user_ids],
+            [
+                (project_id, user_id, organization_id, user_id, first_seen, 1)
+                for user_id in end_user_ids
+            ],
         )
         ch_client.execute(
             f"INSERT INTO {user_graph_tables[0]} (project_id, end_user_id, observation_type, service_name, trace_id, id, start_time, end_time, _version) VALUES",
-            [(project_id, user_id, "span", "fixture", user_id, user_id, first_seen, first_seen, 1) for user_id in end_user_ids],
+            [
+                (
+                    project_id,
+                    user_id,
+                    "span",
+                    "fixture",
+                    user_id,
+                    user_id,
+                    first_seen,
+                    first_seen,
+                    1,
+                )
+                for user_id in end_user_ids
+            ],
         )
         actual: list[str] = []
         before_first_seen = None
@@ -213,10 +235,12 @@ def test_user_rollup_cursor_keeps_string_tie_order_across_pages(ch_client, user_
                 window_start=first_seen - timedelta(days=1),
                 window_end=first_seen + timedelta(days=1),
             )
-            query = query.replace(
-                "FROM span_user_rollup AS rollup", f"FROM {table} AS rollup"
-            ).replace("FROM end_users AS eu", f"FROM {curated_table} AS eu").replace(
-                "FROM end_user_id_remap", f"FROM {user_graph_tables[2]}"
+            query = (
+                query.replace(
+                    "FROM span_user_rollup AS rollup", f"FROM {table} AS rollup"
+                )
+                .replace("FROM end_users AS eu", f"FROM {curated_table} AS eu")
+                .replace("FROM end_user_id_remap", f"FROM {user_graph_tables[2]}")
             )
             query = re.sub(r"\bspans\b", user_graph_tables[0], query)
             page = _execute(ch_client, query, params)
@@ -246,10 +270,13 @@ def test_exact_system_graph_statement_reads_current_latest_state(ch_client):
             start_time DateTime64(6, 'UTC'),
             trace_id String,
             id String,
+            name String MATERIALIZED '',
+            parent_span_id String MATERIALIZED '',
             latency_ms Int32,
             total_tokens Int32,
             prompt_tokens Int32,
             completion_tokens Int32,
+            attrs_string Map(String, String) MATERIALIZED map(),
             cost Float64,
             status String,
             is_deleted UInt8,
@@ -354,6 +381,9 @@ def test_agent_graph_one_statement_replays_corrections_and_tombstones(ch_client)
             name String,
             latency_ms Int32,
             total_tokens Int32,
+            prompt_tokens Int32 MATERIALIZED 0,
+            completion_tokens Int32 MATERIALIZED 0,
+            attrs_string Map(String, String) MATERIALIZED map(),
             cost Float64,
             status String,
             is_deleted UInt8,
@@ -520,6 +550,7 @@ def test_exact_trace_graph_one_scan_matches_independent_sibling_filters(ch_clien
             start_time DateTime64(6, 'UTC'),
             trace_id String,
             id String,
+            name String MATERIALIZED '',
             parent_span_id String,
             latency_ms Int32,
             total_tokens Int32,
@@ -969,7 +1000,10 @@ def test_user_graphs_count_only_latest_live_span_rows(ch_client, user_graph_tabl
             2,
         ),
     ]
-    ch_client.execute(f"INSERT INTO {spans} VALUES", rows)
+    ch_client.execute(
+        f"INSERT INTO {spans} (project_id, observation_type, service_name, start_time, trace_id, id, parent_span_id, end_user_id, trace_session_id, latency_ms, total_tokens, prompt_tokens, completion_tokens, cost, status, created_at, is_deleted, _version) VALUES",
+        rows,
+    )
     ch_client.execute(
         f"INSERT INTO {end_users} VALUES",
         [(project_id, end_user_id, organization_id, 1, 0)],
@@ -1077,12 +1111,28 @@ def _seed_replay_population(ch_client, user_graph_tables):
     def span(trace, span_id, minute, cost, user, *, deleted=0, version=1):
         at = hour + timedelta(minutes=minute)
         return (
-            ids["project"], "llm", "svc", at, trace, span_id, "",
-            user, None, 10, 4, 2, 2, cost, "OK", at, deleted, version,
+            ids["project"],
+            "llm",
+            "svc",
+            at,
+            trace,
+            span_id,
+            "",
+            user,
+            None,
+            10,
+            4,
+            2,
+            2,
+            cost,
+            "OK",
+            at,
+            deleted,
+            version,
         )
 
     ch_client.execute(
-        f"INSERT INTO {spans} VALUES",
+        f"INSERT INTO {spans} (project_id, observation_type, service_name, start_time, trace_id, id, parent_span_id, end_user_id, trace_session_id, latency_ms, total_tokens, prompt_tokens, completion_tokens, cost, status, created_at, is_deleted, _version) VALUES",
         [
             # Untouched live span.
             span("t-live", "s1", 20, 5.0, ids["user_one"]),
@@ -1167,7 +1217,12 @@ def test_fused_attribute_flags_are_evaluated_on_the_winning_version(
     assert "FROM spans FINAL" not in query
     assert "FROM end_users " not in query
     flat = " ".join(query.split())
-    assert f"status, {predicate}), _version) AS latest_state" in flat
+    projected = (
+        *user_time_series.USER_GRAPH_SPAN_COLUMNS,
+        user_time_series.graph_cost_flags_sql(),
+        predicate,
+    )
+    assert f"argMax(tuple({', '.join(projected)}), _version) AS latest_state" in flat
     assert "countIf(rs.user_member_match_0) AS user_member_trace_0" in query
 
     rows = _execute(ch_client, query, params)

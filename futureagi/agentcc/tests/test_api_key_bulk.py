@@ -67,16 +67,15 @@ class TestAPIKeyBulkExpiresAt:
         # Null expiry stays null (never-expiring keys).
         assert by_id["gw-perpetual"]["expires_at"] is None
 
-    def test_expired_keys_are_not_shipped(
-        self, admin_client, organization, workspace
-    ):
+    def test_expired_keys_are_not_shipped(self, admin_client, organization, workspace):
         past = timezone.now() - timedelta(days=1)
         _make_key(organization, workspace, "gw-expired", "c" * 64, past)
         _make_key(organization, workspace, "gw-live", "d" * 64, None)
 
-        ids = {item["id"] for item in admin_client.get(
-            "/agentcc/api-keys/bulk/"
-        ).json()["result"]}
+        ids = {
+            item["id"]
+            for item in admin_client.get("/agentcc/api-keys/bulk/").json()["result"]
+        }
 
         assert "gw-expired" not in ids  # filtered at the query level
         assert "gw-live" in ids

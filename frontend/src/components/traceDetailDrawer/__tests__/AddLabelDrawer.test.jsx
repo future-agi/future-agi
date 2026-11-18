@@ -126,7 +126,7 @@ describe("AddLabelDrawer", () => {
 
     render(<AddLabelDrawer open onClose={vi.fn()} projectId="project-1" />);
 
-    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
     expect(screen.queryByText("No labels found")).not.toBeInTheDocument();
   });
 

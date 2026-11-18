@@ -1,5 +1,5 @@
 import { test, expect } from '../../lib/scope-actors';
-import type { Request } from '@playwright/test';
+import type { Request, Response } from '@playwright/test';
 import { sendTrace } from '../../lib/otlp';
 import { E2E } from '../../lib/env';
 import { POLL } from '../../lib/state-probe';
@@ -182,6 +182,14 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
   page.setDefaultTimeout(UI_READY);
   // PrimaryGraph's session transport can disable the shared Reload control.
   // Keep its actual request/response alongside list evidence if that gate fails.
+  // Synchronous metadata only: initial catalog failures survive navigation,
+  // without response-body callbacks outliving the browser context.
+  const catalogResponses: unknown[] = [];
+  page.on('response', response => {
+    if (new URL(response.url()).pathname !== METRICS || response.request().method() !== 'POST') return;
+    if (catalogResponses.length < 100) catalogResponses.push({ endpoint: METRICS,
+      method: 'POST', status: response.status() });
+  });
   const graphResponses: unknown[] = [];
   const graphReads = new Set<Promise<void>>();
   page.on('response', response => {
@@ -207,6 +215,78 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
     ? req.postDataJSON() : Object.fromEntries(new URL(req.url()).searchParams);
   const complete = (body: ListPage) => expect(body.result.metadata).toMatchObject({ has_more: false,
     next_cursor: null, query_complete: true, query_status: 'complete', query_error_code: null, total_rows_is_lower_bound: false });
+  // Session-grid's loadExactListPage follows opaque cursors before publishing a
+  // visible page. Capture those actual browser reads; API replay is independent.
+  const listResponses: Response[] = [];
+  page.on('response', response => {
+    if (new URL(response.url()).pathname === LIST && ['GET', 'POST'].includes(response.request().method()))
+      listResponses.push(response);
+  });
+  // Same finite eight-page bound as OBS catalog-history-live-parity. Our cohort
+  // fits one visible page; transport chunks may stop at the acquisition wall.
+  const walkList = async (load: (cursor: string | undefined) => Promise<ListPage>) => {
+    const pages: ListPage[] = [], table: ListPage['result']['table'] = [];
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let hop = 0; hop < 8; hop++) {
+      const body = await load(cursor), metadata = body.result.metadata;
+      pages.push(body);
+      table.push(...body.result.table);
+      expect(new Set(table.map(row => row.session_id)).size).toBe(table.length);
+      expect(typeof metadata.has_more).toBe('boolean');
+      if (!metadata.has_more) {
+        complete(body);
+        return { pages, table };
+      }
+      expect(metadata.total_rows_is_lower_bound).toBe(true);
+      expect(typeof metadata.query_complete).toBe('boolean');
+      if (metadata.query_complete) {
+        expect([metadata.query_status, metadata.query_error_code]).toEqual(['complete', null]);
+      } else {
+        expect(metadata.query_complete).toBe(false);
+        expect(metadata.query_status).toBe('degraded');
+        expect(['deadline_exceeded', 'query_budget_exceeded']).toContain(metadata.query_error_code);
+      }
+      expect(typeof metadata.next_cursor).toBe('string');
+      expect(metadata.next_cursor!.length).toBeGreaterThan(0);
+      expect(cursors.has(metadata.next_cursor!)).toBe(false);
+      cursors.add(metadata.next_cursor!);
+      cursor = metadata.next_cursor!;
+    }
+    throw new Error('Session list did not complete within eight cursor pages');
+  };
+  // listCursorPagination.requestParams drops the numbered offset on cursor hops.
+  const cursorParams = (params: Record<string, string | number | boolean>, cursor: string | undefined) => {
+    if (cursor === undefined) return params;
+    const { page_number: _page, ...query } = params;
+    return { ...query, cursor };
+  };
+  const readUIList = async (first: Response) => {
+    const initialParams = paramsOf(first.request());
+    expect(initialParams.cursor).toBeUndefined();
+    const started = Date.now();
+    let position = listResponses.indexOf(first);
+    expect(position).toBeGreaterThanOrEqual(0);
+    return walkList(async cursor => {
+      let response = first;
+      if (cursor !== undefined) {
+        const remaining = UI_READY - (Date.now() - started);
+        expect(remaining).toBeGreaterThan(0);
+        await expect.poll(() => listResponses.slice(position + 1)
+          .find(candidate => paramsOf(candidate.request()).cursor === cursor), { timeout: remaining }).toBeDefined();
+        response = listResponses.slice(position + 1)
+          .find(candidate => paramsOf(candidate.request()).cursor === cursor)!;
+        position = listResponses.indexOf(response);
+      }
+      expect(response.status()).toBe(200);
+      expect(paramsOf(response.request())).toEqual(cursorParams(initialParams, cursor));
+      return readJsonWithin<ListPage>(response);
+    });
+  };
+  const readAPIList = (api: typeof actor.api, params: Record<string, string | number | boolean>) => {
+    expect(params.cursor).toBeUndefined();
+    return walkList(cursor => api.post<ListPage>(LIST, cursorParams(params, cursor)));
+  };
   const saved: { labelId: string; phase: number; params: Record<string, string | number | boolean> }[] = [];
   const receipts: unknown[] = [];
   let initial: Score[] = [];
@@ -229,9 +309,9 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
           await heading.click();
           if (label.type === 'numeric') await control.getByRole('spinbutton').fill(String(label.filter[phase]));
           else if (label.type === 'star') {
-            // StarInput renders one clickable Box per rating in its inner Stack.
+            // StarInput renders one ButtonBase per rating in its inner Stack.
             // InlineAnnotator does not pass focused, so numeric hints are absent.
-            const stars = control.locator('.MuiStack-root > .MuiStack-root > .MuiBox-root');
+            const stars = control.locator('.MuiStack-root > .MuiStack-root > .MuiButtonBase-root');
             await expect(stars).toHaveCount(Number(label.settings.no_of_stars), { timeout: UI_READY });
             await stars.nth(Number(label.filter[phase]) - 1).click();
           }
@@ -319,9 +399,43 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
           for (const wanted of phase ? [0, 1] as const : [0] as const) {
             await page.goto(url, { waitUntil: 'domcontentloaded' });
             await page.getByRole('button', { name: 'Filter', exact: true }).click();
-            await page.getByRole('button', { name: 'Property', exact: true }).first().click();
-            await page.getByPlaceholder('Search properties...').fill(label.name);
-            await page.locator(`[data-filter-property-option="${label.id}"][data-filter-property-category="annotation"]`).click();
+            const pickerDeadline = Date.now() + UI_READY;
+            const pickerRemaining = () => {
+              const remaining = pickerDeadline - Date.now();
+              expect(remaining, 'catalog response/body/option share one UI_READY budget').toBeGreaterThan(0);
+              return remaining;
+            };
+            const property = page.getByRole('button', { name: 'Property', exact: true }).filter({ visible: true });
+            await expect(property).toHaveCount(1, { timeout: pickerRemaining() });
+            await property.click({ timeout: pickerRemaining() });
+            // TraceFilterPanel/useMetricsCatalog sends source/project_ids/search.
+            // Do NOT match on status: a cache 503 must fail here, not as a missing option.
+            const metricsReady = page.waitForResponse(response => {
+              if (new URL(response.url()).pathname !== METRICS || response.request().method() !== 'POST') return false;
+              const params = response.request().postDataJSON();
+              return params.source === 'traces' && params.project_ids === projectId && params.search === label.name;
+            }, { timeout: pickerRemaining() });
+            const [catalogResponse] = await Promise.all([metricsReady,
+              page.getByPlaceholder('Search properties...').fill(label.name, { timeout: pickerRemaining() })]);
+            const receipt = { endpoint: METRICS, method: 'POST', status: catalogResponse.status(),
+              request: { source: 'traces', project_ids: projectId, search: label.name },
+              code: null as string | null, bodyRead: 'pending' };
+            try {
+              const body = await readJsonWithin<{ code?: unknown }>(catalogResponse, Math.min(10_000, pickerRemaining()));
+              // Never attach arbitrary response text, headers or bearer credentials.
+              receipt.code = body.code === 'service_unavailable' ? body.code : null;
+              receipt.bodyRead = 'complete';
+            } catch (error) {
+              receipt.bodyRead = 'failed';
+              throw error;
+            } finally {
+              await testInfo.attach(`browser-catalog-${label.id}-${phase}-${wanted}`,
+                { body: JSON.stringify(receipt), contentType: 'application/json' });
+            }
+            expect(catalogResponse.status(), `${METRICS} ${receipt.code ?? ''}`).toBe(200);
+            const option = page.locator(`[data-filter-property-option="${label.id}"][data-filter-property-category="annotation"]`);
+            await expect(option).toHaveCount(1, { timeout: pickerRemaining() });
+            await option.click({ timeout: pickerRemaining() });
             // buildApiFilterFromPanelRow + metricToTraceFilterProperty: exact native wire.
             const filterType = ['numeric', 'star'].includes(label.type) ? 'number'
               : label.type === 'thumbs_up_down' ? 'thumbs' : label.type;
@@ -352,15 +466,13 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
             expect(params.project_id).toBe(projectId);
             const filter = (JSON.parse(String(params.filters)) as Filter[]).find(f => f.column_id === label.id)!;
             expect(filter).toMatchObject({ property_id: `annotation:${label.id}`, filter_config: expectedConfig });
-            const body = await response.json() as ListPage;
+            const body = await readUIList(response);
             const expected = phase === wanted ? [sessionId] : [];
-            complete(body);
-            expect(body.result.table.map(r => r.session_id)).toEqual(expected);
-            if (expected.length) expect(body.result.table[0]).toMatchObject({ project_id: projectId, total_traces_count: 2 });
+            expect(body.table.map(r => r.session_id)).toEqual(expected);
+            if (expected.length) expect(body.table[0]).toMatchObject({ project_id: projectId, total_traces_count: 2 });
             await expect.poll(rowsInGrid, { timeout: UI_READY }).toEqual(expected);
-            const replay = await actor.api.post<ListPage>(LIST, params);
-            complete(replay);
-            expect(replay.result.table.map(r => r.session_id)).toEqual(expected);
+            const replay = await readAPIList(actor.api, params);
+            expect(replay.table.map(r => r.session_id)).toEqual(expected);
             if (phase) saved.push({ labelId: label.id, phase: wanted, params });
             await testInfo.attach(`filter-${label.id}-${phase}-${wanted}`, { body: JSON.stringify({ params, body, replay }), contentType: 'application/json' });
           }
@@ -383,10 +495,13 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
         for (const entry of saved.filter(s => s.phase === 1)) {
           const { project_id: _project, ...unscopedParams } = entry.params;
           const params = sibling ? { ...entry.params, project_id: siblingId } : unscopedParams;
-          const body = await reader.api.post<ListPage | EmptyWorkspacePage>(LIST, params);
-          if (sibling) complete(body as ListPage);
-          else expect(body.result.metadata).toEqual({ total_rows: 0 });
-          expect(body.result.table).toEqual([]);
+          const body = sibling ? await readAPIList(reader.api, params)
+            : await reader.api.post<EmptyWorkspacePage>(LIST, params);
+          if ('pages' in body) expect(body.table).toEqual([]);
+          else {
+            expect(body.result.metadata).toEqual({ total_rows: 0 });
+            expect(body.result.table).toEqual([]);
+          }
           receipts.push({ organizationId: reader.organizationId, workspaceId: reader.workspaceId, params, body });
         }
         receipts.push({ organizationId: reader.organizationId, workspaceId: reader.workspaceId, catalogParams, catalog });
@@ -401,9 +516,8 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
       expect(deleted).toEqual(current.map(s => ({ ...s, deleted: 1, has_delete_timestamp: 1 })));
       await expect.poll(readCH, POLL.CDC_VISIBLE).toEqual(deleted);
       for (const entry of saved) {
-        const body = await actor.api.post<ListPage>(LIST, entry.params);
-        complete(body);
-        expect(body.result.table).toEqual([]);
+        const body = await readAPIList(actor.api, entry.params);
+        expect(body.table).toEqual([]);
         receipts.push({ deletedFilter: entry, body });
       }
       // ObserveHeader's Reload data refreshes Session-grid without discarding useState extraFilters.
@@ -416,15 +530,15 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
       await reload.click();
       const response = await refreshed;
       expect(response.status()).toBe(200);
-      const body = await response.json() as ListPage;
-      complete(body);
-      expect(body.result.table).toEqual([]);
+      const body = await readUIList(response);
+      expect(body.table).toEqual([]);
       await expect.poll(rowsInGrid, { timeout: UI_READY }).toEqual([]);
       expect(await readSource()).toEqual(sourceBefore);
       expect(await readSessions()).toEqual(sessions);
       await testInfo.attach('deleted-score-state', { body: JSON.stringify({ postgres: deleted, clickhouse: await readCH(), refreshed: body }), contentType: 'application/json' });
     });
   } finally {
+    await testInfo.attach('browser-catalog-statuses', { body: JSON.stringify(catalogResponses), contentType: 'application/json' });
     await testInfo.attach('catalog-and-scope-receipts', { body: JSON.stringify(receipts), contentType: 'application/json' });
     await context.close(); // scopeActors/scopeProbe fixtures dispose their own clients/probe.
     await Promise.all(graphReads);

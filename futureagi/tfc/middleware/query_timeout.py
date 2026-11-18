@@ -44,7 +44,7 @@ def monitor_query_performance(func):
         if end - start > 3.0:  # Log queries taking more than 1 second
             logger.warning(
                 f"Slow operation in {func.__name__}: "
-                f"Time: {end-start:.2f}s, "
+                f"Time: {end - start:.2f}s, "
                 f"Queries: {final_queries - initial_queries}"
             )
 

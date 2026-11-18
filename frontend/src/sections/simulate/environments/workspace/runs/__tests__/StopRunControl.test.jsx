@@ -8,11 +8,18 @@ const { enqueueSnackbar } = await import("notistack");
 // The shared cancel hook (POST test-executions/{id}/cancel/) — mocked so mutate
 // resolves synchronously through the callbacks it is handed.
 let cancelOutcome = "success";
+let cancelError = new Error("nope");
 const cancelMutate = vi.fn((id, opts) =>
-  cancelOutcome === "success" ? opts?.onSuccess?.() : opts?.onError?.(new Error("nope")),
+  cancelOutcome === "success"
+    ? opts?.onSuccess?.()
+    : opts?.onError?.(cancelError),
 );
+const useCancelExecution = vi.fn(() => ({
+  mutate: cancelMutate,
+  isPending: false,
+}));
 vi.mock("src/sections/common/simulation/hooks/useCancelExecution", () => ({
-  useCancelExecution: () => ({ mutate: cancelMutate, isPending: false }),
+  useCancelExecution,
 }));
 
 const { default: StopRunControl } = await import("../StopRunControl");
@@ -27,7 +34,9 @@ const renderControl = (props, wrap = (node) => node) => {
 
 beforeEach(() => {
   cancelOutcome = "success";
+  cancelError = new Error("nope");
   cancelMutate.mockClear();
+  useCancelExecution.mockClear();
   enqueueSnackbar.mockClear();
 });
 
@@ -62,6 +71,38 @@ describe("StopRunControl", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop simulation" }));
     fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
     expect(enqueueSnackbar).toHaveBeenCalledWith(expect.stringMatching(/couldn.t stop/i), { variant: "error" });
+  });
+
+  it("says why when the server won't stop a run that is being graded again", () => {
+    cancelOutcome = "error";
+    cancelError = {
+      statusCode: 409,
+      message: "Grading can't be stopped. It finishes on its own.",
+    };
+    renderControl({ executionId: "ex-1", stoppable: true });
+    fireEvent.click(screen.getByRole("button", { name: "Stop simulation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "Grading can't be stopped. It finishes on its own.",
+      { variant: "error" },
+    );
+  });
+
+  it("shows its own error, so the app-wide error toast stays quiet", () => {
+    renderControl({ executionId: "ex-1", stoppable: true });
+    expect(useCancelExecution).toHaveBeenCalledWith({ errorHandled: true });
+  });
+
+  it("keeps the generic line for any other failure", () => {
+    cancelOutcome = "error";
+    cancelError = { statusCode: 500, message: "Failed to cancel test: boom" };
+    renderControl({ executionId: "ex-1", stoppable: true });
+    fireEvent.click(screen.getByRole("button", { name: "Stop simulation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "Couldn't stop the run. Try again",
+      { variant: "error" },
+    );
   });
 
   it("does not open the surrounding row when clicked", () => {

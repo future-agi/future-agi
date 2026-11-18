@@ -49,11 +49,11 @@ const ImageComponent = ({
         justifyContent="center"
         borderRadius={1}
         gap="5px"
-        bgcolor="#00000080"
+        bgcolor="rgba(0,0,0,0.5)"
         sx={{
           opacity: 0,
           visibility: "hidden",
-          transition: "opacity 0.3s ease, visibility 0.3s ease",
+          transition: "opacity 0.2s ease, visibility 0.2s ease",
         }}
       >
         <IconButton
@@ -62,7 +62,7 @@ const ImageComponent = ({
             setSelectedImageId({ id, src });
           }}
         >
-          <Iconify icon="mdi:search-add-outline" />
+          <Iconify icon="solar:magnifier-zoom-in-linear" />
         </IconButton>
         <IconButton
           sx={{ color: "common.white" }}
@@ -70,13 +70,13 @@ const ImageComponent = ({
             setSelectedImageId({ id, src });
           }}
         >
-          <Iconify icon="meteor-icons:arrows-rotate" />
+          <Iconify icon="solar:refresh-linear" />
         </IconButton>
         <IconButton
           sx={{ color: "common.white" }}
           onClick={() => removeImageBlot(id)}
         >
-          <Iconify icon="mynaui:trash-solid" />
+          <Iconify icon="solar:trash-bin-trash-linear" />
         </IconButton>
       </Box>
     </Box>

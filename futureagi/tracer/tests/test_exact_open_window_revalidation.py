@@ -843,7 +843,17 @@ def test_explicit_refresh_of_an_old_hit_enqueues_exactly_once(
 
 def _agent_body() -> dict:
     return {
-        "nodes": [{"id": "agent"}],
+        "nodes": [
+            {
+                "id": "agent",
+                "cost_coverage": {
+                    "status": "complete",
+                    "known_subtotal": 0.0,
+                    "known_fact_count": 0,
+                    "unknown_fact_count": 0,
+                },
+            }
+        ],
         "edges": [],
         "path_edges": [],
         "query_complete": True,
@@ -889,7 +899,7 @@ def test_agent_graph_revalidates_an_old_open_hit_once(queue, temporal_status):
 
     assert first["query_status"] == "complete"
     assert first["query_completed_at"] == completed_at
-    assert first["nodes"] == [{"id": "agent"}]
+    assert first["nodes"] == _agent_body()["nodes"]
     assert first["query_refreshing"] is True
     assert poll["query_refreshing"] is True
     assert [job["namespace"] for job in queue] == [AGENT_NS]

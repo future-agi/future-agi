@@ -154,6 +154,16 @@ def _worker_plans() -> list[_QueuePlan]:
                 max_workflow_tasks=1,
             )
         )
+    if "sql_workbench" not in excluded:
+        plans.append(
+            _QueuePlan(
+                "sql_workbench",
+                [],
+                get_activities_for_queue("sql_workbench"),
+                max_activities=2,
+                max_workflow_tasks=2,
+            )
+        )
     return plans
 
 
@@ -173,28 +183,15 @@ class _QueueRoutingExecutor(concurrent.futures.ThreadPoolExecutor):
 
 
 def _activity_interceptor(pool: concurrent.futures.Executor):
-    from asgiref.sync import ThreadSensitiveContext, sync_to_async
-    from django.db import close_old_connections
-    from temporalio.worker import (
-        ActivityInboundInterceptor,
-        ExecuteActivityInput,
-        Interceptor,
-    )
+    from temporalio.worker import ExecuteActivityInput, Interceptor
 
-    class _Inbound(ActivityInboundInterceptor):
+    from tfc.temporal.common.activity_thread import OwnThreadActivityInbound
+
+    class _Inbound(OwnThreadActivityInbound):
         async def execute_activity(self, input: ExecuteActivityInput):
             token = _activity_pool.set(pool)
             try:
-                async with ThreadSensitiveContext():
-                    try:
-                        return await super().execute_activity(input)
-                    finally:
-                        # The context's private thread dies with the context;
-                        # close the DB connection it opened instead of leaving
-                        # it to GC.
-                        await sync_to_async(
-                            close_old_connections, thread_sensitive=True
-                        )()
+                return await super().execute_activity(input)
             finally:
                 _activity_pool.reset(token)
 
@@ -209,6 +206,9 @@ def _worker_kwargs(client, plan: _QueuePlan, interceptor) -> dict:
     from temporalio.worker import PollerBehaviorSimpleMaximum, UnsandboxedWorkflowRunner
 
     from tfc.management.commands.start_temporal_worker import _workflow_cache_kwargs
+    from tfc.temporal.common.media_tool_interceptor import (
+        MediaToolActivityInterceptor,
+    )
 
     # More pollers than slots cannot take more work; the exact queue has one.
     polls = env_int("TEMPORAL_MAX_CONCURRENT_TASK_POLLS", 2)
@@ -223,7 +223,8 @@ def _worker_kwargs(client, plan: _QueuePlan, interceptor) -> dict:
         # No workflow_task_executor: each Worker builds its own pool sized to
         # its workflow-task slots. A smaller shared pool makes activations
         # queue, and queueing counts toward the SDK's 2 s deadlock timeout.
-        "interceptors": [interceptor],
+        # A missing ffmpeg fails the activity once instead of on every retry.
+        "interceptors": [MediaToolActivityInterceptor(), interceptor],
         "graceful_shutdown_timeout": timedelta(
             seconds=env_int("TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT", 30)
         ),

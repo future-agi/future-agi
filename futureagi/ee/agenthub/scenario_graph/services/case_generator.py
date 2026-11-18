@@ -111,7 +111,9 @@ def generate_cases_for_intent(
         except ImportError:
             check_usage = None
 
-        usage_check = check_usage(org_id, APICallTypeChoices.SYNTHETIC_DATA_GENERATION.value)
+        usage_check = check_usage(
+            org_id, APICallTypeChoices.SYNTHETIC_DATA_GENERATION.value
+        )
         if not usage_check.allowed:
             raise ValueError(usage_check.reason or "Usage limit exceeded")
 
@@ -205,7 +207,9 @@ def _generate_raw_data_from_sda(
             branch_metadatas=branch_metadata_payloads,
             called_for="simulate",
         )
-        total_cost = getattr(getattr(sda, "llm", None), "cost", {}).get("total_cost", 0) or 0
+        total_cost = (
+            getattr(getattr(sda, "llm", None), "cost", {}).get("total_cost", 0) or 0
+        )
     else:
         generated_data, total_cost = _run_parallel_sda_workers(
             sda_payload=sda_payload,
@@ -243,7 +247,10 @@ def _sda_worker_sync(
             branch_metadatas=[branch_meta],
             called_for="simulate",
         )
-        cost = getattr(getattr(local_sda, "llm", None), "cost", {}).get("total_cost", 0) or 0
+        cost = (
+            getattr(getattr(local_sda, "llm", None), "cost", {}).get("total_cost", 0)
+            or 0
+        )
         return data, cost
     except Exception as e:
         logger.exception(
@@ -335,7 +342,9 @@ def _run_parallel_sda_workers(
         return data, cost
 
 
-def _log_generation_cost(generated_data, agent_context: Dict[str, Any], actual_cost: float = 0.0):
+def _log_generation_cost(
+    generated_data, agent_context: Dict[str, Any], actual_cost: float = 0.0
+):
     """Log token usage and deduct cost for the generation."""
     try:
         try:
@@ -343,7 +352,10 @@ def _log_generation_cost(generated_data, agent_context: Dict[str, Any], actual_c
         except ImportError:
             APICallTypeChoices = None
         try:
-            from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
+            from ee.usage.utils.usage_entries import (
+                count_text_tokens,
+                log_and_deduct_cost_for_api_request,
+            )
         except ImportError:
             count_text_tokens = None
             log_and_deduct_cost_for_api_request = None

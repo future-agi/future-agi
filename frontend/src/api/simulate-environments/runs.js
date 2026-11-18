@@ -2,12 +2,15 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
 import { paths } from "src/routes/paths";
-import {
-  STOPPABLE_STATUSES,
-  TERMINAL_STATUSES,
-} from "src/sections/common/simulation/constants/statusStyles";
+import { STOPPABLE_STATUSES } from "src/sections/common/simulation/constants/statusStyles";
+import { runStateFor } from "src/sections/simulate/environments/workspace/runs/runs.constants";
 import { MOCK_RUNS } from "./_fixtures/runs";
 import { harnessEnvironmentKey } from "./environment";
+
+// Grading finishes on its own, so an `Evaluating` run offers no Stop here.
+const STOPPABLE_RUN_STATUSES = STOPPABLE_STATUSES.filter(
+  (s) => s !== "Evaluating",
+);
 
 // The Runs tab's data source. For a real completed harness job the env carries
 // `platform.runTestId`, so the run history is the product's real executions
@@ -19,10 +22,16 @@ import { harnessEnvironmentKey } from "./environment";
 // endpoint is already registered — this adds no apiPath.
 export const RUNS_PAGE_SIZE = 10;
 
-export function listRunTestExecutions(runTestId, { page, limit } = {}) {
+// `summary` reads only each run's id, status and pinned versions, not its calls.
+export function listRunTestExecutions(
+  runTestId,
+  { page, limit, summary } = {},
+) {
   return axios
     .get(endpoints.runTests.detailExecutions(runTestId), {
-      params: page ? { page, limit } : undefined,
+      params: page
+        ? { page, limit, ...(summary ? { summary: true } : {}) }
+        : undefined,
     })
     .then((res) => res.data);
 }
@@ -36,64 +45,59 @@ export function listRunTestExecutions(runTestId, { page, limit } = {}) {
 // and order (kept out of this pure mapper). `executionId` mirrors `id` so a row
 // click routes into the
 // reused product execution detail.
-const RUN_STATE = {
-  Pending: "queued",
-  Running: "running",
-  Evaluating: "running",
-  Cancelling: "cancelling",
-  Completed: "finished",
-  Failed: "failed",
-  Cancelled: "cancelled",
-};
-
 export function executionToRun(raw) {
   const total =
-    raw?.total_calls ?? raw?.total_chats ?? raw?.calls_attempted ?? raw?.calls ?? 0;
+    raw?.total_calls ??
+    raw?.total_chats ??
+    raw?.calls_attempted ??
+    raw?.calls ??
+    0;
   const hasOutcomes = raw?.outcome_passed != null;
   const rate = raw?.success_rate ?? 0;
   const passed = hasOutcomes
     ? raw.outcome_passed
     : raw?.completed_calls ?? Math.round((total * rate) / 100);
   const skipped = hasOutcomes ? raw.outcome_skipped ?? 0 : 0;
+  const errored = hasOutcomes ? raw.outcome_errored ?? 0 : 0;
   const failed = hasOutcomes
-    ? (raw.outcome_failed ?? 0) + skipped
+    ? raw.outcome_failed ?? 0
     : raw?.failed_calls ?? Math.max(total - passed, 0);
-
-  let status;
-  if (!TERMINAL_STATUSES.includes(raw?.status)) {
-    status = "running";
-  } else if (raw.status === "Cancelled") {
-    // A stopped run is terminal but not a failure.
-    status = "cancelled";
-  } else if (raw.status === "Completed" && failed === 0) {
-    status = "passed";
-  } else {
-    status = "failed";
-  }
 
   return {
     id: raw?.id,
     executionId: raw?.id,
-    status,
+    status: raw.outcome_status,
+    // The run's trial pass, 0-100, as its own page reads it; null when no trial passed or failed.
+    passRate: raw.trial_pass_rate,
+    trialsPassed: raw.trials_passed,
+    trialsEvaluated: raw.trials_evaluated,
+    trialsInconclusive: raw.trials_inconclusive,
     // The run's lifecycle for the Status column — `status` above is a verdict
     // (passed/failed), this is where the run is (queued/running/completed).
-    runState: RUN_STATE[raw?.status] ?? status,
+    runState: runStateFor(raw.status),
     // Only a run that hasn't finished and isn't already stopping can be stopped.
-    stoppable: STOPPABLE_STATUSES.includes(raw?.status),
+    stoppable: STOPPABLE_RUN_STATUSES.includes(raw?.status),
+    // Its evals are being graded. `runState` reads this as running, like a run
+    // whose calls are still going.
+    grading: raw?.status === "Evaluating",
     startedAt: raw?.start_time ?? null,
     finishedAt: raw?.completed_at ?? null,
     total,
     passed,
     failed,
-    pending: hasOutcomes
-      ? Math.max(total - passed - failed, 0)
-      : raw?.pending_calls ?? Math.max(total - passed - failed, 0),
+    scored: raw.scored,
+    errored,
     skipped,
     hasOutcomes,
     scenarioCount: raw?.selected_scenarios ?? null,
     scenarioIds: raw?.scenario_keys ?? [],
     trials: raw?.trials ?? 1,
     agentVersion: raw?.agent_version ?? null,
+    // The versions the run was pinned to ({id, label}), null before versioning.
+    pinnedAgentVersion: raw?.pinned_agent_version ?? null,
+    environmentVersion: raw?.environment_version ?? null,
+    suiteVersion: raw?.suite_version ?? null,
+    agentDiffers: Boolean(raw?.agent_differs),
     durationS: raw?.duration ?? null,
   };
 }
@@ -140,13 +144,14 @@ export function useEnvironmentRuns(
   const query = useQuery({
     queryKey: ["run-test-executions", runTestId, page, pageSize],
     queryFn: () =>
-      listRunTestExecutions(runTestId, { page: page + 1, limit: pageSize }).then(
-        (payload) => ({
-          runs: mapExecutions(payload, page * pageSize),
-          count: payload?.count ?? 0,
-          coveredScenarioCount: payload?.covered_scenario_count ?? null,
-        }),
-      ),
+      listRunTestExecutions(runTestId, {
+        page: page + 1,
+        limit: pageSize,
+      }).then((payload) => ({
+        runs: mapExecutions(payload, page * pageSize),
+        count: payload?.count ?? 0,
+        coveredScenarioCount: payload?.covered_scenario_count ?? null,
+      })),
     enabled: !!runTestId && !mockRuns,
     placeholderData: keepPreviousData,
     refetchInterval: (query) =>
@@ -192,4 +197,3 @@ export function runSimulationTarget(env) {
   }
   return paths.dashboard.simulate.test;
 }
-

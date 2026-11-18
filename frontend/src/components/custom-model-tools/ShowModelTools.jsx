@@ -5,7 +5,6 @@ import {
   IconButton,
   Skeleton,
   Typography,
-  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
@@ -16,9 +15,9 @@ import SvgColor from "src/components/svg-color";
 import EditTool from "./EditTool";
 import { useRunPromptOptions } from "src/api/develop/develop-detail";
 import { ShowComponent } from "../show";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
-  const theme = useTheme();
   const [selectedTool, setSelectedTool] = useState(
     tools?.map((item) => {
       return Object.prototype.hasOwnProperty.call(item, "tool")
@@ -99,13 +98,12 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
         <IconButton
           onClick={onClose}
           sx={{
-            borderRadius: "4px",
             position: "absolute",
             top: "16px",
             right: "16px",
           }}
         >
-          <Iconify icon="mingcute:close-line" color="text.primary" />
+          <Iconify icon="solar:close-linear" color="text.primary" />
         </IconButton>
       </Box>
       <Box
@@ -120,28 +118,8 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
         <Button
           onClick={handleCreateTool}
           variant="outlined"
-          startIcon={<Iconify icon="eva:plus-fill" />}
-          sx={{
-            width: "150px",
-            height: "38px",
-            border: "1px solid",
-            borderColor: "border.default",
-            color: "text.primary",
-            fontWeight: (theme) => theme.typography.fontWeightMedium,
-            ...theme.typography["s1"],
-            display: "flex",
-            alignItems: "center",
-            flexDirection: "row",
-            py: (theme) => theme.spacing(1),
-            px: (theme) => theme.spacing(3),
-            borderRadius: "8px",
-            "& .MuiButton-startIcon": {
-              marginRight: "4px",
-            },
-            // "&:hover": {
-            //   backgroundColor: "background.neutral",
-            // },
-          }}
+          startIcon={<Iconify icon="solar:add-linear" />}
+          sx={{ alignSelf: "flex-start" }}
         >
           Create tool
         </Button>
@@ -206,10 +184,7 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
                   {item.name}
                 </Typography>
                 <Box sx={{ display: "flex", gap: "8px" }}>
-                  <IconButton
-                    onClick={() => handleEditTool(item)}
-                    sx={{ padding: "4px", height: "24px", borderRadius: "4px" }}
-                  >
+                  <IconButton size="small" onClick={() => handleEditTool(item)}>
                     <SvgColor
                       src="/assets/prompt/editPencil.svg"
                       sx={{
@@ -220,11 +195,11 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
                     />
                   </IconButton>
                   <IconButton
+                    size="small"
                     onClick={() => handleDeleteTool(item)}
-                    sx={{ padding: "4px", height: "24px", borderRadius: "4px" }}
                   >
                     <Iconify
-                      icon="mingcute:close-line"
+                      icon="solar:close-linear"
                       color="text.primary"
                       width={16}
                       height={16}
@@ -249,14 +224,6 @@ const ShowModelToolsChild = ({ onClose, handleApply, tools }) => {
           onClick={handleApplyTool}
           variant="contained"
           color="primary"
-          sx={{
-            width: "200px",
-            height: "38px",
-            fontWeight: (theme) => theme.typography.fontWeightMedium,
-            ...theme.typography["s1"],
-            py: (theme) => theme.spacing(1),
-            px: (theme) => theme.spacing(3),
-          }}
         >
           Save
         </LoadingButton>
@@ -272,18 +239,20 @@ ShowModelToolsChild.propTypes = {
 };
 
 const ShowModelTools = ({ open, onClose, handleApply, tools }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={onClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           height: "100vh",
-          width: "550px",
+          width: "480px",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

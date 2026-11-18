@@ -349,6 +349,13 @@ def create_cluster(
         trace_id=issue.trace_id,
         scan_issue_id=issue.issue_id,
     )
+    from tracer.services.feed_alerts.events import record_issue_event
+
+    record_issue_event(
+        cluster=cluster,
+        before=None,
+        source_key=f"scanner-create:{issue.issue_id}",
+    )
 
     # Store centroid in ClickHouse
     db = ClickHouseVectorDB()
@@ -556,6 +563,9 @@ def assign_to_cluster(
     cluster = TraceErrorGroup.objects.get(cluster_id=cluster_id, project_id=project_id)
     if is_grouping_issue(cluster.pk):
         raise ValueError("legacy scanner cannot assign to an Omega-owned issue")
+    from tracer.services.feed_alerts.events import issue_snapshot, record_issue_event
+
+    alert_before = issue_snapshot(cluster)
 
     # Link issue → cluster. Both membership writes are idempotent: re-running the
     # scan over a trace updates the issue row it already owns, and matches the
@@ -589,6 +599,12 @@ def assign_to_cluster(
             "updated_at",
         ]
     )
+    record_issue_event(
+        cluster=cluster,
+        before=alert_before,
+        source_key=f"scanner-assign:{issue.issue_id}:{cluster.pk}",
+    )
+    alert_after_count = issue_snapshot(cluster)
 
     # Incrementally update centroid in ClickHouse
     db = ClickHouseVectorDB()
@@ -675,6 +691,11 @@ def assign_to_cluster(
         "issue_assigned_to_cluster",
         cluster_id=cluster_id,
         issue_id=issue.issue_id,
+    )
+    record_issue_event(
+        cluster=cluster,
+        before=alert_after_count,
+        source_key=f"scanner-grade:{issue.issue_id}:{cluster.pk}",
     )
 
 
@@ -968,6 +989,10 @@ def _merge_pg(keep_id: str, absorb_id: str, project_id: str):
         keep, absorb = absorb, keep  # survive the triaged one instead
         keep_id, absorb_id = absorb_id, keep_id
 
+    from tracer.services.feed_alerts.events import issue_snapshot, record_issue_event
+
+    alert_before = issue_snapshot(keep)
+
     TraceScanIssue.objects.filter(cluster=absorb).update(cluster=keep)
 
     # The junction is unique per (cluster, trace); a trace present in both clusters
@@ -1007,6 +1032,11 @@ def _merge_pg(keep_id: str, absorb_id: str, project_id: str):
             "unique_traces",
             "updated_at",
         ]
+    )
+    record_issue_event(
+        cluster=keep,
+        before=alert_before,
+        source_key=f"scanner-merge:{keep.pk}:{absorb.pk}",
     )
 
     absorb.delete()

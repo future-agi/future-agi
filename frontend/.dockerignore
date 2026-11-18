@@ -108,3 +108,7 @@ __pycache__/
 **/.mypy_cache/
 .uv-cache/
 **/.uv-cache/
+
+# Private updater state contains complete retained env files (including secrets).
+# Keep this recursive exclusion LAST: later negations must not re-include it.
+**/.futureagi-updates/

@@ -27,7 +27,9 @@ from tracer.utils.otel import (
     WorkflowAttributes,
 )
 
-metrics_calculator = ConversationMetricsCalculator() if ConversationMetricsCalculator else None
+metrics_calculator = (
+    ConversationMetricsCalculator() if ConversationMetricsCalculator else None
+)
 
 # The four Vapi recording OTel attribute keys that _extract_recording_urls writes.
 _VAPI_RECORDING_KEYS: list[str] = [
@@ -86,7 +88,7 @@ def _rehost_recording_urls_sync(
 
         # Derive url_type from the key tail (e.g. "mono.combined" -> "mono_combined")
         if key.startswith(prefix):
-            tail = key[len(prefix):]
+            tail = key[len(prefix) :]
         else:
             tail = key
         url_type = _VAPI_URL_TYPE_BY_KEY.get(tail)
@@ -113,9 +115,13 @@ def _rehost_recording_urls_sync(
     # Mirror S3 URLs onto flat consumer-facing aliases (in-place on eval_attributes)
     mono_s3 = s3_url_by_url_type.get("mono_combined")
     stereo_s3 = s3_url_by_url_type.get("stereo")
-    if mono_s3 and not VapiRecordingService.is_fagi_s3_url(eval_attributes.get("recording_url")):
+    if mono_s3 and not VapiRecordingService.is_fagi_s3_url(
+        eval_attributes.get("recording_url")
+    ):
         eval_attributes["recording_url"] = mono_s3
-    if stereo_s3 and not VapiRecordingService.is_fagi_s3_url(eval_attributes.get("stereo_recording_url")):
+    if stereo_s3 and not VapiRecordingService.is_fagi_s3_url(
+        eval_attributes.get("stereo_recording_url")
+    ):
         eval_attributes["stereo_recording_url"] = stereo_s3
 
     # Mirror to CallExecution / CallExecutionSnapshot (best-effort, import-guarded).

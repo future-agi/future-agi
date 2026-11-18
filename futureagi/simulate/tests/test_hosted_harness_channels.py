@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -12,8 +13,15 @@ from django.test import override_settings
 from django.utils import timezone as django_timezone
 from rest_framework.test import APIClient
 
-from simulate.models import CallExecution, HostedHarnessJob, HostedHarnessReceipt
+from simulate.models import (
+    CallExecution,
+    HostedHarnessExecution,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
+    HostedHarnessScenario,
+)
 from simulate.models.chat_message import ChatMessageModel
+from simulate.serializers.hosted_harness import HarnessCallSerializer
 from simulate.services.harness_scenarios import index_scenarios
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -26,6 +34,7 @@ from simulate.services.hosted_harness import (
 )
 from simulate.services.hosted_harness_ingestion import (
     _apply_receipt_to_call,
+    _apply_target_metrics,
     _call_lifecycle_status,
     _ingest_hosted_transcript,
     _normalized_artifact_content_type,
@@ -37,6 +46,36 @@ from simulate.services.hosted_harness_ingestion import (
 )
 
 BASE = "/simulate/api/harness/attempts"
+
+
+def test_retry_target_metrics_replace_tokens_without_erasing_other_metrics():
+    call = SimpleNamespace(
+        conversation_metrics_data={"csat_score": 8, "turn_count": 4},
+        ended_reason="",
+    )
+    _apply_target_metrics(
+        call,
+        {
+            "usage": {
+                "prompt_tokens": 900,
+                "completion_tokens": 100,
+                "total_tokens": 1000,
+            },
+            "cost_cents": 12,
+        },
+    )
+    assert call.conversation_metrics_data["total_tokens"] == 1000
+
+    _apply_target_metrics(call, {"usage": {"prompt_tokens": 50}})
+    assert call.conversation_metrics_data == {
+        "csat_score": 8,
+        "turn_count": 4,
+        "input_tokens": 50,
+    }
+    assert call.customer_cost_cents is None
+
+    _apply_target_metrics(call, None)
+    assert call.conversation_metrics_data == {"csat_score": 8, "turn_count": 4}
 
 
 @pytest.mark.django_db
@@ -429,7 +468,7 @@ def test_receipt_coverage_distinguishes_missing_grading_from_agent_failure():
             ],
             "evaluations": [],
         }
-    ) == {"expected": 2, "executed": 1, "failed": 1, "complete": False}
+    ) == {"expected": 2, "executed": 1, "failed": 1, "unmeasured": 0, "complete": False}
 
 
 def test_errored_scenario_with_completed_call_keeps_completed_lifecycle():
@@ -491,6 +530,7 @@ def test_receipt_projects_actual_call_end_time_and_duration():
             "duration_ms": 82_000,
             "recording_artifacts": [],
             "stop_reason": "simulator_end_call",
+            "script_completed": False,
         },
         "sub_goals": [],
         "evaluations": [],
@@ -506,13 +546,34 @@ def test_receipt_projects_actual_call_end_time_and_duration():
         artifacts.filter.return_value.order_by.return_value.last.return_value = None
         _apply_receipt_to_call(registration, body)
 
-    assert call.started_at == "2026-08-27T10:00:00Z"
-    assert call.ended_at == "2026-08-27T10:01:22Z"
-    assert call.completed_at == "2026-08-27T10:01:22Z"
+    assert call.started_at == datetime(2026, 8, 27, 10, 0, tzinfo=UTC)
+    assert call.ended_at == datetime(2026, 8, 27, 10, 1, 22, tzinfo=UTC)
+    assert call.completed_at == call.ended_at
+    assert body["call"]["started_at"] == "2026-08-27T10:00:00Z"
+    assert body["call"]["ended_at"] == "2026-08-27T10:01:22Z"
     assert call.duration_seconds == 82
     assert call.ended_reason == "simulator_end_call"
+    assert (
+        call.call_metadata["hosted_harness_receipt"]["call"]["script_completed"]
+        is False
+    )
     assert call.error_message == ""
     call.save.assert_called_once()
+
+
+@pytest.mark.parametrize("script_completed", [True, False])
+def test_call_receipt_accepts_explicit_script_completion(script_completed):
+    call = {
+        "started_at": "2026-08-27T10:00:00Z",
+        "ended_at": "2026-08-27T10:01:22Z",
+        "duration_ms": 82_000,
+        "turns": 4,
+        "stop_reason": "simulator_end_call",
+        "script_completed": script_completed,
+    }
+    serializer = HarnessCallSerializer(data=call)
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["script_completed"] is script_completed
 
 
 def test_read_hosted_tool_trace_ignores_blank_and_malformed_lines():
@@ -694,6 +755,13 @@ def test_hosted_text_transcript_is_materialized_for_chat_ui(organization, worksp
             "messages": [
                 {"role": "user", "content": "Where is my invoice?"},
                 {"role": "assistant", "content": "I can look that up."},
+                {
+                    "role": "actor",
+                    "actor": "partner",
+                    "name": "Sam",
+                    "content": "It is invoice 1046.",
+                },
+                {"role": "assistant", "content": "Looking up invoice 1046."},
             ]
         }
     ).encode()
@@ -710,7 +778,12 @@ def test_hosted_text_transcript_is_materialized_for_chat_ui(organization, worksp
         ChatMessageModel.objects.filter(call_execution=call)
         .order_by("created_at", "role")
         .values_list("role", flat=True)
-    ) == ["user", "assistant"]
+    ) == ["user", "assistant", "user", "assistant"]
+    # What someone else in the conversation wrote reaches the chat view and every judge, named as not the person.
+    assert ChatMessageModel.objects.filter(
+        call_execution=call,
+        messages=["Sam (not the person being served): It is invoice 1046."],
+    ).exists()
     response.close.assert_called_once_with()
     response.release_conn.assert_called_once_with()
 
@@ -986,8 +1059,115 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
         "expected": 1,
         "executed": 1,
         "failed": 0,
+        "unmeasured": 0,
         "complete": True,
     }
+
+
+@pytest.mark.django_db
+def test_receipt_target_metrics_fill_customer_fields_not_platform_cost(
+    organization, workspace
+):
+    """A Vapi/Retell target's own cost, latency and tokens arrive on the signed receipt
+    and land in the customer fields, never in `cost_cents`, the platform's own cost."""
+    job, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="target-metrics-key",
+        workspace=workspace,
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    headers = _headers(capability)
+    provisioned = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Target metrics",
+            "modality": "voice",
+            "personas": [
+                {
+                    "scenario_key": "booking",
+                    "name": "Caller",
+                    "situation": "Books a ride",
+                    "outcome": "Ride booked",
+                }
+            ],
+        },
+        format="json",
+        **headers,
+    ).json()["result"]
+    begin = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["booking"],
+        },
+        format="json",
+        **headers,
+    )
+    assert begin.status_code == 200, begin.content
+
+    def post(call_extra):
+        receipt = {
+            "schema_version": "futureagi.harness-result.v1",
+            "job_id": str(job.id),
+            "attempt_id": str(capability.attempt.id),
+            "attempt_number": 1,
+            "scenario_key": "booking",
+            "scenario_id": provisioned["scenarios"][0]["scenario_id"],
+            "scenario_attempt": 1,
+            "world_index": 0,
+            "status": "passed",
+            "sub_goals": [],
+            "evaluations": [],
+            "call": {
+                "started_at": "2026-09-28T10:00:00.000Z",
+                "ended_at": "2026-09-28T10:01:00.000Z",
+                "duration_ms": 60_000,
+                "turns": 4,
+                "transcript_artifact": None,
+                "recording_artifacts": [],
+                **call_extra,
+            },
+            "failure": None,
+        }
+        receipt["digest"] = canonical_digest(receipt)
+        with patch("simulate.services.hosted_harness_ingestion.transaction.on_commit"):
+            response = client.post(
+                f"{BASE}/{capability.attempt.id}/results/",
+                receipt,
+                format="json",
+                **headers,
+            )
+        assert response.status_code == 200, response.content
+        call = job.scenario_registrations.get().call_execution
+        call.refresh_from_db()
+        return call
+
+    call = post(
+        {
+            "target_metrics": {
+                "provider": "vapi",
+                "usage": {
+                    "prompt_tokens": 900,
+                    "completion_tokens": 100,
+                    "total_tokens": 1000,
+                },
+                "cost_cents": 12,
+                "latency": {"turn": 1180, "model": 520, "turns": [900, 1461]},
+            }
+        }
+    )
+    assert call.customer_cost_cents == 12
+    assert call.cost_cents is None
+    assert call.customer_latency_metrics == {
+        "systemMetrics": {"turn": 1180, "model": 520},
+        "turnLatencies": [900, 1461],
+    }
+    assert call.conversation_metrics_data["input_tokens"] == 900
+    assert call.conversation_metrics_data["output_tokens"] == 100
 
 
 @pytest.mark.django_db
@@ -1276,6 +1456,79 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
     assert HostedHarnessReceipt.no_workspace_objects.filter(job=job).count() == 1
     first.attempt.refresh_from_db()
     assert first.attempt.receipt_history["same-scenario"]["attempt_number"] == 1
+
+
+@pytest.mark.django_db
+def test_counts_include_a_runs_calls_linked_through_its_executions(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="run-execution-counts-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Run counts",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "run-scenario",
+                    "name": "Customer",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert provision.status_code == 200
+    begin = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provision.json()["result"]["run_test_id"],
+            "scenario_keys": ["run-scenario"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert begin.status_code == 200
+    # A run's call hangs off its execution, not off the authored scenario.
+    registration = HostedHarnessScenario.no_workspace_objects.get(job=job)
+    call = registration.call_execution
+    HostedHarnessScenario.no_workspace_objects.filter(id=registration.id).update(
+        call_execution=None
+    )
+    execution = HostedHarnessExecution.no_workspace_objects.create(
+        job=job,
+        source_scenario=registration,
+        execution_key="run-scenario:0",
+        trial_index=0,
+        call_execution=call,
+    )
+    HostedHarnessReceipt.no_workspace_objects.create(
+        job=job,
+        attempt=capability.attempt,
+        scenario=registration,
+        execution=execution,
+        attempt_number=capability.attempt.attempt_number,
+        digest="d" * 64,
+        status="failed",
+        body={},
+    )
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.COMPLETED
+    )
+
+    update_execution_counts(job)
+
+    call.test_execution.refresh_from_db()
+    assert (
+        call.test_execution.completed_calls,
+        call.test_execution.failed_calls,
+    ) == (1, 0)
 
 
 @pytest.mark.django_db
@@ -1649,6 +1902,78 @@ def test_artifact_upload_is_content_addressed_and_manifest_is_acked(organization
     assert capability.attempt.manifest_acked is True
     job.refresh_from_db()
     assert job.state == HostedHarnessJob.State.CLEANING_UP
+
+
+@pytest.mark.django_db
+def test_a_trial_s_end_state_is_kept_as_a_world_state_artifact(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="world-state-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    content = json.dumps(
+        {
+            "schema": "futureagi.world-state.v1",
+            "tables": {"orders": []},
+            "skipped": [],
+            "action_log": [],
+        }
+    ).encode()
+    digest = hashlib.sha256(content).hexdigest()
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=MagicMock(),
+    ):
+        response = APIClient().generic(
+            "PUT",
+            f"{BASE}/{capability.attempt.id}/artifacts/{digest}/",
+            content,
+            content_type="application/json",
+            HTTP_X_ARTIFACT_KIND="world_state",
+            HTTP_X_ARTIFACT_SIZE=str(len(content)),
+            HTTP_X_SCENARIO_KEY="refund-1",
+            **_headers(capability),
+        )
+    assert response.status_code == 201, response.content
+
+    # The trial's World changes name it by digest, so the result links the end state of that trial, not another's.
+    from simulate.selectors.call_detail import trial_state as _trial_state
+    from simulate.services.hosted_harness_ingestion import _world_change_fields
+
+    sealed = _world_change_fields(
+        {"end_state_artifact": f"sha256:{digest}", "start": {"state": "seeded"}}
+    )
+    assert sealed["end_state_artifact"] == f"sha256:{digest}"
+    assert (
+        _world_change_fields({"end_state_artifact": "not-a-digest"}).get(
+            "end_state_artifact"
+        )
+        is None
+    )
+    # The job names no platform run; the trial finds its end state by the job that sent its receipt.
+    assert "platform_run_id" not in (job.payload.get("metadata") or {})
+
+    def trial(organization_id, workspace_id, job_id=job.id):
+        run_test = SimpleNamespace(
+            organization_id=organization_id, workspace_id=workspace_id
+        )
+        return SimpleNamespace(
+            call_metadata={
+                "harness_trial_state": {"state_changes": [], **sealed},
+                "hosted_harness_receipt": {"job_id": str(job_id)},
+            },
+            test_execution=SimpleNamespace(run_test=run_test),
+        )
+
+    linked = _trial_state(trial(job.organization_id, job.workspace_id))
+    assert linked["end_state_url"] and digest in linked["end_state_url"]
+    # The same digest named by another organisation's, workspace's or job's trial links nothing.
+    for other in (
+        trial(uuid.uuid4(), job.workspace_id),
+        trial(job.organization_id, uuid.uuid4()),
+        trial(job.organization_id, job.workspace_id, uuid.uuid4()),
+        trial(job.organization_id, job.workspace_id, "not-a-job"),
+    ):
+        assert "end_state_url" not in _trial_state(other)
 
 
 @pytest.mark.django_db
