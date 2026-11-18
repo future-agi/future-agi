@@ -650,3 +650,38 @@ def test_an_edit_and_run_on_a_run_still_running_is_a_409_with_a_code(
     assert "COMPLETED, CANCELLED, or FAILED" in response.json()["result"]
     assert _call_state(call) == cell
     grading.assert_not_called()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("raised", "status_code", "code"),
+    [
+        ("RegradeEvalNotFound", 409, "rerun_evals_changed"),
+        ("RegradeRefused", 409, "rerun_evals_changed"),
+        ("RegradeNothingToGrade", 400, "rerun_evals_nothing_to_grade"),
+    ],
+)
+def test_an_eval_that_changes_under_an_edit_and_run_is_a_409(
+    auth_client, harness_run, eval_template, grading, raised, status_code, code
+):
+    """The guard let this config through, so a missing or refused eval can only mean it
+    changed under the request, as "Re-run evals" answers it; never the harness sentence."""
+    from simulate.services import run_regrade
+
+    config, execution, call = _mapped_harness_cell(
+        harness_run, eval_template, TestExecution.ExecutionStatus.COMPLETED
+    )
+
+    with patch(
+        "simulate.views.run_test.regrade_run_evals",
+        side_effect=getattr(run_regrade, raised)(),
+    ):
+        response = _edit_and_run(auth_client, harness_run, config, execution)
+
+    assert response.status_code == status_code, response.content
+    assert response.json()["code"] == code
+    if code == "rerun_evals_changed":
+        assert response.json()["result"] == (
+            "This evaluation changed while the request was being made. Try again."
+        )
+    grading.assert_not_called()

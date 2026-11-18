@@ -5417,7 +5417,14 @@ class UpdateEvalConfigView(APIView):
             )
         except RegradeStillFinishing as still_finishing:
             return refuse("rerun_evals_still_finishing", str(still_finishing))
-        except (RegradeEvalNotFound, RegradeRefused, RegradeNothingToGrade) as refused:
+        except (RegradeEvalNotFound, RegradeRefused):
+            # The guard above let this config through, so the eval can only have changed
+            # under this request: a conflict with the row's state, as "Re-run evals" answers it.
+            return refuse(
+                "rerun_evals_changed",
+                "This evaluation changed while the request was being made. Try again.",
+            )
+        except RegradeNothingToGrade as refused:
             return refuse(
                 "rerun_evals_nothing_to_grade",
                 str(refused)
