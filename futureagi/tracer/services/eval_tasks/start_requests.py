@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import structlog
 from django.db import transaction
-from django.db.models import Exists, F, OuterRef, Q
+from django.db.models import Exists, OuterRef, Q
 from django.db.models.functions import Now
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
@@ -22,7 +22,6 @@ from tracer.models.eval_task import (
     EvalTaskLogger,
     EvalTaskStartRequest,
     EvalTaskStatus,
-    InstantEvalResume,
     RunType,
 )
 from tracer.models.instant_eval import InstantEvalRun
@@ -39,7 +38,6 @@ UNCONFIRMED_AFTER = timedelta(minutes=30)
 # missed start from an accepted execution whose history expired.
 HISTORY_WINDOW = timedelta(days=1)
 MAX_ATTEMPTS = 2
-RESUME_OUTSTANDING = "A Resume is already awaiting confirmation."
 START_FAILURE_MESSAGE = (
     "The run couldn't start after an automatic retry. Your task is saved."
 )
@@ -85,39 +83,45 @@ def has_recorded_work(task):
         .filter(eval_task_id=task.pk)
         .exclude(hash_cursor="")
         .exists()
-        or InstantEvalResume.objects.using("default")
-        .filter(pk=task.pk, admitted_run_id__isnull=False)
-        .exists()
     )
 
 
-def resume_block_reason(task):
-    if InstantEvalResume.outstanding(task.pk).exists():
-        return RESUME_OUTSTANDING
-    state = _requests().filter(pk=task.pk).values_list("state", flat=True).first()
-    if state == State.START_FAILED:
+def resume_block_reason(task, *, instant=False):
+    intent = (
+        _requests()
+        .filter(pk=task.pk)
+        .annotate(watched=EvalTaskStartRequest.live_condition())
+        .values("state", "watched")
+        .first()
+    )
+    state = intent["state"] if intent else None
+    # A failed create has no end_time. A later explicit Re-run that itself
+    # ran and failed has its own end_time; judge that run on its evidence.
+    failed_create = task.status == EvalTaskStatus.FAILED and not task.end_time
+    if failed_create and state == State.START_FAILED:
         return START_FAILURE_MESSAGE
     if has_recorded_work(task):
         return None
-    if state == State.EXHAUSTED:
+    if failed_create and state == State.EXHAUSTED:
+        if instant:
+            # Ask has Retry / Run again, not the standard task page's Re-run.
+            return _MESSAGES["execution_closed_without_progress"]
         return "This start request is closed. Use Re-run to make a new start request."
-    if state not in (None, State.VOID):
+    if intent and intent["watched"]:
         return "No previous run could be confirmed for this task."
-    # A void create can be RUNNING at its gate, or COMPLETED with start_fenced.
-    # Only an independently started drain (e.g. a later explicit Re-run) can
-    # prove prior execution here. Pre-intent tasks retain the legacy check.
-    void = state == State.VOID
+    # Preserve terminal create history after Re-run. A generic CLOSED might
+    # describe the old gated execution; require an independent drain type.
     try:
         history = _call(
             client.describe_eval_task_workflow_sync,
             task.pk,
             timeout=5,
-            **({"distinguish_legacy": True} if void else {}),
+            **({"distinguish_legacy": True} if intent else {}),
         )
     except _TransportUnavailable:
         history = None
-    closed = client.WF_LEGACY_CLOSED if void else client.WF_CLOSED
-    active = client.WF_LEGACY_PROGRESSING if void else client.WF_PROGRESSING
+    closed = client.WF_LEGACY_CLOSED if intent else client.WF_CLOSED
+    active = client.WF_LEGACY_PROGRESSING if intent else client.WF_PROGRESSING
     if history == closed or (
         history == active and task.status == EvalTaskStatus.PAUSED
     ):
@@ -205,93 +209,6 @@ def start_request_error(task):
 
 
 @transaction.atomic(using="default")
-def _fail_instant_resume(task_id, token):
-    """A matching close/rejection loses to admission or a newer handoff."""
-    task = (
-        EvalTask.objects.using("default").select_for_update().filter(pk=task_id).first()
-    )
-    removed, _ = InstantEvalResume.outstanding(task_id).filter(token=token).delete()
-    if removed and task and task.status == EvalTaskStatus.PENDING:
-        task.status = EvalTaskStatus.FAILED
-        task.save(update_fields=["status", "updated_at"])
-    return bool(removed)
-
-
-def reconcile_instant_resume(task_id, token):
-    """Only a terminal describe carrying this handoff's token can settle it."""
-    try:
-        history = _call(
-            client.describe_eval_task_workflow_sync,
-            task_id,
-            timeout=5,
-            resume_token=str(token),
-        )
-    except _TransportUnavailable:
-        return False
-    return history == client.WF_RESUME_CLOSED and _fail_instant_resume(task_id, token)
-
-
-def queue_instant_resume(task, run):
-    """Both Resume endpoints hold the run (if any), then the task lock here."""
-    from temporalio.service import RPCError, RPCStatusCode
-
-    if InstantEvalResume.outstanding(task.pk).exists():
-        return False
-    token = uuid4()
-    InstantEvalResume.objects.using("default").update_or_create(
-        task=task, defaults={"token": token, "admitted_run_id": None}
-    )
-    if run is not None:
-        InstantEvalRun.objects.using("default").filter(pk=run.pk).update(
-            answers_version=F("answers_version") + 1
-        )
-    task.status = EvalTaskStatus.PENDING
-    task.save(update_fields=["status", "updated_at"])
-    EvalTaskStartRequest.void_for_tasks([task.pk])
-
-    def send():
-        try:
-            client.start_eval_task_workflow_sync(
-                task, replace_existing=True, resume_token=str(token)
-            )
-        except Exception as exc:
-            logger.warning(
-                "instant_eval_resume_send_failed", error_type=type(exc).__name__
-            )
-            # A lost reply may still have a live worker. Never resend automatically.
-            if isinstance(exc, RPCError) and exc.status in (
-                RPCStatusCode.INVALID_ARGUMENT,
-                RPCStatusCode.PERMISSION_DENIED,
-                RPCStatusCode.UNAUTHENTICATED,
-            ):
-                _fail_instant_resume(task.pk, token)
-
-    transaction.on_commit(send, using="default")
-    return True
-
-
-@transaction.atomic(using="default")
-def admit_instant_resume(task_id, token, run_id):
-    """Only the worker for this handoff can admit it, even after a lost reply."""
-    task = _live_tasks(task_id).select_for_update(of=("self",)).first()
-    rows = InstantEvalResume.objects.using("default").filter(pk=task_id, token=token)
-    resume = rows.select_for_update().first()
-    if resume is None:
-        return False
-    if resume.admitted_run_id:
-        return (
-            str(resume.admitted_run_id) == run_id
-            and task is not None
-            and task.status in (EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING)
-        )
-    if task is None or task.status != EvalTaskStatus.PENDING:
-        rows.delete()  # Pause/delete won before this replacement reached its gate.
-        return False
-    rows.update(admitted_run_id=run_id)
-    return True
-
-
-@transaction.atomic(using="default")
 def admit_start(task_id, run_id):
     """First actual execution of the live request wins, whatever its send order.
 
@@ -300,14 +217,8 @@ def admit_start(task_id, run_id):
     that run is safe, but an independent execution can never pass.
     """
     task = _live_tasks(task_id).select_for_update(of=("self",)).first()
-    rows = (
-        _requests()
-        .filter(
-            pk=task_id,
-            attempts__gt=0,
-            state__in=(State.CLAIMED, State.PENDING, State.ACCEPTED),
-        )
-        .exclude(last_outcome="execution_completed")
+    rows = _requests().filter(
+        EvalTaskStartRequest.live_condition(), pk=task_id, attempts__gt=0
     )
     request = rows.select_for_update().annotate(db_now=Now()).first()
     if request is None or task is None:

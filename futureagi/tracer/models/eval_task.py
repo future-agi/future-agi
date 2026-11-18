@@ -142,10 +142,18 @@ class EvalTaskStartRequest(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     @classmethod
+    def live_condition(cls):
+        # ACCEPTED with a lease is still watching for the worker. Without a
+        # lease it is a final observation, like START_FAILED or EXHAUSTED.
+        return models.Q(state__in=(cls.State.PENDING, cls.State.CLAIMED)) | models.Q(
+            state=cls.State.ACCEPTED, lease_until__isnull=False
+        )
+
+    @classmethod
     def void_for_tasks(cls, task_ids):
-        """Revoke create in the transaction that locked or wrote the task."""
-        rows = cls.objects.using("default").filter(pk__in=task_ids)
-        rows.exclude(state=cls.State.VOID).update(
+        """Revoke only live creates in the transaction that wrote the task."""
+        live = cls.objects.using("default").filter(cls.live_condition(), pk__in=task_ids)
+        live.update(
             state=cls.State.VOID,
             last_outcome="superseded",
             claim_token=None,
@@ -163,29 +171,6 @@ class EvalTaskStartRequest(models.Model):
                 condition=models.Q(attempts__lte=2), name="eval_start_max_two_attempts"
             )
         ]
-
-
-class InstantEvalResume(models.Model):
-    """One explicit Resume handoff per task; never selected by create recovery."""
-
-    task = models.OneToOneField(
-        EvalTask, primary_key=True, on_delete=models.CASCADE, related_name="+"
-    )
-    token = models.UUIDField()
-    admitted_run_id = models.UUIDField(null=True)
-
-    class Meta:
-        db_table = "tracer_instant_eval_resume"
-
-    @classmethod
-    def outstanding(cls, task_id):
-        return cls.objects.using("default").filter(
-            pk=task_id, admitted_run_id__isnull=True
-        )
-
-    @classmethod
-    def outstanding_token(cls, task_id):
-        return cls.outstanding(task_id).values_list("token", flat=True).first()
 
 
 class EvalTaskLogger(BaseModel):

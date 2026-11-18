@@ -1,4 +1,4 @@
-# Both handoff tables start empty; no existing task is opted into dispatch.
+# No existing task is opted into dispatch.
 import django.db.models.deletion
 from django.db import migrations, models
 
@@ -60,23 +60,5 @@ class Migration(migrations.Migration):
                     )
                 ],
             },
-        ),
-        migrations.CreateModel(
-            name="InstantEvalResume",
-            fields=[
-                (
-                    "task",
-                    models.OneToOneField(
-                        on_delete=django.db.models.deletion.CASCADE,
-                        primary_key=True,
-                        related_name="+",
-                        serialize=False,
-                        to="tracer.evaltask",
-                    ),
-                ),
-                ("token", models.UUIDField()),
-                ("admitted_run_id", models.UUIDField(null=True)),
-            ],
-            options={"db_table": "tracer_instant_eval_resume"},
         ),
     ]

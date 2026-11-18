@@ -239,10 +239,10 @@ def _is_claim_outcome_unknown(exc: BaseException) -> bool:
     return exc.cause.type == "EvalTaskClaimOutcomeUnknown" and exc.cause.non_retryable
 
 
-async def _admit_start(task_id: str, resume_token: str | None) -> bool:
+async def _admit_start(task_id: str) -> bool:
     return await workflow.execute_activity(
         "admit_eval_task_start_activity",
-        StartAdmissionInput(task_id, resume_token),
+        StartAdmissionInput(task_id),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
@@ -975,7 +975,7 @@ class RequestedHistoricalEvalTaskWorkflow(HistoricalEvalTaskWorkflow):
 
     @workflow.run
     async def run(self, input: RequestedHistoricalInput) -> EvalTaskWorkflowOutput:
-        if not await _admit_start(input.drain.task_id, input.resume_token):
+        if not await _admit_start(input.drain.task_id):
             self._phase = PHASE_DONE
             return EvalTaskWorkflowOutput(input.drain.task_id, "start_fenced", 0)
         return await super().run(input.drain)
@@ -988,7 +988,7 @@ class RequestedContinuousEvalTaskWorkflow(ContinuousEvalTaskWorkflow):
 
     @workflow.run
     async def run(self, input: RequestedContinuousInput) -> None:
-        if not await _admit_start(input.drain.task_id, input.resume_token):
+        if not await _admit_start(input.drain.task_id):
             self._phase = PHASE_DONE
             return
         await super().run(input.drain)

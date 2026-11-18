@@ -293,7 +293,6 @@ async def start_workflow_async(
         WorkflowIDConflictPolicy.UNSPECIFIED
     ),
     execution_timeout: timedelta | None = None,
-    memo: dict[str, Any] | None = None,
 ) -> WorkflowHandle:
     """
     Start a workflow asynchronously with common options.
@@ -333,7 +332,6 @@ async def start_workflow_async(
         id_reuse_policy=id_reuse_policy,
         id_conflict_policy=id_conflict_policy,
         execution_timeout=execution_timeout,
-        **({"memo": memo} if memo is not None else {}),
     )
 
 

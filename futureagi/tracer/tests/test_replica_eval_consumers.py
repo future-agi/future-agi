@@ -302,8 +302,8 @@ def test_c34_config_to_task_api_reads_new_relation_for_workflow_sizing(
         uuid.UUID(config_id)
     ]
     assert len(workflow_inputs) == 1
-    assert workflow_inputs[0].max_concurrent == 32
-    assert workflow_inputs[0].batch_size == 100
+    assert workflow_inputs[0].drain.max_concurrent == 32
+    assert workflow_inputs[0].drain.batch_size == 100
     assert CustomEvalConfig.objects.all().db == "replica"
 
 

@@ -39,9 +39,6 @@ def test_committed_rerun_replaces_an_old_or_closing_workflow(monkeypatch):
 
     captured = {}
     monkeypatch.setattr(
-        client, "describe_eval_task_workflow_sync", lambda _: client.WF_CLOSED
-    )
-    monkeypatch.setattr(
         client,
         "_select",
         lambda _task, _queue, **_kwargs: (SimpleNamespace(run=object()), object()),
@@ -60,11 +57,6 @@ def test_committed_rerun_replaces_an_old_or_closing_workflow(monkeypatch):
     assert captured["cancel_existing"] is False
     assert captured["id_reuse_policy"] == WorkflowIDReusePolicy.ALLOW_DUPLICATE
     assert captured["id_conflict_policy"] == WorkflowIDConflictPolicy.TERMINATE_EXISTING
-    assert "memo" not in captured
-    client.start_eval_task_workflow_sync(
-        SimpleNamespace(id="task-id"), replace_existing=True, resume_token="handoff"
-    )
-    assert captured["memo"] == {"eval_task_resume_token": "handoff"}
 
 
 @pytest.mark.unit
@@ -92,10 +84,8 @@ async def test_common_start_forwards_workflow_id_conflict_policy(monkeypatch):
         cancel_existing=False,
         id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
-        memo={"test": "handoff"},
     )
 
-    assert captured["memo"] == {"test": "handoff"}
     assert captured["id_reuse_policy"] == WorkflowIDReusePolicy.ALLOW_DUPLICATE
     assert captured["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
 
@@ -418,30 +408,6 @@ async def test_start_probe_distinguishes_success_from_other_closed_runs(monkeypa
             status=WorkflowExecutionStatus.COMPLETED, workflow_type=workflow_type
         )
         assert await probe("task", distinguish_legacy=True) == expected
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_only_the_matching_replacement_can_confirm_a_resume_closed(monkeypatch):
-    from unittest.mock import AsyncMock, Mock
-
-    from temporalio.client import WorkflowExecutionStatus
-
-    from tfc.temporal.eval_tasks import client
-
-    server = Mock()
-    memo = AsyncMock(return_value={"eval_task_resume_token": "older-token"})
-    execution = SimpleNamespace(status=WorkflowExecutionStatus.FAILED, memo=memo)
-    server.get_workflow_handle.return_value.describe = AsyncMock(return_value=execution)
-    monkeypatch.setattr(
-        "tfc.temporal.common.client.get_client", AsyncMock(return_value=server)
-    )
-    probe = client.describe_eval_task_workflow_async
-    assert await probe("task", resume_token="new-token") == client.WF_CLOSED
-    memo.return_value = {"eval_task_resume_token": "new-token"}
-    assert await probe("task", resume_token="new-token") == client.WF_RESUME_CLOSED
-    execution.status = WorkflowExecutionStatus.RUNNING
-    assert await probe("task", resume_token="new-token") == client.WF_PROGRESSING
 
 
 @pytest.mark.unit

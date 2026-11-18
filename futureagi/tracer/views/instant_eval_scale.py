@@ -52,7 +52,6 @@ from tracer.models.eval_task import (
     EvalTask,
     EvalTaskStartRequest,
     EvalTaskStatus,
-    InstantEvalResume,
     RunType,
 )
 from tracer.models.instant_eval import InstantEvalRow, InstantEvalRun
@@ -62,12 +61,7 @@ from tracer.serializers.filters import SessionFilterListField
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_summary as summary_service
 from tracer.services import instant_eval_users as users_service
-from tracer.services.eval_tasks.start_requests import (
-    RESUME_OUTSTANDING,
-    queue_instant_resume,
-    reconcile_instant_resume,
-    resume_block_reason,
-)
+from tracer.services.eval_tasks.start_requests import resume_block_reason
 from tracer.services.instant_eval_run import (
     ACTIVE,
     DEFAULT_SAMPLE,
@@ -91,7 +85,6 @@ from tracer.services.instant_eval_run import (
     check_credits,
     compute_summary,
     credits_per_answer,
-    is_instant_task,
     max_rows,
     with_primary_evals,
 )
@@ -1178,12 +1171,24 @@ def _load(request, params, gm):
             id=params["eval_task_id"], project=project, deleted=False
         )
     ).first()
-    if task is None or not is_instant_task(task):
+    if task is None or not _is_instant_task(task):
         # Only an Instant eval run is read (and given a run record) here: a
         # read of any other eval task would write rows and a run for it, and
         # a continuous one would then count against the org's runs forever.
         return None, gm.not_found("Eval task not found")
     return task, None
+
+
+def _is_instant_task(task) -> bool:
+    """A task the Ask page started (it carries RUN_MARKER), or a one-off task
+    whose questions are all Instant eval questions (asked through the plain
+    eval-task API)."""
+    if (task.filters or {}).get(rows_service.RUN_MARKER):
+        return True
+    if task.run_type != RunType.HISTORICAL:
+        return False
+    configs = list(task.evals.all())
+    return bool(configs) and all((c.config or {}).get("instant_eval") for c in configs)
 
 
 def ensure_rows(task, unit: str) -> None:
@@ -1622,11 +1627,6 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
     def _resume(self, request, task, run, data):
         if run is not None and run.cancelled_at:
             return self._cancelled()
-        token = InstantEvalResume.outstanding_token(task.pk)
-        if token:
-            if not reconcile_instant_resume(task.pk, token):
-                return self._gm.bad_request(RESUME_OUTSTANDING)
-            task.refresh_from_db(using="default", fields=["status"])
         resumable = task.status in RESUMABLE_TASK_STATUSES
         if not resumable and run is not None:
             # A run that stopped before finishing: its workflow is gone while
@@ -1640,7 +1640,9 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             return self._gm.bad_request(
                 f"The run is {task.status}; only a paused or stopped run can be resumed."
             )
-        if task.status not in ACTIVE and (reason := resume_block_reason(task)):
+        if task.status not in ACTIVE and (
+            reason := resume_block_reason(task, instant=True)
+        ):
             return self._gm.bad_request(reason)
         if busy := self._busy(request, task):
             return busy
@@ -1658,25 +1660,14 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         with transaction.atomic():
             if busy := self._busy_locked(request, task):
                 return busy
-            current_run = (
-                InstantEvalRun.objects.select_for_update()
-                .filter(eval_task=task)
-                .first()
-            )
-            if current_run is not None and current_run.cancelled_at:
-                return self._cancelled()
-            unchanged = EvalTask.objects.select_for_update().filter(
-                pk=task.pk, status=task.status
-            )
-            if not unchanged.exists() or (
-                getattr(current_run, "answers_version", None)
-                != getattr(run, "answers_version", None)
-            ):
-                return self._gm.bad_request("The run changed. Refresh before resuming.")
-            if not queue_instant_resume(task, current_run):
-                return self._gm.bad_request(RESUME_OUTSTANDING)
+            if run is not None:
+                InstantEvalRun.objects.filter(id=run.id).update(
+                    answers_version=F("answers_version") + 1
+                )
+            # The fresh run reads only the rows still without an answer.
+            self._restart(task)
         cache.delete(f"ie-wf-gone:{task.id}")
-        return self._restarted(task, "Resume requested.")
+        return self._restarted(task, "Resumed.")
 
     def _cancel(self, request, task, run, data):
         from tfc.temporal.eval_tasks.client import signal_pause_eval_task_workflow

@@ -17,7 +17,6 @@ from tfc.temporal.common.client import (
 )
 
 logger = structlog.get_logger(__name__)
-_RESUME_MEMO = "eval_task_resume_token"
 
 
 def _workflow_id(task_id: str) -> str:
@@ -30,7 +29,6 @@ def _select(
     *,
     workflow_confirmed_stopped: bool = False,
     gated: bool = False,
-    resume_token: str | None = None,
 ):
     """Return (workflow_class, workflow_input) for the task's run_type."""
     from tfc.temporal.eval_tasks.types import (
@@ -55,15 +53,11 @@ def _select(
     if task.run_type == RunType.CONTINUOUS:
         state = ContinuousDrainState(**args)
         if gated:
-            return RequestedContinuousEvalTaskWorkflow, RequestedContinuousInput(
-                state, resume_token
-            )
+            return RequestedContinuousEvalTaskWorkflow, RequestedContinuousInput(state)
         return ContinuousEvalTaskWorkflow, state
     data = EvalTaskWorkflowInput(**args, **_instant_sizing(task))
     if gated:
-        return RequestedHistoricalEvalTaskWorkflow, RequestedHistoricalInput(
-            data, resume_token
-        )
+        return RequestedHistoricalEvalTaskWorkflow, RequestedHistoricalInput(data)
     return HistoricalEvalTaskWorkflow, data
 
 
@@ -113,7 +107,6 @@ def start_eval_task_workflow_sync(
     replace_existing: bool = False,
     workflow_confirmed_stopped: bool | None = None,
     start_once: bool = False,
-    resume_token: str | None = None,
 ) -> str:
     """Start the workflow for ``task`` from synchronous Django code.
 
@@ -151,8 +144,7 @@ def start_eval_task_workflow_sync(
         task,
         task_queue,
         workflow_confirmed_stopped=workflow_confirmed_stopped,
-        gated=start_once or resume_token is not None,
-        resume_token=resume_token,
+        gated=start_once,
     )
     conflict_policy = (
         WorkflowIDConflictPolicy.TERMINATE_EXISTING
@@ -172,7 +164,6 @@ def start_eval_task_workflow_sync(
             else WorkflowIDReusePolicy.ALLOW_DUPLICATE
         ),
         id_conflict_policy=conflict_policy,
-        **({"memo": {_RESUME_MEMO: resume_token}} if resume_token else {}),
     )
     return handle.id
 
@@ -186,7 +177,6 @@ WF_COMPLETED = "completed"
 # fenced create was voided. A generic CLOSED might just mean start_fenced.
 WF_LEGACY_CLOSED = "legacy_closed"
 WF_LEGACY_PROGRESSING = "legacy_progressing"
-WF_RESUME_CLOSED = "resume_closed"
 
 
 async def describe_eval_task_workflow_async(
@@ -194,7 +184,6 @@ async def describe_eval_task_workflow_async(
     *,
     distinguish_completion: bool = False,
     distinguish_legacy: bool = False,
-    resume_token: str | None = None,
 ) -> str:
     """Classify the task's workflow: progressing, closed, or never/no longer there.
 
@@ -241,12 +230,6 @@ async def describe_eval_task_workflow_async(
         WorkflowExecutionStatus.TERMINATED,
         WorkflowExecutionStatus.TIMED_OUT,
     ):
-        # Status and memo are from the same described execution. The per-task
-        # ID alone can still point to the old drain before the send arrives.
-        if resume_token:
-            memo = await description.memo()
-            if memo.get(_RESUME_MEMO) == resume_token:
-                return WF_RESUME_CLOSED
         return WF_LEGACY_CLOSED if legacy else WF_CLOSED
     # An absent/unknown status in a successful reply isn't a closed execution.
     raise RuntimeError("unconfirmed eval task workflow status")
@@ -258,7 +241,6 @@ def describe_eval_task_workflow_sync(
     timeout: float | None = None,
     distinguish_completion: bool = False,
     distinguish_legacy: bool = False,
-    resume_token: str | None = None,
 ) -> str:
     from tfc.temporal.common.client import _run_async_in_sync_context
 
@@ -268,7 +250,6 @@ def describe_eval_task_workflow_sync(
                 task_id,
                 distinguish_completion=distinguish_completion,
                 distinguish_legacy=distinguish_legacy,
-                resume_token=resume_token,
             ),
             timeout,
         )

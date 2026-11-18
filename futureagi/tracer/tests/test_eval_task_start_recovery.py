@@ -253,6 +253,17 @@ def test_second_failure_needs_negative_describe_before_exhaustion(
     logs = auth_client.get(f"{_CREATE}get_eval_task_logs/", {"eval_task_id": intent.pk})
     assert logs.json()["result"]["error_groups"] == []
 
+    # If the new run really started and was paused, history belongs to the
+    # ungated replacement, not to the still-immutable original create.
+    EvalTask.objects.filter(pk=intent.pk).update(status="paused")
+    describe.return_value = client.WF_LEGACY_CLOSED
+    start.reset_mock()
+    resumed = auth_client.post(f"{_CREATE}unpause_eval_task/?eval_task_id={intent.pk}")
+    assert resumed.status_code == 200, resumed.content
+    describe.assert_called_with(intent.pk, timeout=5, distinguish_legacy=True)
+    start.assert_called_once_with(intent.task, replace_existing=True)
+    check(intent, "start_failed", 2)
+
 
 def test_crash_after_reservation_spends_attempt_before_network_call(
     intent, transport, monkeypatch
@@ -959,6 +970,10 @@ def test_void_for_tasks_never_rewrites_a_finished_intent(intent, state, outcome)
     rows.update(state=state, last_outcome=outcome, attempts=2)
     before = rows.values().get()
     EvalTaskStartRequest.void_for_tasks([intent.pk])
+    assert rows.values().get() == before
+    # The task is Pending again, as after a fresh Re-run. Keeping its history
+    # must not let a delayed create worker admit itself to the new run.
+    assert not service.admit_start(intent.pk, str(uuid4()))
     assert rows.values().get() == before
 
 

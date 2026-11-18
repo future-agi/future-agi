@@ -750,15 +750,10 @@ async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
 
 
 def _admit_start_sync(input: StartAdmissionInput, run_id: str) -> bool:
-    from tracer.services.eval_tasks.start_requests import (
-        admit_instant_resume,
-        admit_start,
-    )
+    from tracer.services.eval_tasks.start_requests import admit_start
 
     close_old_connections()
     try:
-        if input.resume_token:
-            return admit_instant_resume(input.task_id, input.resume_token, run_id)
         return admit_start(input.task_id, run_id)
     finally:
         close_old_connections()

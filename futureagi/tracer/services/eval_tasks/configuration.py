@@ -86,8 +86,8 @@ def update_task_configuration(task: EvalTask, changes: dict) -> EvalTask:
                         if current.last_run is None
                         else min(current.last_run, floor)
                     )
-        if "status" in updates:
-            # A status write supersedes create even if a later edit restores Pending.
+        if "status" in updates and updates["status"] != current.status:
+            # A transition supersedes create even if a later edit restores Pending.
             EvalTaskStartRequest.void_for_tasks([current.pk])
         for field, value in updates.items():
             setattr(current, field, value)

@@ -79,19 +79,16 @@ class ContinuousDrainState:
 @dataclass
 class RequestedHistoricalInput:
     drain: EvalTaskWorkflowInput
-    resume_token: str | None = None
 
 
 @dataclass
 class RequestedContinuousInput:
     drain: ContinuousDrainState
-    resume_token: str | None = None
 
 
 @dataclass
 class StartAdmissionInput:
     task_id: str
-    resume_token: str | None = None
 
 
 @dataclass

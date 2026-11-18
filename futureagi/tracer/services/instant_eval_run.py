@@ -20,7 +20,7 @@ from django.db.models import Prefetch
 from django.utils import timezone
 
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
+from tracer.models.eval_task import EvalTask, EvalTaskStatus
 from tracer.models.instant_eval import InstantEvalRun
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_summary as summary_service
@@ -161,16 +161,6 @@ def with_primary_evals(tasks):
     )
 
 
-def is_instant_task(task) -> bool:
-    """An Ask task, or a historical task with only Instant eval questions."""
-    if (task.filters or {}).get(rows_service.RUN_MARKER):
-        return True
-    if task.run_type != RunType.HISTORICAL:
-        return False
-    configs = list(task.evals.all())  # prefetched from the primary by both views
-    return bool(configs) and all((c.config or {}).get("instant_eval") for c in configs)
-
-
 def _run_of(task):
     return (
         InstantEvalRun.objects.filter(eval_task=task)
@@ -260,47 +250,41 @@ def _workflow_gone(task) -> bool:
         describe_eval_task_workflow_sync,
     )
 
-    from tracer.models.eval_task import EvalTaskStartRequest, InstantEvalResume
-    from tracer.services.eval_tasks.start_requests import (
-        has_recorded_work,
-        reconcile_instant_resume,
-    )
+    from tracer.models.eval_task import EvalTaskStartRequest
+    from tracer.services.eval_tasks.start_requests import has_recorded_work
 
-    token = InstantEvalResume.outstanding_token(task.pk)
-    if token:
-        return reconcile_instant_resume(task.pk, token)
-    requests = EvalTaskStartRequest.objects.using("default").filter(pk=task.pk)
-    unadmitted = (
-        requests.filter(admitted_run_id__isnull=True)
-        .values_list("state", flat=True)
+    intent = (
+        EvalTaskStartRequest.objects.using("default")
+        .filter(pk=task.pk)
+        .annotate(watched=EvalTaskStartRequest.live_condition())
+        .values("admitted_run_id", "watched")
         .first()
     )
-    if unadmitted is not None and not has_recorded_work(task):
-        if unadmitted != EvalTaskStartRequest.State.VOID:
-            return False  # the recorded create still owns this handoff
-        # A fenced close isn't a stall. Don't trust a cached generic CLOSED:
-        # only a later explicit drain could have run without create admission.
+    if intent and not intent["admitted_run_id"] and not has_recorded_work(task):
+        if intent["watched"]:
+            return False  # create alone owns this handoff
+        # A gated execution may have closed without ever being admitted.
+        # Only an independent drain (e.g. a later Re-run) proves prior work.
         try:
             return describe_eval_task_workflow_sync(
                 task.id, timeout=5, distinguish_legacy=True
             ) == WF_LEGACY_CLOSED
         except Exception:
             return False
-    if task.continuous_cursor is None and not (task.filters or {}).get(
-        rows_service.RUN_MARKER
+    if (
+        intent
+        and intent["watched"]
+        and intent["admitted_run_id"]
+        and task.continuous_cursor is None
+        and not (task.filters or {}).get(rows_service.RUN_MARKER)
     ):
-        # A summary read doesn't turn a plain create into a stranded Ask run.
-        # Its own reconciler observes the first admission until there is work.
+        # A summary read doesn't take over a live create awaiting progress.
         from tracer.models.observation_span import EvalLogger
 
         entries = EvalLogger.all_objects.using("default").filter(
             eval_task_id=str(task.pk)
         )
-        watched = requests.filter(
-            admitted_run_id__isnull=False, lease_until__isnull=False
-        )
-        needs_progress = task.status == EvalTaskStatus.PENDING or watched.exists()
-        if needs_progress and not entries.exists():
+        if not entries.exists():
             return False
 
     key = f"ie-wf-gone:{task.id}"

@@ -20,7 +20,6 @@ from tracer.models.eval_task import (
     EvalTaskLogger,
     EvalTaskStartRequest,
     EvalTaskStatus,
-    InstantEvalResume,
     RowType,
     RunType,
 )
@@ -343,8 +342,7 @@ def _bridge_retired_dispatcher(eval_task: EvalTask) -> bool:
         # A still-watched create has its own fenced sender and reconciler.
         requests = EvalTaskStartRequest.objects.using("default").filter(pk=eval_task.pk)
         if (
-            InstantEvalResume.outstanding(eval_task.pk).exists()
-            or not has_recorded_work(eval_task)
+            not has_recorded_work(eval_task)
             or requests.exclude(state=EvalTaskStartRequest.State.VOID)
             .exclude(last_outcome="execution_progress")
             .exists()
