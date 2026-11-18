@@ -27,6 +27,11 @@ import { FormSelectField } from "src/components/FormSelectField";
 import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import {
+  syntheticDataColumnEventFields,
+  syntheticDataEventFields,
+} from "./syntheticDataEventFields";
 
 const createValidationSchema = (datasetId, openDescription) =>
   z.object({
@@ -78,7 +83,7 @@ const SyntheticDataDrawer = ({
   const navigate = useNavigate();
 
   const { data: knowledgeBaseList, refetch: refetchKnowledgeBaseList } =
-    useKnowledgeBaseList("", { enabled: !!open }, { status: true });
+    useKnowledgeBaseList("", { enabled: !!open });
 
   const knowledgeBaseOptions = useMemo(
     () =>
@@ -175,6 +180,7 @@ const SyntheticDataDrawer = ({
       reset();
       refreshGrid(null, true);
     },
+    meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
         getRequestErrorMessage(error, "Failed to create synthetic dataset", {
@@ -204,24 +210,6 @@ const SyntheticDataDrawer = ({
       cols[key] = incomingText;
       return incomingText;
     };
-
-    trackEvent(Events.syntheticDatasetCreationSuccessful, {
-      [PropertyName.name]: formData.name,
-      [PropertyName.description]: formData.description,
-      [PropertyName.pattern]: formData.pattern,
-      [PropertyName.useCase]: formData.useCase,
-    });
-
-    const formattedColumns = formData.columns.map((col) => ({
-      Column_Name: col.name,
-      Column_Type: col.data_type,
-      Property: col.property,
-      Property_Value: col.description,
-    }));
-
-    trackEvent(Events.syntheticDatasetCreationSuccessfulColumn, {
-      [PropertyName.column]: formattedColumns,
-    });
 
     const payload = {
       dataset: {
@@ -253,6 +241,14 @@ const SyntheticDataDrawer = ({
     if (!formData?.kb_id) {
       delete payload.kb_id;
     }
+
+    trackEvent(
+      Events.syntheticDatasetCreationSuccessful,
+      syntheticDataEventFields(payload, { datasetId }),
+    );
+    trackEvent(Events.syntheticDatasetCreationSuccessfulColumn, {
+      [PropertyName.column]: syntheticDataColumnEventFields(payload.columns),
+    });
     // console.log("formData", formData, payload);
     createSyntheticData(payload);
   };
@@ -273,18 +269,20 @@ const SyntheticDataDrawer = ({
 
   const knowledgeBaseDropdownDisabled = Boolean(knowledgeId);
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={onCloseClick}
       PaperProps={{
         sx: {
           height: "100vh",
-          // width: "550px",
+          // width: "480px",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -332,7 +330,7 @@ const SyntheticDataDrawer = ({
                 Create Synthetic Data
               </Typography>
               <IconButton onClick={onCloseClick} size="small">
-                <Iconify icon="mingcute:close-line" />
+                <Iconify icon="solar:close-linear" />
               </IconButton>
             </Box>
             <Box
@@ -435,7 +433,7 @@ const SyntheticDataDrawer = ({
                 loading={false}
                 onClick={handleAddColumn}
               >
-                <Iconify icon="mdi:plus" color="background.paper" />
+                <Iconify icon="solar:add-linear" color="background.paper" />
               </LoadingButton>
               <Divider orientation="horizontal" />
 

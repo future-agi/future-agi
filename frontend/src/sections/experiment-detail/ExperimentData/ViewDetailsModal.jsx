@@ -18,6 +18,7 @@ import CompositeResultView from "src/sections/evals/components/CompositeResultVi
 import {
   getLabel,
   getStatusColor,
+  normalizeEvalResult,
 } from "src/sections/develop-detail/DataTab/common";
 
 const ViewDetailsModal = ({
@@ -32,18 +33,10 @@ const ViewDetailsModal = ({
   const theme = useTheme();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Get the actual evaluation data from the row data
-  const evalData = data
-    ? {
-        ...data,
-        cellValue: data.cellValue,
-        dataType: data.dataType,
-        metadata: data.metadata,
-      }
-    : null;
+  const evalData = data;
   // Detect composite eval results from value_infos
   const compositeResult = useMemo(() => {
-    const vi = data?.value_infos ?? data?.valueInfos;
+    const vi = data?.value_infos;
     const parsed =
       typeof vi === "string"
         ? (() => {
@@ -78,7 +71,10 @@ const ViewDetailsModal = ({
     };
   }, [data]);
 
-  const errorAnalysis = evalData?.metadata?.cellMetadata?.errorAnalysis;
+  const cellValue = evalData?.cell_value;
+  const cellMetadata = evalData?.metadata?.cell_metadata;
+  const errorAnalysis = cellMetadata?.error_analysis;
+  const normalizedResult = normalizeEvalResult(cellValue);
   const input1 = Array.isArray(errorAnalysis?.input1)
     ? errorAnalysis.input1
     : errorAnalysis?.input1
@@ -114,7 +110,7 @@ const ViewDetailsModal = ({
           transform: "translate(-50%, -50%)",
           width: "30%",
           bgcolor: "background.paper",
-          boxShadow: 24,
+          boxShadow: theme.customShadows?.dialog,
           borderRadius: theme.spacing(1.5),
           padding: theme.spacing(2.5),
           display: "flex",
@@ -125,7 +121,7 @@ const ViewDetailsModal = ({
           },
           "&::-webkit-scrollbar-thumb": {
             backgroundColor: "rgba(0, 0, 0, 0.3)",
-            borderRadius: "3px",
+            borderRadius: "4px",
           },
           "&::-webkit-scrollbar-track": {
             backgroundColor: "transparent",
@@ -148,7 +144,7 @@ const ViewDetailsModal = ({
               right: theme.spacing(1.5),
             }}
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
 
           <Typography fontWeight={500} fontSize={16} color="text.primary">
@@ -158,7 +154,7 @@ const ViewDetailsModal = ({
             <Typography
               sx={{
                 color: "text.primary",
-                fontSize: "14px",
+                fontSize: "12px",
                 fontWeight: 500,
                 marginBottom: 0.5,
               }}
@@ -173,40 +169,36 @@ const ViewDetailsModal = ({
                 sx={{ borderRadius: 1 }}
               />
             ) : evalData?.status === "error" ? (
-              <Typography sx={{ color: "red.700", margin: "8px" }}>
+              <Typography sx={{ color: "status.danger.fg", margin: "8px" }}>
                 error
               </Typography>
-            ) : evalData?.cellValue?.startsWith("['") &&
-              evalData?.cellValue?.endsWith("']") ? (
-              JSON.parse(evalData.cellValue.replace(/'/g, '"')).map(
-                (item, idx) => (
-                  <Chip
-                    key={idx}
-                    variant="soft"
-                    label={item}
-                    size="small"
-                    sx={{
-                      margin: "5px",
-                      backgroundColor: "action.hover",
+            ) : normalizedResult.kind === "choices" ? (
+              normalizedResult.items.map((item, idx) => (
+                <Chip
+                  key={idx}
+                  variant="soft"
+                  label={item}
+                  size="small"
+                  sx={{
+                    margin: "5px",
+                    backgroundColor: "action.hover",
+                    color: "primary.main",
+                    pointerEvents: "none",
+                    "&:hover": {
                       color: "primary.main",
-                      fontWeight: "400",
-                      pointerEvents: "none",
-                      "&:hover": {
-                        color: "primary.main",
-                        backgroundColor: "action.hover",
-                      },
-                    }}
-                  />
-                ),
-              )
+                      backgroundColor: "action.hover",
+                    },
+                  }}
+                />
+              ))
             ) : (
               <Chip
                 variant="soft"
-                label={getLabel(evalData?.cellValue)}
+                label={getLabel(cellValue)}
                 size="small"
                 sx={{
                   pointerEvents: "none",
-                  ...getStatusColor(evalData?.cellValue, theme),
+                  ...getStatusColor(cellValue, theme),
                 }}
               />
             )}
@@ -214,7 +206,7 @@ const ViewDetailsModal = ({
           <Box>
             <Typography
               fontWeight={500}
-              fontSize={14}
+              fontSize={12}
               color="text.primary"
               marginBottom={0.5}
             >
@@ -227,9 +219,9 @@ const ViewDetailsModal = ({
                 borderRadius: theme.spacing(1),
               }}
             >
-              {evalData?.metadata?.cellMetadata?.explanation ? (
+              {cellMetadata?.explanation ? (
                 <ul>
-                  <li>{evalData?.metadata?.cellMetadata?.explanation}</li>
+                  <li>{cellMetadata?.explanation}</li>
                 </ul>
               ) : (
                 <Box
@@ -238,7 +230,7 @@ const ViewDetailsModal = ({
                   }}
                 >
                   <Typography
-                    fontSize="14px"
+                    fontSize="12px"
                     fontWeight={400}
                     color="text.primary"
                   >
@@ -252,7 +244,7 @@ const ViewDetailsModal = ({
             <Box>
               <Typography
                 fontWeight={500}
-                fontSize={14}
+                fontSize={12}
                 color="text.primary"
                 marginBottom={0.5}
               >
@@ -271,35 +263,27 @@ const ViewDetailsModal = ({
             </Box>
           )}
           {!compositeResult && (
-          <Box>
-            <Typography
-              fontWeight={500}
-              fontSize={14}
-              color="text.primary"
-              marginBottom={0.5}
-            >
-              Possible Error
-            </Typography>
-
-            {evalData?.cellValue === "error" ? (
-              <Box
-                sx={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 1,
-                  bgcolor: "red.o5",
-                  border: "1px solid",
-                  borderColor: "red.200",
-                  borderRadius: theme.spacing(0.5),
-                  padding: 2,
-                }}
+            <Box>
+              <Typography
+                fontWeight={500}
+                fontSize={12}
+                color="text.primary"
+                marginBottom={0.5}
               >
+                Possible Error
+              </Typography>
+
+              {cellValue === "error" ? (
                 <Box
                   sx={{
                     display: "flex",
-                    gap: theme.spacing(1),
-                    alignItems: "center",
-                    justifyContent: "space-between",
+                    flexDirection: "column",
+                    gap: 1,
+                    bgcolor: "status.danger.bg",
+                    border: "1px solid",
+                    borderColor: "status.danger.border",
+                    borderRadius: theme.spacing(0.5),
+                    padding: 2,
                   }}
                 >
                   <Box
@@ -307,83 +291,93 @@ const ViewDetailsModal = ({
                       display: "flex",
                       gap: theme.spacing(1),
                       alignItems: "center",
+                      justifyContent: "space-between",
                     }}
                   >
-                    <Iconify
-                      icon="uil:exclamation-triangle"
-                      color="red.500"
-                      width={20}
-                    />
-                    <Typography color="red.500" fontSize={14} fontWeight={500}>
-                      Evaluation Failed
-                    </Typography>
-                  </Box>
-                  {isRefreshing || isRefetching ? (
                     <Box
-                      display="flex"
-                      alignItems="center"
-                      justifyContent="center"
-                    >
-                      <CircularProgress size={18} color="error" />
-                    </Box>
-                  ) : (
-                    <Button
-                      aria-label="fetch-error"
-                      style={{
-                        fontSize: "14px",
-                        textDecoration: "underline",
-                        padding: 0,
-                        fontWeight: 500,
-                        color: "var(--text-primary)",
+                      sx={{
+                        display: "flex",
+                        gap: theme.spacing(1),
+                        alignItems: "center",
                       }}
-                      onClick={handleTryAgain}
                     >
-                      Try again
-                    </Button>
+                      <Iconify
+                        icon="solar:danger-triangle-linear"
+                        color="status.danger.fg"
+                        width={20}
+                      />
+                      <Typography
+                        color="status.danger.fg"
+                        fontSize={12}
+                        fontWeight={500}
+                      >
+                        Evaluation Failed
+                      </Typography>
+                    </Box>
+                    {isRefreshing || isRefetching ? (
+                      <Box
+                        display="flex"
+                        alignItems="center"
+                        justifyContent="center"
+                      >
+                        <CircularProgress size={18} color="error" />
+                      </Box>
+                    ) : (
+                      <Button
+                        aria-label="fetch-error"
+                        style={{
+                          fontSize: "12px",
+                          textDecoration: "underline",
+                          padding: 0,
+                          fontWeight: 500,
+                          color: "var(--text-primary)",
+                        }}
+                        onClick={handleTryAgain}
+                      >
+                        Try again
+                      </Button>
+                    )}
+                  </Box>
+                  {evalData?.metadata?.reason && (
+                    <Typography
+                      color="status.danger.fg"
+                      fontSize={12}
+                      fontWeight={400}
+                      sx={{
+                        wordBreak: "break-word",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {evalData.metadata.reason}
+                    </Typography>
                   )}
                 </Box>
-                {evalData?.metadata?.reason && (
-                  <Typography
-                    color="red.700"
-                    fontSize={13}
-                    fontWeight={400}
-                    sx={{
-                      wordBreak: "break-word",
-                      whiteSpace: "pre-wrap",
-                    }}
-                  >
-                    {evalData.metadata.reason}
-                  </Typography>
-                )}
-              </Box>
-            ) : Array.isArray(input1) && input1.length > 0 ? (
-              <Box
-                sx={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: theme.spacing(1.5),
-                }}
-              >
-                {Object.entries(input1).map(([key, value]) => {
-                  const valueArray = Array.isArray(value) ? value : [value];
-                  return (
-                    <ErrorLocalizeCard
-                      key={key}
-                      value={valueArray}
-                      column={
-                        evalData?.metadata?.cellMetadata?.selectedInputKey
-                      }
-                      datapoint={evalData}
-                    />
-                  );
-                })}
-              </Box>
-            ) : (
-              <Typography fontSize="14px" color="text.primary">
-                No errors found.
-              </Typography>
-            )}
-          </Box>
+              ) : Array.isArray(input1) && input1.length > 0 ? (
+                <Box
+                  sx={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: theme.spacing(1.5),
+                  }}
+                >
+                  {Object.entries(input1).map(([key, value]) => {
+                    const valueArray = Array.isArray(value) ? value : [value];
+                    return (
+                      <ErrorLocalizeCard
+                        key={key}
+                        value={valueArray}
+                        column={cellMetadata?.selected_input_key}
+                        datapoint={evalData}
+                      />
+                    );
+                  })}
+                </Box>
+              ) : (
+                <Typography fontSize="12px" color="text.primary">
+                  No errors found.
+                </Typography>
+              )}
+            </Box>
           )}
         </Box>
         <Box

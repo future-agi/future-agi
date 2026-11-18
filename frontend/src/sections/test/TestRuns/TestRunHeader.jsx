@@ -72,7 +72,7 @@ const TestRunHeader = () => {
       axios.post(
         endpoint,
         isPromptSimulation
-          ? undefined
+          ? {}
           : {
               select_all: false,
               scenario_ids: selectedScenarios,
@@ -96,11 +96,14 @@ const TestRunHeader = () => {
     (s) =>
       selectedScenarioIds.has(s.id) && s.status !== SCENARIO_STATUS.COMPLETED,
   );
+  const hasEmptyScenario = scenarioDetails.some(
+    (s) => selectedScenarioIds.has(s.id) && (s.dataset_rows || 0) === 0,
+  );
   const agentType = isPromptSimulation
     ? AGENT_TYPES.CHAT
-    : (testData?.agent_definition_detail?.agent_type ??
+    : testData?.agent_definition_detail?.agent_type ??
       testData?.agent_version?.configuration_snapshot?.agent_type ??
-      testData?.agentVersion?.configurationSnapshot?.agentType);
+      testData?.agentVersion?.configurationSnapshot?.agentType;
 
   return (
     <Box
@@ -138,7 +141,7 @@ const TestRunHeader = () => {
           endAdornment: search && (
             <InputAdornment position="end">
               <Iconify
-                icon="mingcute:close-line"
+                icon="solar:close-linear"
                 onClick={() => {}}
                 sx={{ color: "text.disabled", cursor: "pointer" }}
               />
@@ -167,10 +170,7 @@ const TestRunHeader = () => {
             ref={scenarioPopoverRef}
             sx={{ whiteSpace: "nowrap", minWidth: "fit-content" }}
             startIcon={
-              <SvgColor
-                src="/assets/icons/navbar/ic_sessions.svg"
-                sx={{ width: "16px", height: "16px" }}
-              />
+              <SvgColor width={16} src="/assets/icons/navbar/ic_sessions.svg" />
             }
           >
             Scenarios ({selectedScenarios.length})
@@ -185,7 +185,7 @@ const TestRunHeader = () => {
               simulationType={agentType}
             />
           </Suspense>
-          <CustomTooltip
+          {/* <CustomTooltip
             show
             title="In beta, send early access request"
             size="small"
@@ -231,11 +231,12 @@ const TestRunHeader = () => {
                 Github Actions
               </Button>
             </Box>
-          </CustomTooltip>
+          </CustomTooltip> */}
           <CustomTooltip
             show={
               isAgentDefinitionDeleted ||
               selectedScenarios.length === 0 ||
+              hasEmptyScenario ||
               hasIncompleteScenario
             }
             title={
@@ -243,7 +244,9 @@ const TestRunHeader = () => {
                 ? "Agent definition has been deleted. Please select a new agent definition to run simulation."
                 : selectedScenarios.length === 0
                   ? "Select atleast one scenario to run test"
-                  : "Some selected scenarios are not completed. Wait for them to finish or remove them from the selection."
+                  : hasEmptyScenario
+                    ? "Some selected scenarios have no datapoints. Remove them from the selection to run."
+                    : "Some selected scenarios are not completed. Wait for them to finish or remove them from the selection."
             }
             size="small"
             arrow
@@ -277,6 +280,7 @@ const TestRunHeader = () => {
                   ][role] ||
                   selectedScenarios.length === 0 ||
                   isAgentDefinitionDeleted ||
+                  hasEmptyScenario ||
                   hasIncompleteScenario
                 }
               >

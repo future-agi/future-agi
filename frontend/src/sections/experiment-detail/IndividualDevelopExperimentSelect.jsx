@@ -113,7 +113,7 @@
 //               InputProps={{
 //                 startAdornment: (
 //                   <InputAdornment position="start">
-//                     <Iconify icon="eva:search-fill" sx={{ color: "divider" }} />
+//                     <Iconify icon="solar:magnifier-linear" width={16} sx={{ color: "divider" }} />
 //                   </InputAdornment>
 //                 ),
 //               }}
@@ -177,7 +177,7 @@ const IndividualDevelopExperimentSelect = () => {
     const fetchData = async () => {
       try {
         const response = await axios.get(
-          `${endpoints.develop.getDerivedDatasets()}${id}/`,
+          endpoints.develop.getDerivedDatasets(id),
         );
         setExperimentList(response?.data?.result);
       } catch (err) {

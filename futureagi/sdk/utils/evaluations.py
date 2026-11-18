@@ -1,6 +1,10 @@
 import json
+import uuid
+from typing import Any
 
 import structlog
+
+from tfc.utils.evaluation_denials import EvaluationDenied, raise_if_rate_limited
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
@@ -8,9 +12,14 @@ from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.evaluation import Evaluation, StatusChoices
 from model_hub.tasks.user_evaluation import trigger_error_localization_for_standalone
-from sdk.utils.helpers import _get_api_call_type
+from sdk.utils.helpers import (
+    _emit_jev_usage,
+    _get_api_call_type,
+    _get_billing_event_type,
+)
 from tracer.utils.inline_evals import trigger_inline_eval
 from tfc.constants.api_calls import APICallStatusChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -41,7 +50,7 @@ def _log_and_deduct_cost_for_standalone_eval(
         "error_localizer": False,
     }
 
-    api_call_type = _get_api_call_type(model)
+    api_call_type = _get_api_call_type(model, template=eval_template)
 
     try:
         from ee.usage.services.metering import check_usage
@@ -51,7 +60,9 @@ def _log_and_deduct_cost_for_standalone_eval(
     if check_usage is not None:
         usage_check = check_usage(str(user.organization.id), api_call_type)
         if not usage_check.allowed:
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
+            from ee.usage.exceptions import UsageLimitExceeded
+
+            raise UsageLimitExceeded(usage_check)
 
     if model:
         log_config.update({"model": str(model)})
@@ -72,6 +83,8 @@ def _log_and_deduct_cost_for_standalone_eval(
         if not api_call_log_row:
             raise ValueError("API call not allowed : Error validating the api call.")
 
+        raise_if_rate_limited(api_call_log_row)
+
         if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
             raise ValueError(f"API call not allowed: {api_call_log_row.status}")
 
@@ -86,7 +99,7 @@ def _log_and_deduct_cost_for_standalone_eval(
 
 def _run_evaluation(run_params, eval_model, eval_instance, runner):
     """
-    This is a simplified version of _run_evaluation from tracer/utils/eval.py
+    This is a simplified version of _execute_evaluation from tracer/utils/eval.py
     It runs the evaluation and returns the result.
     """
     # Apply the shared empty-input rules so the SDK path is consistent
@@ -96,9 +109,7 @@ def _run_evaluation(run_params, eval_model, eval_instance, runner):
     # partial_input warning attached to the response.
     from model_hub.utils.eval_input_validation import validate_eval_inputs
 
-    partial_input_warning, run_params = validate_eval_inputs(
-        eval_model, run_params
-    )
+    partial_input_warning, run_params = validate_eval_inputs(eval_model, run_params)
 
     result = eval_instance.run(**run_params)
     output_type = eval_model.config.get("output", "score")
@@ -169,46 +180,27 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
     # historical per-key strict behaviour.
     from model_hub.utils.eval_input_validation import validate_eval_inputs
 
-    partial_input_warning, inputs = validate_eval_inputs(
-        eval_template, dict(inputs) if inputs else {}, mapped_keys=(inputs or {}).keys()
-    )
-
-    # --- Ground Truth Injection (caller-side, before engine call) ---
-    gt_inputs = dict(inputs) if inputs else {}
     try:
-        from model_hub.utils.ground_truth_retrieval import (
-            format_few_shot_examples,
-            get_ground_truth_few_shot_examples,
-            load_ground_truth_config,
+        partial_input_warning, inputs = validate_eval_inputs(
+            eval_template,
+            dict(inputs) if inputs else {},
+            mapped_keys=(inputs or {}).keys(),
         )
+    except ValueError as exc:
+        # Validation runs before metering/engine execution; expose the same
+        # typed 400 as other invalid standalone inputs, not a retryable 500.
+        raise StandaloneEvaluationError(str(exc)) from exc
 
-        gt_config = load_ground_truth_config(eval_template)
-        if gt_config:
-            from model_hub.models.evals_metric import EvalGroundTruth
+    gt_inputs = dict(inputs) if inputs else {}
+    from model_hub.services.ground_truth_service import GroundTruthService
 
-            gt_id = gt_config.get("ground_truth_id")
-            gt_obj = EvalGroundTruth.objects.filter(id=gt_id, deleted=False).first()
-
-            if eval_type_id == "CustomPromptEvaluator" and gt_obj:
-                gt_examples = get_ground_truth_few_shot_examples(
-                    gt_config, inputs or {}
-                )
-                if gt_examples:
-                    injection_format = gt_config.get("injection_format", "structured")
-                    formatted = format_few_shot_examples(
-                        gt_examples, gt_obj.role_mapping, injection_format
-                    )
-                    gt_inputs["ground_truth_few_shot"] = formatted
-
-            elif eval_type_id == "AgentEvaluator" and gt_obj:
-                gt_inputs["ground_truth_config"] = {
-                    "ground_truth_id": str(gt_id),
-                    "embedding_status": gt_obj.embedding_status,
-                }
-    except Exception as e:
-        logger.warning(
-            f"Standalone Eval | Ground truth injection failed (non-fatal): {e}"
-        )
+    user_org = getattr(user, "organization", None)
+    GroundTruthService.inject_context(
+        gt_inputs,
+        eval_template,
+        organization_id=user_org.id if user_org else None,
+        workspace_id=workspace.id if workspace else None,
+    )
 
     # --- Cost tracking (caller-side, before engine call) ---
     api_call_log_row = _log_and_deduct_cost_for_standalone_eval(
@@ -235,17 +227,23 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
             )
         )
     except Exception as e:
+        from tfc.ee_gates import jev_error_message
+
         logger.exception(f"Standalone Eval | Failed: user: {user.id}, error: {e}")
 
-        api_call_log_row.status = APICallStatusChoices.ERROR.value
-        config_dict = json.loads(api_call_log_row.config)
-        config_dict.update(
-            {
-                "output": {"output": None, "reason": str(e)},
-            }
-        )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.save()
+        if api_call_log_row is not None:
+            api_call_log_row.status = APICallStatusChoices.ERROR.value
+            config_dict = json.loads(api_call_log_row.config)
+            config_dict.update(
+                {
+                    "output": {
+                        "output": None,
+                        "reason": jev_error_message(e) or str(e),
+                    },
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.save()
 
         raise StandaloneEvaluationError(e)  # noqa: B904
 
@@ -316,17 +314,37 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
             credits = billing_config.calculate_ai_credits(actual_cost)
 
             api_call_type = _get_api_call_type(model)
-            if emit is not None and UsageEvent is not None:
+            evaluator = getattr(result, "evaluator", None)
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and not _emit_jev_usage(
+                    evaluator,
+                    org_id=str(user.organization.id),
+                    run_id=(
+                        str(api_call_log_row.log_id)
+                        if api_call_log_row
+                        else str(uuid.uuid4())
+                    ),
+                )
+            ):
                 emit(
                     UsageEvent(
                         org_id=str(user.organization.id),
-                        event_type=api_call_type,
+                        event_type=_get_billing_event_type(
+                            api_call_type,
+                            model,
+                            getattr(result, "model_used", None),
+                            evaluator=evaluator,
+                        ),
                         amount=credits,
                         properties={
                             "source": "standalone_v2",
                             "source_id": str(eval_template.id),
                             "raw_cost_usd": str(actual_cost),
-                            "log_id": str(api_call_log_row.log_id) if api_call_log_row else None,
+                            "log_id": str(api_call_log_row.log_id)
+                            if api_call_log_row
+                            else None,
                             **token_usage_properties(token_usage),
                         },
                     )
@@ -447,7 +465,7 @@ def _run_batched_standalone_eval(
     custom_eval_name,
     span_id,
 ):
-    results = []
+    results: list[Any] = []
     if not inputs or not isinstance(list(inputs.values())[0], list):
         raise ValueError("Inputs must be a list")
 
@@ -456,18 +474,23 @@ def _run_batched_standalone_eval(
 
     for i in range(num_items):
         input_item = {key: inputs[key][i] for key in keys}
-        result = _run_standalone_eval(
-            eval_template,
-            input_item,
-            model,
-            user,
-            workspace,
-            eval_config,
-            error_localizer_enabled,
-            trace_eval,
-            custom_eval_name,
-            span_id,
-        )
+        try:
+            result = _run_standalone_eval(
+                eval_template,
+                input_item,
+                model,
+                user,
+                workspace,
+                eval_config,
+                error_localizer_enabled,
+                trace_eval,
+                custom_eval_name,
+                span_id,
+            )
+        except EvaluationDenied as denial:
+            denial.completed_results = results
+            denial.failed_index = i
+            raise
         results.append(result)
 
     return results
@@ -491,7 +514,10 @@ def _run_protect(
         protect_inputs["call_type"] = "protect_flash" if protect_flash else "protect"
 
         api_call_log_row = _log_and_deduct_cost_for_standalone_eval(
-            user, eval_template, True, protect_inputs,
+            user,
+            eval_template,
+            True,
+            protect_inputs,
             model="protect_flash" if protect_flash else "protect",
             workspace=workspace,
         )
@@ -503,6 +529,9 @@ def _run_protect(
                     inputs=protect_inputs,
                     config_overrides=config or {},
                     model="protect_flash" if protect_flash else None,
+                    # SDK v1 is also the gateway's runtime guardrail API.
+                    # Preserve its verdict defaults, not evaluation errors.
+                    protect_runtime=True,
                     organization_id=str(user.organization.id),
                     workspace_id=str(workspace.id) if workspace else None,
                 )
@@ -616,6 +645,8 @@ def _run_protect(
 
         logger.info(f"Protect Eval | Completed: user: {user.id}")
         return formatted
+    except EvaluationDenied:
+        raise
     except Exception as e:
         logger.exception(f"Protect Eval | Failed: user: {user.id}, error: {e}")
         raise e

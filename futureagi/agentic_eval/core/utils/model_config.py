@@ -15,6 +15,9 @@ class ModelConfig:
     # Modality support flags
     supports_audio: bool = False
     supports_pdf: bool = False
+    # Vertex region for direct calls; litellm defaults to us-central1 otherwise, and some
+    # models are served only from the global endpoint.
+    vertex_location: Optional[str] = None
 
 
 class LiteLlmProvider(str, Enum):
@@ -66,7 +69,15 @@ class ModelConfigs:
     )
     INTERNET_SEARCH: Final[ModelConfig] = ModelConfig(
         provider=LiteLlmProvider.PERPLEXITY.value,
-        model_name="perplexity/llama-3.1-sonar-large-128k-online",
+        model_name="perplexity/sonar-pro",
+        temperature=0.2,
+        max_tokens=16000,
+    )
+    # Perplexity Agent API (third-party LLM orchestration with built-in search/tools).
+    # Backed by https://api.perplexity.ai/v1/agent; default model is gpt-5.1.
+    PERPLEXITY_AGENT_GPT_5_1: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.PERPLEXITY.value,
+        model_name="perplexity/gpt-5.1",
         temperature=0.2,
         max_tokens=16000,
     )
@@ -93,6 +104,13 @@ class ModelConfigs:
         max_tokens=50000,
     )
 
+    VERTEX_GEMINI_2_5_FLASH_LITE: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.VERTEX_AI.value,
+        model_name="vertex_ai/gemini-2.5-flash-lite",
+        temperature=0.2,
+        max_tokens=16000,
+    )
+
     # Claude Sonnet (used by EvalTextLLM defaults in constant.py today).
     CLAUDE_3_5_SONNET: Final[ModelConfig] = ModelConfig(
         provider=LiteLlmProvider.ANTHROPIC.value,
@@ -108,6 +126,7 @@ class ModelConfigs:
         max_tokens=50000,
         supports_audio=True,
         supports_pdf=True,
+        vertex_location="global",
     )
 
     VERTEX_GEMINI_3_PRO: Final[ModelConfig] = ModelConfig(
@@ -124,6 +143,45 @@ class ModelConfigs:
         model_name="vertex_ai/gemini-3.5-flash",
         temperature=0.2,
         max_tokens=8100,
+        vertex_location="global",
+    )
+
+    VERTEX_GEMINI_3_6_FLASH: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.VERTEX_AI.value,
+        model_name="vertex_ai/gemini-3.6-flash",
+        temperature=0.2,
+        max_tokens=8100,
+        vertex_location="global",
+    )
+
+    VERTEX_GEMINI_3_1_FLASH_LITE: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.VERTEX_AI.value,
+        model_name="vertex_ai/gemini-3.1-flash-lite",
+        temperature=0.2,
+        max_tokens=8100,
+        supports_audio=True,
+        supports_pdf=True,
+        vertex_location="global",
+    )
+
+    VERTEX_GEMINI_3_5_FLASH_LITE: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.VERTEX_AI.value,
+        model_name="vertex_ai/gemini-3.5-flash-lite",
+        temperature=0.2,
+        max_tokens=8100,
+        supports_audio=True,
+        supports_pdf=True,
+        vertex_location="global",
+    )
+
+    VERTEX_GEMINI_3_7_FLASH: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.VERTEX_AI.value,
+        model_name="vertex_ai/gemini-3.7-flash",
+        temperature=0.2,
+        max_tokens=50000,
+        supports_audio=True,
+        supports_pdf=True,
+        vertex_location="global",
     )
 
     CLAUDE_4_5_SONNET_BEDROCK_ARN: Final[ModelConfig] = ModelConfig(
@@ -249,6 +307,12 @@ class ModelConfigs:
         return cfg.provider if cfg else None
 
     @classmethod
+    def get_vertex_location(cls, model_name: str) -> Optional[str]:
+        """Resolves the Vertex region a model must be called in, if it needs one."""
+        cfg = cls.get_config(model_name)
+        return cfg.vertex_location if cfg else None
+
+    @classmethod
     def is_turing(cls, model_name: str) -> bool:
         """Check if the model is a turing model."""
         cfg = cls.get_config(model_name)
@@ -275,4 +339,3 @@ class ModelConfigs:
         """Check if the model supports PDF inputs."""
         cfg = cls.get_config(model_name)
         return bool(cfg and cfg.supports_pdf)
-

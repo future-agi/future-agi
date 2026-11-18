@@ -1,4 +1,4 @@
-import { Box, Switch, Typography } from "@mui/material";
+import { Box, Switch, Tab, Typography, Button } from "@mui/material";
 import PropTypes from "prop-types";
 import { useState } from "react";
 import FixMyAgentHeader from "../FixMyAgentHeader";
@@ -6,7 +6,7 @@ import SvgColor from "../../../../components/svg-color";
 import Growth from "../OptimizationResults/Growth";
 import { useFixMyAgentDrawerStoreShallow } from "../state";
 import { FixMyAgentDrawerSections } from "../common";
-import { CustomTab, CustomTabs, TabWrapper } from "./SharedComponents";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import CustomTooltip from "../../../../components/tooltip";
 import { ShowComponent } from "../../../../components/show";
 import PromptDetails from "./PrompDetails/PromptDetails";
@@ -52,11 +52,10 @@ const OptimizationDetailComponent = ({
         <FixMyAgentHeader onClose={onClose} />
 
         <Box sx={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <Typography
-            typography="s1"
-            fontWeight="fontWeightMedium"
-            color="text.disabled"
-            sx={{ cursor: "pointer" }}
+          <Button
+            size="small"
+            variant="text"
+            sx={{ color: "text.disabled" }}
             onClick={() =>
               setOpenSection({
                 section: FixMyAgentDrawerSections.OPTIMIZE,
@@ -65,27 +64,27 @@ const OptimizationDetailComponent = ({
             }
           >
             Optimization Results
-          </Typography>
+          </Button>
           <SvgColor
             src="/assets/icons/custom/lucide--chevron-right.svg"
             sx={{ width: "20px", height: "20px" }}
             color="text.primary"
           />
           <Typography typography="s1" fontWeight="fontWeightMedium">
-            {trailPromptData?.trialName}
+            {trailPromptData?.trial_name}
           </Typography>
         </Box>
       </ShowComponent>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
         <Typography typography="m3" fontWeight="fontWeightSemiBold">
-          {trailPromptData?.trialName}
+          {trailPromptData?.trial_name}
         </Typography>
         <Box sx={{ display: "flex", gap: 1 }}>
           <Typography typography="s1">
-            Optimization Name: {trailPromptData?.optimisationName}
+            Optimization Name: {trailPromptData?.optimisation_name}
           </Typography>
           <Growth
-            value={trailPromptData?.scorePercentageChange}
+            value={trailPromptData?.score_percentage_change}
             getText={(value) => {
               if (value > 0) {
                 return `+${value}% improved from baseline prompt`;
@@ -105,13 +104,13 @@ const OptimizationDetailComponent = ({
           alignItems: "center",
         }}
       >
-        <TabWrapper>
-          <CustomTabs value={activeTab} onChange={handleTabChange}>
+        <Box sx={{ mb: 1.5 }}>
+          <SegmentedTabs value={activeTab} onChange={handleTabChange}>
             {tabs.map((tab) => (
-              <CustomTab key={tab.value} label={tab.label} value={tab.value} />
+              <Tab key={tab.value} label={tab.label} value={tab.value} />
             ))}
-          </CustomTabs>
-        </TabWrapper>
+          </SegmentedTabs>
+        </Box>
         <ShowComponent condition={activeTab === "prompt"}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Switch

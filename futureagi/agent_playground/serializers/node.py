@@ -12,6 +12,7 @@ from agent_playground.serializers.port import (
     PortReadSerializer,
     PortWriteSerializer,
 )
+from tfc.utils.serializer_fields import StringOrObjectField
 
 
 class NodeReadSerializer(serializers.ModelSerializer):
@@ -297,7 +298,7 @@ class PromptTemplateDataSerializer(serializers.Serializer):
         allow_empty=False,
         help_text="Array of message objects with id, role, and content array",
     )
-    response_format = serializers.JSONField(
+    response_format = StringOrObjectField(
         required=False,
         default="text",
         help_text=(
@@ -348,7 +349,10 @@ class PromptTemplateDataSerializer(serializers.Serializer):
         required=False, allow_null=True, allow_blank=True, default=None
     )
     template_format = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True, default=None,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        default=None,
         help_text="Template format: 'mustache' or 'jinja'",
     )
     save_prompt_version = serializers.BooleanField(required=False, default=False)

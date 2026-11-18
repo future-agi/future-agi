@@ -12,7 +12,8 @@ import PropTypes from "prop-types";
 import React, { useRef, useState } from "react";
 import { Controller } from "react-hook-form";
 import Iconify from "src/components/iconify";
-import { useScrollEnd } from "src/hooks/use-scroll-end";
+
+const SCROLL_END_THRESHOLD_PX = 5;
 
 const SearchableSelectContent = ({
   value,
@@ -40,10 +41,13 @@ const SearchableSelectContent = ({
     selectedLabelRef.current = getOptionLabel(selectedOption);
   }
 
-  const scrollContainer = useScrollEnd(() => {
+  const handleListScroll = (e) => {
+    const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
+    if (scrollTop + clientHeight < scrollHeight - SCROLL_END_THRESHOLD_PX)
+      return;
     if (isPending || isFetchingNextPage || !hasNextPage) return;
     fetchNextPage?.();
-  }, [fetchNextPage, isFetchingNextPage, isPending, hasNextPage]);
+  };
 
   const handleOpen = () => setOpen(true);
   const handleClose = () => setOpen(false);
@@ -63,7 +67,7 @@ const SearchableSelectContent = ({
           minWidth: 50,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           cursor: "pointer",
           bgcolor: "background.paper",
           "&:hover": {
@@ -91,7 +95,7 @@ const SearchableSelectContent = ({
           <CircularProgress size={10} sx={{ color: "text.disabled" }} />
         ) : (
           <Iconify
-            icon="eva:chevron-down-fill"
+            icon="solar:alt-arrow-down-linear"
             width={14}
             height={14}
             sx={{ color: "text.secondary", flexShrink: 0 }}
@@ -129,7 +133,7 @@ const SearchableSelectContent = ({
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear"
                     width={16}
                     height={16}
                     sx={{ color: "text.disabled" }}
@@ -139,7 +143,7 @@ const SearchableSelectContent = ({
             }}
             sx={{
               "& .MuiOutlinedInput-root": {
-                fontSize: 13,
+                fontSize: 12,
                 height: 26,
                 "& fieldset": { borderColor: "divider" },
                 "&:hover fieldset": { borderColor: "text.disabled" },
@@ -155,14 +159,14 @@ const SearchableSelectContent = ({
         {/* Options list */}
         <Box
           sx={{ maxHeight: 220, overflowY: "auto", py: 0.5 }}
-          ref={scrollContainer}
+          onScroll={handleListScroll}
         >
           {isPending && (!options || options.length === 0) ? (
             Array.from({ length: 5 }).map((_, i) => (
               <Box key={i} sx={{ px: 1.5, py: 0.75 }}>
                 <Skeleton
                   variant="rectangular"
-                  sx={{ borderRadius: 0.5 }}
+                  sx={{ borderRadius: "4px" }}
                   width={`${60 + (i % 3) * 15}%`}
                   height={20}
                 />
@@ -195,14 +199,13 @@ const SearchableSelectContent = ({
                     sx={{
                       px: 1.5,
                       py: 0.625,
-                      minHeight: "unset",
                       bgcolor: isSelected ? "action.selected" : "transparent",
                       "&:hover": { bgcolor: "action.hover" },
                     }}
                   >
                     <Typography
                       sx={{
-                        fontSize: 13,
+                        fontSize: 12,
                         fontWeight: isSelected ? 500 : 400,
                         color: "text.primary",
                         overflow: "hidden",
@@ -220,7 +223,7 @@ const SearchableSelectContent = ({
                   <Box key={`skel-more-${i}`} sx={{ px: 1.5, py: 0.75 }}>
                     <Skeleton
                       variant="rectangular"
-                      sx={{ borderRadius: 0.5 }}
+                      sx={{ borderRadius: "4px" }}
                       width={`${60 + (i % 3) * 15}%`}
                       height={20}
                     />

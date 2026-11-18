@@ -3,6 +3,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Box,
   Checkbox,
+  Chip,
   CircularProgress,
   FormControlLabel,
   InputAdornment,
@@ -11,7 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { useAuthContext } from "src/auth/hooks";
+import { useOrganization } from "src/contexts/OrganizationContext";
 import { useOrgMembersInfinite } from "src/api/annotation-queues/annotation-queues";
 import { useDebounce } from "src/hooks/use-debounce";
 import { QUEUE_ROLES, ROLE_PRIORITY } from "../constants";
@@ -56,6 +57,7 @@ AnnotatorPicker.propTypes = {
   ),
   onChange: PropTypes.func.isRequired,
   creatorId: PropTypes.string,
+  highlightAutoAssigned: PropTypes.bool,
   isManager: PropTypes.bool,
 };
 
@@ -63,11 +65,17 @@ export default function AnnotatorPicker({
   value = [],
   onChange,
   creatorId,
+  highlightAutoAssigned = false,
   isManager = true,
 }) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search.trim(), 300);
-  const { user } = useAuthContext();
+  // Use the live active org (sessionStorage-backed, same source as the
+  // X-Organization-Id header axios sends) rather than the cached
+  // user.organization.id, which can drift from the active context and made the
+  // members request 404 with "No users found for the specified organization."
+  // (TH-6156).
+  const { currentOrganizationId } = useOrganization();
   const scrollRef = useRef(null);
 
   const {
@@ -75,7 +83,7 @@ export default function AnnotatorPicker({
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useOrgMembersInfinite(user?.organization?.id, debouncedSearch);
+  } = useOrgMembersInfinite(currentOrganizationId, debouncedSearch);
 
   const selectedMap = useMemo(
     () => new Map(value.map((a) => [a.userId, normalizeRoles(a)])),
@@ -146,7 +154,7 @@ export default function AnnotatorPicker({
           startAdornment: (
             <InputAdornment position="start">
               <Iconify
-                icon="eva:search-fill"
+                icon="solar:magnifier-linear"
                 sx={{ color: "text.disabled", width: 16, height: 16 }}
               />
             </InputAdornment>
@@ -162,8 +170,8 @@ export default function AnnotatorPicker({
           maxHeight: 220,
           overflow: "auto",
           border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 0.5,
+          borderColor: "border.default",
+          borderRadius: "8px",
         }}
       >
         {members.map((m) => {
@@ -171,6 +179,9 @@ export default function AnnotatorPicker({
           const isCreator = creatorId && m.id === creatorId;
           const currentRoles =
             selectedMap.get(m.id) || (isCreator ? CREATOR_DEFAULT_ROLES : []);
+          const isAutoAssigned =
+            highlightAutoAssigned &&
+            currentRoles.includes(QUEUE_ROLES.ANNOTATOR);
           const rowReadOnly = !isManager;
           return (
             <Box
@@ -183,15 +194,19 @@ export default function AnnotatorPicker({
                 px: 1,
                 py: 0.5,
                 borderBottom: "1px solid",
-                borderColor: "divider",
+                borderColor: "border.subtle",
                 "&:last-child": { borderBottom: 0 },
-                bgcolor: isSelected ? "action.selected" : "transparent",
-                "&:hover": {
-                  bgcolor: isSelected
+                bgcolor:
+                  isAutoAssigned || isSelected
                     ? "action.selected"
-                    : !rowReadOnly
-                      ? "action.hover"
-                      : "transparent",
+                    : "transparent",
+                "&:hover": {
+                  bgcolor:
+                    isAutoAssigned || isSelected
+                      ? "action.selected"
+                      : !rowReadOnly
+                        ? "action.hover"
+                        : "transparent",
                 },
               }}
             >
@@ -205,7 +220,7 @@ export default function AnnotatorPicker({
                 sx={{ p: 0.5 }}
               />
               <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Typography variant="body2" noWrap>
+                <Typography noWrap sx={{ fontSize: 12, fontWeight: 500 }}>
                   {m.name || "Unnamed"}
                   {isCreator && (
                     <Typography
@@ -219,11 +234,20 @@ export default function AnnotatorPicker({
                   )}
                 </Typography>
                 {m.email && (
-                  <Typography variant="caption" color="text.secondary" noWrap>
+                  <Typography variant="caption" color="text.tertiary" noWrap>
                     {m.email}
                   </Typography>
                 )}
               </Box>
+              {isAutoAssigned && (
+                <Chip
+                  label="Auto-assigned"
+                  size="small"
+                  color="primary"
+                  variant="soft"
+                  sx={{ flexShrink: 0 }}
+                />
+              )}
 
               <Stack
                 direction="row"
@@ -276,7 +300,7 @@ export default function AnnotatorPicker({
         )}
         {isFetchingNextPage && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 1 }}>
-            <CircularProgress size={20} />
+            <CircularProgress size={20} sx={{ color: "text.secondary" }} />
           </Box>
         )}
       </Box>

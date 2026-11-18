@@ -2,15 +2,18 @@ import { useState, useCallback, useRef } from "react";
 import {
   Box,
   Button,
-  InputAdornment,
   MenuItem,
-  Stack,
   TextField,
-  Typography,
+  ToggleButton,
+  ToggleButtonGroup,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { useAnnotationLabelsList } from "src/api/annotation-labels/annotation-labels";
-import AnnotationsTabs from "../../view/annotations-tabs";
+import {
+  useAnnotationLabelsList,
+  useRestoreAnnotationLabel,
+} from "src/api/annotation-labels/annotation-labels";
+import AnnotationsPageLayout from "../../view/annotations-page-layout";
+import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import AnnotationLabelTable from "../annotation-label-table";
 import AnnotationLabelEmpty from "../annotation-label-empty";
 import CreateLabelDrawer from "../create-label-drawer";
@@ -32,6 +35,7 @@ export default function AnnotationLabelsView() {
     page: 0,
     limit: 10,
     include_usage_count: true,
+    archived: false,
   });
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -43,7 +47,9 @@ export default function AnnotationLabelsView() {
   const { data, isLoading } = useAnnotationLabelsList({
     ...filters,
     page: filters.page + 1,
+    archived: filters.archived || undefined,
   });
+  const { mutate: restoreLabel } = useRestoreAnnotationLabel();
 
   const results = data?.results || [];
   const totalCount = data?.count || 0;
@@ -65,6 +71,15 @@ export default function AnnotationLabelsView() {
     setFilters((prev) => ({
       ...prev,
       type: event.target.value,
+      page: 0,
+    }));
+  }, []);
+
+  const handleArchiveViewChange = useCallback((_, value) => {
+    if (!value) return;
+    setFilters((prev) => ({
+      ...prev,
+      archived: value === "archived",
       page: 0,
     }));
   }, []);
@@ -92,6 +107,14 @@ export default function AnnotationLabelsView() {
     setArchiveLabel(label);
   }, []);
 
+  const handleRestore = useCallback(
+    (label) => {
+      if (!label?.id) return;
+      restoreLabel(label.id);
+    },
+    [restoreLabel],
+  );
+
   const handleCreateNew = useCallback(() => {
     setEditLabel(null);
     setDrawerOpen(true);
@@ -103,128 +126,83 @@ export default function AnnotationLabelsView() {
   }, []);
 
   const isEmpty =
-    !isLoading && results.length === 0 && !filters.search && !filters.type;
+    !isLoading &&
+    results.length === 0 &&
+    !filters.search &&
+    !filters.type &&
+    !filters.archived;
 
   return (
-    <Box
-      sx={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        backgroundColor: "background.paper",
-      }}
-    >
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "2px",
-          px: 3,
-          pt: 2,
-        }}
-      >
-        <Typography
-          color="text.primary"
-          typography="m2"
-          fontWeight={"fontWeightSemiBold"}
-        >
-          Annotation labels
-        </Typography>
-        <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
-          <Typography
-            typography="s1"
-            color="text.primary"
-            fontWeight={"fontWeightRegular"}
+    <AnnotationsPageLayout
+      title="Annotation labels"
+      description="Create and manage labels used to annotate traces, spans, and datasets"
+      toolbar={
+        <>
+          <FormSearchField
+            size="small"
+            placeholder="Search"
+            searchQuery={searchInput}
+            onChange={handleSearch}
+            sx={{ width: 280 }}
+          />
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={filters.archived ? "archived" : "active"}
+            onChange={handleArchiveViewChange}
           >
-            Create and manage labels used to annotate traces, spans, and
-            datasets
-          </Typography>
-        </Box>
-      </Box>
-      <Box sx={{ flexShrink: 0, px: 3 }}>
-        <AnnotationsTabs />
-      </Box>
-
+            <ToggleButton value="active">Active</ToggleButton>
+            <ToggleButton value="archived">Archived</ToggleButton>
+          </ToggleButtonGroup>
+          <TextField
+            size="small"
+            select
+            value={filters.type}
+            onChange={handleTypeFilter}
+            sx={{ minWidth: 160 }}
+            SelectProps={{
+              displayEmpty: true,
+              renderValue: (v) =>
+                TYPE_OPTIONS.find((o) => o.value === v)?.label || "All Types",
+            }}
+          >
+            {TYPE_OPTIONS.map((opt) => (
+              <MenuItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </MenuItem>
+            ))}
+          </TextField>
+          <Box sx={{ flex: 1 }} />
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<Iconify icon="solar:add-linear" />}
+            onClick={handleCreateNew}
+          >
+            Create Label
+          </Button>
+        </>
+      }
+    >
       {isEmpty ? (
         <AnnotationLabelEmpty onCreateClick={handleCreateNew} />
       ) : (
-        <Box
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            flex: 1,
-            overflow: "hidden",
-            px: 3,
+        <AnnotationLabelTable
+          data={results}
+          loading={isLoading}
+          page={filters.page}
+          rowsPerPage={filters.limit}
+          totalCount={totalCount}
+          onPageChange={handlePageChange}
+          onRowsPerPageChange={(rpp) => {
+            setFilters((prev) => ({ ...prev, limit: rpp, page: 0 }));
           }}
-        >
-          <Stack
-            direction="row"
-            spacing={2}
-            mb={2}
-            flexShrink={0}
-            alignItems="center"
-          >
-            <TextField
-              size="small"
-              placeholder="Search labels..."
-              value={searchInput}
-              onChange={handleSearch}
-              sx={{ minWidth: 280 }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Iconify
-                      icon="eva:search-fill"
-                      sx={{ color: "text.disabled" }}
-                    />
-                  </InputAdornment>
-                ),
-              }}
-            />
-            <TextField
-              size="small"
-              select
-              value={filters.type}
-              onChange={handleTypeFilter}
-              sx={{ minWidth: 160 }}
-              SelectProps={{
-                displayEmpty: true,
-                renderValue: (v) =>
-                  TYPE_OPTIONS.find((o) => o.value === v)?.label || "All Types",
-              }}
-            >
-              {TYPE_OPTIONS.map((opt) => (
-                <MenuItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </MenuItem>
-              ))}
-            </TextField>
-            <Box sx={{ flex: 1 }} />
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" />}
-              onClick={handleCreateNew}
-            >
-              Create Label
-            </Button>
-          </Stack>
-
-          <AnnotationLabelTable
-            data={results}
-            loading={isLoading}
-            page={filters.page}
-            rowsPerPage={filters.limit}
-            totalCount={totalCount}
-            onPageChange={handlePageChange}
-            onRowsPerPageChange={(rpp) => {
-              setFilters((prev) => ({ ...prev, limit: rpp, page: 0 }));
-            }}
-            onEdit={handleEdit}
-            onDuplicate={handleDuplicate}
-            onArchive={handleArchive}
-          />
-        </Box>
+          onEdit={handleEdit}
+          onDuplicate={handleDuplicate}
+          onArchive={handleArchive}
+          onRestore={handleRestore}
+          archivedView={filters.archived}
+        />
       )}
 
       <CreateLabelDrawer
@@ -237,6 +215,6 @@ export default function AnnotationLabelsView() {
         label={archiveLabel}
         onClose={() => setArchiveLabel(null)}
       />
-    </Box>
+    </AnnotationsPageLayout>
   );
 }

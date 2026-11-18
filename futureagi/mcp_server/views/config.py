@@ -1,6 +1,8 @@
 """Dashboard API endpoints for MCP configuration."""
 
 from django.conf import settings
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -11,11 +13,20 @@ from mcp_server.serializers.connection import (
     MCPConnectionSerializer,
     MCPConnectionUpdateSerializer,
 )
+from mcp_server.serializers.contracts import (
+    MCPConnectionResponseSerializer,
+    MCPErrorResponseSerializer,
+    MCPToolGroupsResponseSerializer,
+)
 from mcp_server.serializers.tool_config import MCPToolGroupConfigUpdateSerializer
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 
 
 class MCPConfigView(APIView):
     """Get or update MCP connection configuration."""
+
+    permission_classes = [IsAuthenticated]
 
     def _get_mcp_url(self):
         """Build the public MCP endpoint URL."""
@@ -24,6 +35,12 @@ class MCPConfigView(APIView):
         )
         return f"{host}/mcp" if host else None
 
+    @swagger_auto_schema(
+        responses={
+            200: MCPConnectionResponseSerializer,
+            403: MCPErrorResponseSerializer,
+        },
+    )
     def get(self, request):
         user = request.user
         organization = request.organization
@@ -31,7 +48,8 @@ class MCPConfigView(APIView):
 
         if not organization:
             return Response(
-                {"status": False, "error": "No organization context"}, status=403
+                build_error_envelope("No organization context", status_code=403),
+                status=403,
             )
 
         try:
@@ -54,6 +72,16 @@ class MCPConfigView(APIView):
         result["mcp_url"] = self._get_mcp_url()
         return Response({"status": True, "result": result})
 
+    @validated_request(
+        request_serializer=MCPConnectionUpdateSerializer,
+        responses={
+            200: MCPConnectionResponseSerializer,
+            403: MCPErrorResponseSerializer,
+            404: MCPErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+        partial_request_validation=True,
+    )
     def put(self, request):
         user = request.user
         organization = request.organization
@@ -61,7 +89,8 @@ class MCPConfigView(APIView):
 
         if not organization:
             return Response(
-                {"status": False, "error": "No organization context"}, status=403
+                build_error_envelope("No organization context", status_code=403),
+                status=403,
             )
 
         try:
@@ -72,11 +101,12 @@ class MCPConfigView(APIView):
             )
         except MCPConnection.DoesNotExist:
             return Response(
-                {"status": False, "error": "No MCP connection found"}, status=404
+                build_error_envelope("No MCP connection found", status_code=404),
+                status=404,
             )
 
         serializer = MCPConnectionUpdateSerializer(
-            connection, data=request.data, partial=True
+            connection, data=request.validated_data, partial=True
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -89,6 +119,15 @@ class MCPConfigView(APIView):
 class MCPToolGroupsView(APIView):
     """Get or update tool group configuration."""
 
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={
+            200: MCPToolGroupsResponseSerializer,
+            403: MCPErrorResponseSerializer,
+            500: MCPErrorResponseSerializer,
+        }
+    )
     def get(self, request):
         user = request.user
         workspace = request.workspace
@@ -125,6 +164,14 @@ class MCPToolGroupsView(APIView):
         serializer = MCPToolGroupConfigSerializer(config)
         return Response({"status": True, "result": serializer.data})
 
+    @validated_request(
+        request_serializer=MCPToolGroupConfigUpdateSerializer,
+        responses={
+            200: MCPToolGroupsResponseSerializer,
+            403: MCPErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def put(self, request):
         user = request.user
         organization = request.organization
@@ -132,11 +179,9 @@ class MCPToolGroupsView(APIView):
 
         if not organization:
             return Response(
-                {"status": False, "error": "No organization context"}, status=403
+                build_error_envelope("No organization context", status_code=403),
+                status=403,
             )
-
-        serializer = MCPToolGroupConfigUpdateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
 
         try:
             connection = MCPConnection.no_workspace_objects.get(
@@ -156,10 +201,10 @@ class MCPToolGroupsView(APIView):
             connection=connection,
         )
 
-        if "enabled_groups" in serializer.validated_data:
-            config.enabled_groups = serializer.validated_data["enabled_groups"]
-        if "disabled_tools" in serializer.validated_data:
-            config.disabled_tools = serializer.validated_data["disabled_tools"]
+        if "enabled_groups" in request.validated_data:
+            config.enabled_groups = request.validated_data["enabled_groups"]
+        if "disabled_tools" in request.validated_data:
+            config.disabled_tools = request.validated_data["disabled_tools"]
         config.save()
 
         from mcp_server.serializers.tool_config import MCPToolGroupConfigSerializer

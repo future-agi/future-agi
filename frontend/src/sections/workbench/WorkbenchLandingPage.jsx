@@ -24,10 +24,10 @@ const WorkbenchLandingPage = () => {
       });
       trackEvent(Events.promptCreateNewClicked, {
         [PropertyName.click]: true,
-        [PropertyName.promptId]: data?.data?.result?.rootTemplate,
+        [PropertyName.promptId]: data?.data?.result?.root_template,
       });
       navigate(
-        `/dashboard/workbench/create/${data?.data?.result?.rootTemplate}`,
+        `/dashboard/workbench/create/${data?.data?.result?.root_template}`,
       );
     },
   });
@@ -91,8 +91,8 @@ const WorkbenchLandingPage = () => {
       >
         <Box display={"flex"} flexDirection={"column"} gap={0.5}>
           <Typography
-            variant="l3"
-            fontWeight={"fontWeightMedium"}
+            variant="m1"
+            fontWeight={"fontWeightSemiBold"}
             color="text.primary"
             sx={{ marginBottom: "4px" }}
           >

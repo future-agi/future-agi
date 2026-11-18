@@ -1,28 +1,69 @@
 /* eslint-disable react-refresh/only-export-components */
 import React from "react";
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import {
+  useWorkspaceFromList,
+  useWorkspacesList,
+} from "src/api/workspaces/list";
 import { paths } from "src/routes/paths";
+import { agentsSidebarPath } from "src/sections/agent-playground/agentsTabs";
+import { usePathname } from "src/routes/hooks";
+import { HELP_LINK } from "src/config-global";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useHostUpdateAccess } from "src/api/hostUpdates/host-update-status";
+import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import {
   ROLES,
   showRoleSpecific,
   RoutesName,
 } from "src/utils/rolePermissionMapping";
-import axiosInstance, { endpoints } from "src/utils/axios";
 
-const icon = (name) => (
-  <SvgColor src={`/assets/icons/navbar/${name}.svg`} />
-  // OR
-  // <Iconify icon="fluent:mail-24-filled" />
-  // https://icon-sets.iconify.design/solar/
-  // https://www.streamlinehq.com/icons
-);
+// Design system: nav icons are Solar linear, the same set as the rest of
+// the product. Names not listed fall back to the old navbar SVGs.
+const SOLAR_NAV_ICONS = {
+  ic_blog: "solar:chart-square-linear",
+  ic_analytics: "solar:database-linear",
+  ic_lock: "solar:key-minimalistic-linear",
+  ic_dash_tasks: "solar:checklist-minimalistic-linear",
+  ic_users: "solar:users-group-rounded-linear",
+  hugeicons: "solar:database-linear",
+  ic_docs: "solar:document-text-linear",
+  ic_booking: "solar:map-arrow-right-linear",
+  ic_chat: "solar:chat-round-line-linear",
+  ic_run: "solar:routing-2-linear",
+  ic_prompt: "solar:notes-linear",
+  ic_add_team: "solar:user-plus-linear",
+  ic_help: "solar:question-circle-linear",
+  ic_eval: "solar:checklist-linear",
+  ic_prototype: "solar:box-linear",
+  ic_annotate: "solar:pen-2-linear",
+  ic_knowledge_base: "solar:book-2-linear",
+  ic_alert: "solar:bell-linear",
+  ic_experiment: "solar:test-tube-linear",
+  ic_project: "solar:folder-linear",
+  ic_sessions: "solar:layers-minimalistic-linear",
+  ic_optimize: "solar:tuning-2-linear",
+  ic_evaluate: "solar:clipboard-check-linear",
+  ic_feed: "solar:bug-linear",
+  ic_persona: "solar:user-id-linear",
+  ic_agents: "solar:cpu-bolt-linear",
+  ic_chartsObserve: "solar:graph-up-linear",
+  ic_gateway: "solar:server-square-linear",
+  ic_environment: "solar:globus-linear",
+  ic_chat_nav: "solar:chat-round-line-linear",
+};
+
+const icon = (name) =>
+  SOLAR_NAV_ICONS[name] ? (
+    <Iconify icon={SOLAR_NAV_ICONS[name]} />
+  ) : (
+    <SvgColor src={`/assets/icons/navbar/${name}.svg`} />
+  );
 
 const ICONS = {
   dashboard: icon("ic_blog"),
@@ -45,13 +86,12 @@ const ICONS = {
   knowledge_base: icon("ic_knowledge_base"),
   alerts: icon("ic_alert"),
   falconAI: icon("ic_falcon_ai"),
+  chat: icon("ic_chat_nav"),
   simulate: icon("ic_experiment"),
-  agentDefinition: icon("ic_project"),
   scenarios: icon("ic_sessions"),
   simulatorAgent: icon("ic_optimize"),
   test: icon("ic_evaluate"),
   feed: icon("ic_feed"),
-  persona: icon("ic_persona"),
   agents: icon("ic_agents"),
 };
 
@@ -60,14 +100,15 @@ const ICONS = {
 export function useNavData() {
   const { user } = useAuthContext();
   const { currentWorkspaceRole } = useWorkspace();
-  const { isOSS } = useDeploymentMode();
-  const userOrgRole = user?.organization_role ?? user?.organizationRole;
-  const userDefaultWsRole =
-    user?.default_workspace_role ?? user?.defaultWorkspaceRole;
+  const userOrgRole = user?.organization_role;
+  const userDefaultWsRole = user?.default_workspace_role;
   const isOwner = userOrgRole === "Owner";
   const effectiveWsRole = currentWorkspaceRole || userDefaultWsRole;
   const isAdmin =
     userOrgRole === "Admin" || effectiveWsRole === "workspace_admin";
+  // Orgs created after the cutoff see only Environments in Simulate.
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
+  const agentsPath = agentsSidebarPath(usePathname());
   const data = useMemo(() => {
     const buildItems = [
       {
@@ -92,7 +133,8 @@ export function useNavData() {
       },
       {
         title: "Agents",
-        path: paths.dashboard.agents,
+        path: agentsPath,
+        activePath: paths.dashboard.agents,
         icon: ICONS.agents,
         // eventTrigger: () => {
         //   trackEvent(Events.navigationPromptClicked, {
@@ -100,16 +142,16 @@ export function useNavData() {
         //   });
         // },
       },
-      {
-        title: "Prototype",
-        path: paths.dashboard.prototype,
-        icon: ICONS.prototype,
-        eventTrigger: () => {
-          trackEvent(Events.navigationPrototypeClicked, {
-            [PropertyName.click]: true,
-          });
-        },
-      },
+      // {
+      //   title: "Prototype",
+      //   path: paths.dashboard.prototype,
+      //   icon: ICONS.prototype,
+      //   eventTrigger: () => {
+      //     trackEvent(Events.navigationPrototypeClicked, {
+      //       [PropertyName.click]: true,
+      //     });
+      //   },
+      // },
       {
         title: "Knowledge base",
         path: paths.dashboard.knowledge_base,
@@ -159,7 +201,7 @@ export function useNavData() {
           {
             title: "Error Feed",
             path: paths.dashboard.errorFeed.root,
-            icon: <Iconify icon="mdi:bug-outline" />,
+            icon: <Iconify icon="solar:bug-linear" />,
           },
           {
             title: "Tasks",
@@ -199,7 +241,7 @@ export function useNavData() {
           {
             title: "Gateway",
             path: paths.dashboard.gateway.root,
-            icon: <Iconify icon="mdi:transit-connection-variant" />,
+            icon: <Iconify icon="solar:routing-2-linear" />,
             hasChildren: true,
           },
         ],
@@ -208,55 +250,44 @@ export function useNavData() {
         subheader: "Simulate",
         items: [
           {
-            title: "Agent Definition",
-            path: paths.dashboard.simulate.agentDefinition,
-            icon: ICONS.agentDefinition,
-            eventTrigger: () => {
-              trackEvent(Events.navigationAlertDefinitionClicked, {
-                [PropertyName.click]: true,
-              });
-            },
+            title: "Environment",
+            path: paths.dashboard.simulate.environments.root,
+            icon: <Iconify icon="solar:server-square-cloud-linear" />,
           },
-          {
-            title: "Scenarios",
-            path: paths.dashboard.simulate.scenarios,
-            icon: ICONS.scenarios,
-            eventTrigger: () => {
-              trackEvent(Events.navigationScenariosClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
-          {
-            title: "Personas",
-            path: paths.dashboard.simulate.personas,
-            icon: ICONS.persona,
-            eventTrigger: () => {
-              trackEvent(Events.navigationPersonasClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
-          // {
-          //   title: "Simulation Agent",
-          //   path: paths.dashboard.simulate.simulatorAgent,
-          //   icon: ICONS.simulatorAgent,
-          //   eventTrigger: () => {
-          //     trackEvent(Events.navigationSimulationAgentClicked, {
-          //       [PropertyName.click]: true,
-          //     });
-          //   },
-          // },
-          {
-            title: "Run Simulation",
-            path: paths.dashboard.simulate.test,
-            icon: ICONS.test,
-            eventTrigger: () => {
-              trackEvent(Events.navigationRunTestsClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
+          ...(restrictSimulateToEnvironments
+            ? []
+            : [
+                {
+                  title: "Scenarios",
+                  path: paths.dashboard.simulate.scenarios,
+                  icon: ICONS.scenarios,
+                  eventTrigger: () => {
+                    trackEvent(Events.navigationScenariosClicked, {
+                      [PropertyName.click]: true,
+                    });
+                  },
+                },
+                // {
+                //   title: "Simulation Agent",
+                //   path: paths.dashboard.simulate.simulatorAgent,
+                //   icon: ICONS.simulatorAgent,
+                //   eventTrigger: () => {
+                //     trackEvent(Events.navigationSimulationAgentClicked, {
+                //       [PropertyName.click]: true,
+                //     });
+                //   },
+                // },
+                {
+                  title: "Run Simulation",
+                  path: paths.dashboard.simulate.test,
+                  icon: ICONS.test,
+                  eventTrigger: () => {
+                    trackEvent(Events.navigationRunTestsClicked, {
+                      [PropertyName.click]: true,
+                    });
+                  },
+                },
+              ]),
         ],
       },
       // {
@@ -268,40 +299,40 @@ export function useNavData() {
     sections.unshift({
       items: [
         {
-          title: "Falcon AI",
+          title: "Chat",
           path: paths.dashboard.falconAI,
-          icon: ICONS.falconAI,
-          disabled: isOSS,
-          disabledTooltip: "Not available on self-hosted",
+          icon: ICONS.chat,
         },
       ],
     });
 
     return sections;
-  }, [isOwner, isAdmin, isOSS]);
+  }, [isOwner, isAdmin, agentsPath, restrictSimulateToEnvironments]);
   return data;
 }
 
+const DOCS_LINK = "https://docs.futureagi.com";
+const OSS_HELP_LINK = "https://discord.com/invite/n2tCUKBkAw";
+
 export function useNavUpgradeData() {
   const { user } = useAuthContext();
+  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
   const getStartedCompleted = user?.getStartedCompleted;
   const data = useMemo(() => {
+    // OSS images ship without VITE_HELP_LINK, so point Help at the community
+    // Discord unless the operator configured a support channel of their own.
+    const helpLink =
+      isOSS && !deploymentModeLoading ? HELP_LINK || OSS_HELP_LINK : HELP_LINK;
     const items = [
       {
         title: "Docs",
-        path: "https://docs.futureagi.com",
+        path: DOCS_LINK,
         icon: ICONS.docs,
         eventTrigger: () => {
           trackEvent(Events.docLinkClicked, {
             [PropertyName.source]: "side_navigation",
           });
         },
-      },
-
-      {
-        title: "Help",
-        path: import.meta.env.VITE_HELP_LINK,
-        icon: ICONS.help,
       },
     ];
 
@@ -312,8 +343,17 @@ export function useNavUpgradeData() {
         icon: ICONS.getStarted,
       });
     }
+
+    // Without a path the item renders as a link to the current route, so drop it.
+    if (helpLink) {
+      items.push({
+        title: "Help",
+        path: helpLink,
+        icon: ICONS.help,
+      });
+    }
     return [{ subheader: "RESOURCES", items }];
-  }, [getStartedCompleted]);
+  }, [getStartedCompleted, isOSS, deploymentModeLoading]);
 
   return data;
 }
@@ -342,25 +382,22 @@ const SettingsIcons = {
 
 export function useNavSettingsData() {
   const { user } = useAuthContext();
-  const { isOSS } = useDeploymentMode();
+  const { isCloud } = useDeploymentMode();
+  const { allowed: hostUpdatesAllowed } = useHostUpdateAccess();
   const { currentWorkspaceRole } = useWorkspace();
 
-  const { data: workspaces = [] } = useQuery({
-    queryKey: ["workspaces-list", "settings"],
-    queryFn: () => axiosInstance.get(endpoints.workspace.workspaceList),
-    select: (res) => res.data?.results || [],
-    enabled: !!(user?.ws_enabled ?? user?.wsEnabled),
-    staleTime: 30_000,
+  const { data: workspaces = [] } = useWorkspacesList({
+    enabled: !!user?.ws_enabled,
   });
 
   // Use organization role for org-level settings
   // Workspace role is only relevant for workspace-specific tabs
-  const effectiveRole = user?.organization_role ?? user?.organizationRole;
+  const effectiveRole = user?.organization_role;
   const isOrgAdminPlus =
     effectiveRole === ROLES.OWNER || effectiveRole === ROLES.ADMIN;
   const isWsAdmin =
     isOrgAdminPlus || currentWorkspaceRole === ROLES.WORKSPACE_ADMIN;
-  const wsEnabled = user?.ws_enabled ?? user?.wsEnabled;
+  const wsEnabled = user?.ws_enabled;
 
   const sections = useMemo(() => {
     // Wait for user role to be loaded before rendering tabs
@@ -417,11 +454,11 @@ export function useNavSettingsData() {
         icon: SettingsIcons.Providers,
       });
     }
-    // Falcon AI Connectors — same access as integrations
-    if (!isOSS && canAccess(RoutesName.integrations)) {
+    // Connectors (tools for Chat) — same access as integrations
+    if (canAccess(RoutesName.integrations)) {
       wsSettingsItems.push({
-        title: "Falcon AI Connectors",
-        path: "/dashboard/settings/falcon-ai-connectors",
+        title: "Connectors",
+        path: "/dashboard/settings/connectors",
         icon: SettingsIcons.Integrations,
       });
     }
@@ -434,21 +471,21 @@ export function useNavSettingsData() {
 
     // Section 3: Organization (based on role permissions for each item)
     const orgItems = [];
-    if (canAccess(RoutesName.usageSummary)) {
+    if (isCloud && canAccess(RoutesName.usageSummary)) {
       orgItems.push({
         title: "Usage Summary",
         path: "/dashboard/settings/usage-summary",
         icon: SettingsIcons.Summary,
       });
     }
-    if (!isOSS && canAccess(RoutesName.planAndPricing)) {
+    if (isCloud && canAccess(RoutesName.planAndPricing)) {
       orgItems.push({
         title: "Plans & Pricing",
         path: "/dashboard/settings/pricing",
         icon: SettingsIcons.Pricing,
       });
     }
-    if (!isOSS && canAccess(RoutesName.billing)) {
+    if (isCloud && canAccess(RoutesName.billing)) {
       orgItems.push({
         title: "Billing",
         path: "/dashboard/settings/billing",
@@ -478,14 +515,20 @@ export function useNavSettingsData() {
         icon: SettingsIcons.Security,
       });
     }
-    // EE Licenses - hidden (feature not available yet)
-    // if (effectiveRole === ROLES.OWNER) {
-    //   orgItems.push({
-    //     title: "EE Licenses",
-    //     path: "/dashboard/settings/ee-licenses",
-    //     icon: SettingsIcons.Keys,
-    //   });
-    // }
+    if (!isCloud && isOrgAdminPlus) {
+      orgItems.push({
+        title: "License",
+        path: "/dashboard/settings/ee-licenses",
+        icon: SettingsIcons.Keys,
+      });
+    }
+    if (hostUpdatesAllowed) {
+      orgItems.push({
+        title: "Updates",
+        path: paths.dashboard.settings.updates,
+        icon: <Iconify icon="mdi:update" />,
+      });
+    }
     if (wsEnabled && canAccess(RoutesName.workspace)) {
       orgItems.push({
         title: "Workspaces",
@@ -505,7 +548,7 @@ export function useNavSettingsData() {
       result.push({
         subheader: "Your Workspaces",
         items: workspaces.map((ws) => ({
-          title: ws.display_name || ws.displayName || ws.name,
+          title: ws.display_name || ws.name,
           path: `/dashboard/settings/workspace/${ws.id}`,
           icon: SettingsIcons.Workspaces,
         })),
@@ -520,7 +563,8 @@ export function useNavSettingsData() {
     user,
     wsEnabled,
     workspaces,
-    isOSS,
+    isCloud,
+    hostUpdatesAllowed,
   ]);
 
   return sections;
@@ -529,24 +573,17 @@ export function useNavSettingsData() {
 export function useWorkspaceSettingsNav(workspaceId) {
   const { user } = useAuthContext();
 
-  const { data: workspace = null } = useQuery({
-    queryKey: ["workspaces-list", "settings"],
-    queryFn: () => axiosInstance.get(endpoints.workspace.workspaceList),
-    select: (res) =>
-      (res.data?.results || []).find((w) => w.id === workspaceId) || null,
-    enabled: !!workspaceId,
-    staleTime: 30_000,
-  });
+  const { workspace } = useWorkspaceFromList(workspaceId);
 
   if (!workspaceId || !workspace) return null;
 
-  // Check org role using organizationRole, not workspace role
-  const userOrgRole = user?.organization_role ?? user?.organizationRole;
+  // Check org role using the canonical user-info organization_role field.
+  const userOrgRole = user?.organization_role;
   const isOrgAdminPlus =
     userOrgRole === ROLES.OWNER || userOrgRole === ROLES.ADMIN;
 
   // Workspace level thresholds: 8=admin, 3=member, 1=viewer (from backend Level constants)
-  const wsLevel = workspace.user_ws_level ?? workspace.userWsLevel ?? 0;
+  const wsLevel = workspace.user_ws_level ?? 0;
   const isWsAdmin = isOrgAdminPlus || wsLevel >= 8;
   const isWsViewer = !isOrgAdminPlus && wsLevel < 3;
 
@@ -588,11 +625,7 @@ export function useWorkspaceSettingsNav(workspaceId) {
   }
 
   return {
-    name:
-      workspace.display_name ||
-      workspace.displayName ||
-      workspace.name ||
-      "Workspace",
+    name: workspace.display_name || workspace.name || "Workspace",
     data: [{ items }],
   };
 }
@@ -604,92 +637,92 @@ export function useNavGatewayData() {
         {
           title: "Overview",
           path: paths.dashboard.gateway.overview,
-          iconName: "mdi:view-dashboard-outline",
+          iconName: "solar:widget-4-linear",
         },
       ],
     },
     {
-      subheader: "CONFIGURE",
+      subheader: "Configure",
       items: [
         {
           title: "Providers",
           path: paths.dashboard.gateway.providers,
-          iconName: "mdi:cloud-cog-outline",
+          iconName: "solar:cloud-linear",
         },
         {
           title: "API Keys",
           path: paths.dashboard.gateway.keys,
-          iconName: "mdi:key-outline",
+          iconName: "solar:key-linear",
         },
         {
           title: "Guardrails",
           path: paths.dashboard.gateway.guardrails.root,
-          iconName: "mdi:shield-check-outline",
+          iconName: "solar:shield-check-linear",
         },
         {
           title: "Fallbacks",
           path: paths.dashboard.gateway.fallbacks,
-          iconName: "mdi:swap-horizontal",
+          iconName: "solar:transfer-horizontal-linear",
         },
       ],
     },
     {
-      subheader: "INSIGHTS",
+      subheader: "Insights",
       items: [
         {
           title: "Request Logs",
           path: paths.dashboard.gateway.logs,
-          iconName: "mdi:text-box-search-outline",
+          iconName: "solar:file-search-linear",
         },
         {
           title: "Analytics",
           path: paths.dashboard.gateway.analytics,
-          iconName: "mdi:chart-line",
+          iconName: "solar:graph-up-linear",
         },
         {
           title: "Monitoring",
           path: paths.dashboard.gateway.monitoring,
-          iconName: "mdi:bell-ring-outline",
+          iconName: "solar:bell-ring-linear",
         },
         {
           title: "Sessions",
           path: paths.dashboard.gateway.sessions,
-          iconName: "mdi:message-text-outline",
+          iconName: "solar:chat-round-line-linear",
         },
         // {
         //   title: "Experiments",
         //   path: paths.dashboard.gateway.experiments,
-        //   iconName: "mdi:flask-outline",
+        //   iconName: "solar:test-tube-linear",
         // },
       ],
     },
     {
-      subheader: "MANAGE",
+      subheader: "Manage",
       items: [
         {
           title: "Budgets",
           path: paths.dashboard.gateway.budgets,
-          iconName: "mdi:wallet-outline",
+          iconName: "solar:wallet-linear",
         },
         {
           title: "Webhooks",
           path: paths.dashboard.gateway.webhooks,
-          iconName: "mdi:webhook",
+          iconName: "solar:link-circle-linear",
         },
         {
           title: "Custom Properties",
           path: paths.dashboard.gateway.customProperties,
-          iconName: "mdi:tag-multiple-outline",
+          iconName: "solar:tag-price-linear",
         },
         {
           title: "MCP Tools",
           path: paths.dashboard.gateway.mcp,
-          iconName: "mdi:tools",
+          iconName: "solar:toolbox-linear",
         },
         {
           title: "Settings",
           path: paths.dashboard.gateway.settings,
-          iconName: "mdi:cog-outline",
+          iconName: "solar:settings-linear",
         },
       ],
     },

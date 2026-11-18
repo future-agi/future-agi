@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from model_hub.models.choices import StatusType
 from simulate.models import Scenarios
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 
 
 class SimulatorAgentResponseSerializer(serializers.Serializer):
@@ -97,8 +98,8 @@ class ScenarioResponseSerializer(serializers.ModelSerializer):
     def get_dataset_rows(self, obj):
         from model_hub.models.develop_dataset import Row
 
-        if hasattr(obj, "_dataset_row_count") and obj._dataset_row_count is not None:
-            return obj._dataset_row_count
+        if hasattr(obj, "_dataset_row_count"):
+            return obj._dataset_row_count or 0
         if obj.dataset:
             return Row.objects.filter(dataset=obj.dataset, deleted=False).count()
         return 0
@@ -108,9 +109,18 @@ class ScenarioResponseSerializer(serializers.ModelSerializer):
 
         if obj.dataset:
             column_order = obj.dataset.column_order
-            columns = Column.objects.filter(deleted=False, id__in=column_order)
+            prefetched_columns = getattr(obj.dataset, "_run_test_columns", None)
+            columns = (
+                prefetched_columns
+                if prefetched_columns is not None
+                else Column.objects.filter(deleted=False, id__in=column_order)
+            )
+            columns_by_id = {str(column.id): column for column in columns}
             column_config = {}
-            for column in columns:
+            for column_id in column_order:
+                column = columns_by_id.get(str(column_id))
+                if column is None:
+                    continue
                 column_config[f"{column.id}"] = {
                     "name": column.name,
                     "type": column.data_type,
@@ -121,11 +131,15 @@ class ScenarioResponseSerializer(serializers.ModelSerializer):
     def get_graph(self, obj):
         from simulate.models.scenario_graph import ScenarioGraph
 
-        graph = (
-            ScenarioGraph.objects.filter(scenario=obj, is_active=True)
-            .order_by("-created_at")
-            .first()
-        )
+        prefetched_graphs = getattr(obj, "_active_graphs", None)
+        if prefetched_graphs is not None:
+            graph = prefetched_graphs[0] if prefetched_graphs else None
+        else:
+            graph = (
+                ScenarioGraph.objects.filter(scenario=obj, is_active=True)
+                .order_by("-created_at")
+                .first()
+            )
         if graph and graph.graph_config:
             return graph.graph_config.get("graph_data", {})
         return {}
@@ -181,6 +195,13 @@ class ScenarioPromptItemSerializer(serializers.Serializer):
     content = serializers.CharField(read_only=True)
 
 
+class DatasetColumnConfigEntrySerializer(serializers.Serializer):
+    """Nested serializer for individual dataset column config entries."""
+
+    name = serializers.CharField(read_only=True)
+    type = serializers.CharField(read_only=True)
+
+
 class ScenarioDetailResponseSerializer(serializers.Serializer):
     """Response serializer for GET /scenarios/{scenario_id}/.
 
@@ -209,6 +230,9 @@ class ScenarioDetailResponseSerializer(serializers.Serializer):
         child=ScenarioPromptItemSerializer(), read_only=True
     )
     dataset_rows = serializers.IntegerField(read_only=True)
+    dataset_column_config = serializers.DictField(
+        child=DatasetColumnConfigEntrySerializer(), read_only=True, allow_null=True
+    )
 
 
 class ScenarioListResponseSerializer(serializers.Serializer):
@@ -274,16 +298,5 @@ class ScenarioPromptsUpdateResponseSerializer(serializers.Serializer):
     prompts = serializers.CharField(read_only=True)
 
 
-class ScenarioErrorResponseSerializer(serializers.Serializer):
-    """Standardized error response shape — used only for Swagger documentation.
-
-    Not applied to actual response construction (preserves existing behavior).
-
-    Shape:
-        {"error": "Human-readable message", "details": {"field": ["validation error"]}}
-
-    `details` is only present for 400 validation errors.
-    """
-
-    error = serializers.CharField(read_only=True)
-    details = serializers.DictField(required=False, read_only=True)
+class ScenarioErrorResponseSerializer(ApiTextErrorResponseSerializer):
+    """Standardized error response shape — used only for Swagger documentation."""

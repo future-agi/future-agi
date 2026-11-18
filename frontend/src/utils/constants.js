@@ -53,7 +53,7 @@ export const AdvanceNumberFilterOperators = [
   { label: "Greater Than Or Equal", value: "greater_than_or_equal" },
   { label: "Less Than Or Equal", value: "less_than_or_equal" },
   { label: "Between", value: "between" },
-  { label: "Not In Between", value: "not_in_between" },
+  { label: "Not Between", value: "not_between" },
 ];
 
 export const TextFilterOperators = [
@@ -126,6 +126,17 @@ export const RESPONSE_CODES = {
   MAINTENANCE: 503,
 };
 
+// WebSocket close codes — cross-side contract with the backend.
+// Mirrored in futureagi/sockets/prompt_stream_consumer.py (WS_CLOSE_CODE_*).
+// The snapshot in
+// src/sections/workbench/createPrompt/__tests__/ws-close-codes.test.js pins
+// these values so drift is caught in CI.
+export const WS_CLOSE_CODES = {
+  UNAUTHENTICATED: 4001,
+  PERMISSION_DENIED: 4003,
+  NOT_FOUND: 4004,
+};
+
 export const LOGIN_ERROR_CODES = {
   IP_BLOCKED: "LOGIN_IP_BLOCKED",
   IP_RATE_LIMITED: "LOGIN_IP_RATE_LIMITED",
@@ -135,6 +146,7 @@ export const LOGIN_ERROR_CODES = {
   ACCOUNT_DEACTIVATED: "LOGIN_ACCOUNT_DEACTIVATED",
   TOO_MANY_ATTEMPTS: "LOGIN_TOO_MANY_ATTEMPTS",
   UNEXPECTED_ERROR: "LOGIN_UNEXPECTED_ERROR",
+  SERVICE_UNAVAILABLE: "LOGIN_SERVICE_UNAVAILABLE",
 };
 
 //Prompt Constants

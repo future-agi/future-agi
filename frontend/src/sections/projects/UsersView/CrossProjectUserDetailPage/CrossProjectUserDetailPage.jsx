@@ -5,7 +5,14 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Box, Divider, Paper, Typography, useTheme } from "@mui/material";
+import {
+  Box,
+  Button,
+  Divider,
+  Paper,
+  Typography,
+  useTheme,
+} from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import { useNavigate, useParams } from "react-router";
 import Iconify from "src/components/iconify";
@@ -84,17 +91,14 @@ const UserDetailPageBody = () => {
       return;
     }
     if (lastHydratedTabRef.current === activeTab) return;
-    const customViews =
-      workspaceSavedViewsData?.customViews ??
-      workspaceSavedViewsData?.custom_views ??
-      [];
+    const customViews = workspaceSavedViewsData?.custom_views ?? [];
     if (!customViews.length) return;
     const viewId = activeTab.slice(5);
     const view = customViews.find((v) => v.id === viewId);
     if (!view?.config) return;
     lastHydratedTabRef.current = activeTab;
     setActiveViewConfig(view.config);
-    const targetSubTab = view.config.sub_tab || view.config.subTab;
+    const targetSubTab = view.config.sub_tab;
     if (targetSubTab && targetSubTab !== subTab) setSubTab(targetSubTab);
   }, [activeTab, workspaceSavedViewsData, setActiveViewConfig, subTab]);
 
@@ -158,54 +162,34 @@ const UserDetailPageBody = () => {
               sx={{ minHeight: 38 }}
             >
               <Box display="flex" alignItems="center" gap={1.5}>
-                <Box
-                  component="button"
+                <Button
+                  variant="outlined"
+                  size="small"
                   onClick={() => navigate("/dashboard/users")}
-                  sx={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 0.5,
-                    height: 26,
-                    px: 1.5,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "4px",
-                    bgcolor: "transparent",
-                    cursor: "pointer",
-                    fontSize: 14,
-                    fontWeight: 500,
-                    fontFamily: "'IBM Plex Sans', sans-serif",
-                    color: "text.primary",
-                    "&:hover": { bgcolor: "action.hover" },
-                  }}
+                  startIcon={
+                    <Iconify icon="solar:alt-arrow-left-linear" width={16} />
+                  }
                 >
-                  <Iconify icon="mdi:chevron-left" width={16} />
                   Back
-                </Box>
+                </Button>
 
                 <Box
                   sx={{
                     display: "inline-flex",
                     alignItems: "center",
                     gap: 0.75,
-                    height: 26,
-                    px: 1.5,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "4px",
-                    bgcolor: "background.paper",
                     maxWidth: 480,
                   }}
                 >
                   <Iconify
-                    icon="mdi:account-outline"
+                    icon="solar:user-linear"
                     width={16}
                     sx={{ color: "text.secondary" }}
                   />
                   <Typography
-                    variant="body2"
                     noWrap
                     sx={{
+                      typography: "m1",
                       fontWeight: 600,
                       color: "text.primary",
                       overflow: "hidden",

@@ -68,15 +68,14 @@ const GenericCard = ({
         size="small"
         icon={
           <SvgColor
+            width={16}
             src={
               isVoice
                 ? "/assets/icons/ic_voice.svg"
                 : "/assets/icons/ic_chat_single.svg"
             }
             sx={{
-              width: 16,
-              height: 16,
-              color: isVoice ? "blue.700" : "pink.700",
+              color: isVoice ? "status.info.fg" : "status.discovery.fg",
             }}
           />
         }
@@ -86,15 +85,13 @@ const GenericCard = ({
             : simulationType?.charAt(0).toUpperCase() + simulationType?.slice(1)
         }
         sx={{
-          backgroundColor: isVoice ? "blue.o10" : "pink.o10",
-          color: isVoice ? "blue.700" : "pink.700",
-          fontWeight: "fontWeightMedium",
-          borderRadius: 0,
+          backgroundColor: isVoice ? "status.info.bg" : "status.discovery.bg",
+          color: isVoice ? "status.info.fg" : "status.discovery.fg",
           "& .MuiChip-icon": {
-            color: isVoice ? "blue.700" : "pink.700",
+            color: isVoice ? "status.info.fg" : "status.discovery.fg",
           },
           "&:hover": {
-            backgroundColor: isVoice ? "blue.o10" : "pink.o10",
+            backgroundColor: isVoice ? "status.info.bg" : "status.discovery.bg",
           },
         }}
       />
@@ -114,7 +111,7 @@ const GenericCard = ({
     >
       <Box
         sx={{
-          borderRadius: 0.5,
+          borderRadius: "4px",
           border: selected ? "1px solid" : "1px solid",
           borderColor: selected ? "primary.main" : "divider",
           transition: "all 0.2s ease",
@@ -131,7 +128,7 @@ const GenericCard = ({
       >
         <Box
           sx={{
-            borderRadius: 0.5,
+            borderRadius: "4px",
             opacity: 1,
             height: "100%",
             cursor: "pointer",
@@ -141,7 +138,7 @@ const GenericCard = ({
             sx={{
               padding: 2,
               backgroundColor: "background.paper",
-              borderRadius: 0.5,
+              borderRadius: "4px",
               display: "flex",
               flexDirection: "column",
               gap: "12px",
@@ -269,7 +266,7 @@ const GenericCard = ({
                   <Box
                     sx={{
                       padding: "4px 12px",
-                      borderRadius: "2px",
+                      borderRadius: "4px",
                       color: "primary.main",
                       backgroundColor: "action.hover",
                     }}
@@ -284,7 +281,7 @@ const GenericCard = ({
                       key={tag}
                       sx={{
                         padding: "4px 12px",
-                        borderRadius: "2px",
+                        borderRadius: "4px",
                         border: "1px solid",
                         borderColor: "divider",
                       }}

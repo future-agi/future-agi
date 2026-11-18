@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import {
+  Alert,
   Box,
   Button,
   Chip,
@@ -38,24 +39,26 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { useGetProjectById } from "src/api/project/evals-task";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
-import { objectCamelToSnake } from "src/utils/utils";
 import { red } from "src/theme/palette";
+import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import {
-  extractAttributeFilters,
   getNewTaskFilters,
   NewTaskValidationSchema,
 } from "../NewTaskDrawer/validation";
-import NewTaskFilterBox from "../NewTaskDrawer/NewTaskFilterBox";
+import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import ScheduledRuns from "../NewTaskDrawer/ScheduledRuns";
 import { getDefaultTaskValues, useGetTaskData } from "../common";
 import TaskConfirmDialog from "./TaskConfirmBox";
 import TaskLogsView from "../TaskLogsView";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
+import { useTaskEvalAttributeInventory } from "../use_task_eval_attribute_inventory";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // ── Configured Eval Card ──
 
 const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
-  const theme = useTheme();
   const name =
     evalItem?.name ||
     evalItem?.eval_template?.name ||
@@ -73,10 +76,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
         borderRadius: 1,
         border: "1px solid",
         borderColor: "divider",
-        bgcolor:
-          theme.palette.mode === "dark"
-            ? "rgba(255,255,255,0.02)"
-            : "rgba(0,0,0,0.01)",
+        bgcolor: "background.neutral",
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -88,11 +88,9 @@ const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
             {mappedKeys.slice(0, 3).map((key) => (
               <Chip
                 key={key}
-                label={`${key} → ${evalItem.mapping[key]}`}
+                label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   bgcolor: "action.hover",
                   "& .MuiChip-label": { px: 0.5 },
                 }}
@@ -103,8 +101,6 @@ const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
                 label={`+${mappedKeys.length - 3}`}
                 size="small"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   "& .MuiChip-label": { px: 0.5 },
                 }}
               />
@@ -118,7 +114,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
           onClick={onRemove}
           sx={{ p: 0.25, color: "text.secondary" }}
         >
-          <Iconify icon="mingcute:close-line" width={16} />
+          <Iconify icon="solar:close-linear" width={16} />
         </IconButton>
       )}
     </Box>
@@ -185,7 +181,8 @@ const EditTaskDrawerV2Content = ({
     enabled: !!observeId,
   });
 
-  // Debounced filters for API calls
+  // Debounced filters for configured-eval lookup only. Attribute mapping uses
+  // the exact retained-key cursor below and is independent of task filters.
   const _filters = useMemo(() => {
     return getNewTaskFilters(formValues, project, true).filters || {};
   }, [formValues, project]);
@@ -198,7 +195,7 @@ const EditTaskDrawerV2Content = ({
       axios.get(endpoints.project.getEvalTaskConfig(), {
         params: {
           project_id: project,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
           task_id: selectedRow?.id,
         },
       }),
@@ -210,27 +207,16 @@ const EditTaskDrawerV2Content = ({
     if (configuredEvalList) replace(configuredEvalList);
   }, [configuredEvalList, replace]);
 
-  // Fetch eval attributes for variable mapping
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", rowType, filters],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
-        },
-      }),
-    select: (d) => d.data?.result,
+  const {
+    sourceColumns,
+    attributeFields: evalAttributes,
+    onSourceColumnSearchChange,
+    sourceColumnInventoryControls,
+  } = useTaskEvalAttributeInventory({
+    projectId: project,
+    rowType,
+    enabled: Boolean(project),
   });
-
-  const sourceColumns = useMemo(() => {
-    if (!evalAttributes) return [];
-    return evalAttributes.map((attr) => ({
-      headerName: attr,
-      field: attr,
-      name: attr,
-    }));
-  }, [evalAttributes]);
 
   // Fetch project list
   const { data: projectsList } = useQuery({
@@ -264,24 +250,11 @@ const EditTaskDrawerV2Content = ({
   const onUpdateSubmit = useCallback(
     (editType) => {
       const data = formValues;
-      const attributeFilters = extractAttributeFilters(data?.filters);
-
-      // Generic system filter aggregation: every non-attribute filter
-      // row contributes its value to a BE key named after `f.property`.
-      // Mirrors the create-side getNewTaskFilters (validation.js) so
-      // span_kind, latency_ms, total_tokens, etc. all round-trip
-      // without each one being hard-coded.
-      const systemFilters = {};
-      (data.filters || []).forEach((f) => {
-        if (!f?.property || f.property === "attributes") return;
-        const v = f?.filterConfig?.filterValue;
-        if (v === undefined || v === null || v === "") return;
-        if (systemFilters[f.property]) {
-          systemFilters[f.property].push(v);
-        } else {
-          systemFilters[f.property] = [v];
-        }
-      });
+      const { filters: systemFilters, attributeFilters } = getNewTaskFilters(
+        data,
+        data.project,
+        true,
+      );
 
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id) || [],
@@ -428,13 +401,12 @@ const EditTaskDrawerV2Content = ({
                 />
               }
               onClick={() => setIsEditing(!isEditing)}
-              sx={{ textTransform: "none", fontSize: "12px" }}
             >
               {isEditing ? "Editing" : "Edit"}
             </Button>
           )}
           <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
-            <Iconify icon="mingcute:close-line" width={20} />
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Box>
       </Box>
@@ -443,21 +415,9 @@ const EditTaskDrawerV2Content = ({
       {isView && (
         <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 2 }}>
           <Tabs
+            sx={{ boxShadow: "none" }}
             value={selectedTab}
             onChange={(_, val) => setSelectedTab(val)}
-            sx={{
-              minHeight: 0,
-              "& .MuiTab-root": {
-                minHeight: 36,
-                fontWeight: 600,
-                fontSize: "13px",
-                textTransform: "none",
-                "&:not(.Mui-selected)": {
-                  color: "text.disabled",
-                  fontWeight: 500,
-                },
-              },
-            }}
           >
             {TAB_OPTIONS.map((tab) => (
               <Tab key={tab.value} label={tab.label} value={tab.value} />
@@ -537,18 +497,14 @@ const EditTaskDrawerV2Content = ({
                 <Accordion defaultExpanded>
                   <AccordionSummary>Filters</AccordionSummary>
                   <AccordionDetails>
-                    <NewTaskFilterBox
-                      getValues={getValues}
-                      setValue={setValue}
-                      attributes={
-                        Array.isArray(evalAttributes)
-                          ? evalAttributes.map((attr) => ({
-                              label: attr,
-                              value: attr,
-                            }))
-                          : []
-                      }
+                    <TaskFilterBar
                       control={control}
+                      setValue={setValue}
+                      projectId={project}
+                      isSimulator={String(rowType || "")
+                        .toLowerCase()
+                        .startsWith("voice")}
+                      rowType={rowType}
                     />
                   </AccordionDetails>
                 </Accordion>
@@ -576,11 +532,9 @@ const EditTaskDrawerV2Content = ({
                         disabled={!project}
                         onClick={() => setEvalPickerOpen(true)}
                         startIcon={
-                          <Iconify icon="mingcute:add-line" width={16} />
+                          <Iconify icon="solar:add-linear" width={16} />
                         }
                         sx={{
-                          textTransform: "none",
-                          fontWeight: 500,
                           alignSelf: "flex-start",
                         }}
                       >
@@ -618,7 +572,7 @@ const EditTaskDrawerV2Content = ({
                         <Typography
                           variant="body2"
                           color="text.disabled"
-                          sx={{ fontSize: "13px" }}
+                          sx={{ fontSize: "12px" }}
                         >
                           No evaluations configured
                         </Typography>
@@ -679,7 +633,11 @@ const EditTaskDrawerV2Content = ({
         open={evalPickerOpen}
         onClose={() => setEvalPickerOpen(false)}
         source="task"
+        sourceId={project || ""}
+        sourceRowType={rowType}
         sourceColumns={sourceColumns}
+        onSourceColumnSearchChange={onSourceColumnSearchChange}
+        sourceColumnInventoryControls={sourceColumnInventoryControls}
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
       />
@@ -709,16 +667,25 @@ const EditTaskDrawerV2 = ({
   const theme = useTheme();
   const taskId = selectedRow?.id;
 
-  const { data: taskDetails } = useGetTaskData(taskId, {
+  const {
+    data: taskDetails,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useGetTaskData(taskId, {
     enabled: !!taskId && open,
   });
 
+  const covered = useDrawerCovered(open);
   if (!open) return null;
 
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       variant="temporary"
       onClose={onClose}
       PaperProps={{
@@ -736,6 +703,40 @@ const EditTaskDrawerV2 = ({
         BackdropProps: { style: { backgroundColor: "rgba(0, 0, 0, 0.3)" } },
       }}
     >
+      {isLoading && !taskDetails && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: "100%",
+          }}
+        >
+          <ContentSkeleton variant="panel" />
+        </Box>
+      )}
+      {isError && (
+        <Alert
+          severity="error"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => refetch()}
+              disabled={isFetching}
+            >
+              Retry
+            </Button>
+          }
+          sx={{ m: 2, flexShrink: 0 }}
+        >
+          {getSafeActionErrorMessage(
+            error,
+            "Task details could not be loaded.",
+          )}
+          {taskDetails ? " Existing task details are still shown." : ""}
+        </Alert>
+      )}
       {taskDetails && (
         <EditTaskDrawerV2Content
           selectedRow={selectedRow}

@@ -76,6 +76,7 @@ def _as_context_dict(
         return {k: v for k, v in asdict(context).items() if v is not None}
     return context
 
+
 LITELLM_EXCEPTION_ERROR_CODES = {
     BadRequestError: "LITELLM_BAD_REQUEST",
     UnsupportedParamsError: "LITELLM_UNSUPPORTED_PARAMS",
@@ -169,7 +170,7 @@ def _iter_exception_chain(exception: Exception) -> Iterator[Exception]:
         context = getattr(exc, "__context__", None)
         if cause is not None:
             stack.append(cause)
-        if context is not None and context is not cause:
+        elif context is not None and not exc.__suppress_context__:
             stack.append(context)
 
 
@@ -519,8 +520,16 @@ def log_verbose_error(
         if field in context:
             log_fields[field] = context[field]
 
-    # Log with all structured fields
-    logger.error(f"LiteLLM API error: {parsed_error['message']}", **log_fields)
+    # Log with all structured fields. "No audio input found for STT" is an
+    # expected user misconfiguration (text-only input to an audio eval), not an
+    # API failure; downgrade only that case to warning so genuine API errors
+    # keep creating Sentry issues.
+    if "No audio input found in messages for STT." in str(
+        parsed_error.get("raw_error", "")
+    ):
+        logger.warning(f"LiteLLM API error: {parsed_error['message']}", **log_fields)
+    else:
+        logger.error(f"LiteLLM API error: {parsed_error['message']}", **log_fields)
 
 
 def handle_api_error(

@@ -23,7 +23,6 @@ from agentic_eval.core_evals.llm_services.fi_api_service import FiApiService
 
 
 class BaseEvaluator(ABC):
-
     # Abstract properties
     @property
     @abstractmethod
@@ -72,7 +71,6 @@ class BaseEvaluator(ABC):
     def _examples_str(self) -> str:
         return "" if self.examples is None else "\n".join(map(str, self.examples))
 
-
     def validate_args(self, **kwargs) -> None:
         """
         Validates that all required arguments are present and not None.
@@ -94,7 +92,9 @@ class BaseEvaluator(ABC):
                     raise ValueError(
                         f"Data at index {i} is missing required argument: {arg}"
                     )
-                entry_dict = dict(entry)  # Convert TypedDict to regular dict for dynamic access
+                entry_dict = dict(
+                    entry
+                )  # Convert TypedDict to regular dict for dynamic access
                 if entry_dict.get(arg) is None:
                     raise ValueError(
                         f"Data at index {i} has required argument {arg} set to None"
@@ -113,7 +113,6 @@ class BaseEvaluator(ABC):
         except Exception:
             pass
         return eval_request_id
-
 
     def _log_evaluation_results(
         self, eval_request_id: str | None, eval_results: list[EvalResult]
@@ -206,10 +205,7 @@ class BaseEvaluator(ABC):
         Logs the dataset to Fi
         """
         try:
-            dataset = Dataset.create(
-                name=generate_unique_dataset_name(),
-                rows=data
-            )
+            dataset = Dataset.create(name=generate_unique_dataset_name(), rows=data)
             return dataset
         except Exception as e:
             logger.error(f"Error logging dataset to Fi: {e}")
@@ -227,19 +223,24 @@ class BaseEvaluator(ABC):
                     "eval_results": eval_results,
                     "development_eval_config": {
                         "eval_type_id": self.name,
-                        "eval_display_name": generate_eval_display_name(self.display_name),
+                        "eval_display_name": generate_eval_display_name(
+                            self.display_name
+                        ),
                         "eval_config": eval_config,
-                        "llm_engine": llm_engine
-                    }
+                        "llm_engine": llm_engine,
+                    },
                 },
-                dataset_id=dataset_id
+                dataset_id=dataset_id,
             )
         except Exception as e:
             logger.error(f"Error logging eval results to Fi: {e}")
             pass
 
     def run_batch(
-        self, data: list[DataPoint], max_parallel_evals: int = 5, upload_to_fi: bool = True
+        self,
+        data: list[DataPoint],
+        max_parallel_evals: int = 5,
+        upload_to_fi: bool = True,
     ) -> BatchRunResult:
         """
         Runs the evaluator on a batch of data.

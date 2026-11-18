@@ -32,6 +32,76 @@ class AgentccCustomPropertySchemaSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("allowed_values must be a JSON array")
         return value
 
+    def validate(self, attrs):
+        property_type = attrs.get(
+            "property_type",
+            getattr(
+                self.instance,
+                "property_type",
+                AgentccCustomPropertySchema.TYPE_STRING,
+            ),
+        )
+        allowed_values = attrs.get(
+            "allowed_values",
+            getattr(self.instance, "allowed_values", []),
+        )
+        default_value = attrs.get(
+            "default_value",
+            getattr(self.instance, "default_value", None),
+        )
+
+        if not isinstance(allowed_values, list):
+            raise serializers.ValidationError(
+                {"allowed_values": "allowed_values must be a JSON array"}
+            )
+
+        if property_type == AgentccCustomPropertySchema.TYPE_ENUM:
+            if not allowed_values:
+                raise serializers.ValidationError(
+                    {
+                        "allowed_values": (
+                            "Enum properties require at least one allowed value"
+                        )
+                    }
+                )
+            for index, value in enumerate(allowed_values):
+                if value is None or isinstance(value, (dict, list)):
+                    raise serializers.ValidationError(
+                        {
+                            "allowed_values": (
+                                f"Allowed value at index {index} must be a string, number, or boolean"
+                            )
+                        }
+                    )
+
+        if default_value is not None:
+            error = self._default_value_error(
+                property_type=property_type,
+                allowed_values=allowed_values,
+                default_value=default_value,
+            )
+            if error:
+                raise serializers.ValidationError({"default_value": error})
+
+        return attrs
+
+    def _default_value_error(self, *, property_type, allowed_values, default_value):
+        if property_type == AgentccCustomPropertySchema.TYPE_STRING:
+            if not isinstance(default_value, str):
+                return "Default value must be a string"
+        elif property_type == AgentccCustomPropertySchema.TYPE_NUMBER:
+            if isinstance(default_value, bool) or not isinstance(
+                default_value, (int, float)
+            ):
+                return "Default value must be a number"
+        elif property_type == AgentccCustomPropertySchema.TYPE_BOOLEAN:
+            if not isinstance(default_value, bool):
+                return "Default value must be a boolean"
+        elif property_type == AgentccCustomPropertySchema.TYPE_ENUM:
+            if default_value not in allowed_values:
+                return "Default value must be one of the allowed values"
+        return ""
+
     def validate_name(self, value):
         try:
             return validate_safe_agentcc_name(value)

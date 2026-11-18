@@ -80,16 +80,29 @@ class TestCHMetricFilters:
         assert params == {}
 
     def test_has_eval_false_no_condition(self):
-        where, _ = self._builder().translate([_has_eval_filter(False)])
-        assert where == ""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        where, _ = ClickHouseFilterBuilder(
+            candidate_ids_param="candidate_trace_ids"
+        ).translate([_has_eval_filter(False)])
+        assert "trace_id NOT IN" in where
+        assert "toString(eval_scan.trace_id) IN %(candidate_trace_ids)s" in where
 
     def test_has_eval_string_true(self):
         where, _ = self._builder().translate([_has_eval_filter("true")])
         assert "tracer_eval_logger" in where
 
     def test_has_eval_string_false(self):
-        where, _ = self._builder().translate([_has_eval_filter("false")])
-        assert where == ""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        where, _ = ClickHouseFilterBuilder(
+            candidate_ids_param="candidate_trace_ids"
+        ).translate([_has_eval_filter("false")])
+        assert "trace_id NOT IN" in where
 
     def test_has_eval_string_True_capital(self):
         where, _ = self._builder().translate([_has_eval_filter("True")])
@@ -122,7 +135,7 @@ class TestCHMetricFilters:
 
     def test_errors_filter_generates_status_condition(self):
         where, params = self._builder().translate([_errors_filter()])
-        assert "lower(status)" in where
+        assert "lowerUTF8(toString(status))" in where
         assert "error" in params.values()
 
     # --- combinations ---
@@ -161,8 +174,8 @@ class TestCHMetricFilters:
         assert "model" in where
         assert "tracer_eval_logger" in where
 
-    def test_camelCase_filter_format(self):
-        """Frontend sends camelCase before objectCamelToSnake — builder handles both."""
+    def test_camel_case_filter_format_is_supported_by_backend_contract(self):
+        """Frontend camelCase payloads are accepted by the CH filter builder."""
         filters = [
             {
                 "columnId": "has_eval",
@@ -173,10 +186,10 @@ class TestCHMetricFilters:
                 },
             }
         ]
-        where, _ = self._builder().translate(filters)
+        where, params = self._builder().translate(filters)
         assert "tracer_eval_logger" in where
 
-    def test_has_annotation_camelCase(self):
+    def test_has_annotation_camel_case_filter_format_is_supported(self):
         filters = [
             {
                 "columnId": "has_annotation",
@@ -187,7 +200,7 @@ class TestCHMetricFilters:
                 },
             }
         ]
-        where, _ = self._builder().translate(filters)
+        where, params = self._builder().translate(filters)
         assert "trace_id NOT IN" in where
 
     def test_empty_filter_list(self):
@@ -227,7 +240,7 @@ class TestCHMetricFilters:
     def test_has_eval_true_excludes_null_trace_ids(self):
         """has_eval subquery should exclude NULL trace_ids."""
         where, _ = self._builder().translate([_has_eval_filter(True)])
-        assert "trace_id IS NOT NULL" in where
+        assert "NOT isNull(eval_scan.trace_id)" in where
 
     # --- Type safety (String vs UUID) ---
 
@@ -239,14 +252,14 @@ class TestCHMetricFilters:
     def test_has_annotation_joins_through_span(self):
         """Score.trace_id is often NULL — must join via observation_span to resolve trace_id."""
         where, _ = self._builder().translate([_has_annotation_filter(False)])
-        assert "LEFT JOIN spans AS sp" in where
+        assert "FROM spans WHERE" in where
         assert "sp.id = s.observation_span_id" in where
 
     def test_has_eval_casts_to_string(self):
         """Subquery must use toString(trace_id) because spans.trace_id is String
         but tracer_eval_logger.trace_id is UUID."""
         where, _ = self._builder().translate([_has_eval_filter(True)])
-        assert "toString(el.trace_id)" in where
+        assert "toString(latest_eval.trace_id)" in where
 
 
 # ============================================================================

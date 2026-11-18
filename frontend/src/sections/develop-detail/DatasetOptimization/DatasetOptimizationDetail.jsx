@@ -16,6 +16,7 @@ import DatasetOptimizationResultBar from "./DatasetOptimizationResultBar";
 import DatasetOptimizationResultProvider from "./context/DatasetOptimizationResultProvider";
 import DatasetOptimizationCancelled from "./DatasetOptimizationCancelled";
 import { useDatasetOptimizationStore } from "./states";
+import { normalizeDatasetOptimizationDetail } from "./common";
 
 // Re-export context for use in child components
 export { useDatasetOptimizationResultContext } from "./context/DatasetOptimizationResultContext";
@@ -59,7 +60,8 @@ const DatasetOptimizationDetail = ({
         }
         return false;
       },
-      select: (data) => data?.data?.result,
+      select: (data) =>
+        normalizeDatasetOptimizationDetail(data?.data?.result ?? {}),
     });
 
   const handleTrialClick = (trialId) => {
@@ -93,20 +95,14 @@ const DatasetOptimizationDetail = ({
           />
         }
       >
-        <Typography
-          component={Button}
+        <Button
           size="small"
-          typography="s1"
-          fontWeight="fontWeightMedium"
-          color="text.secondary"
+          variant="text"
           onClick={onBack}
-          sx={{
-            px: "10px",
-            "&:hover": { backgroundColor: "transparent" },
-          }}
+          sx={{ color: "text.secondary" }}
         >
           Optimization Runs
-        </Typography>
+        </Button>
         <Typography
           typography="s1"
           fontWeight="fontWeightMedium"

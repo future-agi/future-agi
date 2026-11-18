@@ -7,10 +7,12 @@ import {
   MenuItem,
   Select,
   Tab,
-  Tabs,
   Tooltip,
   Typography,
+  Button,
+  ButtonBase,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -28,8 +30,10 @@ import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import axios, { endpoints } from "src/utils/axios";
 import { extractCodeEvaluateParams } from "src/utils/codeEvalParams";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
+import logger from "src/utils/logger";
 import { canonicalEntries } from "src/utils/utils";
 import { camelCaseToTitleCase } from "src/utils/utils";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import CodeEditor from "./CodeEditor";
 import DatasetTestMode from "./DatasetTestMode";
 import TracingTestMode from "./TracingTestMode";
@@ -42,6 +46,8 @@ import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import EvalResultDisplay from "./EvalResultDisplay";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import VersionBadge from "./VersionBadge";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import {
   useExecuteCompositeEval,
   useExecuteCompositeEvalAdhoc,
@@ -49,7 +55,11 @@ import {
 
 const SOURCE_TABS = ["Dataset", "Tracing", "Simulation", "Custom"];
 
-const camelizeKey = (key = "") => key.replace(/_([a-z])/g, (_, char) => char.toUpperCase());
+// Stable default so an omitted `requiredKeys` doesn't remint an array each render.
+const NO_REQUIRED_KEYS = [];
+
+const camelizeKey = (key = "") =>
+  key.replace(/_([a-z])/g, (_, char) => char.toUpperCase());
 
 const formatParamLabel = (key) => camelCaseToTitleCase(camelizeKey(key));
 
@@ -59,11 +69,13 @@ const CustomJsonInput = ({
   inputValues,
   onInputChange,
   instructions,
+  evalName,
   onColumnsLoaded,
 }) => {
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState(null);
   const followUpRef = useRef(null);
+  const { enqueueSnackbar } = useSnackbar();
 
   // AI bar state
   const [aiOpen, setAiOpen] = useState(false);
@@ -72,7 +84,7 @@ const CustomJsonInput = ({
   const [hasResult, setHasResult] = useState(false);
   const [originalJson, setOriginalJson] = useState(null);
 
-  // Extract keys from current JSON — include nested dot-notation paths
+  // Extract keys from current JSON - include nested dot-notation paths
   const jsonKeys = React.useMemo(() => {
     try {
       const parsed = JSON.parse(jsonText);
@@ -137,48 +149,69 @@ const CustomJsonInput = ({
     });
   }, [variables, jsonKeys]);
 
-  // Sync JSON keys with variables — add new ones, remove stale ones
+  // Sync the scaffold with the variables without clobbering what the user is typing.
+  const prevVarsRef = useRef(null);
   useEffect(() => {
-    // Parse current JSON
-    let current = {};
+    const prev = prevVarsRef.current;
+    const varsChanged =
+      prev === null ||
+      prev.length !== variables.length ||
+      !prev.every((v, i) => v === variables[i]);
+
+    // Only reconcile when the variable set changes. On any other re-render
+    // (every keystroke, since jsonText is a dep) leave the user's text alone.
+    if (!varsChanged) return;
+
+    let current;
     try {
-      current = JSON.parse(jsonText);
+      current = JSON.parse(jsonText || "{}");
     } catch {
-      /* keep empty */
+      return; // invalid / mid-edit — leave the user's text alone
+    }
+    if (
+      typeof current !== "object" ||
+      current === null ||
+      Array.isArray(current)
+    ) {
+      return;
     }
 
     const varSet = new Set(variables);
-
-    // Remove keys that are no longer in variables (only if their value is empty)
+    const prevSet = new Set(prev || []);
+    const updated = { ...current };
     let changed = false;
-    const updated = {};
-    for (const [k, v] of Object.entries(current)) {
-      if (!varSet.has(k) && (v === "" || v === null || v === undefined)) {
-        changed = true; // drop this stale key
-      } else {
-        updated[k] = v;
+
+    // Drop a removed variable's empty field only — never a user's key.
+    for (const k of Object.keys(updated)) {
+      if (
+        !varSet.has(k) &&
+        prevSet.has(k) &&
+        (updated[k] === "" || updated[k] === null || updated[k] === undefined)
+      ) {
+        delete updated[k];
+        changed = true;
       }
     }
 
-    // Add new variables that aren't already in the JSON
+    // Add any missing variable field.
     variables.forEach((v) => {
-      updated[v] = v in current ? current[v] : inputValues[v] || "";
-      if (!(v in current)) changed = true;
+      if (!(v in updated)) {
+        updated[v] = inputValues[v] || "";
+        changed = true;
+      }
     });
 
-    // Check if any old keys were removed
-    for (const key of Object.keys(current)) {
-      if (!varSet.has(key)) {
-        changed = true;
-        break;
-      }
-    }
+    prevVarsRef.current = variables;
 
     if (changed) {
-      const keys = Object.keys(updated);
-      setJsonText(keys.length > 0 ? JSON.stringify(updated, null, 2) : "{\n}");
+      setJsonText(
+        Object.keys(updated).length > 0
+          ? JSON.stringify(updated, null, 2)
+          : "{\n}",
+      );
+      setJsonError(null);
     }
-  }, [variables]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [variables, jsonText]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Parse JSON and update individual input values
   const handleJsonChange = useCallback(
@@ -187,18 +220,37 @@ const CustomJsonInput = ({
       try {
         const parsed = JSON.parse(text);
         setJsonError(null);
-        if (typeof parsed === "object" && !Array.isArray(parsed)) {
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
           Object.entries(parsed).forEach(([k, v]) => {
             const val =
               typeof v === "object" ? JSON.stringify(v) : String(v ?? "");
             onInputChange(k, val);
+          });
+          // Resolve each variable from its source — a direct key, or the
+          // key it's bound to in the mapping panel. Clear only when it has
+          // no source, so a deleted key's stale value isn't silently
+          // submitted while a mapped binding is left intact.
+          variables.forEach((v) => {
+            if (v in parsed) return;
+            const mapped = varMapping[v];
+            const val = mapped
+              ? mapped.split(".").reduce((obj, k) => obj?.[k], parsed)
+              : undefined;
+            onInputChange(
+              v,
+              val === undefined
+                ? ""
+                : typeof val === "object"
+                  ? JSON.stringify(val)
+                  : String(val ?? ""),
+            );
           });
         }
       } catch {
         setJsonError("Invalid JSON");
       }
     },
-    [onInputChange],
+    [onInputChange, variables, varMapping],
   );
 
   // Call AI
@@ -207,21 +259,33 @@ const CustomJsonInput = ({
       const varList = variables.join(", ");
       const currentData =
         jsonText && jsonText.trim() !== "{}" ? jsonText : null;
-      const description = currentData
-        ? `Current test data JSON:\n${currentData}\n\nUser wants to: ${userPrompt}\n\nGenerate updated JSON with keys: ${varList}. Return ONLY valid JSON.`
-        : `Generate realistic test data as JSON for variables: ${varList}.\n${instructions ? `Eval context: ${instructions.slice(0, 300)}` : ""}\nUser request: ${userPrompt}\nReturn ONLY valid JSON.`;
+
+      // Context so the model knows the test data is for THIS evaluation.
+      const evalContext = [
+        "The test data you generate will be used to run the following evaluation.",
+        evalName ? `Evaluation name: ${evalName}` : "",
+        instructions
+          ? `Evaluation instruction:\n${instructions.slice(0, 4000)}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+      const task = currentData
+        ? `Current test data JSON:\n${currentData}\n\nUser wants to: ${userPrompt}\n\nGenerate updated JSON with keys: ${varList}.`
+        : `User request: ${userPrompt}\n\nGenerate JSON with keys: ${varList}.`;
+
+      const description = `${evalContext}\n\n${task}`;
 
       const { data } = await axios.post(endpoints.develop.eval.aiEvalWriter, {
         description,
+        output_format: "test_data",
       });
-      const raw = data?.result?.prompt;
-      if (raw) {
-        const match = raw.match(/\{[\s\S]*\}/);
-        if (match) return match[0];
-      }
-      return null;
+      // Backend parses + validates the test_data object for us now.
+      const testData = data?.result?.test_data;
+      return testData && typeof testData === "object" ? testData : null;
     },
-    [variables, jsonText, instructions],
+    [variables, jsonText, instructions, evalName],
   );
 
   // Submit prompt
@@ -234,20 +298,22 @@ const CustomJsonInput = ({
       try {
         const result = await callAI(prompt.trim());
         if (result) {
-          const parsed = JSON.parse(result);
-          const formatted = JSON.stringify(parsed, null, 2);
+          const formatted = JSON.stringify(result, null, 2);
           handleJsonChange(formatted);
           setHasResult(true);
           setAiPrompt(prompt.trim());
           setTimeout(() => followUpRef.current?.focus(), 100);
         }
-      } catch {
-        // silent
+      } catch (err) {
+        logger.error("Test data generation failed", err);
+        enqueueSnackbar("Couldn't generate test data. Please try again.", {
+          variant: "error",
+        });
       } finally {
         setAiLoading(false);
       }
     },
-    [jsonText, originalJson, callAI, handleJsonChange],
+    [jsonText, originalJson, callAI, handleJsonChange, enqueueSnackbar],
   );
 
   const handleAccept = useCallback(() => {
@@ -290,10 +356,7 @@ const CustomJsonInput = ({
               zIndex: 10,
               borderBottom: "1px solid",
               borderColor: "divider",
-              backgroundColor: (theme) =>
-                theme.palette.mode === "dark"
-                  ? "rgba(26,26,46,0.95)"
-                  : "rgba(250,250,254,0.95)",
+              backgroundColor: "background.aiSurface",
               borderRadius: "8px 8px 0 0",
             }}
           >
@@ -311,7 +374,7 @@ const CustomJsonInput = ({
                   <Typography
                     variant="body2"
                     color="text.secondary"
-                    sx={{ fontSize: "13px" }}
+                    sx={{ fontSize: "12px" }}
                   >
                     Generating...
                   </Typography>
@@ -320,7 +383,7 @@ const CustomJsonInput = ({
                 <Box
                   component="input"
                   autoFocus
-                  placeholder="Describe the test data you need — e.g. 'generate a failing case'"
+                  placeholder="Describe the test data you need - e.g. 'generate a failing case'"
                   value={aiPrompt}
                   onChange={(e) => setAiPrompt(e.target.value)}
                   onKeyDown={(e) => {
@@ -334,7 +397,7 @@ const CustomJsonInput = ({
                     flex: 1,
                     border: "none",
                     outline: "none",
-                    fontSize: "13px",
+                    fontSize: "12px",
                     backgroundColor: "transparent",
                     color: "text.primary",
                     "&::placeholder": { color: "text.disabled" },
@@ -345,7 +408,7 @@ const CustomJsonInput = ({
                   variant="body2"
                   sx={{
                     flex: 1,
-                    fontSize: "13px",
+                    fontSize: "12px",
                     color: "text.secondary",
                     fontStyle: "italic",
                   }}
@@ -364,37 +427,20 @@ const CustomJsonInput = ({
               >
                 {hasResult && (
                   <>
-                    <Box
-                      component="button"
+                    <Button
+                      size="small"
                       onClick={handleReject}
-                      sx={{
-                        border: "none",
-                        background: "none",
-                        cursor: "pointer",
-                        fontSize: "12px",
-                        color: "text.secondary",
-                        p: "4px 8px",
-                      }}
+                      sx={{ color: "text.secondary" }}
                     >
                       Reject
-                    </Box>
-                    <Box
-                      component="button"
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
                       onClick={handleAccept}
-                      sx={{
-                        border: "1px solid",
-                        borderColor: "primary.main",
-                        background: "none",
-                        cursor: "pointer",
-                        fontSize: "12px",
-                        color: "primary.main",
-                        fontWeight: 600,
-                        p: "4px 10px",
-                        borderRadius: "4px",
-                      }}
                     >
                       Accept
-                    </Box>
+                    </Button>
                   </>
                 )}
                 {!hasResult && !aiLoading && (
@@ -402,7 +448,6 @@ const CustomJsonInput = ({
                     size="small"
                     onClick={() => handleSubmit(aiPrompt)}
                     disabled={!aiPrompt.trim()}
-                    sx={{ p: 0.5 }}
                   >
                     <SvgColor
                       src="/assets/icons/navbar/ic_falcon_ai.svg"
@@ -416,10 +461,10 @@ const CustomJsonInput = ({
                     />
                   </IconButton>
                 )}
-                <IconButton size="small" onClick={handleClose} sx={{ p: 0.25 }}>
+                <IconButton size="small" onClick={handleClose}>
                   <Box
                     sx={{
-                      fontSize: "14px",
+                      fontSize: "12px",
                       color: "text.disabled",
                       lineHeight: 1,
                     }}
@@ -447,7 +492,7 @@ const CustomJsonInput = ({
                     width: "100%",
                     border: "none",
                     outline: "none",
-                    fontSize: "13px",
+                    fontSize: "12px",
                     backgroundColor: "transparent",
                     color: "text.primary",
                     borderTop: "1px solid",
@@ -473,24 +518,16 @@ const CustomJsonInput = ({
         {/* ── Falcon button overlay (bottom-right) ── */}
         {!aiOpen && (
           <Box sx={{ position: "absolute", bottom: 8, right: 12, zIndex: 5 }}>
-            <Tooltip title="Generate test data with Falcon AI" arrow>
+            <Tooltip title="Generate test data with AI" arrow>
               <IconButton
                 size="small"
                 onClick={() => setAiOpen(true)}
                 sx={{
-                  width: 30,
-                  height: 30,
-                  backgroundColor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? "rgba(20,26,33,0.9)"
-                      : "rgba(250,251,252,0.9)",
+                  backgroundColor: "background.paper",
                   border: "1px solid",
                   borderColor: "divider",
                   "&:hover": {
-                    backgroundColor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(124,77,255,0.15)"
-                        : "rgba(124,77,255,0.08)",
+                    backgroundColor: "status.discovery.bg",
                   },
                 }}
               >
@@ -507,14 +544,14 @@ const CustomJsonInput = ({
       {jsonError && (
         <Typography
           variant="caption"
-          color="error.main"
-          sx={{ fontSize: "11px" }}
+          color="status.danger.fg"
+          sx={{ fontSize: "12px" }}
         >
           {jsonError}
         </Typography>
       )}
 
-      {/* Variable mapping with dropdowns — same UI as DatasetTestMode */}
+      {/* Variable mapping with dropdowns - same UI as DatasetTestMode */}
       {variables.length > 0 && (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           {variables.map((variable) => (
@@ -537,7 +574,7 @@ const CustomJsonInput = ({
               >
                 <Box
                   sx={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     color: "text.secondary",
                     fontFamily: "monospace",
                   }}
@@ -548,7 +585,7 @@ const CustomJsonInput = ({
                   {variable}
                 </Typography>
               </Box>
-              <Box sx={{ fontSize: "14px", color: "text.disabled" }}>→</Box>
+              <Box sx={{ fontSize: "12px", color: "text.disabled" }}>→</Box>
               <Select
                 size="small"
                 displayEmpty
@@ -573,7 +610,7 @@ const CustomJsonInput = ({
                 }}
                 sx={{ flex: 1, fontSize: "12px", height: 30 }}
               >
-                <MenuItem value="" disabled sx={{ fontSize: "12px" }}>
+                <MenuItem value="" disabled>
                   Select column
                 </MenuItem>
                 {jsonKeys.map((k, i) => (
@@ -581,12 +618,10 @@ const CustomJsonInput = ({
                     key={`${k}-${i}`}
                     value={k}
                     sx={{
-                      fontSize: "12px",
                       fontFamily: "monospace",
                       pl: k.includes(".")
                         ? `${12 + (k.split(".").length - 1) * 12}px`
                         : undefined,
-                      color: k.includes(".") ? "primary.main" : "text.primary",
                     }}
                   >
                     {k}
@@ -606,6 +641,7 @@ CustomJsonInput.propTypes = {
   inputValues: PropTypes.object.isRequired,
   onInputChange: PropTypes.func.isRequired,
   instructions: PropTypes.string,
+  evalName: PropTypes.string,
   onColumnsLoaded: PropTypes.func,
 };
 
@@ -614,9 +650,10 @@ const TestPlayground = React.forwardRef(
     {
       templateId,
       instructions = "",
+      evalName = "",
       evalType,
       model = "turing_large",
-      requiredKeys = [],
+      requiredKeys = NO_REQUIRED_KEYS,
       showVersions,
       onTestResult,
       onColumnsLoaded,
@@ -630,12 +667,12 @@ const TestPlayground = React.forwardRef(
       functionParamsSchema = null,
       configParamsDesc = null,
       codeParams: controlledCodeParams = null,
+      runConfig,
       onCodeParamsChange,
       code = "",
       codeLanguage = "python",
       isSystemEval = false,
       onReadyChange,
-      multiChoice = false,
     },
     ref,
   ) => {
@@ -659,6 +696,11 @@ const TestPlayground = React.forwardRef(
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
       useErrorLocalizerPoll();
 
+    const { role } = useAuthContext();
+    const canEditEvals = Boolean(
+      RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
+    );
+
     // Version hover menu state
     const [versionMenuAnchor, setVersionMenuAnchor] = useState(null);
     const [hoveredVersionId, setHoveredVersionId] = useState(null);
@@ -672,9 +714,7 @@ const TestPlayground = React.forwardRef(
       if (!list.length) return;
       if (urlVersionParam) {
         const match = list.find(
-      ver =>
-            String(ver.version_number ?? ver.versionNumber) ===
-            String(urlVersionParam),
+          (ver) => String(ver.version_number) === String(urlVersionParam),
         );
         if (match && match.id !== selectedVersionId) {
           setSelectedVersionId(match.id);
@@ -717,7 +757,7 @@ const TestPlayground = React.forwardRef(
       setSelectedVersionId(menuVersion.id);
       onVersionSelect?.(menuVersion);
       enqueueSnackbar(
-        `Loaded V${menuVersion.version_number} config — edit and save to create a new version`,
+        `Loaded V${menuVersion.version_number} config - edit and save to create a new version`,
         { variant: "info" },
       );
       handleVersionMenuClose();
@@ -728,7 +768,7 @@ const TestPlayground = React.forwardRef(
         const isAlreadySelected = selectedVersionId === version.id;
         if (isAlreadySelected) {
           setSelectedVersionId(null);
-          onVersionSelect?.(null); // deselect — go back to current config
+          onVersionSelect?.(null); // deselect - go back to current config
         } else {
           setSelectedVersionId(version.id);
           onVersionSelect?.(version);
@@ -755,7 +795,7 @@ const TestPlayground = React.forwardRef(
 
       // For code evals: system evals always have the canonical signature
       // `evaluate(input, output, expected, context, **kwargs)` and store
-      // the real keys in YAML required_keys — use those directly.
+      // the real keys in YAML required_keys - use those directly.
       // User-authored code is live-parsed so newly typed kwargs surface
       // as mapping rows. Standard trio is the last-resort fallback.
       let codeStdVars = [];
@@ -768,7 +808,9 @@ const TestPlayground = React.forwardRef(
         } else {
           const liveParams = extractCodeEvaluateParams(code, codeLanguage);
           codeStdVars =
-            liveParams.length > 0 ? liveParams : ["input", "output", "expected"];
+            liveParams.length > 0
+              ? liveParams
+              : ["input", "output", "expected"];
         }
       }
 
@@ -816,11 +858,14 @@ const TestPlayground = React.forwardRef(
       codeParamsRef.current = codeParams;
     }, [codeParams]);
 
-    const handleCodeParamChange = useCallback((key, value) => {
-      const next = { ...codeParamsRef.current, [key]: value };
-      setInternalCodeParams(next);
-      onCodeParamsChange?.(next);
-    }, [onCodeParamsChange]);
+    const handleCodeParamChange = useCallback(
+      (key, value) => {
+        const next = { ...codeParamsRef.current, [key]: value };
+        setInternalCodeParams(next);
+        onCodeParamsChange?.(next);
+      },
+      [onCodeParamsChange],
+    );
 
     const visibleFunctionParamEntries = React.useMemo(() => {
       if (!functionParamsSchema) return [];
@@ -830,7 +875,7 @@ const TestPlayground = React.forwardRef(
       );
     }, [functionParamsSchema, variables]);
 
-    // Per-tab readiness — Custom always allows running (empty strings are
+    // Per-tab readiness - Custom always allows running (empty strings are
     // a valid input for exploratory testing); Dataset/Tracing/Simulation
     // report up via their own onReadyChange callbacks because they require
     // a row / dataset selection.
@@ -841,7 +886,6 @@ const TestPlayground = React.forwardRef(
       Simulation: false,
     });
 
- 
     const handleDatasetReady = useCallback(
       (isReady, mapping) => {
         setTabReady((prev) =>
@@ -871,7 +915,7 @@ const TestPlayground = React.forwardRef(
       },
       [onReadyChange],
     );
-  useEffect(() => {
+    useEffect(() => {
       if (!onReadyChange) return;
       onReadyChange(!!tabReady[activeTab]);
     }, [activeTab, tabReady, onReadyChange]);
@@ -883,7 +927,7 @@ const TestPlayground = React.forwardRef(
       const tid = templateIdRef.current;
       // Adhoc composite (eval create page) doesn't need a saved templateId.
       if (!tid && !compositeAdhocConfig) {
-        onTestResult?.(false, "No template ID — save the eval first");
+        onTestResult?.(false, "No template ID - save the eval first");
         return;
       }
 
@@ -897,7 +941,7 @@ const TestPlayground = React.forwardRef(
 
         // Composite evals use a dedicated execute endpoint that runs every
         // child and optionally aggregates their scores.
-        // Composite parent templates have no declared required_keys — child
+        // Composite parent templates have no declared required_keys - child
         // evals each declare their own. Pass every key the user typed in the
         // JSON input so the execute endpoint can route them to children.
         if (isComposite) {
@@ -953,10 +997,10 @@ const TestPlayground = React.forwardRef(
           endpoints.develop.eval.evalPlayground,
           {
             template_id: tid,
-            model,
+            ...(evalType !== "code" && model ? { model } : {}),
             error_localizer: errorLocalizerEnabled,
-            multi_choice: multiChoice,
             config: {
+              ...(runConfig ? { run_config: runConfig } : {}),
               mapping,
               ...(evalType === "code" ? { params } : {}),
             },
@@ -966,7 +1010,7 @@ const TestPlayground = React.forwardRef(
         if (data?.status) {
           setResult(data.result);
           onTestResult?.(true, data.result);
-          // Kick off the async error-localization poll when enabled —
+          // Kick off the async error-localization poll when enabled -
           // the eval playground returns before the localizer task
           // finishes, so we poll `/get-eval-logs` and merge the
           // resulting error_details into `result` via the EvalResultDisplay
@@ -975,7 +1019,7 @@ const TestPlayground = React.forwardRef(
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
-          const errMsg = data?.result || "Evaluation failed";
+          const errMsg = "Evaluation failed. Please retry.";
           setError(errMsg);
           onTestResult?.(false, errMsg);
         }
@@ -984,17 +1028,15 @@ const TestPlayground = React.forwardRef(
         // banner so users see an upgrade CTA instead of a generic red
         // "failed" box. Fall back to the friendly `result` field that the
         // axios interceptor flattens (backend `usage_limit_response` sets
-        // result=reason). `err.response.data.result` is dead — the
+        // result=reason). `err.response.data.result` is dead - the
         // interceptor rejects with a flat custom error.
         if (handleCreditError(err)) {
           onTestResult?.(false, err?.result || "Usage limit exceeded");
         } else {
-          const errMsg =
-            err?.result ||
-            err?.detail ||
-            err?.response?.data?.result ||
-            err?.message ||
-            "Failed to run evaluation";
+          const errMsg = getSafeActionErrorMessage(
+            err,
+            "Failed to run evaluation. Please retry.",
+          );
           setError(errMsg);
           onTestResult?.(false, errMsg);
         }
@@ -1003,6 +1045,9 @@ const TestPlayground = React.forwardRef(
       }
     }, [
       variables,
+      evalType,
+      model,
+      runConfig,
       onTestResult,
       errorLocalizerEnabled,
       startErrorLocalizerPoll,
@@ -1011,7 +1056,6 @@ const TestPlayground = React.forwardRef(
       compositeAdhocConfig,
       executeCompositeAdhoc,
       handleCreditError,
-      multiChoice,
     ]);
 
     // Expose runTest and switchToVersion to parent via ref
@@ -1056,9 +1100,9 @@ const TestPlayground = React.forwardRef(
           height: "100%",
         }}
       >
-        {/* Header — Test Evaluations + Versions (only if saved) */}
+        {/* Header - Test Evaluations + Versions (only if saved) */}
         <Box sx={{ display: "flex", gap: 2, mb: 1.5 }}>
-          <Box
+          <ButtonBase
             onClick={() => setActiveMainTab("test")}
             sx={{
               display: "flex",
@@ -1076,7 +1120,7 @@ const TestPlayground = React.forwardRef(
             }}
           >
             <Iconify
-              icon="solar:play-bold"
+              icon="solar:play-linear"
               width={14}
               sx={{
                 color:
@@ -1094,9 +1138,9 @@ const TestPlayground = React.forwardRef(
             >
               Test Evaluation
             </Typography>
-          </Box>
+          </ButtonBase>
           {(templateId || showVersions) && (
-            <Box
+            <ButtonBase
               onClick={() => setActiveMainTab("versions")}
               sx={{
                 display: "flex",
@@ -1114,7 +1158,7 @@ const TestPlayground = React.forwardRef(
               }}
             >
               <Iconify
-                icon="iconamoon:history"
+                icon="solar:history-linear"
                 width={14}
                 sx={{
                   color:
@@ -1136,15 +1180,15 @@ const TestPlayground = React.forwardRef(
               >
                 Versions
               </Typography>
-            </Box>
+            </ButtonBase>
           )}
         </Box>
 
         {activeMainTab === "test" ? (
           <>
-            {/* Source tabs + Map Variables — same row */}
+            {/* Source tabs + Map Variables - same row */}
             <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
-              <Tabs
+              <SegmentedTabs
                 value={activeTab}
                 onChange={(_, val) => {
                   setActiveTab(val);
@@ -1153,61 +1197,16 @@ const TestPlayground = React.forwardRef(
                   setInputValues({});
                   onSourceTabChange?.();
                 }}
-                TabIndicatorProps={{ style: { display: "none" } }}
-                sx={{
-                  minHeight: 28,
-                  "& .MuiTab-root": {
-                    minHeight: 28,
-                    px: 1.5,
-                    py: 0,
-                    mr: "0px !important",
-                    textTransform: "none",
-                    fontSize: "12px",
-                    borderRadius: "6px",
-                  },
-                  border: "1px solid",
-                  borderColor: "divider",
-                  p: "2px",
-                  borderRadius: "8px",
-                  width: "fit-content",
-                  bgcolor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.04)"
-                      : "background.neutral",
-                }}
+                sx={{ width: "fit-content" }}
               >
                 {SOURCE_TABS.map((tab) => (
-                  <Tab
-                    key={tab}
-                    value={tab}
-                    label={tab}
-                    sx={{
-                      bgcolor:
-                        activeTab === tab
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
-                          : "transparent",
-                      boxShadow:
-                        activeTab === tab
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
-                          : "none",
-                      borderRadius: "6px",
-                      fontWeight: activeTab === tab ? 600 : 400,
-                      color:
-                        activeTab === tab ? "text.primary" : "text.disabled",
-                    }}
-                  />
+                  <Tab key={tab} value={tab} label={tab} />
                 ))}
-              </Tabs>
+              </SegmentedTabs>
             </Box>
 
             {/* Tab content */}
-            <Box sx={{ flex: 1, overflow: "auto" }}>
+            <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
               {activeTab === "Custom" && (
                 <>
                   <CustomJsonInput
@@ -1215,6 +1214,7 @@ const TestPlayground = React.forwardRef(
                     inputValues={inputValues}
                     onInputChange={handleInputChange}
                     instructions={instructions}
+                    evalName={evalName}
                     onColumnsLoaded={onColumnsLoaded}
                   />
 
@@ -1228,6 +1228,12 @@ const TestPlayground = React.forwardRef(
                             ? {
                                 error_localizer_status:
                                   errorLocalizerState.status,
+                              }
+                            : {}),
+                          ...(errorLocalizerState.message
+                            ? {
+                                error_localizer_message:
+                                  errorLocalizerState.message,
                               }
                             : {}),
                           ...(errorLocalizerState.details
@@ -1249,7 +1255,7 @@ const TestPlayground = React.forwardRef(
                     </Box>
                   )}
 
-                  {/* Credit-limit / upgrade banner — takes precedence over
+                  {/* Credit-limit / upgrade banner - takes precedence over
                       the generic error box so users see a clear CTA. */}
                   {exhaustionError && (
                     <Box sx={{ mt: 1 }}>
@@ -1269,11 +1275,11 @@ const TestPlayground = React.forwardRef(
                         p: 1.5,
                         borderRadius: "6px",
                         border: "1px solid",
-                        borderColor: "error.main",
-                        backgroundColor: "error.lighter",
+                        borderColor: "status.danger.border",
+                        backgroundColor: "status.danger.bg",
                       }}
                     >
-                      <Typography variant="caption" color="error.main">
+                      <Typography variant="caption" color="status.danger.fg">
                         {typeof error === "string"
                           ? error
                           : JSON.stringify(error)}
@@ -1284,7 +1290,7 @@ const TestPlayground = React.forwardRef(
               )}
               {activeTab === "CustomOLD" && (
                 <Box>
-                  {/* placeholder to keep JSX structure — not rendered */}
+                  {/* placeholder to keep JSX structure - not rendered */}
 
                   {/* Result display */}
                   {result && (
@@ -1324,7 +1330,6 @@ const TestPlayground = React.forwardRef(
                                   ? "error"
                                   : "default"
                             }
-                            sx={{ fontSize: "11px", height: "20px" }}
                           />
                         </Box>
                       )}
@@ -1348,10 +1353,7 @@ const TestPlayground = React.forwardRef(
                               borderRadius: "6px",
                               border: "1px solid",
                               borderColor: "divider",
-                              backgroundColor: (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(255,255,255,0.03)"
-                                  : "background.neutral",
+                              backgroundColor: "background.neutral",
                             }}
                           >
                             {typeof result.reason === "string"
@@ -1370,11 +1372,11 @@ const TestPlayground = React.forwardRef(
                         p: 1.5,
                         borderRadius: 1,
                         border: "1px solid",
-                        borderColor: "error.main",
-                        backgroundColor: "error.lighter",
+                        borderColor: "status.danger.border",
+                        backgroundColor: "status.danger.bg",
                       }}
                     >
-                      <Typography variant="caption" color="error.main">
+                      <Typography variant="caption" color="status.danger.fg">
                         {typeof error === "string"
                           ? error
                           : JSON.stringify(error)}
@@ -1388,9 +1390,10 @@ const TestPlayground = React.forwardRef(
                 <DatasetTestMode
                   ref={datasetTestRef}
                   templateId={templateId}
-                  model={model}
+                  model={evalType === "code" ? "" : model}
                   variables={variables}
                   codeParams={codeParams}
+                  runConfig={runConfig}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
                   onClearResult={onClearResult}
@@ -1405,9 +1408,10 @@ const TestPlayground = React.forwardRef(
                 <TracingTestMode
                   ref={tracingTestRef}
                   templateId={templateId}
-                  model={model}
+                  model={evalType === "code" ? "" : model}
                   variables={variables}
                   codeParams={codeParams}
+                  runConfig={runConfig}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
                   onClearResult={onClearResult}
@@ -1423,9 +1427,10 @@ const TestPlayground = React.forwardRef(
                 <SimulationTestMode
                   ref={simulationTestRef}
                   templateId={templateId}
-                  model={model}
+                  model={evalType === "code" ? "" : model}
                   variables={variables}
                   codeParams={codeParams}
+                  runConfig={runConfig}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
                   onClearResult={onClearResult}
@@ -1436,99 +1441,91 @@ const TestPlayground = React.forwardRef(
                 />
               )}
 
-              {/* Code eval params — visible on all source tabs */}
+              {/* Code eval params - visible on all source tabs */}
               {evalType === "code" &&
                 visibleFunctionParamEntries.length > 0 && (
                   <Box sx={{ mt: 2 }}>
-                    <Typography
-                      variant="body2"
-                      fontWeight={600}
-                      sx={{ mb: 1 }}
-                    >
+                    <Typography variant="body2" fontWeight={600} sx={{ mb: 1 }}>
                       Parameters
                     </Typography>
-                    {visibleFunctionParamEntries.map(
-                      ([key, schema]) => (
-                        <Box
-                          key={key}
-                          sx={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 1,
-                            mb: 0.75,
-                          }}
+                    {visibleFunctionParamEntries.map(([key, schema]) => (
+                      <Box
+                        key={key}
+                        sx={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 1,
+                          mb: 0.75,
+                        }}
+                      >
+                        <Tooltip
+                          title={
+                            configParamsDesc?.[key] || schema?.description || ""
+                          }
+                          placement="top"
                         >
-                          <Tooltip
-                            title={
-                              configParamsDesc?.[key] ||
-                              schema?.description ||
-                              ""
-                            }
-                            placement="top"
-                          >
-                            <Typography
-                              variant="caption"
-                              sx={{
-                                minWidth: 90,
-                                fontFamily: "monospace",
-                                color: "primary.main",
-                              }}
-                            >
-                              {formatParamLabel(key)}
-                            </Typography>
-                          </Tooltip>
-                          <Box
-                            component="input"
-                            type={
-                              schema?.type === "integer" ||
-                              schema?.type === "number"
-                                ? "number"
-                                : "text"
-                            }
-                            placeholder={
-                              schema?.nullable
-                                ? "optional"
-                                : String(schema?.default ?? "")
-                            }
-                            value={codeParams[key] ?? ""}
-                            onChange={(e) => {
-                              // BE's `type: number` schema rejects strings; coerce here.
-                              const raw = e.target.value;
-                              const isNumeric =
-                                schema?.type === "integer" ||
-                                schema?.type === "number";
-                              let next = raw;
-                              if (isNumeric && raw !== "") {
-                                const n = Number(raw);
-                                if (!Number.isNaN(n)) next = n;
-                              }
-                              handleCodeParamChange(key, next);
-                            }}
+                          <Typography
+                            variant="caption"
                             sx={{
-                              flex: 1,
-                              px: 1,
-                              py: 0.5,
-                              fontSize: "12px",
+                              minWidth: 90,
                               fontFamily: "monospace",
-                              border: "1px solid",
-                              borderColor: "divider",
-                              borderRadius: "6px",
-                              bgcolor: "background.paper",
-                              color: "text.primary",
-                              outline: "none",
-                              "&:focus": { borderColor: "primary.main" },
+                              color: "primary.main",
                             }}
-                          />
-                        </Box>
-                      ),
-                    )}
+                          >
+                            {formatParamLabel(key)}
+                          </Typography>
+                        </Tooltip>
+                        <Box
+                          component="input"
+                          type={
+                            schema?.type === "integer" ||
+                            schema?.type === "number"
+                              ? "number"
+                              : "text"
+                          }
+                          placeholder={
+                            schema?.nullable
+                              ? "optional"
+                              : String(schema?.default ?? "")
+                          }
+                          value={codeParams[key] ?? ""}
+                          onChange={(e) => {
+                            // BE's `type: number` schema rejects strings; coerce here.
+                            const raw = e.target.value;
+                            const isNumeric =
+                              schema?.type === "integer" ||
+                              schema?.type === "number";
+                            let next = raw;
+                            if (isNumeric && raw !== "") {
+                              const n = Number(raw);
+                              if (!Number.isNaN(n)) next = n;
+                            }
+                            handleCodeParamChange(key, next);
+                          }}
+                          sx={{
+                            flex: 1,
+                            px: 1,
+                            py: 0.5,
+                            fontSize: "12px",
+                            fontFamily: "monospace",
+                            border: "1px solid",
+                            borderColor: "divider",
+                            borderRadius: "6px",
+                            bgcolor: "background.paper",
+                            color: "text.primary",
+                            outline: "none",
+                            "&:focus": { borderColor: "primary.main" },
+                          }}
+                        />
+                      </Box>
+                    ))}
                   </Box>
                 )}
             </Box>
           </>
         ) : (
           /* =================== VERSIONS TAB =================== */
-          <Box sx={{ flex: 1, overflow: "auto" }}>
+          <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
             {!templateId ? (
               <Typography
                 variant="body2"
@@ -1586,26 +1583,15 @@ const TestPlayground = React.forwardRef(
                             ? "primary.main"
                             : "transparent",
                           backgroundColor: isSelected
-                            ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(124,77,255,0.08)"
-                                  : "rgba(124,77,255,0.04)"
+                            ? "status.discovery.bg"
                             : isHovered
-                              ? (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "rgba(255,255,255,0.05)"
-                                    : "rgba(0,0,0,0.025)"
+                              ? "action.hover"
                               : "transparent",
                           transition: "all 0.15s",
                           "&:hover": {
-                            backgroundColor: (theme) =>
-                              isSelected
-                                ? theme.palette.mode === "dark"
-                                  ? "rgba(124,77,255,0.12)"
-                                  : "rgba(124,77,255,0.06)"
-                                : theme.palette.mode === "dark"
-                                  ? "rgba(255,255,255,0.05)"
-                                  : "rgba(0,0,0,0.025)",
+                            backgroundColor: isSelected
+                              ? "status.discovery.bg"
+                              : "action.hover",
                           },
                           mb: isLast ? 0 : 0.25,
                         }}
@@ -1635,21 +1621,17 @@ const TestPlayground = React.forwardRef(
                               backgroundColor: isSelected
                                 ? "primary.main"
                                 : isDefault
-                                  ? "rgba(52,138,239,0.12)"
-                                  : (theme) =>
-                                      theme.palette.mode === "dark"
-                                        ? "rgba(255,255,255,0.08)"
-                                        : "action.hover",
+                                  ? "status.info.bg"
+                                  : "action.hover",
                               border:
-                                isDefault && !isSelected
-                                  ? "1.5px solid rgba(52,138,239,0.3)"
-                                  : "none",
+                                isDefault && !isSelected ? "1px solid" : "none",
+                              borderColor: "status.info.border",
                               flexShrink: 0,
                             }}
                           >
                             <Typography
                               sx={{
-                                fontSize: "11px",
+                                fontSize: "12px",
                                 fontWeight: 600,
                                 fontFamily: "'IBM Plex Sans', sans-serif",
                                 color: isSelected
@@ -1701,11 +1683,11 @@ const TestPlayground = React.forwardRef(
                                   px: 0.75,
                                   py: 0.125,
                                   borderRadius: "4px",
-                                  fontSize: "10px",
+                                  fontSize: "12px",
                                   fontWeight: 600,
                                   fontFamily: "'IBM Plex Sans', sans-serif",
-                                  backgroundColor: "rgba(0,162,81,0.1)",
-                                  color: "success.main",
+                                  backgroundColor: "status.success.bg",
+                                  color: "status.success.fg",
                                   lineHeight: 1.4,
                                 }}
                               >
@@ -1718,11 +1700,11 @@ const TestPlayground = React.forwardRef(
                                   px: 0.75,
                                   py: 0.125,
                                   borderRadius: "4px",
-                                  fontSize: "10px",
+                                  fontSize: "12px",
                                   fontWeight: 600,
                                   fontFamily: "'IBM Plex Sans', sans-serif",
-                                  backgroundColor: "rgba(124,77,255,0.1)",
-                                  color: "primary.main",
+                                  backgroundColor: "status.discovery.bg",
+                                  color: "status.discovery.fg",
                                   lineHeight: 1.4,
                                 }}
                               >
@@ -1744,10 +1726,7 @@ const TestPlayground = React.forwardRef(
                                   width: 16,
                                   height: 16,
                                   borderRadius: "50%",
-                                  backgroundColor: (t) =>
-                                    t.palette.mode === "dark"
-                                      ? "rgba(124,77,255,0.15)"
-                                      : "rgba(124,77,255,0.08)",
+                                  backgroundColor: "status.discovery.bg",
                                   display: "flex",
                                   alignItems: "center",
                                   justifyContent: "center",
@@ -1756,7 +1735,7 @@ const TestPlayground = React.forwardRef(
                               >
                                 <Typography
                                   sx={{
-                                    fontSize: "9px",
+                                    fontSize: "12px",
                                     fontWeight: 600,
                                     color: "primary.main",
                                   }}
@@ -1766,7 +1745,7 @@ const TestPlayground = React.forwardRef(
                               </Box>
                               <Typography
                                 sx={{
-                                  fontSize: "11px",
+                                  fontSize: "12px",
                                   fontWeight: 400,
                                   fontFamily: "'IBM Plex Sans', sans-serif",
                                   color: "text.secondary",
@@ -1779,26 +1758,22 @@ const TestPlayground = React.forwardRef(
                           )}
                         </Box>
 
-                        {/* Three-dot menu — always visible */}
+                        {/* Three-dot menu - always visible */}
                         <Tooltip title="Actions" arrow placement="left">
                           <IconButton
                             size="small"
+                            disabled={!canEditEvals}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleVersionMenuOpen(e, v);
                             }}
                             sx={{
-                              width: 28,
-                              height: 28,
                               flexShrink: 0,
                               mt: 0.25,
                               opacity: isHovered || versionMenuAnchor ? 1 : 0.4,
                               transition: "opacity 0.15s",
                               "&:hover": {
-                                backgroundColor: (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "rgba(255,255,255,0.1)"
-                                    : "rgba(0,0,0,0.06)",
+                                backgroundColor: "border.default",
                               },
                             }}
                           >
@@ -1824,8 +1799,7 @@ const TestPlayground = React.forwardRef(
                   slotProps={{
                     paper: {
                       sx: {
-                        minWidth: 180,
-                        boxShadow: 3,
+                        minWidth: 200,
                         borderRadius: "8px",
                         py: 0.5,
                       },
@@ -1833,22 +1807,16 @@ const TestPlayground = React.forwardRef(
                   }}
                 >
                   {!menuVersion?.is_default && (
-                    <MenuItem
-                      onClick={handleSetDefault}
-                      sx={{ fontSize: "13px", gap: 1, py: 1 }}
-                    >
+                    <MenuItem onClick={handleSetDefault} sx={{ gap: 1, py: 1 }}>
                       <Iconify
                         icon="solar:star-bold"
                         width={16}
-                        sx={{ color: "warning.main" }}
+                        sx={{ color: "status.warning.fg" }}
                       />
                       Set as Default
                     </MenuItem>
                   )}
-                  <MenuItem
-                    onClick={handleRestore}
-                    sx={{ fontSize: "13px", gap: 1, py: 1 }}
-                  >
+                  <MenuItem onClick={handleRestore} sx={{ gap: 1, py: 1 }}>
                     <Iconify
                       icon="solar:restart-bold"
                       width={16}
@@ -1871,6 +1839,7 @@ TestPlayground.displayName = "TestPlayground";
 TestPlayground.propTypes = {
   templateId: PropTypes.string,
   instructions: PropTypes.string,
+  evalName: PropTypes.string,
   evalType: PropTypes.string,
   requiredKeys: PropTypes.array,
   showVersions: PropTypes.bool,
@@ -1887,12 +1856,13 @@ TestPlayground.propTypes = {
   functionParamsSchema: PropTypes.object,
   configParamsDesc: PropTypes.object,
   codeParams: PropTypes.object,
+  runConfig: PropTypes.object,
   onCodeParamsChange: PropTypes.func,
   code: PropTypes.string,
   codeLanguage: PropTypes.string,
   onReadyChange: PropTypes.func,
   isSystemEval: PropTypes.bool,
-  multiChoice: PropTypes.bool,
 };
 
 export default TestPlayground;
+export { CustomJsonInput };

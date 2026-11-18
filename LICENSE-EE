@@ -1,0 +1,18 @@
+                    Future AGI Enterprise License 1.0
+
+Copyright (c) 2024-present Future AGI, Inc.
+
+This Enterprise License governs the "Enterprise Code" — the source code
+contained in any directory named `ee/` in this repository (for example,
+`futureagi/ee/` and `frontend/ee/`) and all of their subdirectories.
+
+Unless you have a valid Enterprise license agreement with Future AGI, Inc.,
+you may not use, copy, modify, or distribute the Enterprise Code.
+
+The Enterprise Code requires an active paid subscription (an Enterprise
+license key or a Future AGI Cloud plan) to use in production. It is NOT
+covered by the Apache License, Version 2.0 that governs the open-source core
+(futureagi/future-agi); that Apache license and this Enterprise License are
+both referenced from the root NOTICE file.
+
+For licensing inquiries: enterprise@futureagi.com

@@ -33,7 +33,7 @@ const ActionForm = ({
       fullWidth
       PaperProps={{
         sx: {
-          width: "520px",
+          width: "560px",
           borderRadius: 2,
           p: 2,
           display: "flex",
@@ -57,7 +57,7 @@ const ActionForm = ({
         <IconButton onClick={onClose}>
           <Iconify
             // @ts-ignore
-            icon="mdi:close"
+            icon="solar:close-linear"
           />
         </IconButton>
       </DialogTitle>
@@ -77,7 +77,7 @@ const ActionForm = ({
           <Box
             sx={{
               p: 2,
-              backgroundColor: "orange.o5",
+              backgroundColor: "status.warning.bg",
               borderRadius: 1,
             }}
           >
@@ -135,15 +135,13 @@ const ActionForm = ({
                     Org Role:
                   </Typography>
                   <Typography variant="body1" sx={{ color: "text.primary" }}>
-                    {(userData?.org_role ?? userData?.orgRole) ||
-                      orgLevelToString[
-                        userData?.org_level ?? userData?.orgLevel
-                      ] ||
+                    {userData?.org_role ||
+                      orgLevelToString[userData?.org_level] ||
                       userData?.role ||
                       "N/A"}
                   </Typography>
                 </Box>
-                {(userData?.ws_role ?? userData?.wsRole) && (
+                {userData?.ws_role && (
                   <Box sx={{ display: "flex" }}>
                     <Typography
                       variant="body1"
@@ -156,10 +154,8 @@ const ActionForm = ({
                       WS Role:
                     </Typography>
                     <Typography variant="body1" sx={{ color: "text.primary" }}>
-                      {(userData?.ws_role ?? userData?.wsRole) ||
-                        wsLevelToString[
-                          userData?.ws_level ?? userData?.wsLevel
-                        ] ||
+                      {userData?.ws_role ||
+                        wsLevelToString[userData?.ws_level] ||
                         "N/A"}
                     </Typography>
                   </Box>

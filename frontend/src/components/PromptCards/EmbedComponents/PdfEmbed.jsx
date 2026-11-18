@@ -46,7 +46,7 @@ const PdfEmbed = ({ isEmbed, id, size, onDelete, name }) => {
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
                 fontWeight: 500,
-                fontSize: "14px",
+                fontSize: "12px",
                 fontFamily: "IBM Plex Sans,sans-serif",
                 color: "var(--text-primary)",
               }}
@@ -69,6 +69,7 @@ const PdfEmbed = ({ isEmbed, id, size, onDelete, name }) => {
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <ShowComponent condition={Boolean(onDelete)}>
             <button
+              type="button"
               onClick={onDelete}
               style={{
                 background: "none",

@@ -5,6 +5,7 @@ import { useWatch } from "react-hook-form";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { ShowComponent } from "src/components/show";
+import { RANGE_FILTER_OPS } from "src/api/contracts/filter-contract.generated";
 import {
   AdvanceNumberFilterOperators,
   BOOLEAN_VALUE_OPTIONS,
@@ -25,6 +26,7 @@ const OPERATORS = {
 const VALUE_OPTIONS = {
   boolean: BOOLEAN_VALUE_OPTIONS,
 };
+const RangeOperators = new Set(RANGE_FILTER_OPS);
 
 export default function FilterDependents({
   control,
@@ -64,7 +66,7 @@ export default function FilterDependents({
     let newFilterValue;
 
     if (filterType === "number") {
-      const isBetween = ["between", "not_in_between"].includes(newOperator);
+      const isBetween = RangeOperators.has(newOperator);
 
       if (isBetween) {
         newFilterValue = [existingValue?.[0] ?? "", existingValue?.[1] ?? ""];
@@ -156,7 +158,7 @@ export default function FilterDependents({
               defaultValue=""
               onBlur={() => {}}
             />
-            {["between", "not_in_between"].includes(filter_op) && (
+            {RangeOperators.has(filter_op) && (
               <>
                 <Typography
                   fontWeight={"fontWeightRegular"}

@@ -137,10 +137,7 @@ const FormSelectMenus = ({
           // width: anchorWidth,
           "& .MuiPaper-root": {
             bgcolor: "background.paper",
-            border: "1px solid",
-            borderColor: "action.hover",
             p: "12px",
-            boxShadow: "0px 4px 8px rgba(0, 0, 0, 0.1)",
             maxHeight: `280px`,
             overflow: "hidden",
             display: "flex",
@@ -174,8 +171,7 @@ const FormSelectMenus = ({
               // "No option" placeholder so searching narrows the scope.
               if (!multiple || !selectAll) return null;
               const selectableItems = filteredItems.filter(
-                (o) =>
-                  !o.disabled && !o.isGroup && o.value !== emptyValue,
+                (o) => !o.disabled && !o.isGroup && o.value !== emptyValue,
               );
               if (selectableItems.length === 0) return null;
               const currentValues = Array.isArray(value) ? value : [];
@@ -206,9 +202,7 @@ const FormSelectMenus = ({
                       checked={allSelected}
                       indeterminate={
                         !allSelected &&
-                        selectableValues.some((v) =>
-                          currentValues.includes(v),
-                        )
+                        selectableValues.some((v) => currentValues.includes(v))
                       }
                     />
                   )}
@@ -283,7 +277,6 @@ const FormSelectMenus = ({
                               name: "preventOverflow",
                               options: {
                                 boundary: "viewport",
-                                padding: 12,
                               },
                             },
                           ],
@@ -307,7 +300,7 @@ const FormSelectMenus = ({
                             typography: "s3",
                             fontWeight: "fontWeightMedium",
                             color: "text.primary",
-                            textTransform: "uppercase",
+                            textTransform: "none",
                           }),
                         }}
                       >
@@ -359,7 +352,7 @@ const FormSelectMenus = ({
                 },
               }}
             >
-              <Iconify icon="eva:plus-fill" /> &nbsp; {createLabel}
+              <Iconify icon="solar:add-linear" /> &nbsp; {createLabel}
             </LabelButton>
           </Box>
         )}

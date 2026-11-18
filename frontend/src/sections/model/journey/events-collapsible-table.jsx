@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
+import Section from "src/components/section";
 import Table from "@mui/material/Table";
-import Paper from "@mui/material/Paper";
 import TableRow from "@mui/material/TableRow";
 import Collapse from "@mui/material/Collapse";
 import TableHead from "@mui/material/TableHead";
@@ -73,8 +73,8 @@ function CollapsibleTableRow({ row, propsToShow }) {
             <Iconify
               icon={
                 collapsible.value
-                  ? "eva:arrow-ios-upward-fill"
-                  : "eva:arrow-ios-downward-fill"
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
               }
             />
           </IconButton>
@@ -92,16 +92,7 @@ function CollapsibleTableRow({ row, propsToShow }) {
       <TableRow>
         <TableCell sx={{ py: 0 }} colSpan={6}>
           <Collapse in={collapsible.value} unmountOnExit>
-            <Paper
-              variant="outlined"
-              sx={{
-                py: 2,
-                borderRadius: 1.5,
-                ...(collapsible.value && {
-                  boxShadow: (theme) => theme.customShadows.z20,
-                }),
-              }}
-            >
+            <Section variant="panel" sx={{ px: 0 }}>
               {/* TODO: button to add to annotation task */}
 
               <Typography variant="h6" sx={{ m: 2, mt: 0 }}>
@@ -120,7 +111,7 @@ function CollapsibleTableRow({ row, propsToShow }) {
               </Typography>
 
               <JsonCodeView data={row} />
-            </Paper>
+            </Section>
           </Collapse>
         </TableCell>
       </TableRow>

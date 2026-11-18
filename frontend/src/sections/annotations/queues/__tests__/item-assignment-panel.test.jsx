@@ -20,8 +20,7 @@ const annotators = [
 ];
 
 describe("ItemAssignmentPanel", () => {
-  it("shows unassigned state and lets an annotator assign the item to themself", async () => {
-    const user = userEvent.setup();
+  it("shows unassigned state without annotator self-assignment controls", () => {
     const onAssign = vi.fn();
 
     render(
@@ -29,7 +28,6 @@ describe("ItemAssignmentPanel", () => {
         item={{ id: "item-1", assigned_users: [] }}
         annotators={annotators}
         currentUserId="user-1"
-        canAnnotate
         onAssign={onAssign}
       />,
     );
@@ -38,14 +36,13 @@ describe("ItemAssignmentPanel", () => {
     expect(
       screen.queryByText(/Assigned to another annotator/i),
     ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /assign to me/i }));
-
-    expect(onAssign).toHaveBeenCalledWith({
-      itemIds: ["item-1"],
-      userIds: ["user-1"],
-      action: "add",
-    });
+    expect(
+      screen.queryByRole("button", { name: /assign to me/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^assign$/i }),
+    ).not.toBeInTheDocument();
+    expect(onAssign).not.toHaveBeenCalled();
   });
 
   it("lets managers assign the item to another annotator", async () => {

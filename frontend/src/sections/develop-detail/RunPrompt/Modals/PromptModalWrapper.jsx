@@ -13,6 +13,12 @@ import PropTypes from "prop-types";
 import React from "react";
 import Iconify from "src/components/iconify";
 
+const actionBtnBaseSx = {
+  minWidth: "90px",
+  minHeight: "32px",
+  textTransform: "none",
+};
+
 export default function PromptModalWrapper({
   children,
   onSubmit,
@@ -39,7 +45,7 @@ export default function PromptModalWrapper({
       }}
       PaperProps={{
         sx: {
-          width: "570px",
+          width: "560px",
           borderRadius: theme.spacing(1),
           padding: theme.spacing(2),
           display: "flex",
@@ -67,7 +73,7 @@ export default function PromptModalWrapper({
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
         {subTitle && (
@@ -99,8 +105,9 @@ export default function PromptModalWrapper({
             onClick={onClose}
             variant="outlined"
             type="button"
+            size="small"
             sx={{
-              minWidth: "180px",
+              ...actionBtnBaseSx,
               "&:hover": {
                 borderColor: "divider",
               },
@@ -121,10 +128,10 @@ export default function PromptModalWrapper({
           variant="contained"
           color="primary"
           type="submit"
+          size="small"
           onClick={onSubmit}
           sx={{
-            minWidth: "180px",
-            minHeight: "38px",
+            ...actionBtnBaseSx,
             marginLeft: "0 !important",
             ...actionBtnSx,
           }}

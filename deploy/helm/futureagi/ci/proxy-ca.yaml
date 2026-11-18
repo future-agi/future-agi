@@ -1,0 +1,18 @@
+# CI only: proxy, CA bundle from a Secret and PostgreSQL verify-full over
+# examples/external.yaml, with every optional component on (the code sandbox
+# must get neither). hack/rendered_checks.py asserts the variables and mounts.
+global:
+  proxy:
+    httpProxy: http://proxy.corp.example:3128
+    httpsProxy: http://proxy.corp.example:3128
+    noProxy: .corp.example,10.0.0.0/8
+  caBundle:
+    secret: corp-ca
+    key: bundle.pem
+postgres:
+  external:
+    sslMode: verify-full
+serving:
+  enabled: true
+codeExecutor:
+  enabled: true

@@ -35,7 +35,8 @@ class TraceErrorAnalysisTask(BaseModel):
 
     # Configuration (what user sets from UI)
     sampling_rate = models.FloatField(
-        default=0.1, help_text="Percentage of traces to analyze (0-1)"  # 10% by default
+        default=0.1,
+        help_text="Percentage of traces to analyze (0-1)",  # 10% by default
     )
 
     # Status tracking
@@ -53,6 +54,7 @@ class TraceErrorAnalysisTask(BaseModel):
         null=True,
         blank=True,
         related_name="last_analyzed_by_task",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
 
     # Statistics

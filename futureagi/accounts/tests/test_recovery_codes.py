@@ -65,6 +65,39 @@ class TestRecoveryCodes:
         data = response.json()
         assert len(data["recovery_codes"]) == 10
 
+    def test_recovery_codes_regenerate_rejects_user_without_2fa(
+        self, auth_client, user
+    ):
+        """Users without a confirmed 2FA method cannot create orphan recovery codes."""
+        response = auth_client.post(
+            "/accounts/2fa/recovery-codes/regenerate/",
+            {"password": "testpassword123"},
+        )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["status"] is False
+        assert data["type"] == "validation_error"
+        assert data["code"] == "invalid"
+        assert "two-factor authentication method" in data["detail"]
+        assert RecoveryCode.objects.filter(user=user).count() == 0
+
+    def test_recovery_codes_regenerate_rejects_unknown_fields_before_rotation(
+        self, auth_client, user
+    ):
+        """Strict request validation does not rotate or consume recovery codes."""
+        secret = self._setup_totp(auth_client)
+        totp = pyotp.TOTP(secret)
+
+        response = auth_client.post(
+            "/accounts/2fa/recovery-codes/regenerate/",
+            {"code": totp.now(), "recoveryCodes": True},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["details"] == {"recoveryCodes": ["Unknown field."]}
+        assert RecoveryCode.objects.filter(user=user, is_used=False).count() == 10
+
     def test_recovery_codes_count(self, auth_client, user):
         """Count endpoint returns correct remaining."""
         self._setup_totp(auth_client)
@@ -139,6 +172,14 @@ class TestRecoveryCodes:
             {},
         )
         assert response.status_code == 400
+        data = response.json()
+        assert data["status"] is False
+        assert data["type"] == "validation_error"
+        assert data["code"] == "invalid"
+        assert data["detail"] == "Password is required to regenerate recovery codes."
+        assert data["message"] == data["detail"]
+        assert data["error"] == data["detail"]
+        assert data["result"] == data["detail"]
 
     def test_passkey_only_regenerate_wrong_password_rejected(self, auth_client, user):
         """Passkey-only user is rejected when wrong password is provided."""
@@ -149,3 +190,11 @@ class TestRecoveryCodes:
             {"password": "wrongpassword"},
         )
         assert response.status_code == 400
+        data = response.json()
+        assert data["status"] is False
+        assert data["type"] == "validation_error"
+        assert data["code"] == "invalid"
+        assert data["detail"] == "Invalid password."
+        assert data["message"] == data["detail"]
+        assert data["error"] == data["detail"]
+        assert data["result"] == data["detail"]

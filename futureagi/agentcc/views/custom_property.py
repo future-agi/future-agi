@@ -11,7 +11,9 @@ from tfc.utils.general_methods import GeneralMethods
 logger = structlog.get_logger(__name__)
 
 
-class AgentccCustomPropertySchemaViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
+class AgentccCustomPropertySchemaViewSet(
+    BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
     """CRUD for custom property schemas. Org-scoped."""
 
     permission_classes = [IsAuthenticated]
@@ -84,8 +86,7 @@ class AgentccCustomPropertySchemaViewSet(BaseModelViewSetMixinWithUserOrg, Model
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            instance.deleted = True
-            instance.save(update_fields=["deleted", "updated_at"])
+            instance.delete()
             return self._gm.success_response({"deleted": True})
         except Exception as e:
             logger.exception("custom_property_delete_error", error=str(e))
@@ -116,8 +117,8 @@ class AgentccCustomPropertySchemaViewSet(BaseModelViewSetMixinWithUserOrg, Model
 
                 if schema.property_type == "string" and not isinstance(value, str):
                     errors.append(f"Property '{key}' must be a string")
-                elif schema.property_type == "number" and not isinstance(
-                    value, (int, float)
+                elif schema.property_type == "number" and (
+                    isinstance(value, bool) or not isinstance(value, (int, float))
                 ):
                     errors.append(f"Property '{key}' must be a number")
                 elif schema.property_type == "boolean" and not isinstance(value, bool):

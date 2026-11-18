@@ -1,4 +1,4 @@
-import { Box, Typography, Divider } from "@mui/material";
+import { Box, Button, Divider, Typography } from "@mui/material";
 import React, { useState } from "react";
 import {
   Accordion,
@@ -43,31 +43,23 @@ const AudioErrorCard = ({ valueInfos, column }) => {
               <Typography
                 sx={{ mt: 1, ml: 1, fontSize: "12px", color: "text.disabled" }}
               >
-                {expanded[index] || item.description.length <= wordLimit
-                  ? item.description
-                  : `${item.description.substring(0, wordLimit)}...`}
+                {expanded[index] || (item.description || "").length <= wordLimit
+                  ? item.description || ""
+                  : `${(item.description || "").substring(0, wordLimit)}...`}
               </Typography>
 
-              {item.description.length > wordLimit && (
+              {(item.description || "").length > wordLimit && (
                 <Box
                   sx={{ display: "flex", justifyContent: "flex-end", mt: 1 }}
                 >
-                  <Typography
-                    component="button"
-                    variant="body2"
+                  <Button
+                    size="small"
+                    variant="text"
+                    color="inherit"
                     onClick={() => toggleShowMore(index)}
-                    sx={{
-                      color: "text.primary",
-                      textDecoration: "underline",
-                      background: "none",
-                      border: "none",
-                      fontWeight: "500",
-                      cursor: "pointer",
-                      padding: 0,
-                    }}
                   >
                     {expanded[index] ? "Show Less" : "Show More"}
-                  </Typography>
+                  </Button>
                 </Box>
               )}
 

@@ -45,8 +45,8 @@ const ReplaySessions = ({ isCollapsed, setIsCollapsed, gridApi }) => {
   // Fetch scenarioDetail in parent component for use in confirmation dialog
   // The select function returns d.data, so scenarioDetail will be the data object
   const { data: scenarioDetail, isLoading: isScenarioDetailLoading } =
-    useGetScenarioDetail(createdScenario?.scenarioId, {
-      enabled: !!createdScenario?.scenarioId && currentStep === 1,
+    useGetScenarioDetail(createdScenario?.scenario_id, {
+      enabled: !!createdScenario?.scenario_id && currentStep === 1,
     });
 
   const handleCloseReplaySessionDrawer = () => {
@@ -135,17 +135,16 @@ const ReplaySessions = ({ isCollapsed, setIsCollapsed, gridApi }) => {
           }}
         >
           <IconButton
+            size="small"
             sx={{
               bgcolor: "background.paper",
               border: "1px solid",
               borderColor: "divider",
-              padding: 0.75,
               flexShrink: 0,
               position: "absolute",
               top: "48px",
               left: "-29px",
               borderRight: 0,
-              borderRadius: "4px 0px 0px 4px",
               "&:hover": {
                 borderRight: "none",
                 bgcolor: "background.default",
@@ -161,7 +160,7 @@ const ReplaySessions = ({ isCollapsed, setIsCollapsed, gridApi }) => {
                 height: "16px",
                 color: "text.disabled",
                 transform: !isCollapsed ? "rotate(0deg)" : "rotate(180deg)",
-                transition: "transform 0.3s ease-in-out",
+                transition: "transform 200ms ease-in-out",
               }}
             />
           </IconButton>
@@ -206,7 +205,6 @@ const ReplaySessions = ({ isCollapsed, setIsCollapsed, gridApi }) => {
             color="error"
             size="small"
             onClick={handleConfirmClose}
-            sx={{ paddingX: (theme) => theme.spacing(3) }}
           >
             {scenarioDetail?.status === SCENARIO_STATUS.PROCESSING
               ? "Close"

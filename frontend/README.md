@@ -49,6 +49,7 @@ frontend/
 - **Pages vs. sections vs. components:** a *page* is a route entry point, a *section* is a feature-scoped composition, a *component* is reusable across features.
 - **State:** server state goes in TanStack Query, client state in Zustand. Don't mix them.
 - **Imports:** absolute imports via the `src/` alias are preferred over deep relative paths.
+- **UI:** build every screen with the Future AGI Design System (docs and tokens in [`design-system/`](design-system/README.md)) and use its shared components. If you use a coding agent, the `building-ui` skill (`.agents/skills/building-ui/SKILL.md`, linked into `.claude/skills/` for Claude Code) applies it for you. Before opening a PR, run `yarn lint:ds:changed && yarn ds:optouts` from `frontend/` and fix every `[DS]` message; CI runs both.
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) — see [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 - **Pre-commit hooks** auto-run ESLint + Prettier on staged `frontend/src/**` files. Make sure they're set up by running `yarn install` from the repo root.
 

@@ -116,9 +116,9 @@ const EditAutoReloadSettingsModal = ({
           top: "50%",
           left: "50%",
           transform: "translate(-50%, -50%)",
-          width: 547,
+          width: 560,
           bgcolor: "background.paper",
-          boxShadow: 24,
+          boxShadow: theme.customShadows?.dialog,
           borderRadius: theme.spacing(1),
         }}
       >
@@ -142,12 +142,12 @@ const EditAutoReloadSettingsModal = ({
               <Typography
                 variant="m3"
                 color={"text.primary"}
-                fontWeight={"fontWeightBold"}
+                fontWeight={"fontWeightSemiBold"}
               >
                 Auto Reload Settings
               </Typography>
               <Iconify
-                icon="mingcute:close-line"
+                icon="solar:close-linear"
                 onClick={() => onClose()}
                 sx={{ cursor: "pointer" }}
               />
@@ -381,7 +381,7 @@ const EditAutoReloadSettingsModal = ({
             >
               <Button
                 variant="outlined"
-                sx={{ width: "50%", height: "30px" }}
+                sx={{ width: "50%" }}
                 onClick={() => {
                   onClose();
                 }}
@@ -401,7 +401,6 @@ const EditAutoReloadSettingsModal = ({
                 type="submit"
                 sx={{
                   width: "50%",
-                  height: "30px",
                   "&:disabled": {
                     color: "common.white",
                     backgroundColor: "action.hover",

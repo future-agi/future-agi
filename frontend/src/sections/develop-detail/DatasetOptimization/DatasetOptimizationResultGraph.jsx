@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Typography, useTheme } from "@mui/material";
+import { chartAxisColors } from "src/theme/data-colors";
 import ReactApexChart from "react-apexcharts";
 import { useState, useRef, useEffect, useMemo } from "react";
 import Logo from "src/components/logo/logo";
@@ -99,7 +100,7 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
           backgroundColor: "background.neutral",
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
         }}
       >
         <Typography color="text.secondary">Loading graph...</Typography>
@@ -114,7 +115,7 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
         backgroundColor: "background.neutral",
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         display: "flex",
         flexDirection: "column",
         gap: "12px",
@@ -179,7 +180,7 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
                   flexShrink: 0,
                   cursor: "pointer",
                   paddingX: 0.5,
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   backgroundColor:
                     activeSeries === index
                       ? getUniqueColorPalette(index).tagBackground
@@ -199,7 +200,7 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
                     width: 10,
                     height: 10,
                     borderRadius: "50%",
-                    backgroundColor: getUniqueColorPalette(index).tagForeground,
+                    backgroundColor: getUniqueColorPalette(index).tagBackground,
                   }}
                 />
                 <Typography typography="s1">{series.name}</Typography>
@@ -224,7 +225,7 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
               id: "dataset-optimization-result-graph",
               type: "line",
               background: "transparent",
-              foreColor: isDark ? "#a1a1aa" : undefined,
+              foreColor: chartAxisColors(theme).foreColor,
               toolbar: {
                 show: false,
               },
@@ -252,7 +253,7 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
               if (activeSeries !== null && idx !== activeSeries) {
                 return getUniqueColorPalette(idx).tagBackground;
               } else {
-                return getUniqueColorPalette(idx).tagForeground;
+                return getUniqueColorPalette(idx).tagBackground;
               }
             }),
             stroke: {
@@ -278,7 +279,7 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
                 show: true,
                 position: "back",
                 stroke: {
-                  color: getUniqueColorPalette(0).tagForeground,
+                  color: getUniqueColorPalette(0).tagBackground,
                   width: 1,
                   dashArray: 4,
                 },
@@ -329,8 +330,8 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
               onMarkerHover: (_, chartContext, { seriesIndex }) => {
                 if (seriesIndex !== undefined) {
                   const color =
-                    getUniqueColorPalette(seriesIndex)?.tagForeground ||
-                    getUniqueColorPalette(0).tagForeground;
+                    getUniqueColorPalette(seriesIndex)?.tagBackground ||
+                    getUniqueColorPalette(0).tagBackground;
                   const baseEl = chartContext.w.globals.dom.baseEl;
                   const crosshairLine = baseEl?.querySelector(
                     ".apexcharts-xcrosshairs line",
@@ -346,8 +347,8 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
               custom: ({ seriesIndex, dataPointIndex, w }) => {
                 if (seriesIndex !== undefined) {
                   const color =
-                    getUniqueColorPalette(seriesIndex)?.tagForeground ||
-                    getUniqueColorPalette(0).tagForeground;
+                    getUniqueColorPalette(seriesIndex)?.tagBackground ||
+                    getUniqueColorPalette(0).tagBackground;
                   const baseEl = w.globals.dom.baseEl;
                   const crosshairLine = baseEl?.querySelector(
                     ".apexcharts-xcrosshairs line",
@@ -364,8 +365,8 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
                 const seriesName = w.config.series[seriesIndex].name;
                 const value = w.globals.series[seriesIndex][dataPointIndex];
                 const color =
-                  getUniqueColorPalette(seriesIndex)?.tagForeground ??
-                  getUniqueColorPalette(0).tagForeground;
+                  getUniqueColorPalette(seriesIndex)?.tagBackground ??
+                  getUniqueColorPalette(0).tagBackground;
 
                 return getGraphTooltipComponent(
                   trialName,

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   useForm,
   useWatch,
@@ -21,7 +21,7 @@ import {
 } from "src/sections/develop-detail/AccordianElements";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
-import NewTaskFilterBox from "./NewTaskFilterBox";
+import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import ScheduledRuns from "./ScheduledRuns";
 import _ from "lodash";
 import axios, { endpoints } from "src/utils/axios";
@@ -29,7 +29,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { formatDate } from "src/utils/report-utils";
 import { endOfToday, sub } from "date-fns";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { getNewTaskFilters, NewTaskValidationSchema } from "./validation";
+import { NewTaskValidationSchema } from "./validation";
 import { enqueueSnackbar } from "src/components/snackbar";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
@@ -38,8 +38,12 @@ import EvaluationSection from "./EvaluationSection";
 import { useNavigate } from "react-router";
 import EvaluationDrawer from "../../EvaluationDrawer/EvaluationDrawer";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
-import { objectCamelToSnake } from "src/utils/utils";
 import { resetEvalStore } from "src/sections/evals/store/useEvalStore";
+import AttributeInventoryControls from "src/sections/projects/LLMTracing/AttributeInventoryControls";
+import {
+  attributeInventoryKey,
+  useCursorAttributeInventory,
+} from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
 
 const NewTaskDrawerChild = ({
   open,
@@ -93,10 +97,6 @@ const NewTaskDrawerChild = ({
 
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
   const formValues = useWatch({ control });
-
-  const filtersWithoutDate = useMemo(() => {
-    return getNewTaskFilters(formValues, project, true).filters || [];
-  }, [formValues, project]);
 
   const { data: configuredEvalList, isLoading } = useQuery({
     queryKey: ["configured-evals", project],
@@ -157,6 +157,7 @@ const NewTaskDrawerChild = ({
       rowType,
       spansLimit,
       samplingRate,
+      samplingPolicy,
       evalsDetails,
       startDate,
       endDate,
@@ -170,6 +171,7 @@ const NewTaskDrawerChild = ({
         ? { spans_limit: spansLimit }
         : {}),
       sampling_rate: samplingRate,
+      ...(samplingPolicy ? { sampling_policy: samplingPolicy } : {}),
       evals_details: evalsDetails,
       start_date: startDate,
       end_date: endDate,
@@ -177,19 +179,25 @@ const NewTaskDrawerChild = ({
     createEvalTask(payload);
   };
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          project_id: project,
-          row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
-        },
-      }),
-    select: (data) => data.data?.result,
-    enabled: isProjectSelected,
-  });
+  const [attributeSearch, setAttributeSearch] = useState("");
+  const preservedAttributeKeys = useMemo(() => {
+    const filterKeys = (formValues?.filters || [])
+      .filter((filter) => filter?.property === "attributes")
+      .map((filter) => filter.propertyId);
+    const mappingKeys = (formValues?.evalsDetails || []).flatMap((evaluation) =>
+      Object.values(evaluation?.mapping || {}),
+    );
+    return [...new Set([...filterKeys, ...mappingKeys].filter(Boolean))];
+  }, [formValues]);
+  const { filteredAttributes: evalAttributes, inventoryControlProps } =
+    useCursorAttributeInventory({
+      projectId: project,
+      rowType,
+      discoveryMode: "eval_mapping",
+      search: attributeSearch,
+      preservedKeys: preservedAttributeKeys,
+      enabled: isProjectSelected,
+    });
 
   const { data: projectsList } = useQuery({
     queryKey: ["project-list"],
@@ -201,11 +209,10 @@ const NewTaskDrawerChild = ({
   });
 
   const formattedEvalAttributes = useMemo(() => {
-    if (!evalAttributes) return [];
     return (
       evalAttributes?.map((attr) => ({
-        headerName: attr,
-        field: attr,
+        headerName: attributeInventoryKey(attr),
+        field: attributeInventoryKey(attr),
       })) || []
     );
   }, [evalAttributes]);
@@ -238,7 +245,7 @@ const NewTaskDrawerChild = ({
             width: {
               xs: "100%",
               sm: "100%",
-              md: "590px",
+              md: "640px",
             },
           }}
           role="presentation"
@@ -270,7 +277,7 @@ const NewTaskDrawerChild = ({
               <Link
                 href="https://docs.futureagi.com/docs/observe/features/evals"
                 underline="always"
-                color="blue.500"
+                color="status.info.fg"
                 target="_blank"
                 rel="noopener noreferrer"
                 fontWeight="fontWeightMedium"
@@ -284,7 +291,7 @@ const NewTaskDrawerChild = ({
                 padding: 0,
               }}
             >
-              <Iconify icon="mingcute:close-line" />
+              <Iconify icon="solar:close-linear" />
             </IconButton>
           </Box>
           <Box
@@ -367,18 +374,14 @@ const NewTaskDrawerChild = ({
                   <Accordion defaultExpanded>
                     <AccordionSummary>Filters</AccordionSummary>
                     <AccordionDetails>
-                      <NewTaskFilterBox
-                        attributes={
-                          Array.isArray(evalAttributes)
-                            ? evalAttributes.map((attr) => ({
-                                label: attr,
-                                value: attr,
-                              }))
-                            : []
-                        }
-                        getValues={getValues}
-                        setValue={setValue}
+                      <TaskFilterBar
                         control={control}
+                        setValue={setValue}
+                        projectId={project}
+                        isSimulator={String(rowType || "")
+                          .toLowerCase()
+                          .startsWith("voice")}
+                        rowType={rowType}
                       />
                     </AccordionDetails>
                   </Accordion>
@@ -431,6 +434,15 @@ const NewTaskDrawerChild = ({
       open={open}
       onClose={handleClose}
       allColumns={formattedEvalAttributes}
+      onColumnSearchChange={setAttributeSearch}
+      columnInventoryControls={
+        <AttributeInventoryControls
+          {...inventoryControlProps}
+          search={attributeSearch}
+          onSearchChange={setAttributeSearch}
+          searchLabel="Search source properties"
+        />
+      }
       refreshGrid={refreshGrid}
       module="task"
       onSuccess={(data, variables) => {

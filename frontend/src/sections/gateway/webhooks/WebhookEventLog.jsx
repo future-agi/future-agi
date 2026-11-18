@@ -1,3 +1,5 @@
+import EmptyState from "src/components/empty-state";
+import ErrorState from "src/components/error-state";
 import React from "react";
 import {
   Box,
@@ -8,27 +10,19 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Chip,
   Button,
   Skeleton,
-  Alert,
   Stack,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { useWebhookEvents, useRetryWebhookEvent } from "./hooks/useWebhooks";
 import { enqueueSnackbar } from "notistack";
 import { formatDateTime as formatDate } from "../utils/formatters";
 
-const STATUS_COLORS = {
-  pending: "warning",
-  delivered: "success",
-  failed: "error",
-  dead_letter: "default",
-};
-
 const WebhookEventLog = ({ webhookId }) => {
-  const params = webhookId ? { webhook: webhookId } : {};
+  const params = webhookId ? { webhook_id: webhookId } : {};
   const { data: events, isLoading, error } = useWebhookEvents(params);
   const retryMutation = useRetryWebhookEvent();
 
@@ -53,24 +47,21 @@ const WebhookEventLog = ({ webhookId }) => {
 
   if (error) {
     return (
-      <Alert severity="error">
-        Failed to load webhook events: {error.message}
-      </Alert>
+      <ErrorState
+        title="Failed to load webhook events"
+        detail={error.message}
+        sx={{ height: "auto", flexGrow: 0 }}
+      />
     );
   }
 
   if (!events?.length) {
     return (
-      <Box display="flex" flexDirection="column" alignItems="center" py={6}>
-        <Iconify
-          icon="mdi:inbox-outline"
-          width={48}
-          sx={{ color: "text.disabled", mb: 2 }}
-        />
-        <Typography variant="body1" color="text.secondary">
-          No delivery events yet
-        </Typography>
-      </Box>
+      <EmptyState
+        icon="solar:inbox-linear"
+        title="No delivery events yet"
+        sx={{ pt: 6, pb: 6 }}
+      />
     );
   }
 
@@ -85,7 +76,12 @@ const WebhookEventLog = ({ webhookId }) => {
             <TableCell>Response Code</TableCell>
             <TableCell>Last Attempt</TableCell>
             <TableCell>Error</TableCell>
-            <TableCell align="right">Actions</TableCell>
+            <TableCell
+              sx={{ fontVariantNumeric: "tabular-nums" }}
+              align="right"
+            >
+              Actions
+            </TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -97,25 +93,21 @@ const WebhookEventLog = ({ webhookId }) => {
                 </Typography>
               </TableCell>
               <TableCell>
-                <Chip
-                  label={evt.status}
-                  color={STATUS_COLORS[evt.status] || "default"}
-                  size="small"
-                />
+                <StatusBadge status={evt.status} />
               </TableCell>
               <TableCell>
                 <Typography variant="body2" color="text.secondary">
-                  {evt.attempts}/{evt.maxAttempts}
+                  {evt.attempts}/{evt.max_attempts ?? evt.maxAttempts}
                 </Typography>
               </TableCell>
               <TableCell>
                 <Typography variant="body2" color="text.secondary">
-                  {evt.lastResponseCode || "\u2014"}
+                  {evt.last_response_code ?? evt.lastResponseCode ?? "\u2014"}
                 </Typography>
               </TableCell>
               <TableCell>
                 <Typography variant="body2" color="text.secondary">
-                  {formatDate(evt.lastAttemptAt)}
+                  {formatDate(evt.last_attempt_at ?? evt.lastAttemptAt)}
                 </Typography>
               </TableCell>
               <TableCell>
@@ -124,16 +116,22 @@ const WebhookEventLog = ({ webhookId }) => {
                   color="error.main"
                   noWrap
                   sx={{ maxWidth: 200 }}
-                  title={evt.lastError}
+                  title={evt.last_error ?? evt.lastError}
                 >
-                  {evt.lastError || "\u2014"}
+                  {evt.last_error || evt.lastError || "\u2014"}
                 </Typography>
               </TableCell>
-              <TableCell align="right">
+              <TableCell
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+                align="right"
+              >
                 {(evt.status === "failed" || evt.status === "dead_letter") && (
                   <Button
+                    className="row-hover-action"
                     size="small"
-                    startIcon={<Iconify icon="mdi:refresh" width={16} />}
+                    startIcon={
+                      <Iconify icon="solar:refresh-linear" width={16} />
+                    }
                     onClick={() => handleRetry(evt.id)}
                     disabled={retryMutation.isPending}
                   >

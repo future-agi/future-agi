@@ -104,7 +104,6 @@ const FormattedReason = ({ title }) => {
             minWidth: "auto",
             color: "text.primary",
             textDecoration: "underline",
-            fontSize: "14px",
             "&:hover": {
               backgroundColor: "transparent",
             },
@@ -160,12 +159,15 @@ const EvaluationCellRenderer = (params) => {
   const shouldBeStringified = ["array", "float"].includes(dataType);
 
   const handleCellClick = (originType) => {
+    // Live index at click time — the destructured rowIndex goes stale after a
+    // row delete/reorder, which sent the run to the wrong position.
+    const currentRowIndex = params.node?.rowIndex ?? rowIndex;
     switch (originType) {
       case OriginTypes.EVALUATION:
-        handleRun(originType, rowIndex, templateVersion, evalTemplateId);
+        handleRun(originType, currentRowIndex, templateVersion, evalTemplateId);
         break;
       default:
-        handleRun(originType, rowIndex, templateVersion);
+        handleRun(originType, currentRowIndex, templateVersion);
         break;
     }
   };
@@ -259,7 +261,7 @@ const EvaluationCellRenderer = (params) => {
           <Box
             p={1}
             overflow={"auto"}
-            bgcolor={isOutputEmpty && "blue.o10"}
+            bgcolor={isOutputEmpty && "status.info.bg"}
             height={"100%"}
             display={isOutputEmpty && "flex"}
             whiteSpace={"wrap"}
@@ -273,7 +275,7 @@ const EvaluationCellRenderer = (params) => {
                 alignItems={"center"}
               >
                 NA
-                <Typography color={"blue.500"}>
+                <Typography color={"status.info.fg"}>
                   (Hover and click <img src={"/assets/icons/ic_run.svg"} /> to
                   run)
                 </Typography>

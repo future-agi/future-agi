@@ -20,42 +20,38 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import uuid
 from datetime import timedelta
-from typing import Any, Dict, Tuple
 
 import pytest
-from django.utils import timezone
-from rest_framework import status
-
-from accounts.models.user import User
 from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.user import User
+from conftest import create_categorical_label
+from django.utils import timezone
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
-    AnnotationQueueAnnotator,
     AnnotationQueueLabel,
     AutomationRule,
-    ItemAnnotation,
     QueueItem,
     QueueItemAssignment,
 )
 from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
     AnnotationTypeChoices,
-    AnnotatorRole,
-    AssignmentStrategy,
     AutomationRuleTriggerFrequency,
     QueueItemSourceType,
     QueueItemStatus,
 )
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.develop_dataset import Dataset, Row
-from model_hub.models.score import SCORE_SOURCE_FK_MAP, Score
+from model_hub.models.score import Score
+from model_hub.serializers.annotation_queues import QueueExportQuerySerializer
+from rest_framework import status
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
 from tracer.models.trace_annotation import TraceAnnotation
-
 
 # ---------------------------------------------------------------------------
 # URL constants & helpers
@@ -192,6 +188,9 @@ def project(db, organization, workspace):
 def trace(db, project):
     from tracer.models.trace import Trace
 
+    # CH-native note: a trace resolves from its CH root span, so tests that annotate
+    # a *bare* trace seed one (via ``observation_span`` or ``seed_ch_span``); this
+    # fixture stays PG-only so it never adds a competing root to another test's span.
     return Trace.objects.create(
         project=project,
         name="Trace A",
@@ -203,16 +202,21 @@ def trace(db, project):
 @pytest.fixture
 def trace_session(db, project):
     from tracer.models.trace_session import TraceSession
+    from tracer.tests._ch_seed import seed_ch_trace_sessions
 
-    return TraceSession.objects.create(project=project, name="Session A")
+    session = TraceSession.objects.create(project=project, name="Session A")
+    # CH-native: session resolution reads the CH ``trace_sessions`` table.
+    seed_ch_trace_sessions([session])
+    return session
 
 
 @pytest.fixture
 def observation_span(db, project, trace):
     from tracer.models.observation_span import ObservationSpan
+    from tracer.tests._ch_seed import seed_ch_span
 
     span_id = f"span_{uuid.uuid4().hex[:16]}"
-    return ObservationSpan.objects.create(
+    span = ObservationSpan.objects.create(
         id=span_id,
         project=project,
         trace=trace,
@@ -230,6 +234,29 @@ def observation_span(db, project, trace):
         latency_ms=200,
         status="OK",
     )
+    # CH-native: annotation resolves the span from ClickHouse — seed it there.
+    seed_ch_span(span)
+    return span
+
+
+def _seed_ch_trace_root(trace):
+    """Seed a CH-only root span so a *bare* trace resolves under CH-native annotation
+    (trace resolution reads the trace's root span from CH, not the PG row). Built in
+    memory and seeded to CH — never written to PG (the tracer tables are dropped)."""
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.tests._ch_seed import seed_ch_span
+
+    span = ObservationSpan(
+        id=f"chroot_{uuid.uuid4().hex[:16]}",
+        project=trace.project,
+        trace=trace,
+        name="trace root",
+        observation_type="agent",
+        start_time=timezone.now() - timedelta(seconds=1),
+        end_time=timezone.now(),
+        status="OK",
+    )
+    seed_ch_span(span)  # CH only — NOT ObservationSpan.objects.create
 
 
 @pytest.fixture
@@ -313,9 +340,19 @@ def categorical_label(db, organization, workspace, project):
 @pytest.fixture
 def queue(db, auth_client, user, organization):
     """Active queue. Creator is auto-registered as MANAGER by the serializer."""
-    resp = auth_client.post(QUEUE_URL, {"name": "Team A Queue"}, format="json")
-    assert resp.status_code in (200, 201), resp.data
+    # A queue must have at least one label (serializer-enforced).
+    label_id = create_categorical_label(auth_client, name="Team A Label")
+    resp = auth_client.post(
+        QUEUE_URL,
+        {"name": "Team A Queue", "label_ids": [str(label_id)]},
+        format="json",
+    )
+    assert resp.status_code == status.HTTP_201_CREATED, resp.data
     qid = resp.data["id"]
+    # The bootstrap label only satisfies the "at least one label" creation rule.
+    # Mark it non-required so tests that annotate their own label can still
+    # complete items (a required, un-annotated label blocks completion).
+    AnnotationQueueLabel.objects.filter(queue_id=qid).update(required=False)
     # Creator (auth_client.user) was auto-added as MANAGER by the serializer
     # via AnnotationQueueSerializer.create(). No explicit insert needed.
     r = auth_client.post(_update_status_url(qid), {"status": "active"}, format="json")
@@ -363,9 +400,8 @@ class TestScoreCreate:
         assert score.created_at is not None
         assert score.deleted is False
 
-    def test_score_on_trace_db_verified(
-        self, auth_client, trace, thumbs_label, user
-    ):
+    def test_score_on_trace_db_verified(self, auth_client, trace, thumbs_label, user):
+        _seed_ch_trace_root(trace)
         payload = {
             "source_type": "trace",
             "source_id": str(trace.id),
@@ -395,11 +431,15 @@ class TestScoreCreate:
         assert score.trace_session_id == trace_session.id
         assert score.value == {"rating": 5}
         # No TraceAnnotation expected for trace_session source.
-        assert not TraceAnnotation.objects.filter(
-            annotation_label=star_label,
-            user_id=score.annotator_id,
-            deleted=False,
-        ).filter(trace__isnull=True).exists()
+        assert (
+            not TraceAnnotation.objects.filter(
+                annotation_label=star_label,
+                user_id=score.annotator_id,
+                deleted=False,
+            )
+            .filter(trace__isnull=True)
+            .exists()
+        )
 
     def test_score_on_dataset_row_db_verified(
         self, auth_client, dataset_with_rows, star_label
@@ -507,9 +547,7 @@ class TestScoreCreate:
         )
         assert resp.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_upsert_does_not_duplicate(
-        self, auth_client, observation_span, star_label
-    ):
+    def test_upsert_does_not_duplicate(self, auth_client, observation_span, star_label):
         """Score POST is upsert-by-(source, label, annotator) → no duplicates."""
         for v in (1, 2, 5):
             resp = self._post(
@@ -622,7 +660,7 @@ class TestScoreList:
 
     def _seed(
         self, auth_client, span, trace, label_a, label_b
-    ) -> Tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
         # 2 scores on span (label_a, label_b), 1 score on trace (label_a)
         a = auth_client.post(
             SCORE_URL,
@@ -784,7 +822,9 @@ class TestAutoCompleteQueueItems:
             workspace=workspace,
             status=AnnotationQueueStatusChoices.ACTIVE.value,
         )
-        AnnotationQueueLabel.objects.create(queue=queue, label=star_label, required=True)
+        AnnotationQueueLabel.objects.create(
+            queue=queue, label=star_label, required=True
+        )
         AnnotationQueueLabel.objects.create(
             queue=queue, label=thumbs_label, required=True
         )
@@ -817,9 +857,14 @@ class TestAutoCompleteQueueItems:
         # Pre-state
         item.refresh_from_db()
         assert item.status == QueueItemStatus.PENDING.value
-        baseline_qi_count = QueueItem.objects.filter(deleted=False).count()
+        # Scope to this span so the assertion is immune to default-queue items
+        # other tests may create for unrelated sources.
+        baseline_qi_count = QueueItem.objects.filter(
+            observation_span=observation_span, deleted=False
+        ).count()
 
-        # Score one — should NOT complete
+        # Score one — should NOT complete. Pass queue_item_id explicitly so the
+        # score lands in this queue's context (per-queue Score uniqueness).
         with TestCase.captureOnCommitCallbacks(execute=True):
             auth_client.post(
                 SCORE_URL,
@@ -828,13 +873,14 @@ class TestAutoCompleteQueueItems:
                     "source_id": observation_span.id,
                     "label_id": str(star_label.id),
                     "value": {"rating": 5},
+                    "queue_item_id": str(item.id),
                 },
                 format="json",
             )
         item.refresh_from_db()
         assert item.status != QueueItemStatus.COMPLETED.value
 
-        # Score the second required → completes
+        # Score the second required in the same queue → completes
         with TestCase.captureOnCommitCallbacks(execute=True):
             auth_client.post(
                 SCORE_URL,
@@ -843,15 +889,20 @@ class TestAutoCompleteQueueItems:
                     "source_id": observation_span.id,
                     "label_id": str(thumbs_label.id),
                     "value": {"value": "up"},
+                    "queue_item_id": str(item.id),
                 },
                 format="json",
             )
         item.refresh_from_db()
         assert item.status == QueueItemStatus.COMPLETED.value
 
-        # No spurious queue items created
+        # No spurious queue items created — we attributed the scores to the
+        # test queue's item, so no default-queue item is auto-created.
         assert (
-            QueueItem.objects.filter(deleted=False).count() == baseline_qi_count
+            QueueItem.objects.filter(
+                observation_span=observation_span, deleted=False
+            ).count()
+            == baseline_qi_count
         )
 
 
@@ -874,6 +925,7 @@ class TestAutoCreateQueueItemsForDefault:
         trace,
         star_label,
     ):
+        _seed_ch_trace_root(trace)
         # Auto-create runs in ``transaction.on_commit``. See note in
         # ``test_completes_when_all_required_scored`` for why we wrap in
         # ``captureOnCommitCallbacks(execute=True)``.
@@ -892,9 +944,7 @@ class TestAutoCreateQueueItemsForDefault:
             queue=default_queue, label=star_label, required=False
         )
         # Pre-state: zero items.
-        assert (
-            QueueItem.objects.filter(queue=default_queue, deleted=False).count() == 0
-        )
+        assert QueueItem.objects.filter(queue=default_queue, deleted=False).count() == 0
 
         # Score the trace
         with TestCase.captureOnCommitCallbacks(execute=True):
@@ -927,9 +977,7 @@ class TestAutoCreateQueueItemsForDefault:
                 },
                 format="json",
             )
-        assert (
-            QueueItem.objects.filter(queue=default_queue, deleted=False).count() == 1
-        )
+        assert QueueItem.objects.filter(queue=default_queue, deleted=False).count() == 1
 
 
 # ===========================================================================
@@ -1061,13 +1109,13 @@ class TestAnnotationLabelsCRUD:
             {"description": "now described"},
             format="json",
         )
-        assert resp.status_code in (200, 202)
+        assert resp.status_code == status.HTTP_200_OK, resp.data
         star_label.refresh_from_db()
         assert star_label.description == "now described"
 
     def test_soft_delete_then_restore(self, auth_client, star_label):
         resp = auth_client.delete(f"{LABEL_URL}{star_label.id}/")
-        assert resp.status_code in (200, 204)
+        assert resp.status_code == status.HTTP_204_NO_CONTENT
 
         star_label.refresh_from_db()
         assert star_label.deleted is True
@@ -1089,17 +1137,20 @@ class TestAnnotationLabelsCRUD:
 @pytest.mark.django_db
 @pytest.mark.integration
 class TestQueueCRUD:
-    def test_create_queue_db_verified(self, auth_client, organization, user):
+    def test_create_queue_db_verified(
+        self, auth_client, organization, user, star_label
+    ):
         resp = auth_client.post(
             QUEUE_URL,
             {
                 "name": "MyQueue",
                 "description": "x",
                 "assignment_strategy": "round_robin",
+                "label_ids": [str(star_label.id)],
             },
             format="json",
         )
-        assert resp.status_code in (200, 201), resp.data
+        assert resp.status_code == status.HTTP_201_CREATED, resp.data
         qid = resp.data["id"]
         q = AnnotationQueue.objects.get(pk=qid)
         assert q.name == "MyQueue"
@@ -1122,9 +1173,7 @@ class TestQueueCRUD:
         assert "Alpha" in names
         assert "Beta" not in names
 
-    def test_list_queues_filter_by_status(
-        self, auth_client, organization, workspace
-    ):
+    def test_list_queues_filter_by_status(self, auth_client, organization, workspace):
         AnnotationQueue.objects.create(
             name="A",
             organization=organization,
@@ -1160,6 +1209,33 @@ class TestQueueCRUD:
         assert resp.status_code == 200
         assert resp.data["id"] == str(queue)
 
+    def test_update_queue_db_verified(self, auth_client, queue):
+        resp = auth_client.patch(
+            f"{QUEUE_URL}{queue}/",
+            {
+                "name": "Renamed Queue",
+                "description": "updated",
+                "assignment_strategy": "round_robin",
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        q = AnnotationQueue.objects.get(pk=queue)
+        assert q.name == "Renamed Queue"
+        assert q.description == "updated"
+        assert q.assignment_strategy == "round_robin"
+
+    def test_update_queue_status_is_read_only(self, auth_client, queue):
+        # status is managed via the update-status endpoint, not PATCH.
+        q = AnnotationQueue.objects.get(pk=queue)
+        assert q.status == "active"
+        resp = auth_client.patch(
+            f"{QUEUE_URL}{queue}/", {"status": "draft"}, format="json"
+        )
+        assert resp.status_code == 200, resp.data
+        q.refresh_from_db()
+        assert q.status == "active"
+
     def test_archive_then_restore(self, auth_client, queue):
         resp = auth_client.delete(f"{QUEUE_URL}{queue}/")
         assert resp.status_code == 200
@@ -1175,11 +1251,15 @@ class TestQueueCRUD:
 
     def test_hard_delete_requires_force_and_name(self, auth_client, queue, user):
         # missing force
-        resp = auth_client.post(_hard_delete_url(queue), {"confirm_name": "Team A Queue"}, format="json")
+        resp = auth_client.post(
+            _hard_delete_url(queue), {"confirm_name": "Team A Queue"}, format="json"
+        )
         assert resp.status_code == 400
         # wrong name
         resp = auth_client.post(
-            _hard_delete_url(queue), {"force": True, "confirm_name": "wrong"}, format="json"
+            _hard_delete_url(queue),
+            {"force": True, "confirm_name": "wrong"},
+            format="json",
         )
         assert resp.status_code == 400
         # success
@@ -1196,10 +1276,17 @@ class TestQueueCRUD:
 @pytest.mark.integration
 class TestQueueStatusTransitions:
     def test_draft_to_active(self, auth_client):
-        resp = auth_client.post(QUEUE_URL, {"name": "Draftee"}, format="json")
+        label_id = create_categorical_label(auth_client, name="Draftee Label")
+        resp = auth_client.post(
+            QUEUE_URL,
+            {"name": "Draftee", "label_ids": [str(label_id)]},
+            format="json",
+        )
         qid = resp.data["id"]
         # The serializer auto-adds creator as MANAGER, so update-status works.
-        r = auth_client.post(_update_status_url(qid), {"status": "active"}, format="json")
+        r = auth_client.post(
+            _update_status_url(qid), {"status": "active"}, format="json"
+        )
         assert r.status_code == 200
         q = AnnotationQueue.objects.get(pk=qid)
         assert q.status == "active"
@@ -1223,12 +1310,105 @@ class TestQueueStatusTransitions:
         assert r.status_code == 200
         assert AnnotationQueue.objects.get(pk=queue).status == "completed"
 
+    def test_completed_to_active(self, auth_client, queue):
+        # Reopen a completed queue. This is the only exit from "completed".
+        auth_client.post(
+            _update_status_url(queue), {"status": "completed"}, format="json"
+        )
+        r = auth_client.post(
+            _update_status_url(queue), {"status": "active"}, format="json"
+        )
+        assert r.status_code == 200
+        assert AnnotationQueue.objects.get(pk=queue).status == "active"
+
+    def test_paused_to_completed(self, auth_client, queue):
+
+        auth_client.post(_update_status_url(queue), {"status": "paused"}, format="json")
+        r = auth_client.post(
+            _update_status_url(queue), {"status": "completed"}, format="json"
+        )
+        assert r.status_code == 200
+        assert AnnotationQueue.objects.get(pk=queue).status == "completed"
+
+    def test_completed_to_paused(self, auth_client, queue):
+
+        auth_client.post(
+            _update_status_url(queue), {"status": "completed"}, format="json"
+        )
+        r = auth_client.post(
+            _update_status_url(queue), {"status": "paused"}, format="json"
+        )
+        assert r.status_code == 200
+        assert AnnotationQueue.objects.get(pk=queue).status == "paused"
+
+    def test_completed_to_paused_via_active(self, auth_client, queue):
+        # The sanctioned path to pause a completed queue: reopen, then pause.
+        auth_client.post(
+            _update_status_url(queue), {"status": "completed"}, format="json"
+        )
+        r = auth_client.post(
+            _update_status_url(queue), {"status": "active"}, format="json"
+        )
+        assert r.status_code == 200
+        r = auth_client.post(
+            _update_status_url(queue), {"status": "paused"}, format="json"
+        )
+        assert r.status_code == 200
+        assert AnnotationQueue.objects.get(pk=queue).status == "paused"
+
     def test_invalid_transition_400(self, auth_client, queue):
         # active -> draft is invalid
         r = auth_client.post(
             _update_status_url(queue), {"status": "draft"}, format="json"
         )
         assert r.status_code == 400
+
+    # --- "nothing returns to draft" invariant -----------------------------
+
+    def test_paused_to_draft_invalid_400(self, auth_client, queue):
+        auth_client.post(_update_status_url(queue), {"status": "paused"}, format="json")
+        r = auth_client.post(
+            _update_status_url(queue), {"status": "draft"}, format="json"
+        )
+        assert r.status_code == 400
+        assert AnnotationQueue.objects.get(pk=queue).status == "paused"
+
+    def test_completed_to_draft_invalid_400(self, auth_client, queue):
+        auth_client.post(
+            _update_status_url(queue), {"status": "completed"}, format="json"
+        )
+        r = auth_client.post(
+            _update_status_url(queue), {"status": "draft"}, format="json"
+        )
+        assert r.status_code == 400
+        assert AnnotationQueue.objects.get(pk=queue).status == "completed"
+
+    # --- "draft cannot skip activation" invariant -------------------------
+
+    def _make_draft_queue(self, auth_client, name):
+        label_id = create_categorical_label(auth_client, name=f"{name} Label")
+        resp = auth_client.post(
+            QUEUE_URL, {"name": name, "label_ids": [str(label_id)]}, format="json"
+        )
+        qid = resp.data["id"]
+        assert AnnotationQueue.objects.get(pk=qid).status == "draft"
+        return qid
+
+    def test_draft_to_paused_invalid_400(self, auth_client):
+        qid = self._make_draft_queue(auth_client, "DraftToPaused")
+        r = auth_client.post(
+            _update_status_url(qid), {"status": "paused"}, format="json"
+        )
+        assert r.status_code == 400
+        assert AnnotationQueue.objects.get(pk=qid).status == "draft"
+
+    def test_draft_to_completed_invalid_400(self, auth_client):
+        qid = self._make_draft_queue(auth_client, "DraftToCompleted")
+        r = auth_client.post(
+            _update_status_url(qid), {"status": "completed"}, format="json"
+        )
+        assert r.status_code == 400
+        assert AnnotationQueue.objects.get(pk=qid).status == "draft"
 
 
 # ===========================================================================
@@ -1254,17 +1434,49 @@ class TestQueueLabelManagement:
         assert bindings.count() == 1
         assert bindings.first().required is False
 
+    def test_add_label_without_required_defaults_to_optional(
+        self, auth_client, queue, star_label
+    ):
+        """Omitting `required` (the trace "Add label" drawer payload) must add
+        an optional label, not trip the required-labels entitlement gate. On a
+        non-entitled plan the pre-fix default of True would 402 here."""
+        resp = auth_client.post(
+            _add_label_url(queue),
+            {"label_id": str(star_label.id)},
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        binding = AnnotationQueueLabel.objects.get(
+            queue_id=queue, label=star_label, deleted=False
+        )
+        assert binding.required is False
+
     def test_add_required_label_blocked_by_entitlement(
         self, auth_client, queue, star_label
     ):
-        """required=True hits an EE entitlement on the free/test plan."""
-        resp = auth_client.post(
-            _add_label_url(queue),
-            {"label_id": str(star_label.id), "required": True},
-            format="json",
-        )
-        # Either 200 (entitlement exists) or an entitlement denial — not 500.
-        assert resp.status_code in (200, 402, 403), resp.data
+        """A required-label capability denial propagates cleanly as 402.
+
+        required_labels is free self-hosted (not oss_locked), so simulate a
+        cloud-plan denial by patching the gate.
+        """
+        from unittest.mock import patch
+
+        from tfc.ee_gating import EEFeature, FeatureUnavailable
+
+        with patch(
+            "tfc.ee_gating.check_ee_feature",
+            side_effect=FeatureUnavailable(EEFeature.REQUIRED_LABELS),
+        ):
+            resp = auth_client.post(
+                _add_label_url(queue),
+                {"label_id": str(star_label.id), "required": True},
+                format="json",
+            )
+        assert resp.status_code == status.HTTP_402_PAYMENT_REQUIRED, resp.data
+        # Denied means no binding at all, not a binding with required=False.
+        assert not AnnotationQueueLabel.objects.filter(
+            queue_id=queue, label=star_label, deleted=False
+        ).exists()
 
     def test_remove_label_soft_deletes_binding(self, auth_client, queue, star_label):
         AnnotationQueueLabel.objects.create(queue_id=queue, label=star_label)
@@ -1300,6 +1512,9 @@ class TestGetOrCreateDefault:
         )
         assert r1.status_code == 200
         q1_id = _result(r1)["queue"]["id"]
+        assert _result(r1)["action"] == "created"
+        assert _result(r1).get("created") is True
+        assert AnnotationQueue.objects.get(pk=q1_id).status == "active"
         # DB: exactly one default queue scoped to project
         assert (
             AnnotationQueue.objects.filter(
@@ -1317,10 +1532,184 @@ class TestGetOrCreateDefault:
         q2_id = _result(r2)["queue"]["id"]
         assert q1_id == q2_id
         assert _result(r2)["action"] == "fetched"
+        assert _result(r2).get("created") is False
 
     def test_no_scope_400(self, auth_client):
         resp = auth_client.post(_get_or_create_default_url(), {}, format="json")
         assert resp.status_code == 400
+
+    def test_restored_from_archived(self, auth_client, project):
+        r1 = auth_client.post(
+            _get_or_create_default_url(),
+            {"project_id": str(project.id)},
+            format="json",
+        )
+        q1_id = _result(r1)["queue"]["id"]
+        dresp = auth_client.delete(f"{QUEUE_URL}{q1_id}/")
+        assert dresp.status_code == 200
+        assert AnnotationQueue.all_objects.get(pk=q1_id).deleted is True
+
+        r2 = auth_client.post(
+            _get_or_create_default_url(),
+            {"project_id": str(project.id)},
+            format="json",
+        )
+        assert r2.status_code == 200
+        assert _result(r2)["queue"]["id"] == q1_id
+        assert _result(r2)["action"] == "restored"
+        assert AnnotationQueue.objects.get(pk=q1_id).deleted is False
+        assert (
+            AnnotationQueue.objects.filter(
+                project=project, is_default=True, deleted=False
+            ).count()
+            == 1
+        )
+
+    def test_dataset_scope(self, auth_client, dataset_with_rows):
+        dataset, _ = dataset_with_rows
+        r1 = auth_client.post(
+            _get_or_create_default_url(),
+            {"dataset_id": str(dataset.id)},
+            format="json",
+        )
+        assert r1.status_code == 200
+        assert _result(r1)["action"] == "created"
+        q1_id = _result(r1)["queue"]["id"]
+        assert (
+            AnnotationQueue.objects.filter(
+                dataset=dataset, is_default=True, deleted=False
+            ).count()
+            == 1
+        )
+
+        r2 = auth_client.post(
+            _get_or_create_default_url(),
+            {"dataset_id": str(dataset.id)},
+            format="json",
+        )
+        assert _result(r2)["queue"]["id"] == q1_id
+        assert _result(r2)["action"] == "fetched"
+
+    def test_agent_definition_scope(self, auth_client, organization, workspace):
+        from simulate.models.agent_definition import AgentDefinition
+
+        agent = AgentDefinition.objects.create(
+            agent_name="Default Scope Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+1234567890",
+            inbound=True,
+            description="agent",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        r1 = auth_client.post(
+            _get_or_create_default_url(),
+            {"agent_definition_id": str(agent.id)},
+            format="json",
+        )
+        assert r1.status_code == 200
+        assert _result(r1)["action"] == "created"
+        q1_id = _result(r1)["queue"]["id"]
+        assert (
+            AnnotationQueue.objects.filter(
+                agent_definition=agent, is_default=True, deleted=False
+            ).count()
+            == 1
+        )
+
+        r2 = auth_client.post(
+            _get_or_create_default_url(),
+            {"agent_definition_id": str(agent.id)},
+            format="json",
+        )
+        assert _result(r2)["queue"]["id"] == q1_id
+        assert _result(r2)["action"] == "fetched"
+
+    def test_not_found_404(self, auth_client):
+        resp = auth_client.post(
+            _get_or_create_default_url(),
+            {"project_id": "00000000-0000-0000-0000-000000000000"},
+            format="json",
+        )
+        assert resp.status_code == 404
+
+    def test_dataset_not_found_404(self, auth_client):
+        resp = auth_client.post(
+            _get_or_create_default_url(),
+            {"dataset_id": "00000000-0000-0000-0000-000000000000"},
+            format="json",
+        )
+        assert resp.status_code == 404
+
+    def test_agent_definition_not_found_404(self, auth_client):
+        resp = auth_client.post(
+            _get_or_create_default_url(),
+            {"agent_definition_id": "00000000-0000-0000-0000-000000000000"},
+            format="json",
+        )
+        assert resp.status_code == 404
+
+    def test_cross_org_project_404(self, auth_client):
+
+        from accounts.models.organization import Organization
+        from accounts.models.workspace import Workspace
+        from model_hub.models.ai_model import AIModel
+        from tracer.models.project import Project
+
+        other_org = Organization.objects.create(name="Other Org")
+        other_user = User.objects.create_user(
+            email=f"other-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Other Org User",
+            organization=other_org,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        other_ws = Workspace.objects.create(
+            name="Other WS",
+            organization=other_org,
+            is_default=True,
+            is_active=True,
+            created_by=other_user,
+        )
+        other_project = Project.objects.create(
+            name="Other Org Project",
+            organization=other_org,
+            workspace=other_ws,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        resp = auth_client.post(
+            _get_or_create_default_url(),
+            {"project_id": str(other_project.id)},
+            format="json",
+        )
+        assert resp.status_code == 404
+        assert not AnnotationQueue.objects.filter(project=other_project).exists()
+
+    def test_created_after_hard_delete(self, auth_client, project):
+        r1 = auth_client.post(
+            _get_or_create_default_url(),
+            {"project_id": str(project.id)},
+            format="json",
+        )
+        q1 = _result(r1)["queue"]
+        hresp = auth_client.post(
+            f"{QUEUE_URL}{q1['id']}/hard-delete/",
+            {"force": True, "confirm_name": q1["name"]},
+            format="json",
+        )
+        assert hresp.status_code == 200
+        assert not AnnotationQueue.all_objects.filter(pk=q1["id"]).exists()
+
+        r2 = auth_client.post(
+            _get_or_create_default_url(),
+            {"project_id": str(project.id)},
+            format="json",
+        )
+        assert r2.status_code == 200
+        assert _result(r2)["action"] == "created"
+        assert _result(r2)["queue"]["id"] != q1["id"]
 
 
 # ===========================================================================
@@ -1350,9 +1739,141 @@ class TestQueueForSource:
         # Result is a list of {queue: {id, ...}, item: {...}, labels: [...]}
         assert isinstance(result, list)
         queue_ids_returned = [
-            entry.get("queue", {}).get("id") for entry in result if isinstance(entry, dict)
+            entry.get("queue", {}).get("id")
+            for entry in result
+            if isinstance(entry, dict)
         ]
         assert str(queue) in queue_ids_returned
+
+    def test_rejects_legacy_source_aliases(self, auth_client, queue, dataset_with_rows):
+        _, rows = dataset_with_rows
+
+        resp = auth_client.get(
+            _queues_for_source_url(),
+            {"sourceType": "dataset_row", "sourceId": str(rows[0].id)},
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+        assert "sourceId" in str(resp.data)
+
+    def test_rejects_legacy_nested_source_aliases(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        _, rows = dataset_with_rows
+
+        resp = auth_client.get(
+            _queues_for_source_url(),
+            {
+                "sources": json.dumps(
+                    [
+                        {
+                            "sourceType": "dataset_row",
+                            "sourceId": str(rows[0].id),
+                        }
+                    ]
+                )
+            },
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+        assert "sourceId" in str(resp.data)
+
+    # --- input validation ------------------------------------------------
+
+    def test_no_source_400(self, auth_client):
+        resp = auth_client.get(_queues_for_source_url(), {})
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_source_type_without_source_id_400(self, auth_client):
+        resp = auth_client.get(_queues_for_source_url(), {"source_type": "dataset_row"})
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_both_single_and_sources_400(self, auth_client, dataset_with_rows):
+        _, rows = dataset_with_rows
+        resp = auth_client.get(
+            _queues_for_source_url(),
+            {
+                "source_type": "dataset_row",
+                "source_id": str(rows[0].id),
+                "sources": json.dumps(
+                    [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]
+                ),
+            },
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_invalid_source_type_400(self, auth_client, dataset_with_rows):
+        _, rows = dataset_with_rows
+        resp = auth_client.get(
+            _queues_for_source_url(),
+            {"source_type": "garbage", "source_id": str(rows[0].id)},
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    # --- behavior --------------------------------------------------------
+
+    def test_multi_source_returns_queue(self, auth_client, queue, dataset_with_rows):
+        _, rows = dataset_with_rows
+        auth_client.post(
+            _add_items_url(queue),
+            {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
+            format="json",
+        )
+        resp = auth_client.get(
+            _queues_for_source_url(),
+            {
+                "sources": json.dumps(
+                    [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]
+                )
+            },
+        )
+        assert resp.status_code == 200, resp.data
+        result = _result(resp)
+        queue_ids = [
+            e.get("queue", {}).get("id") for e in result if isinstance(e, dict)
+        ]
+        assert str(queue) in queue_ids
+
+    def test_excludes_inaccessible_queue(
+        self, auth_client, dataset_with_rows, organization, workspace
+    ):
+        _, rows = dataset_with_rows
+        other_user = User.objects.create_user(
+            email=f"other-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Other User",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        other_q = AnnotationQueue.objects.create(
+            name="Other User Queue",
+            organization=organization,
+            workspace=workspace,
+            created_by=other_user,
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            is_default=False,
+        )
+        QueueItem.objects.create(
+            queue=other_q,
+            source_type="dataset_row",
+            dataset_row=rows[0],
+            organization=organization,
+            status=QueueItemStatus.PENDING.value,
+            order=0,
+        )
+
+        resp = auth_client.get(
+            _queues_for_source_url(),
+            {"source_type": "dataset_row", "source_id": str(rows[0].id)},
+        )
+        assert resp.status_code == 200, resp.data
+        result = _result(resp)
+        queue_ids = [
+            e.get("queue", {}).get("id") for e in result if isinstance(e, dict)
+        ]
+        assert str(other_q.id) not in queue_ids
 
 
 # ===========================================================================
@@ -1363,9 +1884,7 @@ class TestQueueForSource:
 @pytest.mark.django_db
 @pytest.mark.integration
 class TestAddItems:
-    def test_manual_mode_db_verified(
-        self, auth_client, queue, dataset_with_rows
-    ):
+    def test_manual_mode_db_verified(self, auth_client, queue, dataset_with_rows):
         _, rows = dataset_with_rows
         items = [
             {"source_type": "dataset_row", "source_id": str(rows[0].id)},
@@ -1391,12 +1910,51 @@ class TestAddItems:
         assert resp.status_code == 200
         assert _result(resp)["duplicates"] == 1
         assert _result(resp)["added"] == 0
-        assert (
-            QueueItem.objects.filter(queue_id=queue, deleted=False).count() == 1
+        assert QueueItem.objects.filter(queue_id=queue, deleted=False).count() == 1
+
+    def test_manual_mode_rejects_legacy_item_aliases(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        _, rows = dataset_with_rows
+
+        resp = auth_client.post(
+            _add_items_url(queue),
+            {"items": [{"sourceType": "dataset_row", "sourceId": str(rows[0].id)}]},
+            format="json",
         )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+        assert "sourceId" in str(resp.data)
+
+    def test_add_items_queue_not_found_404(self, auth_client, dataset_with_rows):
+        _, rows = dataset_with_rows
+        resp = auth_client.post(
+            _add_items_url("00000000-0000-0000-0000-000000000000"),
+            {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
+            format="json",
+        )
+        assert resp.status_code == 404
 
     def test_filter_mode_traces(self, auth_client, queue, project, trace):
         """Use selection.mode=filter for trace source type."""
+        from tracer.models.observation_span import ObservationSpan
+        from tracer.tests._ch_seed import seed_ch_span, seed_ch_trace
+
+        seed_ch_trace(trace)
+        seed_ch_span(
+            ObservationSpan(
+                id=f"span_{uuid.uuid4().hex[:16]}",
+                project=project,
+                trace=trace,
+                parent_span_id=None,
+                name="Trace A root",
+                observation_type="agent",
+                start_time=timezone.now() - timedelta(seconds=1),
+                end_time=timezone.now(),
+                status="OK",
+            )
+        )
         payload = {
             "selection": {
                 "mode": "filter",
@@ -1411,11 +1969,9 @@ class TestAddItems:
         result = _result(resp)
         # The trace fixture lives in this project; should be at least 1.
         assert result["added"] >= 1
-        assert (
-            QueueItem.objects.filter(
-                queue_id=queue, trace=trace, deleted=False
-            ).exists()
-        )
+        assert QueueItem.objects.filter(
+            queue_id=queue, trace=trace, deleted=False
+        ).exists()
 
 
 # ===========================================================================
@@ -1461,6 +2017,161 @@ class TestListQueueItems:
         assert resp.status_code == 200
         assert resp.data["count"] == 2
 
+    def test_filter_assigned_to_me(self, auth_client, queue, dataset_with_rows, user):
+        _, rows = dataset_with_rows
+        items = [
+            {"source_type": "dataset_row", "source_id": str(r.id)} for r in rows[:3]
+        ]
+        auth_client.post(_add_items_url(queue), {"items": items}, format="json")
+
+        # Assign exactly one of the three items to the current user.
+        qi = QueueItem.objects.filter(queue_id=queue, deleted=False).first()
+        qi.assigned_to = user
+        qi.save(update_fields=["assigned_to"])
+
+        # Unfiltered: all three items are visible.
+        resp = auth_client.get(_items_url(queue))
+        assert resp.status_code == 200
+        assert resp.data["count"] == 3
+
+        # assigned_to=me narrows to just the item assigned to the caller.
+        resp = auth_client.get(_items_url(queue), {"assigned_to": "me"})
+        assert resp.status_code == 200
+        assert resp.data["count"] == 1
+        assert resp.data["results"][0]["id"] == str(qi.id)
+
+    def test_filter_multiple_statuses(self, auth_client, queue, dataset_with_rows):
+        _, rows = dataset_with_rows
+        items = [
+            {"source_type": "dataset_row", "source_id": str(r.id)} for r in rows[:3]
+        ]
+        auth_client.post(_add_items_url(queue), {"items": items}, format="json")
+
+        qi = QueueItem.objects.filter(queue_id=queue, deleted=False).first()
+        qi.status = QueueItemStatus.COMPLETED.value
+        qi.save(update_fields=["status"])
+
+        resp = auth_client.get(_items_url(queue), {"status": "pending,completed"})
+        assert resp.status_code == 200
+        assert resp.data["count"] == 3
+
+    def test_filter_by_review_status(self, auth_client, queue, dataset_with_rows):
+        _, rows = dataset_with_rows
+        items = [
+            {"source_type": "dataset_row", "source_id": str(r.id)} for r in rows[:2]
+        ]
+        auth_client.post(_add_items_url(queue), {"items": items}, format="json")
+
+        qi = QueueItem.objects.filter(queue_id=queue, deleted=False).first()
+        qi.review_status = "rejected"
+        qi.save(update_fields=["review_status"])
+
+        resp = auth_client.get(_items_url(queue), {"review_status": "rejected"})
+        assert resp.status_code == 200
+        assert resp.data["count"] == 1
+        assert resp.data["results"][0]["id"] == str(qi.id)
+
+    def test_filter_workflow_status_needs_changes(
+        self, auth_client, queue, dataset_with_rows
+    ):
+
+        _, rows = dataset_with_rows
+        items = [
+            {"source_type": "dataset_row", "source_id": str(r.id)} for r in rows[:2]
+        ]
+        auth_client.post(_add_items_url(queue), {"items": items}, format="json")
+
+        qi = QueueItem.objects.filter(queue_id=queue, deleted=False).first()
+        qi.review_status = "rejected"
+        qi.save(update_fields=["review_status"])
+
+        resp = auth_client.get(_items_url(queue), {"status": "needs_changes"})
+        assert resp.status_code == 200
+        assert resp.data["count"] == 1
+        assert resp.data["results"][0]["id"] == str(qi.id)
+
+    def test_filter_workflow_status_in_review(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        # status=in_review maps to review_status="pending_review" with no
+        # addressed (resubmitted) review thread.
+        _, rows = dataset_with_rows
+        items = [
+            {"source_type": "dataset_row", "source_id": str(r.id)} for r in rows[:2]
+        ]
+        auth_client.post(_add_items_url(queue), {"items": items}, format="json")
+
+        qi = QueueItem.objects.filter(queue_id=queue, deleted=False).first()
+        qi.review_status = "pending_review"
+        qi.save(update_fields=["review_status"])
+
+        resp = auth_client.get(_items_url(queue), {"status": "in_review"})
+        assert resp.status_code == 200
+        assert resp.data["count"] == 1
+        assert resp.data["results"][0]["id"] == str(qi.id)
+
+    def test_ordering_created_at(self, auth_client, queue, dataset_with_rows):
+        _, rows = dataset_with_rows
+        items = [
+            {"source_type": "dataset_row", "source_id": str(r.id)} for r in rows[:3]
+        ]
+        auth_client.post(_add_items_url(queue), {"items": items}, format="json")
+
+        asc = auth_client.get(_items_url(queue), {"ordering": "created_at"})
+        desc = auth_client.get(_items_url(queue), {"ordering": "-created_at"})
+        assert asc.status_code == 200 and desc.status_code == 200
+        asc_ids = [r["id"] for r in asc.data["results"]]
+        desc_ids = [r["id"] for r in desc.data["results"]]
+        assert asc_ids == list(reversed(desc_ids))
+
+    def test_cross_workspace_isolation(
+        self, auth_client, queue, dataset_with_rows, organization, user
+    ):
+
+        from accounts.models.workspace import Workspace
+
+        _, rows = dataset_with_rows
+        auth_client.post(
+            _add_items_url(queue),
+            {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
+            format="json",
+        )
+
+        other_ws = Workspace.objects.create(
+            name="Other WS",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        other_q = AnnotationQueue.objects.create(
+            name="Other WS Queue",
+            organization=organization,
+            workspace=other_ws,
+            created_by=user,
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+        )
+        other_item = QueueItem.objects.create(
+            queue=other_q,
+            source_type="dataset_row",
+            dataset_row=rows[0],
+            organization=organization,
+            status=QueueItemStatus.PENDING.value,
+            order=0,
+        )
+
+        resp = auth_client.get(_items_url(queue))
+        assert resp.status_code == 200
+        returned_ids = [r["id"] for r in resp.data["results"]]
+        assert str(other_item.id) not in returned_ids
+        assert resp.data["count"] == 1
+
+    def test_rejects_legacy_query_aliases(self, auth_client, queue):
+        resp = auth_client.get(_items_url(queue), {"sourceType": "dataset_row"})
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+
 
 # ===========================================================================
 # 22. Bulk-remove
@@ -1498,9 +2209,77 @@ class TestBulkRemoveItems:
             qi = QueueItem.all_objects.get(pk=iid)
             assert qi.deleted is True
             assert qi.deleted_at is not None
-        assert (
-            QueueItem.objects.filter(queue_id=queue, deleted=False).count() == 1
+        assert QueueItem.objects.filter(queue_id=queue, deleted=False).count() == 1
+
+    def test_bulk_remove_queue_not_found_404(self, auth_client):
+        resp = auth_client.post(
+            _bulk_remove_url("00000000-0000-0000-0000-000000000000"),
+            {"item_ids": ["00000000-0000-0000-0000-000000000001"]},
+            format="json",
         )
+        assert resp.status_code == 404
+
+    def test_bulk_remove_nonexistent_ids_noop(self, auth_client, queue):
+        # Unknown ids remove nothing (deleted=False filter) -> removed == 0.
+        resp = auth_client.post(
+            _bulk_remove_url(queue),
+            {"item_ids": ["00000000-0000-0000-0000-000000000001"]},
+            format="json",
+        )
+        assert resp.status_code == 200
+        assert _result(resp)["removed"] == 0
+
+    def test_bulk_remove_ignores_other_queue_items(
+        self, auth_client, queue, dataset_with_rows, organization, workspace, user
+    ):
+        # item_ids are scoped to queue_id; an id from a different queue must
+        # not be removed even if the caller manages it.
+        _, rows = dataset_with_rows
+        other_q = AnnotationQueue.objects.create(
+            name="Other Queue",
+            organization=organization,
+            workspace=workspace,
+            created_by=user,
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+        )
+        other_item = QueueItem.objects.create(
+            queue=other_q,
+            source_type="dataset_row",
+            dataset_row=rows[0],
+            organization=organization,
+            status=QueueItemStatus.PENDING.value,
+            order=0,
+        )
+        resp = auth_client.post(
+            _bulk_remove_url(queue),
+            {"item_ids": [str(other_item.id)]},
+            format="json",
+        )
+        assert resp.status_code == 200
+        assert _result(resp)["removed"] == 0
+        other_item.refresh_from_db()
+        assert other_item.deleted is False
+
+    def test_bulk_remove_cascades_to_assignments(
+        self, auth_client, queue, dataset_with_rows, user
+    ):
+        _, rows = dataset_with_rows
+        auth_client.post(
+            _add_items_url(queue),
+            {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
+            format="json",
+        )
+        qi = QueueItem.objects.filter(queue_id=queue, deleted=False).first()
+        assignment = QueueItemAssignment.objects.create(queue_item=qi, user=user)
+
+        resp = auth_client.post(
+            _bulk_remove_url(queue), {"item_ids": [str(qi.id)]}, format="json"
+        )
+        assert resp.status_code == 200
+        assert _result(resp)["removed"] == 1
+        # The child assignment is soft-deleted alongside the item.
+        assignment.refresh_from_db()
+        assert assignment.deleted is True
 
 
 # ===========================================================================
@@ -1540,7 +2319,7 @@ class TestAssignItems:
         )
         assert assignments.count() == 2
         # All point to the user we assigned.
-        assert set(a.user_id for a in assignments) == {user.id}
+        assert {a.user_id for a in assignments} == {user.id}
 
         # Unassign — view contract: user_id=None + action="set" + empty user_ids
         # clears all assignments.
@@ -1549,7 +2328,6 @@ class TestAssignItems:
             {
                 "item_ids": item_ids,
                 "user_ids": [],
-                "user_id": None,
                 "action": "set",
             },
             format="json",
@@ -1574,9 +2352,7 @@ class TestSubmitAnnotations:
 
     def _setup(self, auth_client, queue, dataset_with_rows, label):
         _, rows = dataset_with_rows
-        AnnotationQueueLabel.objects.create(
-            queue_id=queue, label=label, required=True
-        )
+        AnnotationQueueLabel.objects.create(queue_id=queue, label=label, required=True)
         auth_client.post(
             _add_items_url(queue),
             {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
@@ -1644,24 +2420,99 @@ class TestSubmitAnnotations:
         assert _result(resp)["submitted"] == 0
         assert Score.objects.filter(queue_item=item).count() == 0
 
+    def test_submit_rejects_legacy_label_alias(
+        self, auth_client, queue, dataset_with_rows, categorical_label
+    ):
+        item = self._setup(auth_client, queue, dataset_with_rows, categorical_label)
+
+        resp = auth_client.post(
+            _submit_url(queue, item.id),
+            {
+                "annotations": [
+                    {
+                        "labelId": str(categorical_label.id),
+                        "value": {"selected": ["Good"]},
+                    }
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "labelId" in str(resp.data)
+        assert Score.objects.filter(queue_item=item).count() == 0
+
     def test_submit_to_paused_queue_400(
         self, auth_client, queue, dataset_with_rows, categorical_label
     ):
         item = self._setup(auth_client, queue, dataset_with_rows, categorical_label)
         # Pause the queue
-        auth_client.post(
-            _update_status_url(queue), {"status": "paused"}, format="json"
-        )
+        auth_client.post(_update_status_url(queue), {"status": "paused"}, format="json")
         resp = auth_client.post(
             _submit_url(queue, item.id),
             {
                 "annotations": [
-                    {"label_id": str(categorical_label.id), "value": {"selected": ["Good"]}}
+                    {
+                        "label_id": str(categorical_label.id),
+                        "value": {"selected": ["Good"]},
+                    }
                 ]
             },
             format="json",
         )
         assert resp.status_code == 400
+
+    def test_submit_update_existing_score(
+        self, auth_client, queue, dataset_with_rows, categorical_label
+    ):
+        item = self._setup(auth_client, queue, dataset_with_rows, categorical_label)
+
+        auth_client.post(
+            _submit_url(queue, item.id),
+            {
+                "annotations": [
+                    {
+                        "label_id": str(categorical_label.id),
+                        "value": {"selected": ["Good"]},
+                    }
+                ]
+            },
+            format="json",
+        )
+        resp = auth_client.post(
+            _submit_url(queue, item.id),
+            {
+                "annotations": [
+                    {
+                        "label_id": str(categorical_label.id),
+                        "value": {"selected": ["Bad"]},
+                    }
+                ]
+            },
+            format="json",
+        )
+        assert resp.status_code == 200
+        scores = Score.objects.filter(
+            queue_item=item, label=categorical_label, deleted=False
+        )
+        assert scores.count() == 1
+        assert scores.first().value == {"selected": ["Bad"]}
+
+    def test_submit_label_not_in_queue_skipped(
+        self, auth_client, queue, dataset_with_rows, categorical_label, star_label
+    ):
+
+        item = self._setup(auth_client, queue, dataset_with_rows, categorical_label)
+        resp = auth_client.post(
+            _submit_url(queue, item.id),
+            {"annotations": [{"label_id": str(star_label.id), "value": {"rating": 4}}]},
+            format="json",
+        )
+        assert resp.status_code == 200
+        assert _result(resp)["submitted"] == 0
+        assert not Score.objects.filter(
+            queue_item=item, label=star_label, deleted=False
+        ).exists()
 
 
 # ===========================================================================
@@ -1672,13 +2523,9 @@ class TestSubmitAnnotations:
 @pytest.mark.django_db
 @pytest.mark.integration
 class TestCompleteAndSkip:
-    def _setup_pending(
-        self, auth_client, queue, dataset_with_rows, label
-    ):
+    def _setup_pending(self, auth_client, queue, dataset_with_rows, label):
         _, rows = dataset_with_rows
-        AnnotationQueueLabel.objects.create(
-            queue_id=queue, label=label, required=True
-        )
+        AnnotationQueueLabel.objects.create(queue_id=queue, label=label, required=True)
         auth_client.post(
             _add_items_url(queue),
             {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
@@ -1697,7 +2544,10 @@ class TestCompleteAndSkip:
             _submit_url(queue, item.id),
             {
                 "annotations": [
-                    {"label_id": str(categorical_label.id), "value": {"selected": ["Good"]}}
+                    {
+                        "label_id": str(categorical_label.id),
+                        "value": {"selected": ["Good"]},
+                    }
                 ]
             },
             format="json",
@@ -1717,6 +2567,71 @@ class TestCompleteAndSkip:
         item.refresh_from_db()
         assert item.status == QueueItemStatus.SKIPPED.value
 
+    def test_complete_without_annotation_400(
+        self, auth_client, queue, dataset_with_rows, categorical_label
+    ):
+
+        item = self._setup_pending(
+            auth_client, queue, dataset_with_rows, categorical_label
+        )
+        resp = auth_client.post(_complete_url(queue, item.id), {}, format="json")
+        assert resp.status_code == 400
+        item.refresh_from_db()
+        assert item.status != QueueItemStatus.COMPLETED.value
+
+    def test_complete_requires_review_goes_to_pending_review(
+        self, auth_client, queue, dataset_with_rows, categorical_label
+    ):
+        # With requires_review, completing routes to review instead of DONE.
+        AnnotationQueue.objects.filter(pk=queue).update(requires_review=True)
+        item = self._setup_pending(
+            auth_client, queue, dataset_with_rows, categorical_label
+        )
+        auth_client.post(
+            _submit_url(queue, item.id),
+            {
+                "annotations": [
+                    {
+                        "label_id": str(categorical_label.id),
+                        "value": {"selected": ["Good"]},
+                    }
+                ]
+            },
+            format="json",
+        )
+        resp = auth_client.post(_complete_url(queue, item.id), {}, format="json")
+        assert resp.status_code == 200, resp.data
+        item.refresh_from_db()
+        assert item.status == QueueItemStatus.IN_PROGRESS.value
+        assert item.review_status == "pending_review"
+
+    def test_skip_completed_item_400(
+        self, auth_client, queue, dataset_with_rows, categorical_label
+    ):
+        item = self._setup_pending(
+            auth_client, queue, dataset_with_rows, categorical_label
+        )
+        item.status = QueueItemStatus.COMPLETED.value
+        item.save(update_fields=["status"])
+        resp = auth_client.post(_skip_url(queue, item.id), {}, format="json")
+        assert resp.status_code == 400
+        item.refresh_from_db()
+        assert item.status == QueueItemStatus.COMPLETED.value
+
+    def test_skip_requires_review_pending_400(
+        self, auth_client, queue, dataset_with_rows, categorical_label
+    ):
+        AnnotationQueue.objects.filter(pk=queue).update(requires_review=True)
+        item = self._setup_pending(
+            auth_client, queue, dataset_with_rows, categorical_label
+        )
+        item.review_status = "pending_review"
+        item.save(update_fields=["review_status"])
+        resp = auth_client.post(_skip_url(queue, item.id), {}, format="json")
+        assert resp.status_code == 400
+        item.refresh_from_db()
+        assert item.status != QueueItemStatus.SKIPPED.value
+
 
 # ===========================================================================
 # 26. Next-item & annotate-detail
@@ -1728,9 +2643,7 @@ class TestCompleteAndSkip:
 class TestNextItemAndAnnotateDetail:
     def _seed_two_items(self, auth_client, queue, dataset_with_rows, label):
         _, rows = dataset_with_rows
-        AnnotationQueueLabel.objects.create(
-            queue_id=queue, label=label, required=True
-        )
+        AnnotationQueueLabel.objects.create(queue_id=queue, label=label, required=True)
         auth_client.post(
             _add_items_url(queue),
             {
@@ -1782,9 +2695,7 @@ class TestNextItemAndAnnotateDetail:
 class TestQueueAnalytics:
     def _seed(self, auth_client, queue, dataset_with_rows, label):
         _, rows = dataset_with_rows
-        AnnotationQueueLabel.objects.create(
-            queue_id=queue, label=label, required=True
-        )
+        AnnotationQueueLabel.objects.create(queue_id=queue, label=label, required=True)
         auth_client.post(
             _add_items_url(queue),
             {
@@ -1820,9 +2731,12 @@ class TestQueueAnalytics:
         assert resp.status_code == 200, resp.data
         result = _result(resp)
         # Must report total of 3 items
-        assert result.get("total") == 3 or result.get("total_items") == 3 or any(
-            isinstance(v, dict) and v.get("total") == 3 for v in result.values()
-        ) or result.get("status_counts") is not None
+        assert (
+            result.get("total") == 3
+            or result.get("total_items") == 3
+            or any(isinstance(v, dict) and v.get("total") == 3 for v in result.values())
+            or result.get("status_counts") is not None
+        )
 
     def test_analytics_endpoint(
         self, auth_client, queue, dataset_with_rows, categorical_label
@@ -1836,8 +2750,7 @@ class TestQueueAnalytics:
     ):
         self._seed(auth_client, queue, dataset_with_rows, categorical_label)
         resp = auth_client.get(_agreement_url(queue))
-        # 200 if entitled, 403 if not — both valid behaviour we want to assert.
-        assert resp.status_code in (200, 403), resp.data
+        assert resp.status_code == status.HTTP_200_OK, resp.data
 
     def test_export_json(
         self, auth_client, queue, dataset_with_rows, categorical_label
@@ -1850,9 +2763,7 @@ class TestQueueAnalytics:
         # 3 items exported.
         assert len(result) == 3
 
-    def test_export_csv(
-        self, auth_client, queue, dataset_with_rows, categorical_label
-    ):
+    def test_export_csv(self, auth_client, queue, dataset_with_rows, categorical_label):
         self._seed(auth_client, queue, dataset_with_rows, categorical_label)
         resp = auth_client.get(_export_url(queue), {"export_format": "csv"})
         assert resp.status_code == 200
@@ -1862,6 +2773,12 @@ class TestQueueAnalytics:
         rows = list(csv.reader(io.StringIO(body)))
         # header + at least 3 data rows (one per item)
         assert len(rows) >= 4
+
+    def test_export_query_serializer_rejects_legacy_format_alias(self):
+        serializer = QueueExportQuerySerializer(data={"format": "csv"})
+
+        assert not serializer.is_valid()
+        assert "format" in serializer.errors
 
     def test_export_to_dataset_creates_dataset(
         self, auth_client, queue, dataset_with_rows, categorical_label, organization
@@ -1889,11 +2806,11 @@ class TestAutomationRules:
         payload = {
             "name": "TeamA Rule",
             "source_type": "trace",
-            "conditions": {"all": []},
+            "conditions": {},
             "trigger_frequency": AutomationRuleTriggerFrequency.MANUAL.value,
         }
         resp = auth_client.post(_rules_url(queue), payload, format="json")
-        assert resp.status_code in (200, 201), resp.data
+        assert resp.status_code == status.HTTP_201_CREATED, resp.data
         rule_id = resp.data.get("id") or _result(resp).get("id")
         assert rule_id, resp.data
         rule = AutomationRule.objects.get(pk=rule_id)
@@ -1933,7 +2850,7 @@ class TestAutomationRules:
             {"name": "newname"},
             format="json",
         )
-        assert resp.status_code in (200, 202)
+        assert resp.status_code == status.HTTP_200_OK, resp.data
         rule.refresh_from_db()
         assert rule.name == "newname"
 
@@ -1945,7 +2862,7 @@ class TestAutomationRules:
             organization=organization,
         )
         resp = auth_client.delete(_rule_detail_url(queue, rule.id))
-        assert resp.status_code in (200, 204)
+        assert resp.status_code == status.HTTP_204_NO_CONTENT
         rule = AutomationRule.all_objects.get(pk=rule.id)
         assert rule.deleted is True
 
@@ -1957,16 +2874,18 @@ class TestAutomationRules:
             name="pick all",
             queue_id=queue,
             source_type="trace",
-            conditions={"project_id": str(project.id), "all": []},
+            conditions={"scope": {"project_id": str(project.id)}},
             organization=organization,
         )
+        _seed_ch_trace_root(trace)
         # Pre-state: no items.
-        assert (
-            QueueItem.objects.filter(queue_id=queue, deleted=False).count() == 0
-        )
+        assert QueueItem.objects.filter(queue_id=queue, deleted=False).count() == 0
         resp = auth_client.post(_rule_evaluate_url(queue, rule.id), {}, format="json")
-        # The endpoint may be 200/201 — we just ensure it doesn't 5xx.
-        assert resp.status_code in (200, 201, 400, 404), resp.data
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert _result(resp) == {"matched": 1, "added": 1, "duplicates": 0}
+        item = QueueItem.objects.get(queue_id=queue, deleted=False)
+        assert item.source_type == "trace"
+        assert str(item.trace_id) == str(trace.id)
 
 
 # ===========================================================================
@@ -1977,15 +2896,10 @@ class TestAutomationRules:
 @pytest.mark.django_db
 @pytest.mark.integration
 class TestGetAnnotationLabelsLegacy:
-    def test_returns_org_labels(
-        self, api_client, user, star_label, thumbs_label
-    ):
+    def test_returns_org_labels(self, api_client, user, star_label, thumbs_label):
         api_client.force_authenticate(user=user)
         resp = api_client.get(TRACER_LABELS)
-        if resp.status_code != 200:
-            pytest.skip(
-                f"Expected 200, got {resp.status_code}: {resp.data}"
-            )
+        assert resp.status_code == 200, resp.data
         result = _result(resp)
         ids = [str(r["id"]) for r in result]
         assert str(star_label.id) in ids
@@ -1994,14 +2908,75 @@ class TestGetAnnotationLabelsLegacy:
     def test_filter_by_project(self, api_client, user, star_label, project):
         api_client.force_authenticate(user=user)
         resp = api_client.get(TRACER_LABELS, {"project_id": str(project.id)})
-        if resp.status_code != 200:
-            pytest.skip(
-                f"Expected 200, got {resp.status_code}: {resp.data}"
-            )
+        assert resp.status_code == 200, resp.data
         result = _result(resp)
         ids = [str(r["id"]) for r in result]
         # star_label is project-scoped to ``project`` so it must appear
         assert str(star_label.id) in ids
+
+    def test_rejects_legacy_project_alias(self, api_client, user, project):
+        api_client.force_authenticate(user=user)
+        resp = api_client.get(TRACER_LABELS, {"projectId": str(project.id)})
+        assert resp.status_code == 400
+        assert "projectId" in str(resp.data)
+
+    def test_project_trace_config_includes_all_label_types_before_scores(
+        self,
+        api_client,
+        user,
+        project,
+        observation_span,
+        star_label,
+        thumbs_label,
+        numeric_label,
+        text_label,
+        categorical_label,
+        monkeypatch,
+    ):
+        from tracer.services.clickhouse.query_builders.trace_list import (
+            TraceListQueryBuilder,
+        )
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "should_use_clickhouse",
+            lambda self, query_type: False,
+        )
+
+        monkeypatch.setattr(
+            TraceListQueryBuilder,
+            "resolve_user_ids",
+            lambda self, trace_ids, analytics: {},
+        )
+        api_client.force_authenticate(user=user)
+        resp = api_client.get(
+            "/tracer/trace/list_traces_of_session/",
+            {
+                "project_id": str(project.id),
+                "page_number": 0,
+                "page_size": 30,
+            },
+        )
+
+        assert observation_span.trace_id
+        assert resp.status_code == 200, resp.data
+        result = _result(resp)
+        annotation_cols = [
+            c for c in result["config"] if c.get("group_by") == "Annotation Metrics"
+        ]
+        cols_by_id = {str(c["id"]): c for c in annotation_cols}
+        expected_types = {
+            str(star_label.id): AnnotationTypeChoices.STAR.value,
+            str(thumbs_label.id): AnnotationTypeChoices.THUMBS_UP_DOWN.value,
+            str(numeric_label.id): AnnotationTypeChoices.NUMERIC.value,
+            str(text_label.id): AnnotationTypeChoices.TEXT.value,
+            str(categorical_label.id): AnnotationTypeChoices.CATEGORICAL.value,
+        }
+
+        assert set(expected_types) <= set(cols_by_id)
+        for label_id, label_type in expected_types.items():
+            assert cols_by_id[label_id]["annotation_label_type"] == label_type
 
 
 # ===========================================================================
@@ -2012,6 +2987,22 @@ class TestGetAnnotationLabelsLegacy:
 @pytest.mark.django_db
 @pytest.mark.integration
 class TestGetAnnotationValues:
+    @pytest.fixture(autouse=True)
+    def _force_pg_annotation_source(self, monkeypatch):
+        """Force the endpoint's PG fallback.
+
+        The ClickHouse branch reads the v1 ``model_hub_score`` table, which
+        the test sidecar (v2/CH25 schema) does not provision, so the view's
+        broad ``except Exception`` turns the missing table into a 400.
+        """
+        from tracer.views.annotation import TraceAnnotationView
+
+        monkeypatch.setattr(
+            TraceAnnotationView,
+            "_get_annotations_from_clickhouse",
+            lambda self, *args, **kwargs: [],
+        )
+
     def test_returns_annotations_for_span(
         self, auth_client, user, observation_span, star_label
     ):
@@ -2035,8 +3026,49 @@ class TestGetAnnotationValues:
         result = _result(resp)
         assert "annotations" in result or isinstance(result, list)
 
+    def test_returns_annotations_for_span_with_annotator_filter(
+        self, auth_client, user, observation_span, star_label
+    ):
+        auth_client.post(
+            SCORE_URL,
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "label_id": str(star_label.id),
+                "value": {"rating": 4},
+            },
+            format="json",
+        )
+
+        resp = auth_client.get(
+            TRACER_ANN_VALUES,
+            {
+                "observation_span_id": str(observation_span.id),
+                "annotators": json.dumps([str(user.id)]),
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        result = _result(resp)
+        assert len(result["annotations"]) == 1
+        assert result["annotations"][0]["annotator_id"] == str(user.id)
+
     def test_missing_params_400(self, auth_client):
         resp = auth_client.get(TRACER_ANN_VALUES)
+        assert resp.status_code == 400
+
+    def test_rejects_legacy_query_aliases(self, auth_client, observation_span):
+        resp = auth_client.get(
+            TRACER_ANN_VALUES, {"observationSpanId": str(observation_span.id)}
+        )
+        assert resp.status_code == 400
+        assert "observationSpanId" in str(resp.data)
+
+    def test_rejects_invalid_annotators_json(self, auth_client, observation_span):
+        resp = auth_client.get(
+            TRACER_ANN_VALUES,
+            {"observation_span_id": str(observation_span.id), "annotators": "not-json"},
+        )
         assert resp.status_code == 400
 
 
@@ -2051,7 +3083,6 @@ class TestQueuePermissionEnforcement:
     """Matrix #10 directive: non-managers must get 403 on update."""
 
     def _make_other_user(self, organization):
-        from accounts.models.organization_membership import OrganizationMembership
 
         u = User.objects.create_user(
             email=f"other-{uuid.uuid4().hex[:8]}@futureagi.com",
@@ -2087,5 +3118,106 @@ class TestQueuePermissionEnforcement:
                 f"{QUEUE_URL}{queue}/", {"description": "evil"}, format="json"
             )
             assert resp.status_code == 403
+        finally:
+            c.stop_workspace_injection()
+
+    def test_non_manager_cannot_add_items(
+        self, auth_client, organization, workspace, queue, dataset_with_rows
+    ):
+        from conftest import WorkspaceAwareAPIClient
+
+        _, rows = dataset_with_rows
+        other = self._make_other_user(organization)
+        c = WorkspaceAwareAPIClient()
+        c.force_authenticate(user=other)
+        c.set_workspace(workspace)
+        try:
+            resp = c.post(
+                _add_items_url(queue),
+                {
+                    "items": [
+                        {"source_type": "dataset_row", "source_id": str(rows[0].id)}
+                    ]
+                },
+                format="json",
+            )
+            assert resp.status_code == 403
+            # Nothing was added despite a well-formed payload.
+            assert not QueueItem.objects.filter(queue_id=queue, deleted=False).exists()
+        finally:
+            c.stop_workspace_injection()
+
+    def test_non_manager_cannot_bulk_remove(
+        self, auth_client, organization, workspace, queue, dataset_with_rows
+    ):
+
+        from conftest import WorkspaceAwareAPIClient
+
+        _, rows = dataset_with_rows
+        auth_client.post(
+            _add_items_url(queue),
+            {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
+            format="json",
+        )
+        qi = QueueItem.objects.filter(queue_id=queue, deleted=False).first()
+
+        other = self._make_other_user(organization)
+        c = WorkspaceAwareAPIClient()
+        c.force_authenticate(user=other)
+        c.set_workspace(workspace)
+        try:
+            resp = c.post(
+                _bulk_remove_url(queue),
+                {"item_ids": [str(qi.id)]},
+                format="json",
+            )
+            assert resp.status_code == 403
+            qi.refresh_from_db()
+            assert qi.deleted is False
+        finally:
+            c.stop_workspace_injection()
+
+    def test_non_annotator_cannot_submit(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        queue,
+        dataset_with_rows,
+        categorical_label,
+    ):
+
+        from conftest import WorkspaceAwareAPIClient
+
+        _, rows = dataset_with_rows
+        AnnotationQueueLabel.objects.create(
+            queue_id=queue, label=categorical_label, required=True
+        )
+        auth_client.post(
+            _add_items_url(queue),
+            {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
+            format="json",
+        )
+        qi = QueueItem.objects.filter(queue_id=queue, deleted=False).first()
+
+        other = self._make_other_user(organization)
+        c = WorkspaceAwareAPIClient()
+        c.force_authenticate(user=other)
+        c.set_workspace(workspace)
+        try:
+            resp = c.post(
+                _submit_url(queue, qi.id),
+                {
+                    "annotations": [
+                        {
+                            "label_id": str(categorical_label.id),
+                            "value": {"selected": ["Good"]},
+                        }
+                    ]
+                },
+                format="json",
+            )
+            assert resp.status_code == 403
+            assert not Score.objects.filter(queue_item=qi, deleted=False).exists()
         finally:
             c.stop_workspace_injection()

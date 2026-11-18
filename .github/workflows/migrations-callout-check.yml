@@ -1,0 +1,43 @@
+# Check the release-please publication section, not the entire PR body.
+# The PR check is not required by branch protection. Also flag missing callouts
+# on actual published/edited releases; this read-only check never edits notes or
+# claims to prevent tag-triggered builds after an overridden PR check.
+name: migrations-callout
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [dev, main]
+  release:
+    types: [published, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test migration callout regressions
+        run: python3 -I .github/scripts/test_migrations_callout.py -v
+
+  check:
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.base_ref == 'main' && startsWith(github.head_ref, 'release-please--')) ||
+      (github.event_name == 'release' &&
+       !github.event.release.draft && !github.event.release.prerelease)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check notes that are actually published
+        run: >-
+          python3 -I .github/scripts/migrations_callout.py
+          --event-name "$GITHUB_EVENT_NAME" --event-path "$GITHUB_EVENT_PATH"

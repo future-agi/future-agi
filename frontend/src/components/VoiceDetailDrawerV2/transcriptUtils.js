@@ -2,6 +2,8 @@
 // CallAnalyticsView. Keep these pure (no React) so they're trivial to
 // unit-test and reuse.
 
+import { OTHER_PARTY_FALLBACK, ACTOR_CHANNEL_LABELS } from "./constants";
+
 export const formatClock = (seconds) => {
   if (seconds == null || !Number.isFinite(seconds)) return "0:00";
   const s = Math.max(0, Math.floor(seconds));
@@ -18,6 +20,14 @@ export const normalizeRole = (role) => {
   if (r === "tool" || r === "function") return "tool";
   return r || "unknown";
 };
+
+const OTHER_ROLES = new Set(["actor", "world_actor"]);
+export const isOtherRole = (role) => OTHER_ROLES.has(role);
+
+export const otherPartyLabel = ({ speakerName, actorRole } = {}) =>
+  [speakerName || OTHER_PARTY_FALLBACK, actorRole].filter(Boolean).join(" · ");
+
+export const channelLabel = (channel) => ACTOR_CHANNEL_LABELS[channel] || "";
 
 export const getContent = (item) => {
   const raw = item?.content ?? item?.message ?? item?.text ?? "";
@@ -79,12 +89,15 @@ export const readTime = (obj, keys) => {
  *   silenceBefore → seconds (null if < 0.3s or indeterminate)
  *   overlapsPrev  → true when this turn started before the previous ended
  */
-export const enrichTurns = (transcript) => {
+export const enrichTurns = (
+  transcript,
+  { enableTemporalFeatures = true } = {},
+) => {
   if (!Array.isArray(transcript) || transcript.length === 0) return [];
 
   // Step 1: raw extract
   const raw = transcript.map((item, i) => {
-    const role = normalizeRole(item.speakerRole || item.role);
+    const role = normalizeRole(item.speaker_role || item.role);
     const start = readTime(item, [
       "startTimeSeconds",
       "start_time_seconds",
@@ -110,14 +123,33 @@ export const enrichTurns = (transcript) => {
     return {
       id: item.id ?? `turn-${i}`,
       role,
-      rawRole: item.speakerRole || item.role,
+      rawRole: item.speaker_role || item.role,
+      speakerName: item.speaker_name || "",
+      actorId: item.actor_id || "",
+      actorRole: item.actor_role || "",
+      channel: item.channel || "",
       content: getContent(item),
+      toolCalls: Array.isArray(item.tool_calls) ? item.tool_calls : [],
       start,
       end,
       duration: directDuration,
       _originalIndex: i,
     };
   });
+
+  // Text-chat transcripts can reuse the transcript presentation without
+  // pretending that message weights are audio durations. Preserve source
+  // order and the duration-like weight used by the speaker legend, but make
+  // all voice-only timing semantics explicitly unavailable.
+  if (!enableTemporalFeatures) {
+    return raw.map((turn) => ({
+      ...turn,
+      start: null,
+      end: null,
+      silenceBefore: null,
+      overlapsPrev: false,
+    }));
+  }
 
   // Step 2: absolute-epoch → offset-seconds normalization. Transcripts
   // arrive with times in one of three units depending on the backend:
@@ -189,23 +221,22 @@ export const enrichTurns = (transcript) => {
     return a.start - b.start;
   });
 
-  // Step 7: silence + overlap on adjacent pairs.
-  for (let i = 0; i < sorted.length; i++) {
-    const cur = sorted[i];
-    const prev = sorted[i - 1];
-    if (!prev || prev.end == null || cur.start == null) {
-      cur.silenceBefore = null;
-      cur.overlapsPrev = false;
-      continue;
+  // Step 7: silence + overlap between spoken turns; tool calls and actor actions are not speech.
+  let prev = null;
+  for (const cur of sorted) {
+    cur.silenceBefore = null;
+    cur.overlapsPrev = false;
+    if (cur.role === "tool" || cur.role === "world_actor") continue;
+    if (prev && prev.end != null && cur.start != null) {
+      const gap = cur.start - prev.end;
+      if (gap < -0.1) {
+        cur.silenceBefore = 0;
+        cur.overlapsPrev = true;
+      } else if (gap > 0.3) {
+        cur.silenceBefore = gap;
+      }
     }
-    const gap = cur.start - prev.end;
-    if (gap < -0.1) {
-      cur.silenceBefore = 0;
-      cur.overlapsPrev = true;
-    } else {
-      cur.silenceBefore = gap > 0.3 ? gap : null;
-      cur.overlapsPrev = false;
-    }
+    prev = cur;
   }
   return sorted;
 };
@@ -215,7 +246,8 @@ export const computeTotals = (turns) => {
   let total = 0;
   for (const t of turns) {
     if (t.duration == null) continue;
-    byRole[t.role] = (byRole[t.role] || 0) + t.duration;
+    const key = isOtherRole(t.role) ? "others" : t.role;
+    byRole[key] = (byRole[key] || 0) + t.duration;
     total += t.duration;
   }
   return { byRole, total };
@@ -291,7 +323,6 @@ export const computeCallMetrics = (turns) => {
       }
     }
   }
-
 
   return {
     duration: lastEnd > 0 ? lastEnd : null,

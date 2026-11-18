@@ -7,6 +7,7 @@ import structlog
 from django.conf import settings
 from django.utils import timezone
 
+from agentic_eval.core.utils.json_utils import strip_code_fence
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -63,7 +64,14 @@ class BranchDeviationAnalyzer:
     """Service to analyze CallExecution transcripts against graph branches using LLM"""
 
     def __init__(self):
-        self.sda = SyntheticDataAgent()
+        self._sda = None
+
+    @property
+    def sda(self):
+        # SyntheticDataAgent() downloads a tokenizer; lazy so short-circuit paths do not pay.
+        if self._sda is None:
+            self._sda = SyntheticDataAgent()
+        return self._sda
 
     def analyze_call_execution_branch(
         self, call_execution: CallExecution
@@ -269,7 +277,7 @@ class BranchDeviationAnalyzer:
                     next_node = scenario_flow_data[i + 1]
                     edge = {
                         "from": node_data.get("name", f"node_{i}"),
-                        "to": next_node.get("name", f"node_{i+1}"),
+                        "to": next_node.get("name", f"node_{i + 1}"),
                         "condition": {
                             "type": edge_condition.get("type", "ai"),
                             "prompt": edge_condition.get("prompt", ""),
@@ -623,7 +631,10 @@ class BranchDeviationAnalyzer:
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.scenario_graph.graph_generator", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.scenario_graph.graph_generator",
+                        exc_info=True,
+                    )
                 return None
 
             # Create graph generator instance
@@ -653,12 +664,10 @@ class BranchDeviationAnalyzer:
     ) -> list[dict[str, Any]]:
         """Get formatted transcripts for the call execution"""
         try:
-
             if (
                 call_execution.simulation_call_type
                 == CallExecution.SimulationCallType.TEXT
             ):
-
                 messages = ChatMessageModel.objects.filter(
                     call_execution=call_execution,
                     role__in=[
@@ -674,7 +683,6 @@ class BranchDeviationAnalyzer:
 
                 formatted_messages = []
                 for message in messages:
-
                     text_messages = message.messages
                     formatted_text = ""
                     for text in text_messages:
@@ -695,7 +703,6 @@ class BranchDeviationAnalyzer:
                 return formatted_messages
 
             else:
-
                 from simulate.utils.stored_transcript_roles import (
                     get_conversational_transcript_roles,
                 )
@@ -800,7 +807,7 @@ class BranchDeviationAnalyzer:
         for i, transcript in enumerate(transcripts):
             speaker = transcript["speaker_role"].title()
             content = transcript["content"]
-            formatted.append(f"{i+1}. {speaker}: {content}")
+            formatted.append(f"{i + 1}. {speaker}: {content}")
 
         return "\n".join(formatted)
 
@@ -809,13 +816,13 @@ class BranchDeviationAnalyzer:
         formatted_branches = []
 
         for i, branch in enumerate(branches):
-            branch_info = f"Branch {i+1}:\n"
+            branch_info = f"Branch {i + 1}:\n"
             branch_info += f"  Path: {' -> '.join(branch.get('path', []))}\n"
 
             # Add detailed node information
             detailed_path = branch.get("detailedPath", [])
             for j, node in enumerate(detailed_path):
-                branch_info += f"  Node {j+1} ({node.get('name', 'unknown')}):\n"
+                branch_info += f"  Node {j + 1} ({node.get('name', 'unknown')}):\n"
                 branch_info += f"    Type: {node.get('type', 'unknown')}\n"
                 branch_info += f"    Prompt: {node.get('prompt', 'No prompt')}\n"
 
@@ -952,7 +959,7 @@ You are analyzing a call execution transcript to evaluate AGENT PERFORMANCE agai
 
 SCENARIO GRAPH CONTEXT:
 - Graph Name: {scenario_graph.name}
-- Scenario: {scenario_graph.scenario.name if scenario_graph.scenario else 'Unknown'}{customer_context}{agent_requirements}{path_context}
+- Scenario: {scenario_graph.scenario.name if scenario_graph.scenario else "Unknown"}{customer_context}{agent_requirements}{path_context}
 
 TRANSCRIPT TO ANALYZE:
 {transcript_text}
@@ -1050,17 +1057,8 @@ Return only the JSON response with no additional text.
     ) -> BranchAnalysis:
         """Parse LLM response and create BranchAnalysis object"""
         try:
-            # Clean the response
-            response = response.strip()
-            if response.startswith("```json"):
-                response = response[7:]
-            if response.startswith("```"):
-                response = response[3:]
-            if response.endswith("```"):
-                response = response[:-3]
-
-            # Parse JSON
-            analysis_data = json.loads(response)
+            # Unwrap any ```json ... ``` fence the model added, then parse.
+            analysis_data = json.loads(strip_code_fence(response))
 
             # Extract the new fields from the response
             new_nodes = analysis_data.get("newNodes", [])

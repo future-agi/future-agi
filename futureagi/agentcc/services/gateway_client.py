@@ -1,23 +1,61 @@
+import json
 import os
 
 import httpx
 import structlog
 
+from agentcc.contracts.gateway_admin import (
+    CreateKeyRequest,
+    ImportKeysRequest,
+    UpdateKeyRequest,
+)
+from agentcc.contracts.gateway_admin import (
+    OrgConfig as GatewayOrgConfig,
+)
+from tfc.ee_loader import is_cloud_env
+
 logger = structlog.get_logger(__name__)
 
 DEFAULT_TIMEOUT = 10.0
 
-# Default gateway address — set via env vars in docker-compose / .env
-AGENTCC_GATEWAY_URL = os.environ.get("AGENTCC_GATEWAY_URL", "http://localhost:8090")
-# Internal URL for container-to-container communication (e.g. http://agentcc-gateway:8090)
-AGENTCC_GATEWAY_INTERNAL_URL = (
-    os.environ.get("AGENTCC_GATEWAY_INTERNAL_URL", "") or AGENTCC_GATEWAY_URL
-)
-AGENTCC_ADMIN_TOKEN = os.environ.get("AGENTCC_ADMIN_TOKEN", "")
-if not AGENTCC_ADMIN_TOKEN:
-    logger.warning(
-        "AGENTCC_ADMIN_TOKEN not set — gateway admin API calls will be unauthenticated"
+
+def resolve_gateway_public_url():
+    return os.environ.get("AGENTCC_GATEWAY_URL", "http://localhost:8090")
+
+
+def resolve_gateway_internal_url():
+    # `AGENTCC_INTERNAL_URL` is the older docker-compose/.env key still used by
+    # local stacks. Keep it as a compatibility fallback so container-to-container
+    # gateway calls do not silently fall back to localhost inside the backend.
+    # An explicit `AGENTCC_GATEWAY_URL` still wins for host-side tools; the
+    # default is the in-network port (8090 is only the host-published port).
+    return (
+        os.environ.get("AGENTCC_GATEWAY_INTERNAL_URL")
+        or os.environ.get("AGENTCC_INTERNAL_URL")
+        or os.environ.get("AGENTCC_GATEWAY_URL")
+        or "http://agentcc-gateway:8080"
     )
+
+
+# Default gateway address — set via env vars in docker-compose / .env
+AGENTCC_GATEWAY_URL = resolve_gateway_public_url()
+# Internal URL for container-to-container communication (e.g. http://agentcc-gateway:8080)
+AGENTCC_GATEWAY_INTERNAL_URL = resolve_gateway_internal_url()
+AGENTCC_ADMIN_TOKEN = os.environ.get("AGENTCC_ADMIN_TOKEN", "")
+
+
+def _note_missing_admin_token(token):
+    """Runs on import, so it fires in every process that loads the module,
+    one-off commands included. The compose files and the Helm chart always
+    set the token; only on Future AGI Cloud (CLOUD_DEPLOYMENT) is its absence
+    worth a warning."""
+    if token:
+        return
+    log = logger.warning if is_cloud_env() else logger.debug
+    log("AGENTCC_ADMIN_TOKEN not set — gateway admin API calls will be unauthenticated")
+
+
+_note_missing_admin_token(AGENTCC_ADMIN_TOKEN)
 
 
 class GatewayClientError(Exception):
@@ -57,9 +95,9 @@ class GatewayClient:
                 )
             return resp.json() if resp.content else {}
         except httpx.ConnectError as e:
-            raise GatewayClientError(f"Cannot connect to gateway at {url}: {e}")
+            raise GatewayClientError(f"Cannot connect to gateway at {url}: {e}") from e
         except httpx.TimeoutException as e:
-            raise GatewayClientError(f"Gateway request timed out: {e}")
+            raise GatewayClientError(f"Gateway request timed out: {e}") from e
 
     # --- Health ---
 
@@ -86,15 +124,13 @@ class GatewayClient:
         return self._request("GET", "/-/keys")
 
     def create_key(self, name, owner="", models=None, providers=None, metadata=None):
-        body = {"name": name}
-        if owner:
-            body["owner"] = owner
-        if models:
-            body["models"] = models
-        if providers:
-            body["providers"] = providers
-        if metadata:
-            body["metadata"] = metadata
+        body = CreateKeyRequest(
+            name=name,
+            owner=owner or None,
+            models=models or None,
+            providers=providers or None,
+            metadata=_stringify_metadata(metadata) if metadata else None,
+        ).model_dump(exclude_none=True)
         return self._request("POST", "/-/keys", json_body=body)
 
     def get_key(self, key_id):
@@ -103,11 +139,21 @@ class GatewayClient:
     def revoke_key(self, key_id):
         return self._request("DELETE", f"/-/keys/{key_id}")
 
+    def import_keys(self, keys):
+        """Load keys the gateway lacks, by hash; see gateway_key_payload."""
+        body = ImportKeysRequest(keys=keys).model_dump(exclude_none=True)
+        return self._request("POST", "/-/keys/sync", json_body=body)
+
     def update_key(self, key_id, **kwargs):
         body = {}
         for field in ("name", "owner", "models", "providers", "metadata"):
             if field in kwargs:
-                body[field] = kwargs[field]
+                body[field] = (
+                    _stringify_metadata(kwargs[field])
+                    if field == "metadata"
+                    else kwargs[field]
+                )
+        body = UpdateKeyRequest.model_validate(body).model_dump(exclude_none=True)
         return self._request("PUT", f"/-/keys/{key_id}", json_body=body)
 
     # --- Config Management ---
@@ -120,7 +166,11 @@ class GatewayClient:
 
     def set_org_config(self, org_id, config):
         """Push a per-org config to the gateway."""
-        return self._request("PUT", f"/-/orgs/{org_id}/config", json_body=config)
+        body = GatewayOrgConfig.model_validate(config).model_dump(
+            by_alias=True,
+            exclude_none=True,
+        )
+        return self._request("PUT", f"/-/orgs/{org_id}/config", json_body=body)
 
     def delete_org_config(self, org_id):
         """Remove a per-org config from the gateway."""
@@ -163,9 +213,9 @@ class GatewayClient:
             resp_headers = dict(resp.headers)
             return resp.status_code, resp_body, resp_headers
         except httpx.ConnectError as e:
-            raise GatewayClientError(f"Cannot connect to gateway at {url}: {e}")
+            raise GatewayClientError(f"Cannot connect to gateway at {url}: {e}") from e
         except httpx.TimeoutException as e:
-            raise GatewayClientError(f"Gateway request timed out: {e}")
+            raise GatewayClientError(f"Gateway request timed out: {e}") from e
 
     # --- Batch API ---
 
@@ -224,3 +274,25 @@ def get_gateway_client():
         base_url=AGENTCC_GATEWAY_INTERNAL_URL,
         admin_token=AGENTCC_ADMIN_TOKEN,
     )
+
+
+def _stringify_metadata(metadata):
+    """Gateway key metadata is a map[string]string; keep local JSON flexible."""
+    if not isinstance(metadata, dict):
+        return {}
+
+    normalized = {}
+    for key, value in metadata.items():
+        if value is None:
+            continue
+        if isinstance(value, str):
+            normalized[str(key)] = value
+        elif isinstance(value, bool):
+            normalized[str(key)] = "true" if value else "false"
+        elif isinstance(value, (dict, list)):
+            normalized[str(key)] = json.dumps(
+                value, sort_keys=True, separators=(",", ":")
+            )
+        else:
+            normalized[str(key)] = str(value)
+    return normalized

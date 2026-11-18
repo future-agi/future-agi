@@ -3,6 +3,8 @@ package gemini
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -13,7 +15,8 @@ type streamState struct {
 	model       string
 	chunkID     string
 	created     int64
-	toolCallIdx int // tracks incrementing index for tool calls across chunks
+	toolCallIdx int  // tracks incrementing index for tool calls across chunks
+	sawToolCall bool // any tool call emitted so far in this stream
 }
 
 func newStreamState(model string) *streamState {
@@ -27,6 +30,12 @@ func newStreamState(model string) *streamState {
 
 // parseStreamData parses a Gemini SSE data payload and returns a StreamChunk.
 func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) {
+	// A failing upstream sends an error object in place of a chunk. Returned
+	// as an APIError so the read loop ends the stream with it.
+	if strings.HasPrefix(strings.TrimSpace(data), `{"error"`) {
+		return nil, parseGeminiError(http.StatusBadGateway, []byte(data))
+	}
+
 	var resp geminiResponse
 	if err := json.Unmarshal([]byte(data), &resp); err != nil {
 		return nil, err
@@ -47,11 +56,21 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 		// earlier text (previous impl was last-wins, which silently lost
 		// content when a chunk held text followed by a function call or image).
 		var textBuilder string
+		var reasoningBuilder string
 		hasText := false
+		hasReasoning := false
 		for _, part := range candidate.Content.Parts {
 			if part.Text != "" {
-				textBuilder += part.Text
-				hasText = true
+				// Thought summaries (includeThoughts) ride as reasoning_content
+				// deltas, mirroring the non-streaming path — keep them out of
+				// user-visible content so the FE can render thinking separately.
+				if part.Thought && part.FunctionCall == nil {
+					reasoningBuilder += part.Text
+					hasReasoning = true
+				} else {
+					textBuilder += part.Text
+					hasText = true
+				}
 			}
 			if part.InlineData != nil {
 				// delta.Content is *string, so we encode the image as a
@@ -61,17 +80,33 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 				hasText = true
 			}
 			if part.FunctionCall != nil {
+				// Smuggle the thoughtSignature through the id like the
+				// non-streaming path (translateResponse) — without it,
+				// thinking-enabled Gemini 3+ rejects the next turn with
+				// "Function call is missing a thought_signature". The id is
+				// random for the same reason as there; Index stays the
+				// per-stream position clients key chunks by. A part holds one
+				// whole call, so each call gets exactly one id.
+				toolCallID := models.NewToolCallID()
+				if part.ThoughtSignature != "" {
+					toolCallID = toolCallID + toolCallIDDelim + part.ThoughtSignature
+				}
 				delta.ToolCalls = append(delta.ToolCalls, models.ToolCallDelta{
 					Index: s.toolCallIdx,
-					ID:    fmt.Sprintf("call_%d", s.toolCallIdx),
+					ID:    toolCallID,
 					Type:  "function",
-					Function: &models.FunctionCall{
+					Function: &models.FunctionCallDelta{
 						Name:      part.FunctionCall.Name,
 						Arguments: string(part.FunctionCall.Args),
 					},
 				})
 				s.toolCallIdx++
+				s.sawToolCall = true
 			}
+		}
+		if hasReasoning {
+			reasoning := reasoningBuilder
+			delta.ReasoningContent = &reasoning
 		}
 		if hasText {
 			// Emit the content field whenever any text-bearing part was
@@ -88,7 +123,13 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 		}
 
 		if candidate.FinishReason != "" {
-			reason := mapGeminiFinishReasonWithToolCalls(candidate.FinishReason, len(delta.ToolCalls) > 0)
+			// Gemini streams the functionCall and the finishReason in separate
+			// chunks, so the final chunk often carries no tool call of its own.
+			// Map using whether ANY tool call appeared in the stream — otherwise
+			// a tool-calling turn closes as "stop" and the caller discards the
+			// call (breaking multi-turn agents).
+			hasToolCall := s.sawToolCall || len(delta.ToolCalls) > 0
+			reason := mapGeminiFinishReasonWithToolCalls(candidate.FinishReason, hasToolCall)
 			sc.FinishReason = &reason
 		}
 
@@ -98,7 +139,7 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 	if resp.UsageMetadata != nil {
 		chunk.Usage = &models.Usage{
 			PromptTokens:     resp.UsageMetadata.PromptTokenCount,
-			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount,
+			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
 			TotalTokens:      resp.UsageMetadata.TotalTokenCount,
 		}
 	}

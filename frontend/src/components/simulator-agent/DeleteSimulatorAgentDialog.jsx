@@ -64,12 +64,10 @@ const DeleteSimulatorAgentDialog = ({
     <Dialog
       open={open}
       onClose={handleClose}
-      maxWidth="xs"
+      maxWidth={false}
       fullWidth
       PaperProps={{
-        sx: {
-          borderRadius: 2,
-        },
+        sx: { maxWidth: 400, borderRadius: 2 },
       }}
     >
       <DialogTitle>

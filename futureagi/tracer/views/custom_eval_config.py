@@ -4,7 +4,6 @@ import traceback
 import structlog
 from django.db import close_old_connections
 from django.db.models import Q
-from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -13,17 +12,21 @@ logger = structlog.get_logger(__name__)
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.serializers.develop_optimisation import EvalTemplateSerializer
+from tfc.routers import uses_db
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+from tracer.db_routing import DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.serializers.custom_eval_config import (
+    CustomEvalConfigListQuerySerializer,
     CustomEvalConfigSerializer,
     GetCustomEvalTemplateSerializer,
     RunEvaluationSerializer,
 )
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.utils.eval import evaluate_observation_span
 
 
@@ -38,7 +41,9 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
         queryset = super().get_queryset()
 
         if custom_eval_config_id:
-            queryset = queryset.filter(id=custom_eval_config_id)
+            # Primary: a config is opened, changed or deleted right after it
+            # is created, before a replica has applied it.
+            queryset = queryset.using("default").filter(id=custom_eval_config_id)
 
         eval_template_id = self.request.query_params.get("eval_template_id")
         if eval_template_id:
@@ -73,7 +78,8 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
                 data["config"]["choices"] = choices
 
             serializer = self.get_serializer(data=data)
-            serializer.is_valid(raise_exception=True)
+            if not serializer.is_valid():
+                return self._gm.bad_request(serializer.errors)
 
             mapping = serializer.validated_data.get("mapping", {})
 
@@ -99,7 +105,10 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
         try:
             custom_eval_config_id = kwargs.get("pk")
             try:
-                custom_eval_config = CustomEvalConfig.objects.get(
+                # Primary: the task panel edits an eval moments after creating
+                # it, and the whole row loaded here is saved back, so a stale
+                # copy would 400 or undo the previous edit.
+                custom_eval_config = CustomEvalConfig.objects.using("default").get(
                     id=custom_eval_config_id,
                     project__organization=getattr(request, "organization", None)
                     or request.user.organization,
@@ -130,7 +139,8 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             serializer = self.get_serializer(
                 custom_eval_config, data=data, partial=True
             )
-            serializer.is_valid(raise_exception=True)
+            if not serializer.is_valid():
+                return self._gm.bad_request(serializer.errors)
 
             if "mapping" in serializer.validated_data:
                 mapping = serializer.validated_data["mapping"]
@@ -213,9 +223,13 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
                         f"Invalid JSON in eval_tag configuration: {str(e)}"
                     )
 
-            conflicting_config = CustomEvalConfig.objects.filter(
-                query & Q(deleted=False)
-            ).first()
+            # Primary: a config created moments ago must count as a conflict,
+            # or ingestion would quietly reuse it with the old mapping.
+            conflicting_config = (
+                CustomEvalConfig.objects.using("default")
+                .filter(query & Q(deleted=False))
+                .first()
+            )
 
             if conflicting_config:
                 return self._gm.success_response(
@@ -238,28 +252,51 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             )
 
     @action(detail=False, methods=["get"])
+    @uses_db(
+        DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST,
+        feature_key="feature:custom_eval_config_list",
+    )
     def list_custom_eval_configs(self, request, *args, **kwargs):
         """
-        List CustomEvalConfigs filtered by the filters provided in the request body.
+        List CustomEvalConfigs filtered by canonical query parameters.
         """
         try:
-            filters = request.query_params.get("filters", {})
-            task_id = request.query_params.get(
-                "task_id", None
-            ) or request.query_params.get("taskId", None)
-            if filters:
-                filters = json.loads(filters)
-            if not isinstance(filters, dict):
-                return self._gm.bad_request("Filters must be a dictionary")
+            query_serializer = CustomEvalConfigListQuerySerializer(
+                data=request.query_params
+            )
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query_data = query_serializer.validated_data
+            task_id = query_data.get("task_id")
 
-            queryset = CustomEvalConfig.objects.filter(
-                deleted=False,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+            # Pure-routing change: only the alias is different from the
+            # original query. CustomEvalConfigSerializer.get_eval_group()
+            # does `obj.eval_group.name` per row — that per-row FK fetch
+            # still goes through the router for EvalGroup (likely landing
+            # on `default`) and remains a pre-existing N+1. We do NOT fix
+            # that here — fixing the serializer is a separate refactor.
+            # `fresh` (the Ask page) reads the primary: it reuses an evaluator
+            # or picks a unique name from this list right after creating one.
+            # Every other caller keeps the replica-eligible alias.
+            manager = (
+                CustomEvalConfig.objects.db_manager("default")
+                if query_data.get("fresh")
+                else CustomEvalConfig.objects.db_manager(
+                    DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
+                )
+            )
+            from tracer.views.observation_span import _project_workspace_scope_q
+
+            # Only the request's workspace, fresh or not. CustomEvalConfig has
+            # no workspace of its own, so its manager adds no workspace
+            # filter and the organization alone spans sibling workspaces.
+            # A join on the project's workspace works on either alias, and,
+            # unlike Project's manager, keeps configs on simulation and
+            # soft-deleted projects.
+            queryset = manager.filter(
+                _project_workspace_scope_q(request), deleted=False
             ).all()
-            project_id = request.query_params.get(
-                "project_id"
-            ) or request.query_params.get("projectId")
+            project_id = query_data.get("project_id")
             if project_id:
                 queryset = queryset.filter(project_id=project_id)
 
@@ -285,7 +322,9 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             serializer.is_valid(raise_exception=True)
 
             try:
-                custom_eval_config = CustomEvalConfig.objects.get(
+                # Primary: a re-run can follow the config's creation within the
+                # replica's lag.
+                custom_eval_config = CustomEvalConfig.objects.using("default").get(
                     id=serializer.validated_data.get("custom_eval_config_id"),
                     project__organization=getattr(request, "organization", None)
                     or request.user.organization,
@@ -333,27 +372,43 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
                     f"Custom eval config with id {custom_eval_config.id} not found in the project version"
                 )
 
-            observation_spans = ObservationSpan.objects.filter(
-                project_version_id=project_version.id,
-                observation_type=req_eval_tag.get("value").lower(),
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            # Fetch spans from CH 25.3 — was ObservationSpan.objects.filter(
+            # project_version_id=, observation_type=, project__organization=).
+            # Org-tenant scope is already guaranteed: ``project_version`` was
+            # fetched above with ``project__organization=`` so its
+            # ``project_id`` is in the caller's org. CHSpanReader's
+            # ``list_by_project`` ANDs ``is_deleted=0`` already.
+            from tracer.services.clickhouse.v2 import get_reader
 
-            if observation_spans.count() == 0:
+            with get_reader() as reader:
+                ch_spans = reader.list_by_project(
+                    str(project_version.project_id),
+                    project_version_id=str(project_version.id),
+                    observation_type=req_eval_tag.get("value").lower(),
+                )
+
+            if not ch_spans:
                 return self._gm.bad_request(
                     f"No observation spans found for the custom eval config with id {custom_eval_config.id}"
                 )
 
-            # mark all previous eval_logger as deleted
-            EvalLogger.objects.filter(
-                observation_span__in=observation_spans,
-                custom_eval_config=custom_eval_config,
-            ).update(deleted=True, deleted_at=timezone.now())
+            span_ids = [span.id for span in ch_spans]
 
-            for observation_span in observation_spans:
+            # Mark all previous eval_logger as deleted. Was
+            # ``EvalLogger.objects.filter(observation_span__in=<qs>)`` which
+            # joined on the FK; substitute the PK ``__in`` form using the
+            # collected CH span ids (EvalLogger.observation_span_id is the
+            # underlying column the FK resolves to).
+            soft_delete_eval_results(
+                EvalLogger.objects.filter(
+                    observation_span_id__in=span_ids,
+                    custom_eval_config=custom_eval_config,
+                )
+            )
+
+            for span_id in span_ids:
                 evaluate_observation_span.delay(
-                    observation_span.id,
+                    span_id,
                     custom_eval_config.id,
                 )
 

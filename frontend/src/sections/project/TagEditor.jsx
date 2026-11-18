@@ -1,18 +1,22 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (user-pickable tag colours) */
 import {
   Box,
+  Button,
   Checkbox,
   Chip,
   Divider,
-  IconButton,
   Popover,
   TextField,
   Typography,
+  ButtonBase,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState, useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
 import axios from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
+import { fetchAllObserveProjects } from "src/api/project/observe-project-list";
 import { enqueueSnackbar } from "notistack";
 
 // ── Tag colors ──
@@ -22,7 +26,7 @@ const TAG_COLORS = [
   "#3B82F6",
   "#F59E0B",
   "#22C55E",
-  "#8B5CF6",
+  "#7857FC",
   "#EC4899",
   "#94A3B8",
   "#06B6D4",
@@ -38,23 +42,23 @@ function getTagColor(tag) {
 // ── API ──
 
 const fetchProjectTags = async (projectId) => {
-  const { data } = await axios.get(`/tracer/project/${projectId}/`);
+  const { data } = await axios.get(
+    apiPath("/tracer/project/{id}/", { id: projectId }),
+  );
   const result = data?.result || data;
   return result?.tags || [];
 };
 
 const updateProjectTags = async (projectId, tags) => {
-  const { data } = await axios.patch(`/tracer/project/${projectId}/tags/`, {
-    tags,
-  });
+  const { data } = await axios.patch(
+    apiPath("/tracer/project/{id}/tags/", { id: projectId }),
+    { tags },
+  );
   return data?.result?.tags || tags;
 };
 
-const fetchAllKnownTags = async () => {
-  const { data } = await axios.get("/tracer/project/list_projects/", {
-    params: { project_type: "observe", page_size: 100, page_number: 0 },
-  });
-  const projects = data?.result?.table || [];
+const fetchAllKnownTags = async ({ signal } = {}) => {
+  const projects = await fetchAllObserveProjects({ signal });
   const tagSet = new Set();
   projects.forEach((p) => (p.tags || []).forEach((t) => tagSet.add(t)));
   return Array.from(tagSet).sort();
@@ -77,11 +81,17 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
   });
 
   // ── Fetch all known tags (for the dropdown list) — only when popover is open ──
-  const { data: allKnownTags = [] } = useQuery({
+  const {
+    data: allKnownTags = [],
+    isError: isKnownTagsError,
+    isFetching: isKnownTagsFetching,
+    refetch: refetchKnownTags,
+  } = useQuery({
     queryKey: ["all-known-tags"],
-    queryFn: fetchAllKnownTags,
+    queryFn: ({ signal }) => fetchAllKnownTags({ signal }),
     enabled: Boolean(anchorEl),
     staleTime: 60_000,
+    retry: false,
   });
 
   // ── Mutation ──
@@ -168,24 +178,20 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
                 label={tag}
                 size="small"
                 sx={{
-                  height: 20,
-                  fontSize: 11,
-                  fontWeight: 500,
                   color: getTagColor(tag),
                   bgcolor: `${getTagColor(tag)}14`,
                   border: `1px solid ${getTagColor(tag)}30`,
-                  "& .MuiChip-label": { px: 0.75 },
                   pointerEvents: "none",
                 }}
               />
             ))}
             {tags.length > 2 && (
-              <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
+              <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
                 +{tags.length - 2}
               </Typography>
             )}
             <Iconify
-              icon="mdi:chevron-down"
+              icon="solar:alt-arrow-down-linear"
               width={14}
               sx={{ color: "text.disabled", ml: "auto", flexShrink: 0 }}
             />
@@ -199,7 +205,7 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
               color: "text.disabled",
             }}
           >
-            <Iconify icon="mdi:tag-plus-outline" width={18} />
+            <Iconify icon="solar:add-square-linear" width={20} />
           </Box>
         )}
       </Box>
@@ -217,13 +223,13 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
           paper: {
-            sx: { width: 220, borderRadius: "10px", overflow: "hidden" },
+            sx: { width: 240, borderRadius: "8px", overflow: "hidden" },
             onClick: (e) => e.stopPropagation(),
           },
         }}
       >
         <Box sx={{ p: 1.5, pb: 1 }}>
-          <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1 }}>
+          <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1 }}>
             Tags
           </Typography>
           <TextField
@@ -236,7 +242,7 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
             InputProps={{
               startAdornment: (
                 <Iconify
-                  icon="mdi:magnify"
+                  icon="solar:magnifier-linear"
                   width={16}
                   sx={{ color: "text.disabled", mr: 0.5 }}
                 />
@@ -251,10 +257,13 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
             const checked = tags.includes(tag);
             const color = getTagColor(tag);
             return (
-              <Box
+              <ButtonBase
+                component="div"
                 key={tag}
                 onClick={() => toggleTag(tag)}
                 sx={{
+                  justifyContent: "flex-start",
+                  textAlign: "left",
                   display: "flex",
                   alignItems: "center",
                   gap: 0.5,
@@ -274,15 +283,39 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
                 <Typography sx={{ fontSize: 12, fontWeight: 500, color }}>
                   {tag}
                 </Typography>
-              </Box>
+              </ButtonBase>
             );
           })}
-          {availableTags.length === 0 && (
+          {isKnownTagsError && (
+            <Box
+              role="alert"
+              sx={{
+                px: 1,
+                py: 0.75,
+                fontSize: 12,
+                color: "warning.main",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 1,
+              }}
+            >
+              Tag suggestions unavailable.
+              <Button
+                size="small"
+                disabled={isKnownTagsFetching}
+                onClick={() => refetchKnownTags()}
+              >
+                Retry
+              </Button>
+            </Box>
+          )}
+          {availableTags.length === 0 && !isKnownTagsError && (
             <Typography
               sx={{
                 px: 1,
                 py: 1,
-                fontSize: 11,
+                fontSize: 12,
                 color: "text.disabled",
                 textAlign: "center",
               }}
@@ -311,7 +344,7 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
             InputProps={{
               startAdornment: (
                 <Iconify
-                  icon="mdi:plus"
+                  icon="solar:add-linear"
                   width={14}
                   sx={{ color: "primary.main", mr: 0.5 }}
                 />

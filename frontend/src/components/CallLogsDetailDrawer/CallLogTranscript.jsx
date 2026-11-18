@@ -6,7 +6,7 @@ import TranscriptConversationCard from "./TranscriptConversationCard";
 const CallLogTranscript = ({ data }) => {
   const filteredTranscript = useMemo(() => {
     const transcript = data?.transcripts;
-    return transcript?.filter((item) => item.speakerRole !== "system");
+    return transcript?.filter((item) => item.speaker_role !== "system");
   }, [data]);
   return (
     <Stack
@@ -15,7 +15,7 @@ const CallLogTranscript = ({ data }) => {
       flexGrow={1}
       border="1px solid"
       borderColor="divider"
-      borderRadius={0.5}
+      borderRadius="4px"
       width={"100%"}
       p={1}
     >

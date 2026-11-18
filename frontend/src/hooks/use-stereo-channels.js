@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { isLiveKitProvider } from "src/sections/agents/constants";
 
 /**
  * Downsamples a Float32Array of PCM samples into N peak values (0–1).
@@ -28,8 +29,30 @@ function extractPeaks(channelData, numPeaks = 800) {
   return peaks;
 }
 
+const SPEAKER_ROLES = ["customer", "assistant"];
+
+// A layout counts only when it names one customer channel and one assistant.
+export const isStereoLayout = (layout) =>
+  SPEAKER_ROLES.includes(layout?.left) &&
+  SPEAKER_ROLES.includes(layout?.right) &&
+  layout.left !== layout.right;
+
 /**
- * Splits a stereo audio URL into two mono blob URLs (left = assistant, right = customer).
+ * Which stereo channel carries the assistant: 0 for left, 1 for right. The
+ * backend's `recordings.stereo_channels` names each channel's speaker; until a
+ * call carries it, fall back to the provider and direction rule.
+ */
+export function assistantChannelIndex(layout, isInbound, provider) {
+  if (isStereoLayout(layout)) return layout.left === "assistant" ? 0 : 1;
+  // Base: left=sim/customer (ch0), right=agent/assistant (ch1). LiveKit-based
+  // runs always write this fixed order regardless of call direction, so they
+  // must NOT flip. Other providers encode channels per direction, so inbound
+  // flips there.
+  return isInbound && !isLiveKitProvider(provider) ? 0 : 1;
+}
+
+/**
+ * Splits a stereo audio URL into two mono blob URLs, one per speaker.
  *
  * Both output URLs share the same duration because they originate from one file,
  * which fixes the waveform alignment issue caused by using separate mono files
@@ -39,9 +62,25 @@ function extractPeaks(channelData, numPeaks = 800) {
  * can skip its own decode step and render the waveform immediately.
  *
  * @param {string} stereoUrl - URL of the stereo recording
+ * @param {boolean} [isInbound] - fallback rule input when there is no layout
+ * @param {?string} [provider] - fallback rule input when there is no layout
+ * @param {?{left: string, right: string}} [layout] - the backend's
+ *   `recordings.stereo_channels`
  * @returns {{ assistantUrl: string, customerUrl: string, assistantPeaks: number[]|null, customerPeaks: number[]|null, loading: boolean, error: string|null }}
  */
-export default function useStereoChannels(stereoUrl) {
+export default function useStereoChannels(
+  stereoUrl,
+  isInbound = false,
+  provider = null,
+  layout = null,
+) {
+  const assistantIndex = assistantChannelIndex(layout, isInbound, provider);
+  // A recording is split once. A layout arriving later (a refetch) re-splits
+  // it; the fallback rule's inputs don't, so the fallback keeps working as it
+  // did before the layout existed.
+  const splitKey = stereoUrl
+    ? `${stereoUrl}|${isStereoLayout(layout) ? assistantIndex : "fallback"}`
+    : "";
   const [state, setState] = useState({
     assistantUrl: "",
     customerUrl: "",
@@ -50,12 +89,17 @@ export default function useStereoChannels(stereoUrl) {
     loading: !!stereoUrl,
     error: null,
   });
-  const prevUrl = useRef("");
+  const prevKey = useRef("");
   const blobUrls = useRef([]);
+  // Read when a split starts, not as a dependency: a fallback input changing
+  // mid-download would cancel the split and the guard would never restart it.
+  const assistantIndexRef = useRef(assistantIndex);
+  assistantIndexRef.current = assistantIndex;
 
   useEffect(() => {
-    if (!stereoUrl || stereoUrl === prevUrl.current) return;
-    prevUrl.current = stereoUrl;
+    if (!stereoUrl || splitKey === prevKey.current) return;
+    prevKey.current = splitKey;
+    const assistantIndexAtStart = assistantIndexRef.current;
 
     // Revoke old blob URLs
     blobUrls.current.forEach((u) => URL.revokeObjectURL(u));
@@ -92,17 +136,21 @@ export default function useStereoChannels(stereoUrl) {
         const leftData = decoded.getChannelData(0);
         const rightData =
           numChannels >= 2 ? decoded.getChannelData(1) : leftData;
+        const [aData, cData] =
+          assistantIndexAtStart === 0
+            ? [leftData, rightData]
+            : [rightData, leftData];
 
         // Extract real peaks now while we have the decoded PCM data.
         // Passing these to WaveSurfer means it renders the waveform instantly
         // without needing to decode the blob URL a second time.
-        const assistantPeaks = extractPeaks(leftData);
+        const assistantPeaks = extractPeaks(aData);
         const customerPeaks =
-          numChannels >= 2 ? extractPeaks(rightData) : assistantPeaks;
+          numChannels >= 2 ? extractPeaks(cData) : assistantPeaks;
 
-        const assistantBlob = encodeWav(leftData, sampleRate);
+        const assistantBlob = encodeWav(aData, sampleRate);
         const customerBlob =
-          numChannels >= 2 ? encodeWav(rightData, sampleRate) : assistantBlob;
+          numChannels >= 2 ? encodeWav(cData, sampleRate) : assistantBlob;
 
         const assistantBlobUrl = URL.createObjectURL(assistantBlob);
         const customerBlobUrl = URL.createObjectURL(customerBlob);
@@ -134,7 +182,7 @@ export default function useStereoChannels(stereoUrl) {
     return () => {
       cancelled = true;
     };
-  }, [stereoUrl]);
+  }, [stereoUrl, splitKey]);
 
   // Cleanup blob URLs on unmount
   useEffect(() => {
