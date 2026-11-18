@@ -266,8 +266,12 @@ def test_a_run_holds_back_each_case_that_may_not_run_with_its_reason(
 
     assert proved not in plan.held
     assert plan.held == frozenset({no_control, archived, never})
-    assert plan.view["held_back"]["by"] == {"not_validated": 2, "scenario_archived": 1}
-    assert "negative control" in plan.view["reasons"]["not_validated"]
+    assert plan.view["held_back"]["by"] == {
+        "not_validated": 1,
+        "proof_failed": 1,
+        "scenario_archived": 1,
+    }
+    assert "negative control" in plan.view["reasons"]["proof_failed"]
     assert "Not validated" in plan.view["reasons"]["not_validated"]
 
 

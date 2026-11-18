@@ -224,7 +224,8 @@ def test_the_preview_says_why_each_held_back_case_cannot_run(user, workspace, st
         resolve_pairing(environment), keys=KEYS, trials=1
     )["selection"]
 
-    shown = preview["reasons"][selection.NOT_VALIDATED_ROW]
+    # A proof's verdicts are held under their own row: a validation would only repeat them.
+    shown = preview["reasons"][selection.PROOF_FAILED_ROW]
     assert REASON_TEXTS["no_negative_control"] in shown
     assert REASON_TEXTS["vacuous"] in shown
 

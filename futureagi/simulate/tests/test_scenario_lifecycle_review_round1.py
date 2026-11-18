@@ -1,30 +1,45 @@
 """Regression tests for round 1 of the Feature 3 review: each reproduces a finding on the head it was raised on."""
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 from django.core.cache import cache
 
-from simulate.models import HarnessSuiteVersion, HostedHarnessJob
+from simulate.models import (
+    HarnessAssembledBundle,
+    HarnessSuiteValidation,
+    HarnessSuiteVersion,
+    HostedHarnessJob,
+)
 from simulate.services.harness_scenario_lifecycle import runnable, scenario_lifecycle
+from simulate.services.harness_versioning import validation
 from simulate.services.harness_versioning.versions import record_proofs
+from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_affected_scenarios import (
     LOOKUP_KEYS,
     PROVED,
     REFUND_KEYS,
+    _built,
     _suite,
     _ten,
 )
 from simulate.tests.test_harness_readiness import _environment, _with_a2
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    scheduled as scheduled,
+)
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     storage as storage,
 )
+from simulate.tests.test_harness_run_gate import _preview_next, _proving_jobs
 from simulate.tests.test_harness_scenario_lifecycle import (
     _copy,
     _members_of,
     _proofs,
     _views,
 )
+from simulate.tests.test_harness_versioning_assembly import _row
+from simulate.tests.test_harness_versioning_runs import _run
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 KEYS = REFUND_KEYS + LOOKUP_KEYS
@@ -133,3 +148,67 @@ def test_a_partial_validation_keeps_each_case_s_own_agent(user, workspace, stora
     assert all(on_a2[key] == "draft" for key in KEYS[1:])
     assert on_a1[KEYS[0]] == "draft"
     assert all(on_a1[key] == "active" for key in KEYS[1:])
+
+
+LEAK = {
+    "format": 2,
+    "proved": False,
+    "blocked_reason": "answer_leaked",
+    "leaks": [
+        {"who": "agent", "field": "opening", "excerpt": "R-1", "grader_field": "checks"}
+    ],
+}
+
+
+def _leaky(environment):
+    HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=environment.suite_version
+    ).update(
+        proofs={
+            **dict.fromkeys(LOOKUP_KEYS, PROVED),
+            **dict.fromkeys(REFUND_KEYS, LEAK),
+        }
+    )
+
+
+def test_a_known_defect_is_refused_not_validated_again(user, workspace, storage):
+    """B2 (a): a run of cases whose proof found a leaked answer is refused with that reason; it starts no validation,
+    which would only repeat the verdict."""
+    environment = _environment(user, workspace, storage, "rv1-leak-loop")
+    _suite(environment, _ten())
+    _leaky(environment)
+    before = _proving_jobs(environment)
+
+    assert _preview_next(environment, REFUND_KEYS) is None
+    with pytest.raises(HostedHarnessError) as refused:
+        _run(environment, REFUND_KEYS, key="leak-1")
+
+    assert refused.value.code == "all_cases_blocked"
+    assert refused.value.details["selection"]["held_back"]["by"] == {
+        "proof_failed": len(REFUND_KEYS)
+    }
+    assert "gives the answer away" in refused.value.message
+    assert "action" not in refused.value.details
+    assert _proving_jobs(environment) == before
+
+
+def test_a_known_defect_never_runs_as_unvalidated(user, workspace, storage):
+    """B2 (b): when the pair's last check ended on our side, unvalidated cases may run; a case with a known defect
+    still does not."""
+    environment = _environment(user, workspace, storage, "rv1-leak-runs")
+    _suite(environment, _ten())
+    _leaky(environment)
+    HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
+        state="pending",
+        object_key=None,
+        error={
+            "last_attempt": {"code": validation.CHECK_UNAVAILABLE, "template": "t:1"}
+        },
+    )
+    _built(environment)
+    with patch.object(validation, "_template", return_value="t:1"):
+        assert _preview_next(environment, REFUND_KEYS) is None
+        with pytest.raises(HostedHarnessError) as refused:
+            _run(environment, REFUND_KEYS, key="leak-2")
+
+    assert refused.value.code == "all_cases_blocked"
