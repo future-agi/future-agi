@@ -931,6 +931,11 @@ def test_detail_echo_keeps_terminal_reason_and_refuses_plain_resume(
     describe.return_value = client.WF_CLOSED
     refused = auth_client.post(f"{_CREATE}unpause_eval_task/?eval_task_id={intent.pk}")
     assert refused.status_code == 400, refused.content
+    if state == "start_failed":
+        # Standard Logs attaches the permission-gated Re-run hint to this reason.
+        assert refused.json()["result"] == expected_reason
+    else:
+        assert "Use Re-run" in refused.json()["result"]
     assert not EvalLogger.all_objects.filter(eval_task_id=str(intent.pk)).exists()
     assert tick() == {"candidates": 0}
     start.assert_not_called()
@@ -1052,8 +1057,9 @@ def test_retired_cron_cannot_bypass_durable_create(intent, transport):
     check(intent, "pending", 0)
 
 
+@pytest.mark.parametrize("history", [client.WF_ABSENT, TimeoutError()])
 def test_pending_task_without_intent_not_scanned(
-    eval_task, transport, monkeypatch, no_new_usage
+    eval_task, transport, monkeypatch, no_new_usage, history
 ):
     from tracer.utils.eval import evaluate_trace_observe
     from tracer.utils.eval_tasks import (
@@ -1063,6 +1069,10 @@ def test_pending_task_without_intent_not_scanned(
     )
 
     start, describe = transport
+    if isinstance(history, Exception):
+        describe.side_effect = history
+    else:
+        describe.return_value = history
     EvalTask.objects.filter(pk=eval_task.pk).update(start_time=timezone.now())
     enqueue = Mock()
     monkeypatch.setattr(process_eval_task, "delay", enqueue)
@@ -1076,6 +1086,98 @@ def test_pending_task_without_intent_not_scanned(
     assert not EvalLogger.all_objects.filter(eval_task_id=str(eval_task.pk)).exists()
     assert tick() == {"candidates": 0}
     start.assert_not_called()
-    describe.assert_not_called()
+    assert not EvalTaskLogger.all_objects.filter(eval_task=eval_task).exists()
     eval_task.refresh_from_db(using="default")
     assert eval_task.status == "pending"
+
+
+@pytest.mark.parametrize("history", [client.WF_ABSENT, TimeoutError()])
+def test_worker_failure_before_first_entry_can_resume_without_history(
+    auth_client, eval_task, transport, history
+):
+    from tfc.temporal.eval_tasks.activities import _set_task_status_sync
+
+    start, describe = transport
+    describe.side_effect = [history]
+    EvalTask.objects.filter(pk=eval_task.pk).update(run_type="historical")
+    assert _set_task_status_sync(str(eval_task.pk), "running", "pending")["changed"]
+    assert _set_task_status_sync(str(eval_task.pk), "failed", "running")["changed"]
+    eval_task.refresh_from_db()
+    assert eval_task.end_time is not None and eval_task.continuous_cursor is None
+    assert not EvalTaskStartRequest.objects.filter(pk=eval_task.pk).exists()
+    assert not EvalLogger.all_objects.filter(eval_task_id=str(eval_task.pk)).exists()
+    assert not EvalTaskLogger.all_objects.filter(eval_task=eval_task).exists()
+
+    response = auth_client.post(
+        f"{_CREATE}unpause_eval_task/?eval_task_id={eval_task.pk}"
+    )
+    assert response.status_code == 200, response.content
+    start.assert_called_once_with(eval_task, replace_existing=True)
+
+
+@pytest.mark.parametrize("delivery", ["cron", "direct"])
+@pytest.mark.parametrize(
+    ("marked_running", "history"),
+    [(True, client.WF_CLOSED), (True, client.WF_ABSENT), (False, client.WF_CLOSED)],
+)
+def test_legacy_delivery_recovers_a_run_interrupted_before_its_first_entry(
+    eval_task, transport, monkeypatch, delivery, marked_running, history
+):
+    from tfc.temporal.eval_tasks.activities import _set_task_status_sync
+    from tracer.utils.eval_tasks import eval_task_cron, process_eval_task
+
+    start, describe = transport
+    describe.return_value = history
+    EvalTask.objects.filter(pk=eval_task.pk).update(run_type="historical")
+    if marked_running:
+        assert _set_task_status_sync(str(eval_task.pk), "running", "pending")["changed"]
+    eval_task.refresh_from_db()
+    assert eval_task.continuous_cursor is None
+    assert not EvalTaskStartRequest.objects.filter(pk=eval_task.pk).exists()
+    assert not EvalLogger.all_objects.filter(eval_task_id=str(eval_task.pk)).exists()
+    assert not EvalTaskLogger.all_objects.filter(eval_task=eval_task).exists()
+
+    if delivery == "cron":
+        enqueue = Mock()
+        monkeypatch.setattr(process_eval_task, "delay", enqueue)
+        eval_task_cron._original_func()
+        enqueue.assert_called_once_with(eval_task.pk)
+        start.assert_not_called()
+    else:
+        process_eval_task._original_func(str(eval_task.pk))
+        start.assert_called_once_with(eval_task)  # coalesce, never replace
+
+
+@pytest.mark.parametrize("evidence", ["retired_logger", "independent_closed_history"])
+def test_failed_intent_is_not_a_veto_on_a_later_drain(
+    auth_client, intent, transport, evidence
+):
+    start, describe = transport
+    EvalTaskStartRequest.objects.filter(pk=intent.pk).update(
+        state="start_failed", attempts=2, last_outcome="not_started"
+    )
+    tasks = EvalTask.objects.filter(pk=intent.pk)
+    tasks.update(status="failed", run_type="historical")
+    rerun = auth_client.patch(
+        f"{_CREATE}update_eval_task/",
+        {"eval_task_id": str(intent.pk), "edit_type": "fresh_run"},
+        format="json",
+    )
+    assert rerun.status_code == 200, rerun.content
+    start.assert_called_once_with(intent.task, replace_existing=True)
+    if evidence == "retired_logger":
+        EvalTaskLogger.objects.create(eval_task_id=intent.pk, deleted=True)
+    else:
+        # The same workflow ID is reused. A generic gated closure is not proof.
+        describe.side_effect = lambda *a, **kw: (
+            client.WF_LEGACY_CLOSED if kw.get("distinguish_legacy") else client.WF_CLOSED
+        )
+    tasks.update(status="failed")  # replacement start lost its reply; no end_time
+    logs = auth_client.get(f"{_CREATE}get_eval_task_logs/", {"eval_task_id": intent.pk})
+    assert logs.status_code == 200, logs.content
+    assert logs.json()["result"]["error_groups"] == []
+    start.reset_mock()
+    resumed = auth_client.post(f"{_CREATE}unpause_eval_task/?eval_task_id={intent.pk}")
+    assert resumed.status_code == 200, resumed.content
+    start.assert_called_once_with(intent.task, replace_existing=True)
+    check(intent, "start_failed", 2)

@@ -6,7 +6,7 @@ import pytest
 from django.utils import timezone
 
 from tfc.temporal.eval_tasks import client
-from tracer.models.eval_task import EvalTaskStatus
+from tracer.models.eval_task import EvalTaskLogger, EvalTaskStatus
 from tracer.models.observation_span import EvalLogger
 
 pytestmark = [pytest.mark.integration, pytest.mark.api, pytest.mark.django_db]
@@ -47,6 +47,7 @@ def test_resume_cannot_start_a_never_started_pending_task(
             "Only paused or failed tasks can be resumed."
         )
     starter.assert_not_called()
+    assert not EvalTaskLogger.all_objects.filter(eval_task=eval_task).exists()
     assert not EvalLogger.all_objects.filter(eval_task_id=str(eval_task.pk)).exists()
     describe.assert_not_awaited()
     eval_task.refresh_from_db()

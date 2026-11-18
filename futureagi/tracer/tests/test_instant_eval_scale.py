@@ -526,6 +526,7 @@ def test_pause_does_not_turn_a_saved_instant_task_into_a_first_start(
     assert not started
     task.refresh_from_db()
     assert task.status == EvalTaskStatus.PAUSED
+    assert not InstantEvalRun.objects.get(eval_task=task).hash_cursor
     assert not EvalLogger.all_objects.filter(eval_task_id=str(task.pk)).exists()
 
 
@@ -677,10 +678,14 @@ def test_pending_legacy_summary_needs_positive_history_to_resume(
     [("exhausted", "execution_closed_without_progress"), ("start_failed", "not_started")],
 )
 def test_failed_create_does_not_offer_a_standard_page_action_on_instant_resume(
-    auth_client, observe_project, yes_no, started, no_new_usage, state, outcome
+    auth_client, observe_project, yes_no, started, monkeypatch, no_new_usage, state, outcome
 ):
     from tracer.models.eval_task import EvalTaskStartRequest
 
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
+        lambda *args, **kwargs: "closed",  # gated create, not an independent drain
+    )
     task = EvalTask.objects.create(
         project=observe_project,
         run_type=RunType.HISTORICAL,
@@ -3487,3 +3492,73 @@ def test_a_run_with_an_answer_or_another_failure_names_no_key_problem(
         "every": False,
         "ai_providers": False,
     }
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("endpoint", ["plain", "instant"])
+def test_failed_create_does_not_own_a_rerun_after_an_instant_resume_503(
+    auth_client, observe_project, yes_no, started, monkeypatch, endpoint
+):
+    from unittest.mock import Mock
+
+    from tfc.temporal.eval_tasks import client
+    from tracer.models.eval_task import EvalTaskStartRequest
+    from tracer.services.eval_tasks.start_requests import reconcile_start_requests
+
+    base = "/tracer/eval-task/"
+    send = Mock(side_effect=ConnectionError())
+    monkeypatch.setattr(client, "start_eval_task_workflow_sync", send)
+    monkeypatch.setattr("tracer.views.eval_task.start_eval_task_workflow_sync", send)
+    monkeypatch.setattr(
+        client, "describe_eval_task_workflow_sync", Mock(return_value=client.WF_ABSENT)
+    )
+    response = auth_client.post(
+        base,
+        {
+            "project": str(observe_project.pk),
+            "evals": [str(yes_no.pk)],
+            "name": "One question",
+            "run_type": "historical",
+            "row_type": "sessions",
+            "spans_limit": 10,
+            "sampling_rate": 100,
+            "filters": {},
+        },
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    task = EvalTask.objects.get(pk=response.json()["result"]["id"])
+    assert reconcile_start_requests() == {"candidates": 1}  # the single retry
+    assert reconcile_start_requests() == {"candidates": 1}  # confirmed absent
+    request = EvalTaskStartRequest.objects.get(pk=task.pk)
+    assert (request.state, request.attempts) == (request.State.START_FAILED, 2)
+    assert send.call_count == 2
+
+    send.side_effect = None
+    send.reset_mock()
+    rerun = auth_client.patch(
+        f"{base}update_eval_task/",
+        {"eval_task_id": str(task.pk), "edit_type": "fresh_run"},
+        format="json",
+    )
+    assert rerun.status_code == 200, rerun.content
+    send.assert_called_once_with(task, replace_existing=True)
+    entry = _answer(task, yes_no, str(uuid.uuid4()), pending=True)
+    EvalLogger.objects.bulk_create([entry])
+    assert _control(auth_client, observe_project, task, "pause").status_code == 200
+    send.side_effect = ConnectionError()
+    failed = _control(auth_client, observe_project, task, "resume")
+    assert failed.status_code == 503, failed.content
+    task.refresh_from_db()
+    assert task.status == EvalTaskStatus.FAILED and task.end_time is None
+
+    send.side_effect = None
+    send.reset_mock()
+    if endpoint == "plain":
+        resumed = auth_client.post(f"{base}unpause_eval_task/?eval_task_id={task.pk}")
+    else:
+        resumed = _control(auth_client, observe_project, task, "resume")
+    assert resumed.status_code == 200, resumed.content
+    send.assert_called_once_with(task, replace_existing=True)
+    request.refresh_from_db()
+    assert (request.state, request.attempts) == (request.State.START_FAILED, 2)

@@ -1013,6 +1013,7 @@ async def test_protocol_online_eval_pause_edit_resume(
         start.assert_not_called()
         entries = EvalLogger.all_objects.filter(eval_task_id=str(task.pk))
         assert not await entries.aexists()
+        assert not await EvalTaskLogger.all_objects.filter(eval_task=task).aexists()
         await sync_to_async(task.refresh_from_db)()
         assert task.status == EvalTaskStatus.PENDING
         await sync_to_async(EvalTaskLogger.objects.create)(eval_task=task)
