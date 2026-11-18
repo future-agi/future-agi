@@ -1171,7 +1171,7 @@ def _load(request, params, gm):
     if project is None:
         return None, gm.not_found("Project not found")
     task = with_primary_evals(
-        EvalTask.objects.using("default").filter(
+        EvalTask.objects.filter(
             id=params["eval_task_id"], project=project, deleted=False
         )
     ).first()

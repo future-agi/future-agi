@@ -213,18 +213,18 @@ async def describe_eval_task_workflow_async(
         "HistoricalEvalTaskWorkflow",
         "ContinuousEvalTaskWorkflow",
     )
-    if description.status in (
-        WorkflowExecutionStatus.RUNNING,
-        WorkflowExecutionStatus.CONTINUED_AS_NEW,
-    ):
+    if description.status == WorkflowExecutionStatus.RUNNING:
         return WF_LEGACY_PROGRESSING if legacy else WF_PROGRESSING
-    if (
-        distinguish_completion
-        and description.status == WorkflowExecutionStatus.COMPLETED
-    ):
+    if not distinguish_completion:
+        # Preserve the drain/Instant contract for every other status.
+        return WF_LEGACY_CLOSED if legacy else WF_CLOSED
+    # Only the create observer requests this stricter classification. A chain
+    # that continued is not proof of closure, and an unknown status is no answer.
+    if description.status == WorkflowExecutionStatus.CONTINUED_AS_NEW:
+        return WF_LEGACY_PROGRESSING if legacy else WF_PROGRESSING
+    if description.status == WorkflowExecutionStatus.COMPLETED:
         return WF_COMPLETED
     if description.status in (
-        WorkflowExecutionStatus.COMPLETED,
         WorkflowExecutionStatus.FAILED,
         WorkflowExecutionStatus.CANCELED,
         WorkflowExecutionStatus.TERMINATED,

@@ -84,21 +84,26 @@ def _common(code: str, message: str, *, log: bool = False) -> Refusal:
     return Refusal(code, message, message, message if log else None)
 
 
-def _has_worker_artifacts(task):
-    # A named display row can be created by a summary GET. Only the worker
-    # advances a cursor or writes evaluation entries/task loggers. A fresh
-    # Re-run can retire entries, so include soft-deleted work.
+def _worker_artifacts(task_id):
+    # Use the same evidence for the observer and the refusal. A summary GET can
+    # create an InstantEvalRun, but only its worker advances the picker cursor.
+    # Re-run can retire entries/loggers, so include soft-deleted rows.
     return (
-        task.continuous_cursor is not None
-        or EvalLogger.all_objects.using("default")
-        .filter(eval_task_id=str(task.pk))
-        .exists()
-        or EvalTaskLogger.all_objects.using("default")
-        .filter(eval_task_id=task.pk)
-        .exists()
-        or InstantEvalRun.objects.using("default")
-        .filter(eval_task_id=task.pk)
-        .exclude(hash_cursor="")
+        Q(continuous_cursor__isnull=False)
+        | Exists(EvalLogger.all_objects.filter(eval_task_id=str(task_id)))
+        | Exists(EvalTaskLogger.all_objects.filter(eval_task_id=task_id))
+        | Exists(
+            InstantEvalRun.objects.filter(eval_task_id=task_id).exclude(hash_cursor="")
+        )
+    )
+
+
+def _has_worker_artifacts(task):
+    # The caller may have obtained the task from a replica. Read the cursor and
+    # the related artifacts together on the intent writer, not off that copy.
+    return (
+        EvalTask.objects.using("default")
+        .filter(_worker_artifacts(task.pk), pk=task.pk)
         .exists()
     )
 
@@ -200,19 +205,12 @@ def _live_tasks(task_id):
 
 
 def _waiting_for_work(task_id):
-    # start_time doubles as a continuous coverage floor. It isn't evidence of
-    # a send or of durable evaluation work. Nor is a summary-created InstantEvalRun.
-    pending = Q(status=EvalTaskStatus.PENDING) & ~Exists(
-        EvalTaskLogger.all_objects.filter(eval_task_id=task_id)
-    )
-    admitted = Q(status=EvalTaskStatus.RUNNING) & Exists(
-        _requests().filter(pk=task_id, admitted_run_id__isnull=False)
-    )
+    # Pending is a prerequisite for sending, not evidence of work. After
+    # admission observe even a terminal status: only the server can confirm a
+    # successful empty completion. No lifecycle timestamp settles a watch.
+    admitted = Exists(_requests().filter(pk=task_id, admitted_run_id__isnull=False))
     return _live_tasks(task_id).filter(
-        pending | admitted,
-        ~Exists(EvalLogger.all_objects.filter(eval_task_id=str(task_id))),
-        end_time__isnull=True,
-        continuous_cursor__isnull=True,
+        Q(status=EvalTaskStatus.PENDING) | admitted, ~_worker_artifacts(task_id)
     )
 
 
@@ -289,11 +287,15 @@ def _reserve_or_settle(task_id, owned, execution):
     if task is None:
         _finish(owned, State.VOID, "superseded")
         return None
-    if not _waiting_for_work(task_id).exists():
+    if _has_worker_artifacts(task):
         if request.attempts:
             _finish(owned, State.ACCEPTED, "execution_progress")
         else:
             _finish(owned, State.VOID, "superseded")
+        return None
+    if not request.admitted_run_id and task.status != EvalTaskStatus.PENDING:
+        # An ineligible task cannot be sent, but its status is not proof of progress.
+        _finish(owned, State.VOID, "superseded")
         return None
     age = request.db_now - request.created_at
     history_expired = (
@@ -352,9 +354,9 @@ def _reserve_or_settle(task_id, owned, execution):
         else State.EXHAUSTED
     )
     if _finish(owned, state, outcome):
-        EvalTask.objects.using("default").filter(pk=task_id).update(
-            status=EvalTaskStatus.FAILED, updated_at=Now()
-        )
+        EvalTask.objects.using("default").filter(
+            pk=task_id, status__in=(EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING)
+        ).update(status=EvalTaskStatus.FAILED, updated_at=Now())
     return None
 
 

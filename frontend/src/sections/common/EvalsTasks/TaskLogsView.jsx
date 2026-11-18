@@ -537,11 +537,6 @@ const withCredentialRemedy = (group) => {
 
 // ── Main Component ──
 
-const CLOSED_START_REASONS = new Set([
-  "The run couldn't start after an automatic retry. Your task is saved.",
-  "The workflow ended before evaluation began. Your task is saved.",
-]);
-
 const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
   const theme = useTheme();
 
@@ -577,8 +572,14 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
   // Placed above the early returns so hook order stays stable. Memoized
   // on the groups array reference so the poll interval (every 5s while
   // the task is running) doesn't re-enrich unnecessarily.
+  const startGroup = data?.error_groups?.find(
+    (group) => group.start_reason_code,
+  );
   const errorGroups = useMemo(
-    () => enrichErrorGroups(data?.error_groups || []).map(withCredentialRemedy),
+    () =>
+      enrichErrorGroups(
+        data?.error_groups?.filter((group) => !group.start_reason_code),
+      ).map(withCredentialRemedy),
     [data?.error_groups],
   );
   // Some response paths (older DRF camelCase middleware) emit camelCase;
@@ -669,24 +670,15 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
     totalCount > 0 ? Math.round((successCount / totalCount) * 100) : 0;
   const errorRate =
     totalCount > 0 ? Math.round((errorsCount / totalCount) * 100) : 0;
-  const hasErrors = errorGroups.length > 0;
-  // With no eval entries the server can return a start-request reason in
-  // this group. It isn't an evaluator error; don't attach generic retry tips.
-  const startReason =
-    data.total_count === 0 && errorGroups.length === 1 && errorGroups[0].raw;
-  const closedStart = CLOSED_START_REASONS.has(startReason);
-  const showStartReason =
-    startReason &&
-    (!closedStart ||
-      (effectiveStatus?.toLowerCase() === "failed" &&
-        (!taskStatus || taskStatus.toLowerCase() === "failed") &&
-        !isError &&
-        !isPaused &&
-        !isFetching));
+  const hasErrors = errorGroups.length > 0 || Boolean(startGroup);
+  // The recorded reason survives later status writes. Only the action hint
+  // depends on a confirmed failure and the current page's Re-run control.
+  const confirmedStartFailure = ["start_failed", "exhausted"].includes(
+    startGroup?.start_reason_code,
+  );
   const suggestRerun =
-    closedStart &&
-    taskStatus?.toLowerCase() === "failed" &&
-    canRerun;
+    confirmedStartFailure && canRerun && !isRunning && !isPending &&
+    !isFetching && !isPaused && !isError;
   const hasWarnings = warningGroups.length > 0;
   // Groups sort by count, and a group with no key breakdown cannot expand, so
   // auto-expand the largest one that actually has something behind it.
@@ -954,13 +946,13 @@ const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
       )}
 
       {/* Error Log — grouped by category with actionable fixes */}
-      {showStartReason && (
-        <Alert severity={effectiveStatus === "failed" ? "error" : "info"}>
-          {startReason}
+      {startGroup && (
+        <Alert severity={confirmedStartFailure ? "error" : "info"}>
+          {startGroup.sample}
           {suggestRerun && " Choose Re-run to try again."}
         </Alert>
       )}
-      {hasErrors && !startReason && (
+      {errorGroups.length > 0 && (
         <Box>
           <Box
             sx={{

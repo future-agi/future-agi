@@ -373,10 +373,11 @@ def eval_task_cron():
     offset = cache.get("eval_task_offset", 0)
 
     eval_tasks = (
-        EvalTask.objects.using("default")
-        .filter(status__in=[EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING])
+        EvalTask.objects.filter(
+            status__in=[EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING]
+        )
         .order_by("created_at")
-        .only("id", "status", "instant_paused_before_start_at", "continuous_cursor")
+        .only("id", "status", "instant_paused_before_start_at")
     )
     cnt = eval_tasks.count()
 
@@ -400,7 +401,7 @@ def eval_task_cron():
 def process_eval_task(eval_task_id: str):
     try:
         try:
-            eval_task = EvalTask.objects.using("default").get(id=eval_task_id)
+            eval_task = EvalTask.objects.get(id=eval_task_id)
         except EvalTask.DoesNotExist:
             logger.error(f"Eval task with id {eval_task_id} not found")
             return
@@ -764,7 +765,7 @@ def run_for_processed_spans(span_ids: list, eval_ids: list, eval_task_id: str):
     the authoritative desired set from the persisted task configuration.
     """
     try:
-        eval_task = EvalTask.objects.using("default").get(id=eval_task_id)
+        eval_task = EvalTask.objects.get(id=eval_task_id)
     except EvalTask.DoesNotExist:
         logger.error(
             "legacy_eval_batch_task_missing",

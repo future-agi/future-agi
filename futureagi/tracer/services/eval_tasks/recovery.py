@@ -18,6 +18,7 @@ from tracer.services.eval_tasks.reaper import (
     effective_stale_seconds,
     reap_stale_running,
 )
+from tracer.services.eval_tasks.start_requests import start_refusal
 
 logger = structlog.get_logger(__name__)
 
@@ -126,6 +127,12 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
         # has no field that separates the fleet's ordinary working set from
         # the tasks it acted on.
         outcome["progressing"] = True
+        return outcome
+
+    # Gate before reaping entries or flipping Failed to Pending. A watched
+    # create belongs to its fenced sender, even when the sweep found work.
+    if start_refusal(task, delivery=True):
+        outcome["deferred"] = True
         return outcome
 
     outcome["requeued"], outcome["failed"] = reap_stale_running(

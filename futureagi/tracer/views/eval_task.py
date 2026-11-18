@@ -2247,7 +2247,12 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 refusal = start_refusal(eval_task)
                 if refusal and (reason := refusal.log_message):
                     error_groups.append(
-                        {"normalized": reason, "count": 1, "sample": reason}
+                        {
+                            "normalized": reason,
+                            "count": 1,
+                            "sample": reason,
+                            "start_reason_code": refusal.code,
+                        }
                     )
             error_text_truncated = any(
                 (row["sample_length"] or 0) > _EVAL_TASK_ERROR_TEXT_MAX_CHARS

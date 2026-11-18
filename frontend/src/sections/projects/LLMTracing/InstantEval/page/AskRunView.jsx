@@ -745,7 +745,8 @@ export default function AskRunView({
   // Every row failed: why (the reason its rows give), the fix and a retry
   // sit at the top, not only in each row's explanation.
   const nothingAnswered = answeredNothing(run);
-  const failure = nothingAnswered ? summary?.failure : null;
+  const failure = summary?.failure;
+  const startFailure = run.status === "failed" && failure?.message;
   const running = live || Boolean(creating);
   const reads = question?.reads || run.reads;
   const split = question
@@ -1268,7 +1269,10 @@ export default function AskRunView({
           </Box>
         )}
         <StatusLine run={run} unit={unit} creating={creating} />
-        {failedBeforeAnswering && (
+        {startFailure && (
+          <Alert severity="error">{startFailure}</Alert>
+        )}
+        {failedBeforeAnswering && !startFailure && (
           <Alert
             severity="error"
             action={questions
