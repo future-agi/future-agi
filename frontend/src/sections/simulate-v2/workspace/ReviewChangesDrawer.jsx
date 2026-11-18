@@ -36,14 +36,6 @@ import { toolSettingOf } from "../_mock/toolEnv";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
-const when = (iso) =>
-  iso
-    ? new Date(iso).toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-      })
-    : "";
-
 /* A line of a change's diff: added, removed or changed — colour on the change only. */
 const SIGN_COLOR = {
   "+": "status.success.fg",
@@ -51,81 +43,68 @@ const SIGN_COLOR = {
   "~": "text.secondary",
 };
 
-/* One change's decision: Accept / Reject, then the outcome with a way back. */
+/* One change's decision: two icon buttons; once decided, a word and a way back. */
 function Decision({ decision, rejectable, restorable, onDecide }) {
-  const quiet = { color: "text.primary", borderColor: "divider", minWidth: 0 };
-  if (decision === "accepted")
-    return (
-      <Stack direction="row" alignItems="center" spacing={0.5} flexShrink={0}>
-        <Iconify
-          icon="solar:check-circle-linear"
-          width={14}
-          sx={{ color: "status.success.fg" }}
-        />
-        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-          Accepted
-        </Typography>
-        <Button
-          variant="outlined"
+  const icon = (title, glyph, onClick, disabled = false, color) => (
+    <Tooltip arrow title={title}>
+      <span>
+        <IconButton
           size="small"
-          color="inherit"
-          onClick={() => onDecide(null)}
-          sx={{ minWidth: 0 }}
+          aria-label={title}
+          disabled={disabled}
+          onClick={onClick}
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "6px",
+            p: 0.5,
+            color: color || "text.secondary",
+          }}
         >
-          Change
-        </Button>
-      </Stack>
-    );
-  if (decision === "rejected")
+          <Iconify icon={glyph} width={14} />
+        </IconButton>
+      </span>
+    </Tooltip>
+  );
+  if (decision)
     return (
-      <Stack direction="row" alignItems="center" spacing={0.5} flexShrink={0}>
-        <Iconify
-          icon="solar:close-circle-linear"
-          width={14}
-          sx={{ color: "text.tertiary" }}
-        />
-        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-          Rejected
+      <Stack direction="row" alignItems="center" spacing={0.75} flexShrink={0}>
+        <Typography
+          sx={{
+            typography: "s3",
+            color:
+              decision === "accepted" ? "status.success.fg" : "text.tertiary",
+          }}
+        >
+          {decision === "accepted" ? "Accepted" : "Rejected"}
         </Typography>
-        <Tooltip arrow title={restorable.ok ? "" : restorable.why}>
-          <span>
-            <Button
-              variant="outlined"
-              size="small"
-              color="inherit"
-              disabled={!restorable.ok}
-              onClick={() => onDecide(null)}
-              sx={{ minWidth: 0 }}
-            >
-              Restore
-            </Button>
-          </span>
-        </Tooltip>
+        {icon(
+          decision === "accepted"
+            ? "Undo"
+            : restorable.ok
+              ? "Restore"
+              : restorable.why,
+          "solar:undo-left-linear",
+          () => onDecide(null),
+          decision === "rejected" && !restorable.ok,
+        )}
       </Stack>
     );
   return (
-    <Stack direction="row" spacing={0.75} flexShrink={0}>
-      <Button
-        size="small"
-        variant="outlined"
-        onClick={() => onDecide("accepted")}
-        sx={quiet}
-      >
-        Accept
-      </Button>
-      <Tooltip arrow title={rejectable.ok ? "" : rejectable.why}>
-        <span>
-          <Button
-            size="small"
-            variant="outlined"
-            disabled={!rejectable.ok}
-            onClick={() => onDecide("rejected")}
-            sx={quiet}
-          >
-            Reject
-          </Button>
-        </span>
-      </Tooltip>
+    <Stack direction="row" spacing={0.5} flexShrink={0}>
+      {icon(
+        "Accept",
+        "solar:check-read-linear",
+        () => onDecide("accepted"),
+        false,
+        "status.success.fg",
+      )}
+      {icon(
+        rejectable.ok ? "Reject" : rejectable.why,
+        "solar:close-circle-linear",
+        () => onDecide("rejected"),
+        !rejectable.ok,
+      )}
     </Stack>
   );
 }
@@ -262,7 +241,7 @@ export default function ReviewChangesDrawer({
               Review changes
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {`${list.length - counts.rejected} unsaved edit${list.length - counts.rejected === 1 ? "" : "s"}${counts.rejected ? ` · ${counts.rejected} rejected` : ""} since environment ${label}. Accept or reject each one, then save. Runs use ${label} until they're saved.`}
+              {`${list.length - counts.rejected} unsaved edit${list.length - counts.rejected === 1 ? "" : "s"} since ${label} · runs use ${label} until you save`}
             </Typography>
           </Box>
           <IconButton size="small" aria-label="Close" onClick={onClose}>
@@ -297,10 +276,10 @@ export default function ReviewChangesDrawer({
                         key={f.id}
                         direction="row"
                         spacing={1}
-                        alignItems="flex-start"
+                        alignItems="center"
                         sx={{
                           px: 1.5,
-                          py: 1,
+                          minHeight: 40,
                           "& + &": {
                             borderTop: "1px solid",
                             borderColor: "divider",
@@ -310,35 +289,32 @@ export default function ReviewChangesDrawer({
                         <Iconify
                           icon="solar:danger-triangle-linear"
                           width={16}
-                          sx={{
-                            color: "status.warning.fg",
-                            flexShrink: 0,
-                            mt: "2px",
-                          }}
+                          sx={{ color: "status.warning.fg", flexShrink: 0 }}
                         />
-                        <Box flex={1} minWidth={0}>
-                          <Typography sx={{ typography: "s2" }}>
+                        {/* One line; why, where from and what it holds up on hover. */}
+                        <Tooltip
+                          arrow
+                          placement="bottom-start"
+                          title={[
+                            f.reason,
+                            f.source && `From ${f.source}`,
+                            f.scenarios?.length
+                              ? `Holds up ${f.scenarios.slice(0, 3).join(", ")}${f.scenarios.length > 3 ? ` and ${f.scenarios.length - 3} more` : ""}`
+                              : "No scenario depends on it — the rest saves without it",
+                          ]
+                            .filter(Boolean)
+                            .join("\n")}
+                          componentsProps={{
+                            tooltip: { sx: { whiteSpace: "pre-line" } },
+                          }}
+                        >
+                          <Typography
+                            noWrap
+                            sx={{ typography: "s2", flex: 1, minWidth: 0 }}
+                          >
                             {f.detail}
                           </Typography>
-                          <Typography
-                            sx={{ typography: "s3", color: "text.secondary" }}
-                          >
-                            {f.reason}
-                          </Typography>
-                          <Typography
-                            sx={{ typography: "s3", color: "text.tertiary" }}
-                          >
-                            {[
-                              f.source && `From ${f.source}`,
-                              f.scenarios?.length
-                                ? `holds up ${f.scenarios.slice(0, 3).join(", ")}${f.scenarios.length > 3 ? ` and ${f.scenarios.length - 3} more` : ""}`
-                                : "no scenario depends on it",
-                              "the rest of the draft saves without it",
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </Typography>
-                        </Box>
+                        </Tooltip>
                         <Button
                           size="small"
                           variant="outlined"
@@ -365,14 +341,16 @@ export default function ReviewChangesDrawer({
                               : "Fix"}
                         </Button>
                         {canEdit && (
-                          <Button
-                            size="small"
-                            color="inherit"
-                            onClick={() => setDismissed(f.id, true)}
-                            sx={{ minWidth: 0, color: "text.secondary" }}
-                          >
-                            Dismiss
-                          </Button>
+                          <Tooltip arrow title="Dismiss">
+                            <IconButton
+                              size="small"
+                              aria-label="Dismiss"
+                              onClick={() => setDismissed(f.id, true)}
+                              sx={{ color: "text.tertiary", p: 0.5 }}
+                            >
+                              <Iconify icon="mingcute:close-line" width={14} />
+                            </IconButton>
+                          </Tooltip>
                         )}
                       </Stack>
                     ))}
@@ -471,7 +449,7 @@ export default function ReviewChangesDrawer({
                             direction="row"
                             alignItems="center"
                             spacing={1}
-                            sx={{ px: 1.5, minHeight: 44, py: 0.5 }}
+                            sx={{ px: 1.5, minHeight: 40, py: 0.25 }}
                           >
                             <IconButton
                               size="small"
@@ -519,23 +497,23 @@ export default function ReviewChangesDrawer({
                                   color: "text.tertiary",
                                 }}
                               >
-                                {[src, link.where, when(c.at)]
-                                  .filter(Boolean)
-                                  .join(" · ")}
+                                {[src, link.where].filter(Boolean).join(" · ")}
                               </Typography>
                             </Box>
-                            <Button
-                              variant="outlined"
-                              size="small"
-                              color="inherit"
-                              onClick={() => goSource(link, g.tab, c)}
-                              sx={{
-                                minWidth: 0,
-                                flexShrink: 0,
-                              }}
-                            >
-                              {link.label}
-                            </Button>
+                            <Tooltip arrow title={link.label}>
+                              <IconButton
+                                size="small"
+                                aria-label={link.label}
+                                onClick={() => goSource(link, g.tab, c)}
+                                sx={{
+                                  color: "text.tertiary",
+                                  p: 0.5,
+                                  flexShrink: 0,
+                                }}
+                              >
+                                <Iconify icon="solar:eye-linear" width={16} />
+                              </IconButton>
+                            </Tooltip>
                             {canEdit && (
                               <Decision
                                 decision={decision}
@@ -652,13 +630,15 @@ export default function ReviewChangesDrawer({
                       width={16}
                       sx={{ color: "text.secondary", flexShrink: 0 }}
                     />
-                    <Typography sx={{ typography: "s2", flex: 1 }}>
-                      {checkState === "passed"
-                        ? `${names.length} affected scenario${names.length === 1 ? "" : "s"} checked — all pass`
-                        : checkState === "running"
-                          ? `Checking ${names.length} affected scenario${names.length === 1 ? "" : "s"}…`
-                          : `These change what's graded: check the ${names.length} affected scenario${names.length === 1 ? "" : "s"} before you save`}
-                    </Typography>
+                    <Tooltip arrow title={cost?.comparability || ""}>
+                      <Typography sx={{ typography: "s2", flex: 1 }}>
+                        {checkState === "passed"
+                          ? `${names.length} affected scenario${names.length === 1 ? "" : "s"} checked — all pass`
+                          : checkState === "running"
+                            ? `Checking ${names.length} affected scenario${names.length === 1 ? "" : "s"}…`
+                            : `Check the ${names.length} affected scenario${names.length === 1 ? "" : "s"} before you save`}
+                      </Typography>
+                    </Tooltip>
                     {checkState !== "passed" && (
                       <Button
                         variant="outlined"
@@ -706,11 +686,6 @@ export default function ReviewChangesDrawer({
                   </Collapse>
                 </Box>
               )}
-              {cost?.comparability && (
-                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                  {cost.comparability}
-                </Typography>
-              )}
             </Stack>
           )}
         </Box>
@@ -729,25 +704,27 @@ export default function ReviewChangesDrawer({
             <TextField
               size="small"
               fullWidth
-              label="Name this version (optional)"
-              placeholder="For example: Refund window from the 2026 policy"
+              placeholder="Name this version (optional)"
               value={note}
               onChange={(e) => setNote(e.target.value)}
+              InputProps={{ sx: { typography: "s1" } }}
             />
             {/* Every change is decided before the save (data.md §3). */}
             <Stack direction="row" alignItems="center" spacing={1}>
               <Typography
+                noWrap
                 sx={{
                   typography: "s3",
                   color: counts.undecided ? "text.secondary" : "text.tertiary",
                   fontVariantNumeric: "tabular-nums",
+                  flex: 1,
+                  minWidth: 0,
                 }}
               >
                 {[
                   `${counts.total - counts.undecided} of ${counts.total} decided`,
                   counts.accepted && `${counts.accepted} accepted`,
-                  counts.rejected &&
-                    `${counts.rejected} rejected — taken out of the world, restore any until you save`,
+                  counts.rejected && `${counts.rejected} rejected`,
                 ]
                   .filter(Boolean)
                   .join(" · ")}
@@ -758,15 +735,13 @@ export default function ReviewChangesDrawer({
                   size="small"
                   color="inherit"
                   onClick={() => patch(acceptRestPatch(envState))}
-                  sx={{ minWidth: 0, py: 0 }}
+                  sx={{ minWidth: 0 }}
                 >
                   {counts.undecided === counts.total
                     ? "Accept all"
-                    : "Accept all remaining"}
+                    : "Accept the rest"}
                 </Button>
               )}
-            </Stack>
-            <Stack direction="row" alignItems="center" spacing={1.5}>
               <Tooltip
                 arrow
                 title={
@@ -787,17 +762,6 @@ export default function ReviewChangesDrawer({
                   </Button>
                 </span>
               </Tooltip>
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  flex: 1,
-                  minWidth: 0,
-                }}
-                noWrap
-              >
-                {cost?.text}
-              </Typography>
               <Tooltip
                 arrow
                 title={
@@ -807,7 +771,7 @@ export default function ReviewChangesDrawer({
                       ? "Every change is rejected — Discard all puts the world back."
                       : needsCheck
                         ? "Run the affected scenario checks first."
-                        : ""
+                        : cost?.text || ""
                 }
               >
                 <span>

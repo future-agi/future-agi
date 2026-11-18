@@ -103,13 +103,21 @@ export default function KnowledgeBasePicker({
                         setPicked((cur) => ({ ...cur, [o.id]: e.target.value }))
                       }
                       inputProps={{ "aria-label": `Revision of ${o.name}` }}
-                      sx={{ typography: "s3", minWidth: 220 }}
+                      /* Closed, just the revision — what changed is in the list. */
+                      renderValue={(v) =>
+                        `rev ${v}${v === o.revision ? " · latest" : ""}`
+                      }
+                      sx={{
+                        minWidth: 128,
+                        "& .MuiSelect-select": { typography: "s1", py: 0.5 },
+                      }}
+                      MenuProps={{ PaperProps: { sx: { maxWidth: 360 } } }}
                     >
                       {[...o.revisions].reverse().map((r) => (
                         <MenuItem
                           key={r.rev}
                           value={r.rev}
-                          sx={{ typography: "s3" }}
+                          sx={{ typography: "s1", whiteSpace: "normal" }}
                         >
                           {`rev ${r.rev}${r.rev === o.revision ? " (latest)" : ""} · ${r.note}`}
                         </MenuItem>

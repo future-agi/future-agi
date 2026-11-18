@@ -2557,9 +2557,6 @@ function Deriving({
         flexDirection: "column",
       }}
     >
-      {/* Waiting on approval: the review spans the page above the chat and
-          the tabs, so it shows on every tab and with the chat folded. */}
-      {review?.waiting && <DesignReview framed env={env} {...review} />}
       <Box
         sx={{
           display: "grid",
@@ -2628,25 +2625,38 @@ function Deriving({
             px: 2,
           }}
         >
-          <PanelBoundary>
-            <DerivedPanels
-              env={env}
-              envState={envState}
-              patch={patch}
-              source={source}
-              done={done}
-              running={running}
-              scenarios={scenarios}
-              scenarioProgress={scenarioProgress}
-              contractProgress={contractProgress}
-              evalIds={evalIds}
-              onAddEvals={onAddEvals}
-              onBuilderTurn={onBuilderTurn}
-              onBuilderPrompt={onSend}
-              onStartRun={onRun}
-              awaitingApproval={!!review?.waiting}
-            />
-          </PanelBoundary>
+          {/* Before approval the design is the whole right side — the same
+              page as Build from scratch: no tabs for what isn't built yet. */}
+          {review?.waiting ? (
+            <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", mx: -2 }}>
+              <DesignReview
+                page
+                env={env}
+                {...review}
+                onOpenChat={() => setCollapsed(false)}
+              />
+            </Box>
+          ) : (
+            <PanelBoundary>
+              <DerivedPanels
+                env={env}
+                envState={envState}
+                patch={patch}
+                source={source}
+                done={done}
+                running={running}
+                scenarios={scenarios}
+                scenarioProgress={scenarioProgress}
+                contractProgress={contractProgress}
+                evalIds={evalIds}
+                onAddEvals={onAddEvals}
+                onBuilderTurn={onBuilderTurn}
+                onBuilderPrompt={onSend}
+                onStartRun={onRun}
+                awaitingApproval={!!review?.waiting}
+              />
+            </PanelBoundary>
+          )}
         </Box>
       </Box>
     </Box>
