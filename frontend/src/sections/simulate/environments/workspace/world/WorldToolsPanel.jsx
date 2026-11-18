@@ -1,10 +1,12 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Box } from "@mui/material";
 import CapabilityGraph from "../overview/CapabilityGraph";
 import WorldInternalsSection from "../contract/WorldInternalsSection";
 import SourcesSection from "../sources/SourcesSection";
 import SourceDrawer from "../sources/SourceDrawer";
+import ReviewRefreshDrawer from "../sources/ReviewRefreshDrawer";
 
 const SOURCE_PARAMS = ["source", "sourceTab", "at"];
 
@@ -21,6 +23,10 @@ export default function WorldToolsPanel({
   onReviewChanges,
 }) {
   const [params, setParams] = useSearchParams();
+  const [refreshing, setRefreshing] = useState(null);
+  const reviewRefresh = locked
+    ? undefined
+    : (source) => setRefreshing(source.source_id);
   const hasWorld = !!envState?.agent || (env.tools?.length || 0) > 0;
   const sourceId = params.get("source");
   const sourceTab = params.get("sourceTab");
@@ -50,6 +56,7 @@ export default function WorldToolsPanel({
         envId={env.id}
         readOnly={locked}
         onReviewChanges={onReviewChanges}
+        onReviewRefresh={reviewRefresh}
       />
       <WorldInternalsSection
         env={env}
@@ -67,6 +74,14 @@ export default function WorldToolsPanel({
           at={at}
           readOnly={locked}
           onClose={closeSource}
+          onReviewRefresh={reviewRefresh}
+        />
+      )}
+      {refreshing && (
+        <ReviewRefreshDrawer
+          envId={env.id}
+          sourceId={refreshing}
+          onClose={() => setRefreshing(null)}
         />
       )}
     </Box>
