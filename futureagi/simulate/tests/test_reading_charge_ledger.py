@@ -158,7 +158,9 @@ def ledger(monkeypatch, settings, subscription, usage_stream):
     monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
 
 
-def _record(organization, run_id, spend, subject_id=None, purpose="agent"):
+def _record(
+    organization, run_id, spend, subject_id=None, purpose="agent", check_id=None
+):
     return harness_usage.record_agent_reading_usage(
         organization_id=organization.id,
         workspace_id=None,
@@ -166,7 +168,16 @@ def _record(organization, run_id, spend, subject_id=None, purpose="agent"):
         run_id=str(run_id),
         purpose=purpose,
         spend=spend,
+        check_id=check_id,
     )
+
+
+def _died_early(spend):
+    """The same cost file as a reading that died early: 2,000 input tokens, none
+    cached, and 50 output."""
+    spend = copy.deepcopy(spend)
+    spend["stages"][0].update(tokens_in=2_000, tokens_cached=0, tokens_out=50)
+    return spend
 
 
 def _drain():
@@ -265,7 +276,8 @@ def test_each_stage_of_a_reading_is_one_row(ledger, organization):
 @pytest.mark.requires_ee
 @requires_cloud_billing
 def test_three_attempts_at_one_reading_are_charged_once(ledger, organization):
-    """Each attempt reads again under a new run id; the charge is the same."""
+    """Each attempt reads again under a new run id; with no check named (a reading
+    outside a check) the charge is the same."""
     from ee.usage.models.usage import UsageEventLog, UsageSummary
 
     spend, subject_id = _cost_file(), uuid4()
@@ -292,27 +304,110 @@ def test_three_attempts_at_one_reading_are_charged_once(ledger, organization):
 @pytest.mark.requires_ee
 @requires_cloud_billing
 def test_a_retried_reading_step_is_charged_once(ledger, organization):
-    """The workflow's step retry runs read_version again, which bills under a new
-    run id each time (agent_reading_sandbox._bill). One charge, not three."""
+    """The workflow's step retry runs read_version again inside the same check,
+    which bills under a new run id each time (agent_reading_sandbox._bill). One
+    charge, not three."""
     from ee.usage.models.usage import UsageEventLog
     from simulate.services import agent_reading_sandbox
 
     runtime = SimpleNamespace(
         organization_id=organization.id, workspace_id=None, agent_version_id=uuid4()
     )
-    spend = _cost_file()
+    spend, check_id = _cost_file(), str(uuid4())
 
     for _attempt in range(3):
-        agent_reading_sandbox._bill(runtime, str(uuid4()), spend)
+        agent_reading_sandbox._bill(runtime, str(uuid4()), spend, check_id=check_id)
     _drain()
 
     row = UsageEventLog.objects.get(organization=organization)
     assert row.event_id == uuid5(
-        runtime.agent_version_id, "reading:agent:understand-agent"
+        runtime.agent_version_id,
+        f"reading:agent:check:{check_id}:understand-agent",
     )
     assert row.amount_raw == pytest.approx(
         _expected_usd(spend["stages"][0]) * CREDITS_PER_USD, abs=Decimal("0.001")
     )
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_inside_one_check_a_reading_that_died_early_and_its_retries_are_one_charge(
+    ledger, organization
+):
+    """Dileep's repro, inside one check: a first attempt that died early, then two
+    full ones, each under a new run id. The check is one charge, the first
+    attempt's; what its step retries read again is our cost."""
+    from ee.usage.models.usage import UsageEventLog
+
+    full, subject_id, check_id = _cost_file(), uuid4(), str(uuid4())
+    early, first_run = _died_early(full), uuid4()
+
+    _record(organization, first_run, early, subject_id, check_id=check_id)
+    _record(organization, uuid4(), full, subject_id, check_id=check_id)
+    _record(organization, uuid4(), full, subject_id, check_id=check_id)
+    _drain()
+
+    row = UsageEventLog.objects.get(organization=organization)
+    assert row.properties["reading_run_id"] == str(first_run)
+    assert row.properties["reading_check_id"] == check_id
+    assert row.amount_raw == pytest.approx(
+        _expected_usd(early["stages"][0]) * CREDITS_PER_USD, abs=Decimal("0.001")
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_a_new_check_of_the_same_version_is_its_own_charge(ledger, organization):
+    """Dileep's repro across checks: the reading that died early ended its check;
+    Try again starts a new one, whose full reading is charged with its own run and
+    amounts."""
+    from ee.usage.models.usage import UsageEventLog
+
+    full, subject_id = _cost_file(), uuid4()
+    early = _died_early(full)
+    first_check, second_check, second_run = str(uuid4()), str(uuid4()), uuid4()
+
+    _record(organization, uuid4(), early, subject_id, check_id=first_check)
+    _record(organization, second_run, full, subject_id, check_id=second_check)
+    _drain()
+
+    rows = {
+        row.properties["reading_check_id"]: row
+        for row in UsageEventLog.objects.filter(organization=organization)
+    }
+    assert set(rows) == {first_check, second_check}
+    second = rows[second_check]
+    assert second.properties["reading_run_id"] == str(second_run)
+    assert second.properties["input_tokens"] == full["stages"][0]["tokens_in"]
+    assert second.amount_raw == pytest.approx(
+        _expected_usd(full["stages"][0]) * CREDITS_PER_USD, abs=Decimal("0.001")
+    )
+    assert rows[first_check].amount_raw == pytest.approx(
+        _expected_usd(early["stages"][0]) * CREDITS_PER_USD, abs=Decimal("0.001")
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+@requires_cloud_billing
+def test_a_reading_outside_a_check_is_keyed_by_its_version_purpose_and_stage(
+    ledger, organization
+):
+    """The background reading that only stores a document is started by no check;
+    every attempt at it is one charge."""
+    from ee.usage.models.usage import UsageEventLog
+
+    spend, subject_id = _cost_file(), uuid4()
+
+    _record(organization, uuid4(), spend, subject_id)
+    _record(organization, uuid4(), spend, subject_id)
+    _drain()
+
+    row = UsageEventLog.objects.get(organization=organization)
+    assert row.event_id == uuid5(subject_id, "reading:agent:understand-agent")
+    assert row.properties["reading_check_id"] == ""
 
 
 @pytest.mark.django_db

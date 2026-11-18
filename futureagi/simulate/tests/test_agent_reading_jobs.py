@@ -5,9 +5,10 @@ import json
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import uuid4, uuid5
 
 import pytest
+from django.utils import timezone
 
 from simulate.models import AgentDefinition, AgentScan, HarnessAgentVersionRuntime
 from simulate.models.agent_setup import AgentVersionSetup
@@ -32,6 +33,7 @@ from simulate.tests.test_harness_connected_versions import _connect, _runtime
 from simulate.tests.test_reading_charge_ledger import (
     CREDITS_PER_USD,
     _cost_file,
+    _died_early,
     _drain,
     _expected_usd,
     requires_cloud_billing,
@@ -510,8 +512,26 @@ class TestReadingBill:
                 "run_id": sent["run_id"],
                 "purpose": "agent",
                 "spend": spend,
+                "check_id": None,
             }
         ]
+
+    def test_a_reading_in_a_check_is_billed_for_that_check(
+        self, agent, monkeypatch, no_evals
+    ):
+        version = _connect(agent)
+        spend = {"stages": [{"stage": "understanding-agent"}]}
+        _reading(monkeypatch, (None, {"agent": {}}, {}, spend))
+        monkeypatch.setattr(
+            agent_reading_sandbox,
+            "_store_reading",
+            lambda *_a, **_k: agent_reading_sandbox.ReadOutcome("stored"),
+        )
+        billed = _billed(monkeypatch)
+
+        read_version(version.id, check_id="workflow-run-1")
+
+        assert [one["check_id"] for one in billed] == ["workflow-run-1"]
 
     def test_a_scan_is_billed_for_its_own_run(
         self, organization, workspace, monkeypatch
@@ -543,18 +563,24 @@ class TestReadingBill:
     ):
         """A fault after the charge (the worker dies storing the reading) makes the
         workflow run the step again: read_version reads the same pending version
-        under a new run id each time. Through the real ledger, one charge."""
+        under a new run id each time, inside the same check. The version's
+        check_started_at is rewritten between attempts (asking for the same change
+        again does that) and the check is still one charge, through the real
+        ledger."""
         from ee.usage.models.usage import UsageEventLog
 
         version = _connect(agent)
-        spend = _cost_file()
+        spend, check_id = _cost_file(), "workflow-run-1"
         runs = []
         _reading(monkeypatch, (None, {"agent": {}}, {}, spend))
         original_bill = agent_reading_sandbox._bill
 
-        def bill(runtime, run_id, spend):
+        def bill(runtime, run_id, spend, **kwargs):
             runs.append(run_id)
-            return original_bill(runtime, run_id, spend)
+            HarnessAgentVersionRuntime.no_workspace_objects.filter(
+                agent_version=version
+            ).update(check_started_at=timezone.now())
+            return original_bill(runtime, run_id, spend, **kwargs)
 
         stored = iter([RuntimeError("worker lost"), RuntimeError("worker lost"), None])
 
@@ -569,15 +595,87 @@ class TestReadingBill:
 
         for _attempt in range(2):
             with pytest.raises(RuntimeError):
-                read_version(version.id)
-        assert read_version(version.id).status == "stored"
+                read_version(version.id, check_id=check_id)
+        assert read_version(version.id, check_id=check_id).status == "stored"
         _drain()
 
         assert len(set(runs)) == 3
         row = UsageEventLog.objects.get(organization=agent.organization)
+        assert row.properties["reading_check_id"] == check_id
         assert row.amount_raw == pytest.approx(
             _expected_usd(spend["stages"][0]) * CREDITS_PER_USD, abs=Decimal("0.001")
         )
+
+    @pytest.mark.requires_ee
+    @requires_cloud_billing
+    def test_try_again_after_a_failed_reading_is_a_second_charge(
+        self, agent, monkeypatch, no_evals, ledger
+    ):
+        """A reading that died early fails its check; Try again starts a new check,
+        whose full reading is charged with its own run and amounts."""
+        from ee.usage.models.usage import UsageEventLog
+
+        version = _connect(agent)
+        full = _cost_file()
+        early = _died_early(full)
+        failure = {"code": "agent_crashed", "message": "died", "retryable": False}
+        sent = _reading(monkeypatch, (failure, None, None, early))
+        assert read_version(version.id, check_id="first-check").status == "failed"
+
+        sent = _reading(monkeypatch, (None, {"agent": {}}, {}, full))
+        monkeypatch.setattr(
+            agent_reading_sandbox,
+            "_store_reading",
+            lambda *_a, **_k: agent_reading_sandbox.ReadOutcome("stored"),
+        )
+        assert read_version(version.id, check_id="second-check").status == "stored"
+        _drain()
+
+        rows = {
+            row.properties["reading_check_id"]: row
+            for row in UsageEventLog.objects.filter(organization=agent.organization)
+        }
+        assert set(rows) == {"first-check", "second-check"}
+        second = rows["second-check"]
+        assert second.properties["reading_run_id"] == sent["run_id"]
+        assert second.amount_raw == pytest.approx(
+            _expected_usd(full["stages"][0]) * CREDITS_PER_USD, abs=Decimal("0.001")
+        )
+
+    @pytest.mark.requires_ee
+    @requires_cloud_billing
+    def test_a_document_reading_outside_a_check_is_charged_once(
+        self, agent, monkeypatch, no_evals, ledger
+    ):
+        """The background reading that only stores a document is started by no
+        check, and the version's check_started_at can be empty. Its attempts are one
+        charge, keyed by the version, the purpose and the stage."""
+        from ee.usage.models.usage import UsageEventLog
+
+        version = _connect(agent)
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version=version
+        ).update(preflight_status=Status.PASSED, check_started_at=None)
+        spend = _cost_file()
+        _reading(monkeypatch, (None, {"agent": {}}, {}, spend))
+        stored = iter([RuntimeError("worker lost"), None])
+
+        def store(*_args, **_kwargs):
+            fault = next(stored)
+            if fault is not None:
+                raise fault
+            return agent_reading_sandbox.ReadOutcome("stored")
+
+        monkeypatch.setattr(agent_reading_sandbox, "_store_reading", store)
+
+        with pytest.raises(RuntimeError):
+            read_version(version.id, document_only=True)
+        assert read_version(version.id, document_only=True).status == "stored"
+        _drain()
+
+        assert _runtime(version).check_started_at is None
+        row = UsageEventLog.objects.get(organization=agent.organization)
+        assert row.event_id == uuid5(version.id, "reading:agent:understand-agent")
 
 
 class TestReadingFolder:
@@ -691,3 +789,39 @@ class TestDocumentOnlyReading:
         assert AgentVersionSetup.no_workspace_objects.filter(
             agent_version_id=child.id, status=AgentVersionSetup.Status.STORED
         ).exists()
+
+
+class TestReadingStepCheck:
+    def test_the_reading_step_names_its_check_by_the_workflow_run(self, monkeypatch):
+        """The check's mark is the workflow run: the same on every retry of the
+        reading step, new when Try again starts the workflow over."""
+        import asyncio
+        import dataclasses
+
+        from temporalio.testing import ActivityEnvironment
+
+        from simulate.services import agent_version_steps
+        from simulate.temporal.activities import agent_version as activities
+        from simulate.temporal.types.agent_version import AgentVersionInput
+
+        asked = []
+
+        def read(version_id, *, check_id=None):
+            asked.append((version_id, check_id))
+            return agent_version_steps.StepOutcome("done")
+
+        monkeypatch.setattr(agent_version_steps, "read", read)
+        monkeypatch.setattr(activities, "close_old_connections", lambda: None)
+        environment = ActivityEnvironment()
+        environment.info = dataclasses.replace(
+            environment.info, workflow_run_id="workflow-run-7"
+        )
+
+        step = asyncio.run(
+            environment.run(
+                activities.read_agent_version, AgentVersionInput(version_id="v-1")
+            )
+        )
+
+        assert step.status == "done"
+        assert asked == [("v-1", "workflow-run-7")]

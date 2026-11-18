@@ -62,8 +62,11 @@ async def snapshot_agent_version(input: AgentVersionInput) -> AgentVersionStep:
 async def read_agent_version(input: AgentVersionInput) -> AgentVersionStep:
     from simulate.services.agent_version_steps import read
 
+    # The workflow run names the check: the same on every retry of this step, new
+    # when Try again starts the workflow over. Read here, before the step's thread.
+    check_id = activity.info().workflow_run_id
     async with Heartbeater():
-        return _step(await _run_db(read, input.version_id))
+        return _step(await _run_db(read, input.version_id, check_id=check_id))
 
 
 @activity.defn(name="check_agent_version")

@@ -279,10 +279,11 @@ def reuse_parent_reading(version_id: Any) -> str | None:
     return str(parent.agent_version_id)
 
 
-def read(version_id: Any) -> StepOutcome:
+def read(version_id: Any, *, check_id: str | None = None) -> StepOutcome:
     """Read the version's agent, unless it already has a document or its parent's
     reading stands for the same code. A failure the next attempt may outlive is
-    raised; any other is returned."""
+    raised; any other is returned. ``check_id`` names the check, the same on every
+    retry of this step; the reading's charge is keyed by it."""
     runtime = _side_row(version_id)
     if runtime is None or runtime.preflight_status != Status.PENDING:
         return StepOutcome("skipped", code="not_pending")
@@ -294,7 +295,7 @@ def read(version_id: Any) -> StepOutcome:
     if reused_from is not None:
         _note(version_id, reading={"status": "reused", "from_version_id": reused_from})
         return StepOutcome("skipped", code="reused")
-    outcome: ReadOutcome = read_version(version_id)
+    outcome: ReadOutcome = read_version(version_id, check_id=check_id)
     if outcome.status == "stored":
         _note(version_id, reading={"status": "stored", "spend": outcome.spend})
         return StepOutcome("done")

@@ -1224,7 +1224,8 @@ HARNESS_AGENT_READING_ENABLED = os.getenv(
 ).lower() in ("1", "true", "yes")
 # Charging a customer for each reading of an agent and each scan for agents. Off, nothing
 # is charged for any reading, background ones included, and one log line per reading says
-# what it would have cost.
+# what it would have cost. Not to be turned on until the rule for which outcomes are
+# charged is built (ADR-013).
 HARNESS_AGENT_READING_CHARGE_ENABLED = os.getenv(
     "HARNESS_AGENT_READING_CHARGE_ENABLED", ""
 ).lower() in ("1", "true", "yes")

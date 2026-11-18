@@ -510,7 +510,9 @@ def _reading_records(spend: dict) -> list[dict]:
     return records
 
 
-def _log_uncharged_reading(*, subject_id, run_id, purpose, spend: dict) -> None:
+def _log_uncharged_reading(
+    *, subject_id, run_id, purpose, spend: dict, check_id=None
+) -> None:
     """One line per reading while charging is off: what it would have been charged."""
     try:
         stages = [
@@ -529,17 +531,38 @@ def _log_uncharged_reading(*, subject_id, run_id, purpose, spend: dict) -> None:
     except HostedHarnessError as exc:
         stages, unpriced = [], exc.code
     logger.info(
-        "agent_reading_not_charged subject_id=%s purpose=%s run_id=%s unpriced=%s stages=%s",
+        "agent_reading_not_charged subject_id=%s purpose=%s run_id=%s check_id=%s "
+        "unpriced=%s stages=%s",
         subject_id,
         purpose,
         run_id,
+        check_id or "",
         unpriced,
         json.dumps(stages, cls=DjangoJSONEncoder),
     )
 
 
+def _reading_event_id(subject_id, purpose: str, check_id, stage: str) -> str:
+    """One charge per stage of one check of a subject: the same on every retry of a
+    step inside the check, new when a new check starts. A reading no check started
+    (the background one that stores a document) names the subject alone."""
+    name = (
+        f"reading:{purpose}:check:{check_id}:{stage}"
+        if check_id
+        else f"reading:{purpose}:{stage}"
+    )
+    return str(uuid5(UUID(str(subject_id)), name))
+
+
 def record_agent_reading_usage(
-    *, organization_id, workspace_id, subject_id, run_id, purpose: str, spend: dict
+    *,
+    organization_id,
+    workspace_id,
+    subject_id,
+    run_id,
+    purpose: str,
+    spend: dict,
+    check_id: str | None = None,
 ) -> dict | None:
     """Price the model stages of one reading of an agent (``purpose`` "agent", the
     subject its agent version) or one scan for agents ("scan", the subject its scan),
@@ -548,15 +571,21 @@ def record_agent_reading_usage(
 
     Nothing is billed while HARNESS_AGENT_READING_CHARGE_ENABLED is off; one log
     line says what would have been. Each stage's charge is keyed by the subject, the
-    purpose and the stage, never the run: every attempt at the same reading is one
-    charge, and a retried step, which reads again under a new run id, adds none."""
+    purpose, the check (``check_id``, fixed when the check starts) and the stage,
+    never the run: a retried step, which reads again under a new run id inside the
+    same check, adds none, and a new check of the same version is its own charge.
+    Without a check, every attempt at the subject's reading is one charge."""
     if purpose not in _READING_PURPOSES:
         raise ValueError(f"unknown reading purpose {purpose!r}")
     if is_oss() or not isinstance(spend, dict):
         return None
     if not settings.HARNESS_AGENT_READING_CHARGE_ENABLED:
         _log_uncharged_reading(
-            subject_id=subject_id, run_id=run_id, purpose=purpose, spend=spend
+            subject_id=subject_id,
+            run_id=run_id,
+            purpose=purpose,
+            spend=spend,
+            check_id=check_id,
         )
         return None
     records = _reading_records(spend)
@@ -575,8 +604,8 @@ def record_agent_reading_usage(
             continue
         emit(
             UsageEvent(
-                event_id=str(
-                    uuid5(UUID(str(subject_id)), f"reading:{purpose}:{item['stage']}")
+                event_id=_reading_event_id(
+                    subject_id, purpose, check_id, item["stage"]
                 ),
                 org_id=str(organization_id),
                 event_type=BillingEventType.HARNESS_AUTHORING,
@@ -586,6 +615,7 @@ def record_agent_reading_usage(
                     "source": "agent_reading",
                     "source_id": str(subject_id),
                     "reading_run_id": str(run_id),
+                    "reading_check_id": str(check_id or ""),
                     "reading_purpose": purpose,
                     "workspace_id": str(workspace_id or ""),
                     "phase": "reading",

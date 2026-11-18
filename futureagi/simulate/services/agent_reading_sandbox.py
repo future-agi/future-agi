@@ -425,12 +425,19 @@ def _first_reading(runtime: HarnessAgentVersionRuntime) -> bool:
     return runtime.trigger == Trigger.CONNECT or runtime.parent_id is None
 
 
-def read_version(version_id: UUID | str, *, document_only: bool = False) -> ReadOutcome:
+def read_version(
+    version_id: UUID | str,
+    *,
+    document_only: bool = False,
+    check_id: str | None = None,
+) -> ReadOutcome:
     """Read one version's agent in the sandbox and store what it found. A refusal
     or a channel change fails the version for good; anything the next attempt may
     outlive is raised for the caller to retry. With ``document_only`` the reading
     only stores the document of a version that has none, whatever its check says,
-    and decides nothing about the version or its agent."""
+    and decides nothing about the version or its agent. ``check_id`` names the
+    check the reading is part of, the same on every attempt of it; the charge is
+    keyed by it."""
     runtime = (
         HarnessAgentVersionRuntime.no_workspace_objects.select_related(
             "agent_definition", "organization", "workspace"
@@ -484,7 +491,7 @@ def read_version(version_id: UUID | str, *, document_only: bool = False) -> Read
         labels=labels,
         collect=collect,
     )
-    _bill(runtime, job_document["run_id"], spend)
+    _bill(runtime, job_document["run_id"], spend, check_id=check_id)
     if failure is not None:
         return ReadOutcome(
             "failed",
@@ -499,7 +506,11 @@ def read_version(version_id: UUID | str, *, document_only: bool = False) -> Read
 
 
 def _bill(
-    runtime: HarnessAgentVersionRuntime, run_id: str, spend: dict[str, Any] | None
+    runtime: HarnessAgentVersionRuntime,
+    run_id: str,
+    spend: dict[str, Any] | None,
+    *,
+    check_id: str | None = None,
 ) -> None:
     if not spend:
         return
@@ -511,6 +522,7 @@ def _bill(
             run_id=run_id,
             purpose="agent",
             spend=spend,
+            check_id=check_id,
         )
     except Exception:  # noqa: BLE001 - a pricing gap never loses the reading
         logger.exception(
