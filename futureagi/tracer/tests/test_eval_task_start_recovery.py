@@ -1204,11 +1204,11 @@ def test_failed_intent_is_not_a_veto_on_a_later_drain(
 
 
 def test_no_intent_task_loads_follow_the_configured_router(
-    lagging_replica,
+    lagging_replica,  # noqa: F811 - imported fixture
     settings,
     project,
     transport,
-    monkeypatch,  # noqa: F811
+    monkeypatch,
 ):
     from tracer.services import instant_eval_rows
     from tracer.utils.eval import evaluate_trace_observe
