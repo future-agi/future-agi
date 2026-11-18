@@ -79,7 +79,15 @@ class DraftReview(TypedDict):
 
 
 def _decisions(draft: Any) -> dict[str, RecordedDecision]:
-    return dict(((draft.documents or {}).get("review") or {}).get("decisions") or {})
+    """The decisions a draft keeps, each read into its shape; an entry that is not one is left out."""
+    found = ((draft.documents or {}).get("review") or {}).get("decisions")
+    return {
+        str(item_id): RecordedDecision(
+            decision=entry["decision"], draft_digest=entry.get("draft_digest")
+        )
+        for item_id, entry in (found.items() if isinstance(found, Mapping) else ())
+        if isinstance(entry, Mapping) and entry.get("decision") in DECISIONS
+    }
 
 
 def any_decision(environment: Any) -> bool:

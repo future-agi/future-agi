@@ -13,6 +13,7 @@ from simulate.services.harness_versioning.review_items import (
     SourceAgent,
     SourceUsed,
     item_index,
+    saved_changes,
     whole_documents,
 )
 
@@ -89,9 +90,7 @@ def name_saved(activated: Mapping[str, tuple[Any, bool]], *, name: str) -> None:
         fields: list[str] = []
         if name:
             version.name, fields = name[:80], [*fields, "name"]
-        reviewed: list[SavedChange] = (version.documents or {}).get(
-            "review_changes"
-        ) or []
+        reviewed = saved_changes(version.documents)
         if reviewed:
             version.summary, fields = (
                 review_summary(reviewed)[:1024],

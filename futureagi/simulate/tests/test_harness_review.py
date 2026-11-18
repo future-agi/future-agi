@@ -954,3 +954,43 @@ def test_the_older_scenario_folder_is_read_only_when_the_suite_has_no_scenarios_
     assert [key for key in item_index(files) if key.startswith("scenario:")] == [
         "scenario:s1"
     ]
+
+
+def test_stored_review_records_are_read_into_their_shapes_and_bad_entries_left_out():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_versioning.review import _decisions
+    from simulate.services.harness_versioning.review_items import saved_changes
+
+    documents = {
+        "review_changes": [
+            {
+                "id": "tool:a",
+                "decision": "accepted",
+                "affects": "all",
+                "graded": True,
+                "revalidate": ["x"],
+            },
+            {"id": "tool:b", "decision": "maybe"},
+            "not a change",
+        ]
+    }
+    changes = saved_changes(documents)
+    assert [(one["id"], one["affects"], one["graded"]) for one in changes] == [
+        ("tool:a", "all", True)
+    ]
+    assert saved_changes(None) == []
+
+    draft = SimpleNamespace(
+        documents={
+            "review": {
+                "decisions": {
+                    "tool:a": {"decision": "rejected", "draft_digest": "d"},
+                    "tool:b": 3,
+                }
+            }
+        }
+    )
+    assert _decisions(draft) == {
+        "tool:a": {"decision": "rejected", "draft_digest": "d"}
+    }
