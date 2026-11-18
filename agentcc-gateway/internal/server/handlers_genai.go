@@ -205,14 +205,15 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write(errBody)
 		return
 	}
+	canonicalReq.Model = upstreamModel
+	canonicalReq.Stream = action == "streamGenerateContent"
+	canonicalReq.TranslatedFrom = "google"
+	rc.TranslationDrops = drops
 	if len(drops) > 0 {
 		joined := strings.Join(drops, ",")
 		rc.Metadata["translation_drops"] = joined
 		w.Header().Set("x-agentcc-translation-drops", joined)
 	}
-	canonicalReq.Model = upstreamModel
-	canonicalReq.Stream = action == "streamGenerateContent"
-	canonicalReq.TranslatedFrom = "google"
 
 	switch action {
 	case "generateContent":
@@ -538,6 +539,7 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
 		var callErr error
 		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
 		if callErr != nil {
@@ -636,6 +638,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	var errCh <-chan error
 
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
 		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
 		if rawChunkCh != nil {
 			recordServedBy(rc, provider)

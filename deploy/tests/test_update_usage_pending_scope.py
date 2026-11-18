@@ -1,4 +1,4 @@
-"""Complete 58/63-pending-migration A9 intersection regression, without Django.
+"""Complete 62/67-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -39,7 +39,10 @@ LATEST = (
     ('tracer','0130_observationspan_internal_type'),
     ('simulate','0102_agent_fix_engine_notes'),
     ('simulate','0103_harness_job_verify_of'),
+    ('simulate','0104_actors'),
+    ('simulate','0105_scenario_faults'),
     ('simulate','0104_agent_fix_variations'),
+    ('simulate','0106_merge_0104_agent_fix_variations_0105_scenario_faults'),
     ('simulate','0105_harness_job_fix_eval_cost'),
     ('simulate','0106_harness_job_graded_for'),
     ('simulate','0107_builder_turn_usage'),
@@ -57,7 +60,8 @@ LATEST = (
     ('simulate','0110_evidence_import_dataset'),
     ('simulate','0111_evidence_import_case_discarded'),
     ('simulate','0112_evidence_import_case_duplicate'),
-    ('simulate','0113_hosted_sandbox_lifetime'),
+    ('simulate','0113_merge_actors_and_evidence_import'),
+    ('simulate','0114_hosted_sandbox_lifetime'),
 )
 # Eight SQL additions shared with the SQL-only candidate. These identities
 # account for the graph; they are not safety declarations for opaque operations.
@@ -281,7 +285,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         self.assertEqual(len(SQL_ADDITIONS),8)
         self.assertEqual(len(SAMPLING_ADDITIONS),10)
         self.assertTrue(set(SQL_ADDITIONS).isdisjoint(SAMPLING_ADDITIONS))
-        for revision,identities,count in ((REVISIONS[1],LATEST,58),(REVISIONS[0],LATEST+FLOOR_ONLY,63)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,62),(REVISIONS[0],LATEST+FLOOR_ONLY,67)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
 
@@ -289,8 +293,8 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # Preserve the SQL-layer negative controls when adding sampling's graph.
         # Same-count replacement must fail just as an extra or missing file does.
         unknown = 'futureagi/tracer/migrations/9999_unreviewed_migration.py'
-        for revision, identities, count in ((REVISIONS[1], LATEST, 58),
-                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 63)):
+        for revision, identities, count in ((REVISIONS[1], LATEST, 62),
+                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 67)):
             paths = subprocess.check_output(['git', '-C', str(ROOT), 'diff',
                 '--name-only', '--diff-filter=A', revision, 'HEAD', '--',
                 'futureagi/**/migrations/*.py'], text=True).splitlines()
@@ -326,7 +330,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         with mock.patch.object(subprocess,'check_output',return_value=paths+
                 'futureagi/tracer/migrations/9999_unexpected.py\n'):
             with self.assertRaises(AssertionError):
-                self.assert_complete_inventory(REVISIONS[1],LATEST,58)
+                self.assert_complete_inventory(REVISIONS[1],LATEST,62)
 
     def test_sampling_layer_has_exact_table_scopes(self):
         expected={
@@ -359,7 +363,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
 
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
         registry=p.load_high_volume_registry()
-        for revision,identities,count in ((REVISIONS[1],LATEST,58),(REVISIONS[0],LATEST+FLOOR_ONLY,63)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,62),(REVISIONS[0],LATEST+FLOOR_ONLY,67)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
                 state=baseline_state(revision); env=scope_environment(state)
@@ -374,7 +378,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 identities_in_order=[dict(app_label=m.app_label,name=m.name) for m in plan]
                 selected=p.select_reference_registry(registry,scopes,plan=identities_in_order)
                 expected={'tracer_trace','tracer_observation_span','tracer_eval_task','usage_apicalllog'}
-                if count==63: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
+                if count==67: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                 self.assertEqual({row['table'] for row in selected},expected)
                 self.assertTrue(all(row['database']=='postgres' for row in selected))
                 self.assertFalse(any(row.get('app_label')=='prism' or row.get('model') in ('UsageEventLog','UsageSummary') for row in selected))

@@ -14,6 +14,7 @@ from rest_framework.response import Response
 from simulate.selectors.held_back import coding_agent_key, coding_agent_run
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
+    HarnessScenarioListResponseSerializer,
 )
 from simulate.serializers.harness_job import (
     HarnessJobActionSerializer,
@@ -25,6 +26,7 @@ from simulate.serializers.harness_job import (
     HarnessPreflightSerializer,
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
+    HarnessScenarioAmendResponseSerializer,
     HarnessScenarioAmendSerializer,
     HarnessSecretFileUploadResponseSerializer,
     HarnessSecretValuesSerializer,
@@ -331,6 +333,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def extend(self, request, pk=None):
         return get_harness_provider().extend(request, pk)
 
+    @validated_request(responses={200: HarnessScenarioListResponseSerializer})
     @action(detail=True, methods=["get"], url_path="scenarios")
     def scenarios(self, request, pk=None):
         return get_harness_provider().list_scenarios(request, pk)
@@ -341,6 +344,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessScenarioAmendSerializer,
+        responses={200: HarnessScenarioAmendResponseSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="scenarios/amend")

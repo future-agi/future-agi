@@ -70,6 +70,14 @@ MEMBER_FIELDS = (
     "keywords",
     "background_noise",
     "max_turns",
+    "actors",
+    # Who talked before the run, what starts it, the world's faults and the scenario's own actor limits: each
+    # changes what a scenario tests, so an edit to one alone is a change.
+    "pre_run",
+    "history",
+    "starts_with",
+    "faults",
+    "limits",
 )
 
 
@@ -211,6 +219,8 @@ def prepare_pieces(
         "contract": contract,
         "sub_goals": sub_goals,
         "sub_goal_digests": hashing.sub_goal_digests(sub_goals),
+        "actor_digests": hashing.actor_digests(split.environment),
+        "actor_names": hashing.actor_names(split.environment),
         "file_digests": _file_digests(split.environment),
         "stage_outputs": [
             one for one in outputs if one.get("kind") not in SUITE_OUTPUT_KINDS
@@ -455,8 +465,18 @@ def _proved_at(proof: Mapping[str, Any]) -> datetime | None:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+# Fields a scenario only has when it uses them; empty is the same as absent, so a member stored before they were kept
+# compares equal to the same scenario now.
+OPTIONAL_MEMBER_FIELDS = ("pre_run", "history", "starts_with", "faults", "limits")
+
+
 def _member_content(document: Mapping[str, Any]) -> dict[str, Any]:
-    return {field: document[field] for field in MEMBER_FIELDS if field in document}
+    return {
+        field: document[field]
+        for field in MEMBER_FIELDS
+        if field in document
+        and not (field in OPTIONAL_MEMBER_FIELDS and not document[field])
+    }
 
 
 def _add_members(
@@ -477,6 +497,27 @@ def _add_members(
     )
 
 
+def with_actor_digests(
+    version: HarnessEnvironmentVersion, documents: Mapping[str, Any]
+) -> dict[str, Any]:
+    """A version's documents with its actor digests. A version saved before they were recorded has its cast read
+    from its own files, so an actor it already had never reads as added."""
+    documents = dict(documents or {})
+    if (
+        "actor_digests" not in documents or "actor_names" not in documents
+    ) and version.archive_object_key:
+        try:
+            files = archives.read_archive(
+                archives.get_archive(version.archive_object_key)
+            )
+        except (S3Error, HostedHarnessError):
+            # Its files are gone or unreadable: its cast is unknown, as before.
+            return documents
+        documents.setdefault("actor_digests", hashing.actor_digests(files))
+        documents["actor_names"] = hashing.actor_names(files)
+    return documents
+
+
 def environment_change(
     base: HarnessEnvironmentVersion | None,
     contract: Any,
@@ -485,7 +526,7 @@ def environment_change(
     """The environment documents' diff against ``base``, and its summary."""
     diff = None
     if base is not None:
-        previous = base.documents or {}
+        previous = with_actor_digests(base, base.documents)
         diff = diffs.environment_diff(
             previous_contract=previous.get("contract"),
             contract=contract,
@@ -493,6 +534,10 @@ def environment_change(
             sub_goals=documents.get("sub_goal_digests") or {},
             previous_files=previous.get("file_digests"),
             files=documents.get("file_digests") or {},
+            previous_actors=previous.get("actor_digests"),
+            actors=documents.get("actor_digests"),
+            previous_actor_names=previous.get("actor_names"),
+            actor_names=documents.get("actor_names"),
         )
     return diff, diffs.summarize_environment(diff)
 
