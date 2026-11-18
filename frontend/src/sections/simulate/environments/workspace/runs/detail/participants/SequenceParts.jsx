@@ -121,10 +121,10 @@ export function Legend({ seq }) {
         ["SAID", "words to or from the caller", true],
         [
           "TASK",
-          "handed to a worker",
+          "handed to a participant",
           seq.steps.some((x) => x.kind === "handoff"),
         ],
-        ["RESULT", "a worker's answer", has("back") || has("none")],
+        ["RESULT", "a participant's answer", has("back") || has("none")],
         ["TOOL", "a tool call", has("tool")],
       ]
         .filter(([, , on]) => on)

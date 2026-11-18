@@ -1,9 +1,9 @@
 export const SEQUENCE_COPY = {
   caller: "Caller",
   coordinator: "Coordinator",
-  worker: "Worker",
-  workerNotDeclared: "Worker · not declared",
-  unknownLane: "Not tied to a worker",
+  worker: "Participant",
+  workerNotDeclared: "Participant · not declared",
+  unknownLane: "Not tied to a participant",
   unknownRole: "Unknown",
   unknownCoordinator: "Coordinator",
   noReply: "No reply",
