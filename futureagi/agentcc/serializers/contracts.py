@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from rest_framework import serializers
 
 from tfc.utils.serializer_fields import JsonValueField
@@ -361,6 +363,29 @@ class GatewayConfigPatchRequestSerializer(serializers.Serializer):
 class GatewayProviderUpdateRequestSerializer(serializers.Serializer):
     name = serializers.CharField()
     config = serializers.DictField(child=JsonValueField())
+
+    def validate_config(self, config):
+        # This is an open provider-specific dictionary. Check the sign without
+        # coercing the value or changing how existing nonnegative inputs save.
+        for key in (
+            "default_timeout",
+            "default_timeout_seconds",
+            "max_concurrent",
+            "conn_pool_size",
+        ):
+            value = config.get(key)
+            if isinstance(value, str):
+                try:
+                    value = Decimal(value)
+                except InvalidOperation:
+                    continue
+                if not value.is_finite():
+                    continue
+            if isinstance(value, (int, float, Decimal)) and value < 0:
+                raise serializers.ValidationError(
+                    {key: "Must be greater than or equal to zero."}
+                )
+        return config
 
 
 class GatewayNameRequestSerializer(serializers.Serializer):
