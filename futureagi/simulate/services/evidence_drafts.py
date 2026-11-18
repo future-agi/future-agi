@@ -334,7 +334,7 @@ def _settle(
             ]
         )
     drafted = sum(c.status == EvidenceImportCase.Status.DRAFTED for c in cases)
-    added = None if started is None else max(0, len(documents) - started)
+    grown = None if started is None else max(0, len(documents) - started)
     # Counts only: a scenario's name is model text written from the evidence. A
     # turn whose reply says it drafted while its cases block shows here as
     # scenarios added that no case took, as folders a valid index leaves out (a
@@ -345,8 +345,8 @@ def _settle(
         evidence_import=str(cases[0].evidence_import_id),
         started=started,
         scenarios=len(documents),
-        added=added,
-        unmatched=None if added is None else max(0, added - drafted),
+        added=grown,
+        unmatched=None if grown is None else max(0, grown - drafted),
         unindexed=max(0, _folders(split.suite) - len(documents)),
         drafted=drafted,
         blocked=sum(c.status == EvidenceImportCase.Status.BLOCKED for c in cases),
