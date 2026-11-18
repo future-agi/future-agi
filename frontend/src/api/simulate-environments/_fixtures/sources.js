@@ -30,6 +30,70 @@ export const sampleSourceSummary = () => ({
   validation_status: null,
 });
 
+// What changed in the Knowledge base since a copy was added, per file id. A
+// saved copy of a file listed here shows "Changed in the Knowledge base" in
+// Sources; Review refresh walks these changes. Add a file id to make it change.
+const KB_CHANGES = {
+  "7a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c01": [
+    {
+      id: "c1",
+      kind: "rule-changed",
+      label: "Return window",
+      ref: "p.1",
+      from: "Items can be returned within 14 days of delivery for a full refund.",
+      to: "Items can be returned within 21 days of delivery for a full refund.",
+      scenarios: [
+        "Refund asked on day 15",
+        "Refund asked on day 21",
+        "Late delivery, refund on day 20",
+      ],
+    },
+    {
+      id: "c2",
+      kind: "rule-changed",
+      label: "Supervisor approval amount",
+      ref: "p.3",
+      from: "Refunds over $300 need a supervisor's approval before they are issued.",
+      to: "Refunds over $250 need a supervisor's approval before they are issued.",
+      scenarios: ["Refund of $280 on one order"],
+    },
+    {
+      id: "c3",
+      kind: "rule-added",
+      label: "Damaged items",
+      ref: "p.2",
+      to: "Damaged items are refunded without a return once the caller sends a photo.",
+      scenarios: [],
+    },
+  ],
+  "7a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c02": [
+    {
+      id: "c1",
+      kind: "row-added",
+      label: "40 orders",
+      detail: "O-501 to O-540",
+      scenarios: ["Refund for a late order"],
+    },
+    {
+      id: "c2",
+      kind: "row-changed",
+      label: "3 orders",
+      detail: "O-104, O-118, O-230: delivery date and price fixed",
+      scenarios: ["Duplicate refund retry", "Refund asked on day 15"],
+    },
+    {
+      id: "c3",
+      kind: "row-removed",
+      label: "2 orders",
+      detail: "O-377, O-412: cancelled before dispatch",
+      scenarios: [],
+    },
+  ],
+};
+
+export const kbChangesOf = (origin) =>
+  (origin?.kind === "knowledge_base" && KB_CHANGES[origin.file_id]) || [];
+
 // Knowledge bases the picker lists, one per collection.
 export const KNOWLEDGE_BASES = [
   {
@@ -416,7 +480,8 @@ export const readSource = ({ name, size, text, origin }) => {
     parsed: null,
     privacy: {},
     personal_choice: null,
-    changed_upstream: false,
+    // Shown once the copy is saved; see KB_CHANGES.
+    changed_upstream: kbChangesOf(origin).length > 0,
     ...fields,
   });
   const as = (role, visibility, fields) => ({

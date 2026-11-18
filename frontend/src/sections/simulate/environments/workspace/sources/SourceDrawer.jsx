@@ -132,12 +132,16 @@ UsedBy.propTypes = {
   onRemove: PropTypes.func.isRequired,
 };
 
-function Versions({ source }) {
+function Versions({ source, readOnly, onReviewRefresh }) {
   const kb = fromKb(source);
   const saved = isSaved(source);
+  const changed = saved && source.ui?.changed_upstream;
   const firstNote = kb
     ? `Copied from the Knowledge base · ${source.origin.collection}`
     : "Uploaded";
+  const laterNote = kb
+    ? "Refreshed from the Knowledge base"
+    : "Replaced with a new version";
   const versions = Array.from({ length: source.version }, (_, i) => i + 1)
     .reverse()
     .map((v) => {
@@ -147,7 +151,7 @@ function Versions({ source }) {
       return {
         v,
         label: `${label}${current && saved ? " · in use" : ""}`,
-        note: v === 1 ? firstNote : "Replaced with a new version",
+        note: v === 1 ? firstNote : laterNote,
       };
     });
 
@@ -157,13 +161,24 @@ function Versions({ source }) {
         <Box>
           <KV label="Knowledge base">{`${source.origin.collection} · ${SOURCES_COPY.yourCopy}`}</KV>
           <KV label="Snapshot">
-            A copy of that revision. It isn&apos;t linked live, so edits in the
-            Knowledge base don&apos;t change this environment.
+            A copy of the file as it was when you added it. It isn&apos;t linked
+            live, so edits in the Knowledge base don&apos;t change this
+            environment.
           </KV>
           <KV label="Refresh">
-            {source.ui?.changed_upstream
+            {changed
               ? SOURCES_COPY.changedUpstream
-              : "Up to date. A new revision waits for you to review it; it is never pulled in on its own."}
+              : "Up to date. A change in the Knowledge base waits for you to review it; it is never pulled in on its own."}
+            {changed && !readOnly && onReviewRefresh && (
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => onReviewRefresh(source)}
+                sx={{ display: "flex", mt: 0.75 }}
+              >
+                {SOURCES_COPY.reviewRefresh}
+              </Button>
+            )}
           </KV>
         </Box>
       )}
@@ -178,7 +193,11 @@ function Versions({ source }) {
   );
 }
 
-Versions.propTypes = { source: PropTypes.object.isRequired };
+Versions.propTypes = {
+  source: PropTypes.object.isRequired,
+  readOnly: PropTypes.bool,
+  onReviewRefresh: PropTypes.func,
+};
 
 function MappingSlot() {
   return (
@@ -189,7 +208,7 @@ function MappingSlot() {
 }
 
 // Each tab's body, by the `sourceTab` id. Every body gets
-// `{ envId, source, at, readOnly, onEdit, onRemove }`.
+// `{ envId, source, at, readOnly, onEdit, onRemove, onReviewRefresh }`.
 const TAB_BODIES = {
   preview: WhatWasRead,
   mapping: MappingSlot,
@@ -224,6 +243,7 @@ export default function SourceDrawer({
   at = null,
   readOnly = false,
   onClose,
+  onReviewRefresh,
 }) {
   const queryClient = useQueryClient();
   const { data: summary } = useEnvironmentSources(envId);
@@ -328,6 +348,7 @@ export default function SourceDrawer({
             readOnly={readOnly}
             onEdit={onEdit}
             onRemove={onRemove}
+            onReviewRefresh={onReviewRefresh}
           />
         </Box>
 
@@ -384,4 +405,6 @@ SourceDrawer.propTypes = {
   at: PropTypes.string,
   readOnly: PropTypes.bool,
   onClose: PropTypes.func.isRequired,
+  // Gets the source when its Knowledge base file changed (Versions tab).
+  onReviewRefresh: PropTypes.func,
 };

@@ -17,12 +17,14 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import {
   sourceSummaryKey,
   useEnvironmentSources,
+  usePrepareKbSource,
   usePrepareUploadSource,
   useSourceCapabilities,
 } from "src/api/simulate-environments/sources";
 import SectionCard from "../../components/SectionCard";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
 import AddSourceMenu from "./AddSourceMenu";
+import KnowledgeBasePicker from "./KnowledgeBasePicker";
 import ProposalsDrawer from "./ProposalsDrawer";
 import { PROPOSALS_COPY } from "./proposals";
 import {
@@ -54,15 +56,14 @@ const stateOf = (source, formats) => {
  * (`?source=<id>`, plus `sourceTab` for one of its tabs). Removed files are
  * flagged in the summary cache as `ui.removed`, so readers of it skip them.
  *
- * The last upload's prepare response is `prepare.data` until `prepare.reset()`;
- * `onPrepared` gets it as it lands. One with proposals opens Review proposed
- * changes; closing that keeps the review until it's rejected or added.
+ * `onPrepared` gets each prepare response (upload or Knowledge base) as it
+ * lands. One with proposals opens Review proposed changes; closing that keeps
+ * the review until it's rejected or added.
  */
 export default function SourcesSection({
   envId,
   readOnly = false,
   onPrepared,
-  onAddKb,
   onReviewRefresh,
   onReviewChanges,
 }) {
@@ -70,9 +71,11 @@ export default function SourcesSection({
   const { data: summary } = useEnvironmentSources(envId);
   const { data: capabilities } = useSourceCapabilities(envId);
   const prepare = usePrepareUploadSource(envId);
+  const prepareKb = usePrepareKbSource(envId);
   const [anchor, setAnchor] = useState(null);
+  const [kbOpen, setKbOpen] = useState(false);
   const [removing, setRemoving] = useState(null);
-  // Held apart from `prepare.data`: re-picking files already here returns an
+  // Held apart from the mutations' data: re-picking files already here returns an
   // empty response, which mustn't wipe the review.
   const [review, setReview] = useState(null);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -121,6 +124,16 @@ export default function SourcesSection({
           list.filter((one) => one.source_id !== source.source_id),
         );
 
+  const onPrepare = {
+    onSuccess: (response) => {
+      onPrepared?.(response);
+      if (!response.ui.items.length) return;
+      setReview(response);
+      setReviewOpen(true);
+    },
+    onError: () => enqueueSnackbar(COPY.readFailed, { variant: "error" }),
+  };
+
   const addFiles = (picked) => {
     const limit = overUploadLimit(picked, capabilities?.upload);
     if (limit) {
@@ -133,22 +146,20 @@ export default function SourcesSection({
         versionId: capabilities?.environment_version_id,
         draft: capabilities?.draft,
       },
-      {
-        onSuccess: (response) => {
-          onPrepared?.(response);
-          if (!response.ui.items.length) return;
-          setReview(response);
-          setReviewOpen(true);
-        },
-        onError: () => enqueueSnackbar(COPY.readFailed, { variant: "error" }),
-      },
+      onPrepare,
     );
+  };
+
+  const addKb = (selection) => {
+    setKbOpen(false);
+    prepareKb.mutate({ selection }, onPrepare);
   };
 
   const endReview = () => {
     setReview(null);
     setReviewOpen(false);
     prepare.reset();
+    prepareKb.reset();
   };
 
   let subtitle = COPY.subtitle.empty;
@@ -190,7 +201,7 @@ export default function SourcesSection({
         anchorEl={anchor}
         onClose={() => setAnchor(null)}
         onAddFiles={addFiles}
-        onAddKb={onAddKb}
+        onAddKb={() => setKbOpen(true)}
         limits={capabilities?.upload}
         command={dataImportCommand(envId, sources[0])}
       />
@@ -314,8 +325,17 @@ export default function SourcesSection({
             openSource(id, null, at);
           }}
           onAddFiles={addFiles}
-          onAddKb={onAddKb}
+          onAddKb={() => setKbOpen(true)}
           onReviewChanges={onReviewChanges}
+        />
+      )}
+
+      {!readOnly && (
+        <KnowledgeBasePicker
+          envId={envId}
+          open={kbOpen}
+          onClose={() => setKbOpen(false)}
+          onPick={addKb}
         />
       )}
 
@@ -353,9 +373,7 @@ SourcesSection.propTypes = {
   readOnly: PropTypes.bool,
   // Gets the upload's prepare response (empty when every file was there already).
   onPrepared: PropTypes.func,
-  // Opens the Knowledge base picker.
-  onAddKb: PropTypes.func,
-  // Gets the source whose Knowledge base file changed.
+  // Gets the saved source whose Knowledge base file changed.
   onReviewRefresh: PropTypes.func,
   // Opens Review changes, from the snackbar once proposals are added.
   onReviewChanges: PropTypes.func,
@@ -377,8 +395,9 @@ function SourceRow({
     !reading &&
     Object.keys(source.ui?.privacy || {}).length > 0 &&
     !source.ui?.personal_choice;
-  const changed = Boolean(source.ui?.changed_upstream);
   const saved = isSaved(source);
+  // Only a saved copy can have changed since it was added.
+  const changed = saved && Boolean(source.ui?.changed_upstream);
   const usage = usageOf(source);
   const usedBy = usage.rules.length + usage.seeds.length;
 
