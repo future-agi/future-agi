@@ -140,11 +140,7 @@ def _without(cls, *names):
     """``cls`` as dev declared it: the same dataclass minus #4199's fields."""
     return dataclasses.make_dataclass(
         f"Dev{cls.__name__}",
-        [
-            (f.name, f.type, f)
-            for f in dataclasses.fields(cls)
-            if f.name not in names
-        ],
+        [(f.name, f.type, f) for f in dataclasses.fields(cls) if f.name not in names],
     )
 
 
@@ -160,9 +156,7 @@ NEW_FIELDS = [
 @pytest.mark.parametrize(
     "cls,names", NEW_FIELDS, ids=[c.__name__ for c, _ in NEW_FIELDS]
 )
-def test_dev_types_decode_new_payloads_and_new_types_decode_dev_payloads(
-    cls, names
-):
+def test_dev_types_decode_new_payloads_and_new_types_decode_dev_payloads(cls, names):
     """The default converter (the repo installs no custom one) ignores unknown
     dataclass fields, and every new field defaults to None."""
     converter = DataConverter.default.payload_converter
@@ -170,8 +164,7 @@ def test_dev_types_decode_new_payloads_and_new_types_decode_dev_payloads(
     required = {
         f.name: f"v-{f.name}"
         for f in dataclasses.fields(cls)
-        if f.default is dataclasses.MISSING
-        and f.default_factory is dataclasses.MISSING
+        if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
     }
     new_value = cls(**required, **{n: f"new-{n}" for n in names})
 
