@@ -162,6 +162,18 @@ tls_cert_problem() {
   fi
 }
 
+# Warns, and still starts, when the private key's mode grants more than owner
+# read-write and group read: a Kubernetes Secret mounted with fsGroup needs
+# 0440 at most. stat -L reads the file behind a Secret's symlinks. Never
+# prints the key.
+warn_broad_key_mode() {
+  key_mode=$(stat -L -c %a "$1" 2>/dev/null) || return 0
+  case "$key_mode" in ''|*[!0-7]*) return 0 ;; esac
+  if [ $((0$key_mode & 037)) -ne 0 ]; then
+    echo "$2 warning: TLS private key $1 has mode $key_mode, readable or writable beyond its owner and group; use 0400 or 0440" >&2
+  fi
+}
+
 case "$http_enabled:$tls_enabled" in
   true:true|true:false|false:true) ;;
   false:false) echo '[entrypoint] HTTP and TLS cannot both be disabled' >&2; exit 1 ;;
@@ -207,6 +219,7 @@ if [ "$tls_enabled" = true ]; then
     echo "[entrypoint] $problem" >&2
     exit 1
   fi
+  warn_broad_key_mode "$key_file" '[entrypoint]'
 fi
 
 # /tmp is writable even in the Helm read-only-root deployment. Its ConfigMap
@@ -252,6 +265,7 @@ if [ "$tls_enabled" = true ] && [ "${1:-}" = nginx ]; then
           echo "[tls-reload] $problem; keeping current configuration" >&2
           continue
         fi
+        warn_broad_key_mode "$key_file" '[tls-reload]'
         echo '[tls-reload] certificate files changed; signalling nginx master' >&2
         kill -HUP "$nginx_pid" 2>/dev/null || exit 0
       fi

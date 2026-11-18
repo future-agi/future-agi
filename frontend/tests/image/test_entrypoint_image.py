@@ -325,3 +325,72 @@ class ReadOnlyRoot(ImageTestCase):
         self.assertIn(
             "[entrypoint] cannot write /usr/share/nginx/html/config.js", logs
         )
+
+
+class PrivateKeyMode(ImageTestCase):
+    """deploy/README.md: owner and fsGroup read are expected; anything broader
+    warns and still serves; a missing or unreadable key still fails."""
+
+    def start_with_key_mode(self, mode):
+        cert, key = self.ca.issue("localhost", "491231235959Z")
+        container = self.start(self.tls_env(), tls_dir=self.secret_dir(cert, key, mode))
+        served = self.wait_for(lambda: self.served_fingerprint(container), what="HTTPS")
+        self.assertEqual(served, self.fingerprint(cert))
+        return container, key
+
+    def test_owner_and_group_read_start_without_a_warning(self):
+        for mode in (0o400, 0o440, 0o600, 0o640):
+            with self.subTest(mode=oct(mode)):
+                container, _ = self.start_with_key_mode(mode)
+                self.assertNotIn("warning", self.logs(container))
+                docker("rm", "-f", container)
+
+    def test_broader_modes_warn_name_the_file_and_still_serve(self):
+        for mode in (0o644, 0o604, 0o660, 0o666, 0o447):
+            with self.subTest(mode=oct(mode)):
+                container, key = self.start_with_key_mode(mode)
+                logs = self.logs(container)
+                self.assertIn(
+                    "[entrypoint] warning: TLS private key "
+                    f"/run/futureagi-tls/tls.key has mode {mode:o}",
+                    logs,
+                )
+                for line in key_body_lines(key):
+                    self.assertNotIn(line, logs)
+                self.assert_running(container)
+                docker("rm", "-f", container)
+
+    def test_a_broad_mode_after_rotation_warns_and_rotates(self):
+        container, _ = self.start_with_key_mode(0o440)
+        cert, key = self.ca.issue("rotated", "491231235959Z")
+        self.rotate(cert, key, 0o644)
+        self.wait_for(
+            lambda: self.served_fingerprint(container) == self.fingerprint(cert),
+            what="the rotated certificate",
+        )
+        logs = self.logs(container)
+        self.assertIn("[tls-reload] warning: TLS private key", logs)
+        for line in key_body_lines(key):
+            self.assertNotIn(line, logs)
+        self.assert_running(container)
+
+    def test_a_missing_or_unreadable_key_still_fails_startup(self):
+        cert, key = self.ca.issue("localhost", "491231235959Z")
+        tls_dir = self.secret_dir(cert, key, 0o000)
+        # The nginx master runs as root; without CAP_DAC_OVERRIDE a mode 000
+        # key owned by another user is unreadable to it. busybox `test -r` is
+        # true for root whatever the mode, so nginx is what refuses the key.
+        code, logs = self.run_to_exit(
+            self.tls_env(), ["--cap-drop", "DAC_OVERRIDE"], tls_dir
+        )
+        self.assertEqual(code, 1, logs)
+        self.assertIn('cannot load certificate key "/run/futureagi-tls/tls.key"', logs)
+        self.assertIn("Permission denied", logs)
+        for line in key_body_lines(key):
+            self.assertNotIn(line, logs)
+        code, logs = self.run_to_exit(
+            self.tls_env(FRONTEND_TLS_KEY_FILE="/run/futureagi-tls/missing.key"),
+            tls_dir=tls_dir,
+        )
+        self.assertEqual(code, 1, logs)
+        self.assertIn("[entrypoint] TLS file missing, empty or unreadable", logs)

@@ -442,7 +442,12 @@ matching key in `tls.key`; protect the private key, but keep it readable by
 the user each image reads it as: the gateway runs as uid and gid 65532
 (`chown 65532:65532 certs/gateway/tls.key; chmod 0400 certs/gateway/tls.key`),
 and the frontend's nginx master reads its key as root before it starts the
-workers. For example:
+workers. The frontend expects a key mode of `0400`, or `0440` from a Kubernetes
+Secret mounted with `fsGroup`; a key that its group can write or anyone else
+can read or write still loads, at startup and on rotation, but it logs a
+warning naming the file and its mode (never the key). Kubernetes mounts Secret
+files `0644` unless the volume sets `defaultMode`, so set `defaultMode: 0440`
+there. A missing, empty or unreadable key still fails startup. For example:
 
 ```yaml
 # docker-compose.native-tls.yml, next to docker-compose.distributed.yml
