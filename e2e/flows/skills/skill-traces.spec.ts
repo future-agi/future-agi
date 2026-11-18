@@ -279,6 +279,8 @@ for (const [flow, goal] of [[3,'Read production adoption and the reason an agent
     await expect(dialog).toHaveCount(0);
     const failed = s.emit('python',[main],{requests:flow === 11 ? 32 : 1,failedRequest:flow === 11});
     if (flow !== 11) s.emit('python',[pinned, follower]);
+    // Runtime pins its window at mount; wait for every post-move request first.
+    await s.waitForTraces(flow === 11 ? 64 : 4);
     await page.goto(`/dashboard/skills/${s.refund.id}?tab=runtime`);
     if (flow === 11) {
       await expect(page.getByText(/failed requests up so far on 1 agent/i).first()).toBeVisible();
@@ -391,6 +393,7 @@ scopeTest('SKILLS-E2E-115: F15 inspect the changed skill on both release cards',
     app.context!.selector = {version:2};
     app.context!.reads = [`skills/${s.refund.name}/SKILL.md`];
     s.emit('python',[app]);
+    await s.waitForTraces(2);
     const ctx = await scopeActors.openContext(browser,scopeActors.ownerA);
     const page = await ctx.newPage();
     for (const url of [`/dashboard/skills/contexts/${s.context.id}?tab=runtime`,`/dashboard/skills/contexts/${s.context.id}/review?request=${sent.id}`]) {
