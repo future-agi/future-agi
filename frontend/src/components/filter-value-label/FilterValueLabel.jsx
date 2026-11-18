@@ -29,21 +29,51 @@ export default function FilterValueLabel({
   // value list is time-windowed, so a filter on an older value would miss the
   // lookup and fall back to the raw value anyway.
   const labelsAreValues = filterLabelsMatchValues(filter);
-  const { options, isLoading } = useResolvedFilterOptions(
+  const {
+    options,
+    isLoading,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    cursorChainStopped,
+  } = useResolvedFilterOptions(
     filter,
     source,
     values.length > 0 && !labelsAreValues,
   );
 
+  const byValue = useMemo(
+    () => new Map(options.map((o) => [o.value, o.label ?? o.value])),
+    [options],
+  );
   const labels = useMemo(() => {
     if (labelsAreValues) return values;
-    const byValue = new Map(options.map((o) => [o.value, o.label ?? o.value]));
     return values.map((v) => byValue.get(v) ?? v);
-  }, [labelsAreValues, options, values]);
+  }, [labelsAreValues, byValue, values]);
 
   const hasValue = values.length > 0;
+  // The value list is a time-sliced cursor chain: a bounded first page can be
+  // empty (or hold other values) while the saved ids are still further down
+  // the chain. Keep reading until every selected value has a label or the
+  // chain ends; only then fall back to the raw value.
+  const hasUnresolved =
+    hasValue && !labelsAreValues && values.some((v) => !byValue.has(v));
+  const canReadMore =
+    hasUnresolved &&
+    Boolean(hasNextPage) &&
+    !isFetchNextPageError &&
+    !cursorChainStopped;
+  useEffect(() => {
+    if (canReadMore && !isLoading && !isFetchingNextPage) {
+      void fetchNextPage?.();
+    }
+  }, [canReadMore, isLoading, isFetchingNextPage, fetchNextPage]);
   const isResolving =
-    hasValue && !labelsAreValues && isLoading && options.length === 0;
+    hasValue &&
+    !labelsAreValues &&
+    ((isLoading && options.length === 0) ||
+      (!byValue.has(values[0]) && (canReadMore || isFetchingNextPage)));
   const extra = Math.max(labels.length - 1, 0);
   const entity = (filter?.name || "item").toLowerCase();
   const entityLabel = pluralize(entity, extra);
