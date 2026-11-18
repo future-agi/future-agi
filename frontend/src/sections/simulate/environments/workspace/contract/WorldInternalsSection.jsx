@@ -47,7 +47,7 @@ function SchemaCard({ schema, totalRows }) {
   const anyExpandable = schema.some((t) => t.fields.length);
   return (
     <SectionCard
-      title="World state · database"
+      title="World state · database schema"
       subtitle="The tables this environment's world holds"
       action={
         <Typography

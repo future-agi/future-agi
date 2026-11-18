@@ -93,7 +93,7 @@ describe("WorldInternalsSection tables", () => {
 
   it("shows no tables card when the detail sends none", () => {
     render(<WorldInternalsSection env={env} />);
-    expect(screen.queryByText("World state · database")).toBeNull();
+    expect(screen.queryByText("World state · database schema")).toBeNull();
   });
 });
 

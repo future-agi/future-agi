@@ -314,6 +314,6 @@ CapabilityGraph.propTypes = {
     personas: PropTypes.arrayOf(PropTypes.string),
     guardrails: PropTypes.arrayOf(PropTypes.string),
   }),
-  // Open on first render (tests); the tab starts it folded.
+  // Open on first render, as World & tools shows it.
   defaultOpen: PropTypes.bool,
 };

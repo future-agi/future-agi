@@ -65,6 +65,28 @@ export const dataImportCommand = (envId, source) =>
 export const isSaved = (source) =>
   source.status === "ready" || source.status === "rows_rejected";
 
+// What the file feeds once saved, from what reading it found.
+export const usageOf = (source) => {
+  const parsed = source.ui?.parsed;
+  const saved = isSaved(source);
+  return {
+    rules:
+      saved && source.role === "policy" && parsed?.kind === "text"
+        ? parsed.passages.filter((passage) => passage.rule)
+        : [],
+    seeds:
+      saved && source.role === "seed_records" && parsed?.kind === "table"
+        ? [parsed]
+        : [],
+  };
+};
+
+// Rows the reader turned away, before or after the file is saved.
+export const rejectedRowsOf = (source) =>
+  source.ui?.parsed?.rejected?.length ||
+  Number(/^(\d+) of/.exec(source.status_note || "")?.[1]) ||
+  0;
+
 // Each participant's view of the saved files: who reads which, and how.
 export const participantFilesOf = (sources) => {
   const files = { agent: [], caller: [], evaluator: [] };
@@ -132,17 +154,22 @@ export const SOURCES_COPY = {
   },
   // A problem says what in the cell and how to fix it on hover.
   problem: {
-    rows_rejected: (note) => ({
-      short: note?.replace(/ of \d+ rows/, " rows") || "Rows rejected",
-      hint: "Open it to see which rows and why.",
-    }),
-    unreadable: (note) => ({
+    rows_rejected: (source) => {
+      const n = rejectedRowsOf(source);
+      return {
+        short: n ? `${plural(n, "row")} rejected` : "Rows rejected",
+        hint: "Open it to see which rows and why.",
+      };
+    },
+    unreadable: (source) => ({
       short: "Can't read",
-      hint: note || "No text to read. Upload a text version instead.",
+      hint:
+        source.status_note || "No text to read. Upload a text version instead.",
     }),
-    unsupported: (note) => ({
+    // Names what this route takes, not everything the reader understands.
+    unsupported: (source, formats = []) => ({
       short: "Not supported",
-      hint: `${note || "This file type can't be read."} Export it as a PDF and upload that.`,
+      hint: `Can't read .${source.ext} files. Upload takes ${formats.map((ext) => ext.toUpperCase()).join(", ")}. Export it as a PDF and upload that.`,
     }),
   },
   yourCopy: "your copy",
@@ -153,11 +180,12 @@ export const SOURCES_COPY = {
     saved
       ? "Remove from this environment. New versions stop using it; past runs keep it."
       : "Remove. It isn't in the world yet.",
-  removeTitle: (name) => `Remove ${name}?`,
-  removeBody: (saved) =>
+  removeTitle: (name, saved) =>
+    saved ? `Remove ${name} from this environment?` : `Remove ${name}?`,
+  removeBody: (saved, rules) =>
     saved
-      ? "New versions of this environment stop using it. Past runs still show it. You can restore it from Removed."
-      : "It isn't in the world yet. You can restore it from Removed.",
+      ? `New versions won't use it. ${rules ? `It's used by ${plural(rules, "rule")}; they keep citing it. ` : ""}Past runs still show it.`
+      : "It isn't in the world yet. Its reading and mapping are discarded; add it again from Sources.",
   removeConfirm: "Remove",
   personal: "Personal data · choose how to handle it",
   choose: "Choose",
