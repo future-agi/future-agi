@@ -48,6 +48,7 @@ DEFAULT_MAX_ITEMS = 50
 SENSITIVE_BODY_PATH_PREFIXES = (
     "/telemetry/",
     "/saml2_auth/",
+    "/simulate/api/harness-jobs/sources/",
     "/simulate/api/harness-jobs/secret-values/",
     "/simulate/api/harness-jobs/secret-files/",
     # Signed over its raw bytes and may carry committer emails; never read early.

@@ -15,6 +15,7 @@ import SettingsPanel from "./settings/SettingsPanel";
 import VersionsPanel from "./versions/VersionsPanel";
 import ImprovementsPanel from "./improvements/ImprovementsPanel";
 import WorkspaceTabLabel from "./WorkspaceTabLabel";
+import CompositionPanel from "./composition/CompositionPanel";
 import { WORKSPACE_TABS } from "./workspace.constants";
 
 // The shared rail + body switch. One instance serves the route workspace and
@@ -81,12 +82,14 @@ export default function WorkspacePanels({
   const showImprovements = fixCount > 0 || (fixesLoading && tab === "improvements");
   // Versions appears only while versioning is switched on for this environment.
   const showVersions = Boolean(env?.versioning?.enabled);
+  // Alignment exists only on a composition: a released environment bound to the agent.
   const tabs = WORKSPACE_TABS.filter(
     (t) =>
       (t.id !== "runs" || showRuns) &&
       (t.id !== "improvements" || showImprovements) &&
       (t.id !== "versions" || showVersions) &&
-      (t.id !== "actors" || Boolean(env?.actorsTab)),
+      (t.id !== "actors" || Boolean(env?.actorsTab)) &&
+      (t.id !== "composition" || Boolean(env?.composition)),
   );
 
   // Default landing is the Overview, which is also the first tab in the rail.
@@ -144,6 +147,8 @@ export default function WorkspacePanels({
         return <ImprovementsPanel env={env} />;
       case "versions":
         return <VersionsPanel env={env} />;
+      case "composition":
+        return <CompositionPanel composition={env.composition} />;
       case "settings":
         return <SettingsPanel env={env} locked={locked} backed={backed} />;
       default:
@@ -208,6 +213,7 @@ WorkspacePanels.propTypes = {
     id: PropTypes.string,
     name: PropTypes.string,
     surface: PropTypes.string,
+    composition: PropTypes.object,
     platform: PropTypes.shape({
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,

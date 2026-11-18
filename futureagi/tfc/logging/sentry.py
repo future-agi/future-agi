@@ -234,7 +234,7 @@ def _event_message(event: dict) -> str:
 
 
 def _is_telemetry_url(url: object) -> bool:
-    """True when ``url`` matches a path prefix whose body must never reach Sentry.
+    """True when ``url`` names a path whose body must never reach Sentry.
 
     Reuses ``SENSITIVE_BODY_PATH_PREFIXES`` (as its patterns) so the OTel
     middleware and the Sentry scrubber agree on which paths are sensitive;

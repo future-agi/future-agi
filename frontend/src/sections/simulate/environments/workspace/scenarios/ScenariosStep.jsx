@@ -135,10 +135,12 @@ export default function ScenariosStep({
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
   const { canEdit } = useSimulationAccess();
-  const rowsLocked = locked || !canEdit;
+  // A composition's suite is a sealed release; the amend route cannot change it, its chat can.
+  const editHint = env?.composition ? SCENARIOS_COPY.compositionEditHint : null;
+  const rowsLocked = locked || !canEdit || Boolean(editHint);
   const rowsLockTooltip = locked
     ? LOCK_TOOLTIP
-    : WORKSPACE_COPY.viewer.scenarios;
+    : editHint || WORKSPACE_COPY.viewer.scenarios;
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -513,6 +515,11 @@ export default function ScenariosStep({
               Couldn&apos;t refresh the scenarios. Showing the last loaded list.
             </Alert>
           )}
+          {editHint && (
+            <Alert severity="info" sx={{ mb: 2, typography: "s3", flexShrink: 0 }}>
+              {editHint}
+            </Alert>
+          )}
           <Box
             sx={{
               flex: 1,
@@ -588,7 +595,7 @@ export default function ScenariosStep({
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <SelectionBar
                       count={sel.count}
-                      onDelete={bulkDelete}
+                      onDelete={editHint ? undefined : bulkDelete}
                       onClear={sel.clear}
                       onRun={
                         canRun && onStartRun ? handleRunSelected : undefined
@@ -598,6 +605,7 @@ export default function ScenariosStep({
                       }
                       trials={trials}
                       onTrialsChange={setTrials}
+                      composition={env?.composition}
                       matching={{
                         mode: sel.mode,
                         total: pageData.total,

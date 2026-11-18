@@ -109,6 +109,9 @@ export default function EnvironmentWorkspace() {
   const backedScenarioCount = backed
     ? evalDetailQuery.data?.overview?.scenario_count ?? undefined
     : undefined;
+  // A composition (a released environment bound to an agent) rides on `env` so the
+  // alignment tab, the run picker and the run report can read it without a second fetch.
+  const composition = (backed && evalDetailQuery.data?.composition) || null;
   // While the job is still deriving, the harness bootstrap is only a placeholder
   // (an endpoint-agent stub with whatever scenarios the run has emitted so far, if
   // any) — and useEnvState seeds byEnv once, so seeding it now would freeze that
@@ -439,7 +442,7 @@ export default function EnvironmentWorkspace() {
         <Suspense fallback={<LoadingScreen />}>
           <Outlet
             context={{
-              env,
+              env: composition ? { ...env, composition } : env,
               envState,
               backed,
               onStartRun: startRun,
@@ -506,8 +509,15 @@ export default function EnvironmentWorkspace() {
   // rename shows
   // everywhere the moment it lands, not only in the Settings field.
   const backedName = evalDetailQuery.data?.overview?.name;
+  const renamed = Boolean(env && backed && backedName);
   const displayEnv =
-    env && backed && backedName ? { ...env, name: backedName } : env;
+    renamed || composition
+      ? {
+          ...env,
+          ...(renamed ? { name: backedName } : {}),
+          ...(composition ? { composition } : {}),
+        }
+      : env;
 
   // Overview summary tiles need the detail's real counts: the job poll (which
   // drives

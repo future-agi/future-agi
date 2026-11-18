@@ -195,6 +195,26 @@ Finished sessions (incl. a full 30-scenario run) ship in `artifacts/sessions/`,
 so nearly the whole UI can be built against real data. Keys are only needed to
 trigger new work (`POST say` / `POST run`).
 
+## Prebuilt environments: releases, adaptation, compositions, run reports
+
+These are platform routes under `/simulate/api/` (not the `/simulate/harness/`
+proxy above). Their request and response shapes and the adaptation message
+kinds are defined once, in `environment-releases.md`; this section only says
+where the frontend uses them.
+
+| Route / message | Shape | Frontend |
+|---|---|---|
+| `GET harness-releases/` | §7.6 | Prebuilt environments page: released-environment gallery at the top (`pages/dashboard/harness/ReleaseGallery.jsx` in `PrebuiltEnvironmentsBrowse.jsx`) |
+| `POST harness-adaptations/` | §7.6 | "Use with my agent" dialog, *Adapt to my agent*; navigates to the returned job's detail page |
+| `POST harness-compositions/` | §7.6 | Same dialog, *Compose without adaptation*; navigates to the composed environment |
+| `tool_result` events of the adaptation tools | §7.5 | Job detail: adaptation checklist (`AdaptationProgress.jsx`): binding drafted, proved, conflicts reviewed, sealed; `job.metadata.adaptation_result.composition_id` links to the environment |
+| `question` message (`question_requested`) | §7.5 | Option buttons (the builder's approval of the binding is one); the answer is `kind: "user_response"`, `reply_to` the question, `payload: {value}` |
+| `GET harness-environments/{id}/` `composition` | §7.6 | Environment workspace: Alignment tab (including policy conflicts), header summary, labels in the run repeats pickers |
+| `GET harness-environments/{id}/runs/{run_id}/report/?baseline=` | §7.7 | Run detail: Report tab; `run_id` and `baseline` are test execution ids |
+
+A question counts as answered once a user message replies to it;
+its buttons stay visible and disabled.
+
 ## Not in v0
 
 - **Single-user.** Session state is one module-level global with one process

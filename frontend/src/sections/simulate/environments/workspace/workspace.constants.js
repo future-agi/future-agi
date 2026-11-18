@@ -16,6 +16,7 @@ export const WORKSPACE_TABS = [
     icon: "solar:document-text-linear",
   },
   { id: "actors", label: "Actors", icon: "solar:users-group-rounded-linear" },
+  { id: "composition", label: "Alignment", icon: "solar:routing-2-linear" },
   {
     id: "scenarios",
     label: "Scenarios",

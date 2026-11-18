@@ -32,6 +32,14 @@ from .harness_versioning import (
     HarnessSuiteValidation,
     HarnessSuiteVersion,
 )
+from .harness_release import (
+    HarnessAgentBinding,
+    HarnessEnvironmentRelease,
+    HarnessRunManifest,
+    HarnessSuiteRelease,
+    HostedAgentSpec,
+)
+from .eval_config import SimulateEvalConfig
 from .hosted_harness import (
     HostedHarnessArtifact,
     HostedHarnessAttempt,
@@ -95,6 +103,11 @@ __all__ = [
     "HarnessSuiteMember",
     "HarnessSuiteValidation",
     "HarnessSuiteVersion",
+    "HarnessAgentBinding",
+    "HarnessEnvironmentRelease",
+    "HarnessRunManifest",
+    "HarnessSuiteRelease",
+    "HostedAgentSpec",
     "PromptTrial",
     "SimulatorAgent",
     "RunTest",
