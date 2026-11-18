@@ -1,10 +1,12 @@
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, userEvent } from "src/utils/test-utils";
+import { render, screen, userEvent, within } from "src/utils/test-utils";
 import QueueDetailView from "../queue-detail-view";
 
 const mocks = vi.hoisted(() => ({
   assignItems: vi.fn(),
+  assignPending: false,
+  annotators: null,
   navigate: vi.fn(),
   queryClient: {
     removeQueries: vi.fn(),
@@ -64,7 +66,7 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
       status: "active",
       viewer_role: "manager",
       viewer_roles: ["manager"],
-      annotators: [
+      annotators: mocks.annotators ?? [
         {
           user_id: "manager-1",
           role: "manager",
@@ -115,7 +117,7 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
   useBulkReviewItems: () => ({ mutate: vi.fn(), isPending: false }),
   useAssignQueueItems: () => ({
     mutate: mocks.assignItems,
-    isPending: false,
+    isPending: mocks.assignPending,
   }),
   useDownloadAnnotationQueueExport: () => ({
     mutate: vi.fn(),
@@ -164,9 +166,101 @@ vi.mock("../automation-rules-tab", () => ({
 describe("QueueDetailView bulk assignment", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.assignPending = false;
+    mocks.annotators = null;
     mocks.assignItems.mockImplementation((_payload, options) => {
       options?.onSuccess?.();
     });
+  });
+
+  const openBulkAssignDialog = async (user) => {
+    await user.click(screen.getByLabelText("Item 1"));
+    await user.click(
+      screen.getByRole("button", { name: /assign selected \(1\)/i }),
+    );
+    return screen.getByRole("dialog");
+  };
+
+  it("selects or clears every annotator from the bulk assignment dialog", async () => {
+    const user = userEvent.setup();
+    render(<QueueDetailView />);
+
+    const dialog = within(await openBulkAssignDialog(user));
+    const alice = dialog.getByLabelText("Alice");
+    const bob = dialog.getByLabelText("Bob");
+    expect(alice).not.toBeChecked();
+    expect(bob).not.toBeChecked();
+
+    await user.click(dialog.getByRole("button", { name: /^select all$/i }));
+    expect(alice).toBeChecked();
+    expect(bob).toBeChecked();
+
+    await user.click(dialog.getByRole("button", { name: /^deselect all$/i }));
+    expect(alice).not.toBeChecked();
+    expect(bob).not.toBeChecked();
+
+    await user.click(dialog.getByRole("button", { name: /^select all$/i }));
+    await user.click(dialog.getByRole("button", { name: /^select none$/i }));
+    expect(alice).not.toBeChecked();
+    expect(bob).not.toBeChecked();
+    expect(dialog.getByRole("button", { name: /^select all$/i })).toBeVisible();
+
+    await user.click(bob);
+    await user.click(dialog.getByRole("button", { name: /^select all$/i }));
+    await user.click(dialog.getByRole("button", { name: /^assign$/i }));
+
+    expect(mocks.assignItems).toHaveBeenCalledTimes(1);
+    expect(mocks.assignItems.mock.calls[0][0].userIds).toEqual(
+      expect.arrayContaining(["annotator-1", "annotator-2"]),
+    );
+    expect(mocks.assignItems.mock.calls[0][0].userIds).toHaveLength(2);
+  });
+
+  it("disables the select all and select none controls while assigning", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<QueueDetailView />);
+
+    await openBulkAssignDialog(user);
+    mocks.assignPending = true;
+    rerender(<QueueDetailView />);
+
+    const dialog = within(screen.getByRole("dialog"));
+    expect(
+      dialog.getByRole("button", { name: /^select all$/i }),
+    ).toBeDisabled();
+    expect(
+      dialog.getByRole("button", { name: /^select none$/i }),
+    ).toBeDisabled();
+  });
+
+  it("hides the select all and select none controls for a single annotator", async () => {
+    mocks.annotators = [
+      {
+        user_id: "manager-1",
+        role: "manager",
+        roles: ["manager"],
+        name: "Manager",
+        email: "manager@example.com",
+      },
+      {
+        user_id: "annotator-1",
+        role: "annotator",
+        roles: ["annotator"],
+        name: "Alice",
+        email: "alice@example.com",
+      },
+    ];
+    const user = userEvent.setup();
+    render(<QueueDetailView />);
+
+    const dialog = within(await openBulkAssignDialog(user));
+    expect(dialog.getByLabelText("Alice")).toBeInTheDocument();
+    expect(
+      dialog.queryByRole("button", { name: /^select all$/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      dialog.queryByRole("button", { name: /^select none$/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("lets managers assign selected items to annotators in one request", async () => {
