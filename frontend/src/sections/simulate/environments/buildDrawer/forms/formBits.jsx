@@ -33,6 +33,8 @@ import {
   chipSx,
   focusRing,
 } from "../drawerStyles";
+import BuildFilesField from "./shared/BuildFilesField";
+import BuildTestField from "./shared/BuildTestField";
 
 /*
   The pieces every setup form in the Build environment drawer is made of,
@@ -847,6 +849,9 @@ export function FormCard({
       : [],
   );
   const shown = connect ? sample : build;
+  // Held here only: no build payload carries them yet.
+  const [testRequest, setTestRequest] = useState("");
+  const [files, setFiles] = useState([]);
   useEffect(() => {
     onBusyChange?.(shown.committing);
   }, [shown.committing, onBusyChange]);
@@ -890,8 +895,18 @@ export function FormCard({
         <Stack spacing={1.25} sx={{ mt: 1.75 }}>
           {!connect && (
             <>
+              <BuildTestField
+                flagged={!uiOnly}
+                value={testRequest}
+                onChange={setTestRequest}
+              />
               <ScenarioRow value={scenarioCount} onChange={onScenarioCount} />
               <ParallelRow build={build} />
+              <BuildFilesField
+                flagged={!uiOnly}
+                files={files}
+                onChange={setFiles}
+              />
             </>
           )}
           <PreflightRow

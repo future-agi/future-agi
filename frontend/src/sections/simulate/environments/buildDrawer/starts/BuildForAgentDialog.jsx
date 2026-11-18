@@ -13,6 +13,8 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { MONO, PreflightRow, useUiOnlyBuild } from "../forms/formBits";
+import BuildFilesField from "../forms/shared/BuildFilesField";
+import BuildTestField from "../forms/shared/BuildTestField";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { BTN_SX, INPUT_SX, T12, T13, T14, focusRing } from "../drawerStyles";
 import { envNameFor } from "./startUtils";
@@ -82,6 +84,8 @@ Pick.propTypes = {
 function DialogBody({ agent, onClose, subtitle }) {
   const build = useUiOnlyBuild(SAMPLE_CHECKS);
   const [name, setName] = useState(() => envNameFor(agent));
+  const [testRequest, setTestRequest] = useState("");
+  const [files, setFiles] = useState([]);
   const version = agent.latestLabel || "Latest";
   // Held as typed, so a half-typed number isn't snapped mid-edit.
   const [countText, setCountText] = useState("10");
@@ -97,11 +101,13 @@ function DialogBody({ agent, onClose, subtitle }) {
 
   const blocked = !name.trim()
     ? "Name it first"
-    : !countOk
-      ? `Scenarios: ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
-      : !build.readyToSubmit
-        ? "Run preflight first"
-        : null;
+    : !testRequest.trim()
+      ? "Say what this environment should test"
+      : !countOk
+        ? `Scenarios: ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
+        : !build.readyToSubmit
+          ? "Run preflight first"
+          : null;
 
   return (
     <>
@@ -136,6 +142,11 @@ function DialogBody({ agent, onClose, subtitle }) {
             }}
           />
         </Box>
+        <BuildTestField
+          required
+          value={testRequest}
+          onChange={setTestRequest}
+        />
         <Stack direction="row" spacing={1.5}>
           <Box flex={1} minWidth={0}>
             <Label>Built from version</Label>
@@ -219,6 +230,7 @@ function DialogBody({ agent, onClose, subtitle }) {
           The environment tests this version first. You can add scenarios and
           switch versions afterwards.
         </Typography>
+        <BuildFilesField files={files} onChange={setFiles} />
         <PreflightRow
           build={build}
           canRun={!!name.trim() && countOk}
