@@ -70,7 +70,7 @@ yarn install
 This installs Husky and `lint-staged` and sets Git’s `core.hooksPath`. No separate
 Python hook installation is needed. Husky runs `lint-staged` on commit:
 
-- `frontend/src/**` → ESLint + Prettier
+- For frontend or Markdown changes, install the formatter dependencies with `yarn --cwd frontend install`. Staged frontend source uses ESLint and Prettier.
 - `futureagi/**/*.py` (except migrations) → `ruff check --fix`, then `ruff format`. The [staged Python runner](scripts/lint-staged-python.sh) uses `uv` or `uvx` for the CI-pinned Ruff version. If it falls back to Ruff on `PATH`, it warns that CI may differ.
 
 Branch names are validated on `git push`.
