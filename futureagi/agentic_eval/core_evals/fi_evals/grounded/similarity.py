@@ -80,11 +80,7 @@ class JaroWincklerSimilarity(Comparator):
         len2 = len(str2)
         if len1 == 0 or len2 == 0:
             return 0.0
-        max_dist = (max(len(str1), len(str2)) // 2) - 1
-        if max_dist < 0:
-            # Short strings (length <= 2) yield a negative match window, which
-            # skips every comparison and returns 0.0 even for identical inputs.
-            max_dist = 0
+        max_dist = max(0, max(len1, len2) // 2 - 1)
         match = 0
         hash_str1 = [0] * len(str1)
         hash_str2 = [0] * len(str2)
@@ -105,10 +101,6 @@ class JaroWincklerSimilarity(Comparator):
                     point += 1
                 if str1[i] != str2[point]:
                     t += 1
-                # Always advance past the matched position in str2. Previously
-                # `point` advanced only on a mismatch, so matched positions were
-                # re-compared, over-counting transpositions and deflating every
-                # score (identical strings scored < 1.0).
                 point += 1
         t //= 2
         return (match / len1 + match / len2 + (match - t) / match) / 3.0
