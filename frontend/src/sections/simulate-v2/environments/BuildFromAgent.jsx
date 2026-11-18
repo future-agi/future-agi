@@ -888,6 +888,29 @@ export default function BuildFromAgent() {
     hydrated,
     runChecks: true,
   });
+  /* Built, checked and saved: the environment's own page takes over, with
+     the same header as every environment (agent × version line, inbox,
+     Run simulation menu, ⋯) — this build page's header is only for the
+     build itself. Replace, so Back doesn't restart a build. */
+  const builtStatus = storeState.myEnvironments?.find(
+    (e) => e.id === env?.id,
+  )?.buildStatus;
+  useEffect(() => {
+    if (!env?.id || !hydrated) return;
+    if (builtStatus !== "ready" || release.unsaved || release.checking) return;
+    navigate(paths.dashboard.simulate.environmentDetail(env.id), {
+      replace: true,
+      ...(fromIssue && { state: { fromIssue } }),
+    });
+  }, [
+    env?.id,
+    hydrated,
+    builtStatus,
+    release.unsaved,
+    release.checking,
+    navigate,
+    fromIssue,
+  ]);
   /* Files picked where the agent was connected (a policy, a CSV of records)
      join the design once, before it's approved — reviewed like any file
      added here (builder.md §1, data.md §2–3). */
