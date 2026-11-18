@@ -46,6 +46,7 @@ export const CONSOLE_COPY = {
   placeholder: "Reply to the builder…",
   attach: "Attach a dataset, CSV or file",
   attachAccept: ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf",
+  fileSize: (bytes) => `${Math.max(1, Math.round(bytes / 1024))} kB`,
   stopping: "Stopping…",
   jumpToLatest: "Jump to latest",
   newMessage: "New message",

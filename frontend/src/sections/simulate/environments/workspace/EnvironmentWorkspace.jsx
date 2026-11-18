@@ -51,6 +51,7 @@ import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
+import useChatFiles from "./sources/useChatFiles";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -138,6 +139,9 @@ export default function EnvironmentWorkspace() {
   // { ids, trials, initialPicks, seed } of the run awaiting version picks.
   const [runDialog, setRunDialog] = useState(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const chatFiles = useChatFiles(env, chat, {
+    onReviewChanges: () => setReviewOpen(true),
+  });
   const runMutation = useMutation({
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
@@ -630,9 +634,10 @@ export default function EnvironmentWorkspace() {
           }
           chat={({ collapse, open, collapseRef }) => (
             <BuilderConsole
-              turns={chat.turns}
+              turns={chatFiles.turns}
               running={chat.running}
-              onSend={chat.send}
+              onSend={chatFiles.send}
+              canAttach
               onStop={chat.stop}
               canStop={chat.canStop}
               working={chat.working}
