@@ -31,6 +31,10 @@ from simulate.models.hosted_harness import (
     HostedHarnessScenario,
 )
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.services.call_provider import (
+    call_agent_provider,
+    call_agent_provider_expression,
+)
 from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.services.run_results_v3 import (
     CALL_ROW_METADATA_KEYS,
@@ -506,6 +510,41 @@ def test_provider_tracks_the_called_version_across_results_analytics_and_csv(run
     assert {
         r["provider"]: r["total"] for r in _breakdown_run_calls(query, "provider")
     } == {"vapi": 2, "livekit": 1}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        ({"vapi": {"id": 1}}, "vapi"),
+        ({"retell": {"id": 1}, "vapi": {"id": 2}}, "vapi"),
+        ({"livekit": {"id": 1}, "retell": {"id": 2}, "vapi": {}}, "retell"),
+        ({"retell": [1], "livekit": {"id": 1}, "eleven_labs": {"id": 2}}, "livekit"),
+        ({"others": {"id": 1}, "eleven_labs": {"id": 2}}, "eleven_labs"),
+        ({"custom": {"id": 1}, "others": {"id": 2}}, "others"),
+        ({"vapi": None, "custom": {"id": 1}}, "custom"),
+        ({"vapi": {}, "custom": "not an object"}, None),
+    ],
+)
+def test_unconfigured_call_provider_payload_fallback_in_python_and_sql(
+    run, payload, expected
+):
+    execution, calls, _, _ = run
+    agent = execution.agent_definition
+    agent.provider = None
+    agent.save(update_fields=["provider"])
+    call = calls[0]
+    call.provider_call_data = payload
+    call.save(update_fields=["provider_call_data"])
+    call.refresh_from_db()
+
+    assert call_agent_provider(call) == expected
+    assert (
+        execution.calls.annotate(result_provider=call_agent_provider_expression())
+        .values_list("result_provider", flat=True)
+        .get(pk=call.pk)
+        == expected
+    )
 
 
 @pytest.mark.django_db

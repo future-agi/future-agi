@@ -544,7 +544,7 @@ class TestCallExecutionDetailView:
 
         assert response.status_code == status.HTTP_200_OK
         payload = response.json()
-        assert payload["provider"] == provider
+        assert payload["provider"] == (provider or "livekit")
         assert payload["attributes"]["raw_log"]["room_sid"] == "RM_test"
 
     def test_reads_livekit_call_without_recording_or_vapi_key(

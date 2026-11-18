@@ -7,8 +7,17 @@ from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Coalesce, NullIf
 
 from simulate.models import AgentVersion, CallExecution, TestExecution
+from tracer.models.observability_provider import ProviderChoices
 
 HOSTED_TARGET_PROVIDER = "hosted_target_provider"
+# Legacy call-detail order, used only when no target provider was recorded or configured.
+_PAYLOAD_PROVIDER_ORDER = (
+    ProviderChoices.VAPI.value,
+    ProviderChoices.RETELL.value,
+    ProviderChoices.LIVEKIT.value,
+    ProviderChoices.ELEVEN_LABS.value,
+    ProviderChoices.OTHERS.value,
+)
 
 
 def record_hosted_voice_target(calls, version, provider: str) -> None:
@@ -28,17 +37,34 @@ def record_hosted_voice_target(calls, version, provider: str) -> None:
 def _configured_provider(
     execution: TestExecution, call_version: AgentVersion | None = None
 ) -> str | None:
-    version = call_version or getattr(execution, "agent_version", None)
-    if version is not None:
-        return version.configuration_snapshot.get("provider") or None
+    for version in (call_version, getattr(execution, "agent_version", None)):
+        if version is not None and isinstance(version.configuration_snapshot, dict):
+            if provider := version.configuration_snapshot.get("provider"):
+                return cast("str", provider)
     return getattr(execution.agent_definition, "provider", None) or None
+
+
+def _payload_provider(data: object) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    for provider in _PAYLOAD_PROVIDER_ORDER:
+        payload = data.get(provider)
+        if isinstance(payload, dict) and payload:
+            return provider
+    return next(
+        (key for key, value in data.items() if isinstance(value, dict) and value), None
+    )
 
 
 def execution_agent_provider(execution: TestExecution) -> str | None:
     # A partial rerun may have called a different target. Do not present a
     # single provider for the entire run if the recorded calls disagree.
     calls = execution.calls.filter(deleted=False)
-    if calls.filter(call_metadata__has_key=HOSTED_TARGET_PROVIDER).exists():
+    configured = _configured_provider(execution)
+    if (
+        not configured
+        or calls.filter(call_metadata__has_key=HOSTED_TARGET_PROVIDER).exists()
+    ):
         providers = list(
             calls.order_by()
             .annotate(result_provider=call_agent_provider_expression())
@@ -46,7 +72,7 @@ def execution_agent_provider(execution: TestExecution) -> str | None:
             .distinct()[:2]
         )
         return providers[0] if len(providers) == 1 else None
-    return _configured_provider(execution)
+    return configured
 
 
 def call_agent_provider(call: CallExecution) -> str | None:
@@ -57,31 +83,49 @@ def call_agent_provider(call: CallExecution) -> str | None:
         return cast("str", metadata[HOSTED_TARGET_PROVIDER])
     return _configured_provider(
         call.test_execution, getattr(call, "agent_version", None)
+    ) or _payload_provider(call.provider_call_data)
+
+
+class _FirstObjectPayloadKey(Func):
+    """First non-empty object in the stored JSONB object, including custom keys."""
+
+    output_field = TextField()
+    template = (
+        "(CASE WHEN jsonb_typeof(%(expressions)s) = 'object' THEN "
+        "(SELECT p.key FROM jsonb_each(%(expressions)s) AS p "
+        "WHERE jsonb_typeof(p.value) = 'object' AND p.value <> '{}'::jsonb LIMIT 1) END)"
     )
 
 
 def call_agent_provider_expression() -> Coalesce:
     """SQL equivalent of call_agent_provider for pages, exports and aggregation."""
+    empty = Value("", output_field=TextField())
     return Coalesce(
-        KeyTextTransform(HOSTED_TARGET_PROVIDER, "call_metadata"),
+        NullIf(KeyTextTransform(HOSTED_TARGET_PROVIDER, "call_metadata"), empty),
         NullIf(
-            Case(
-                When(
-                    agent_version_id__isnull=False,
-                    then=KeyTextTransform(
-                        "provider", "agent_version__configuration_snapshot"
-                    ),
-                ),
-                When(
-                    test_execution__agent_version_id__isnull=False,
-                    then=KeyTextTransform(
-                        "provider",
-                        "test_execution__agent_version__configuration_snapshot",
-                    ),
-                ),
-                default=F("test_execution__agent_definition__provider"),
-                output_field=TextField(),
-            ),
-            Value("", output_field=TextField()),
+            KeyTextTransform("provider", "agent_version__configuration_snapshot"), empty
         ),
+        NullIf(
+            KeyTextTransform(
+                "provider", "test_execution__agent_version__configuration_snapshot"
+            ),
+            empty,
+        ),
+        NullIf(F("test_execution__agent_definition__provider"), empty),
+        Case(
+            *(
+                # PostgreSQL sorts all non-objects below objects, and an empty
+                # object below every non-empty object: > {} matches exactly the
+                # same payloads as `isinstance(payload, dict) and payload`.
+                When(
+                    provider_call_data__has_key=provider,
+                    **{f"provider_call_data__{provider}__gt": {}},
+                    then=Value(provider),
+                )
+                for provider in _PAYLOAD_PROVIDER_ORDER
+            ),
+            default=_FirstObjectPayloadKey("provider_call_data"),
+            output_field=TextField(),
+        ),
+        output_field=TextField(),
     )
