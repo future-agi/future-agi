@@ -16,6 +16,10 @@ export const SEQUENCE_COPY = {
   stoppedByUser: "Stopped by the user",
   stoppedByUserFull: "The user stopped the call before an answer came back.",
   notKept: "Not kept: this call's record reached its size limit",
+  modelTokens: (model, tokens) =>
+    [model, tokens ? `${tokens.toLocaleString()} tokens` : null]
+      .filter(Boolean)
+      .join(" · "),
   // The world's refusal codes in plain words; one not listed reads only as "Refused".
   refusalWords: {
     not_permitted: "not permitted",

@@ -129,6 +129,7 @@ export default function StepDetail({
       (waited ? C.waited(took(step.dur)) : C.took(took(step.dur))),
     step.turns > 1 && C.turns(step.turns),
     step.kind === "handoff" && step.tools > 0 && C.toolCalls(step.tools),
+    step.usage && C.modelTokens(step.usage.model, step.usage.tokens),
   ].filter(Boolean);
   const link = linkOf ? linkOf(step) : null;
   const endState =

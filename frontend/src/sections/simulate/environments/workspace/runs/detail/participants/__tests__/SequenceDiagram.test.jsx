@@ -10,6 +10,7 @@ import {
   callStep,
   handOffStep,
   timeline,
+  WORKERS,
 } from "../__fixtures__/workerRecord";
 
 const seqOf = (record) =>
@@ -268,6 +269,20 @@ describe("SequenceDiagram", () => {
     draw(seqOf(timeline({ steps })), { selected: 3 });
     expect(screen.getByTestId("step-detail")).toHaveTextContent(
       "Not kept: this call's record reached its size limit",
+    );
+  });
+
+  it("shows a participant's model and token total once, on its first hand-off", () => {
+    const record = timeline({
+      workers: WORKERS.map((one) =>
+        one.id === "order_lookup"
+          ? { ...one, model: "gpt-4o", tokens: 1234 }
+          : one,
+      ),
+    });
+    draw(seqOf(record), { selected: 2 });
+    expect(screen.getByTestId("step-detail")).toHaveTextContent(
+      "gpt-4o · 1,234 tokens",
     );
   });
 

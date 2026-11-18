@@ -178,6 +178,7 @@ const stepsOfTurn = (t, coord, laneInfo, push) => {
       turn: t.n,
       key: w.key,
       parentKey: w.parentKey ?? null,
+      usage: w.usage ?? null,
       spanId: w.spanId,
       traceId: w.traceId,
       endState: w.endState,
