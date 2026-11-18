@@ -138,3 +138,24 @@ def test_a_completed_trial_with_missing_verdicts_is_a_grading_failure(
     message = _apply_ungraded_receipt(projected_call, None)
 
     assert message.endswith("This is a grading failure, not an agent failure.")
+
+
+def test_a_grading_failure_names_the_sub_goals_that_were_not_measured(projected_call):
+    hosted_harness_ingestion._apply_receipt_to_call(
+        SimpleNamespace(
+            call_execution=projected_call, job=SimpleNamespace(), scenario_key="s"
+        ),
+        {
+            "digest": "partly-measured",
+            "status": "failed",
+            "call": None,
+            "sub_goals": [
+                {"name": "said_the_fee", "verdict": "pass"},
+                {"name": "heard_the_supervisor", "verdict": "unmeasured"},
+                {"name": "cancelled_once", "held": None},
+            ],
+            "failure": None,
+        },
+    )
+    message = projected_call.call_metadata["harness_grading_error"]
+    assert "(1/3 executed, 1 not measured)" in message

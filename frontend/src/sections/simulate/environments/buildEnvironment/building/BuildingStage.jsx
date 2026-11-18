@@ -1,6 +1,9 @@
 import PropTypes from "prop-types";
 
-import { ENV_SHAPE, ENV_STATE_SHAPE } from "../../workspace/overview/overview.constants";
+import {
+  ENV_SHAPE,
+  ENV_STATE_SHAPE,
+} from "../../workspace/overview/overview.constants";
 import ChatSplitPane from "../../components/ChatSplitPane";
 import BuilderConsole from "../console/BuilderConsole";
 import PanelBoundary from "./PanelBoundary";
@@ -23,7 +26,16 @@ import BuildingPane from "./BuildingPane";
  * to the active ALK run and watch its reading events while it authors. `chat`
  * falls back to `progress` when absent (e.g. a mock-only build).
  */
-export default function BuildingStage({ progress, chat, env, envState, patch, primed, source, world }) {
+export default function BuildingStage({
+  progress,
+  chat,
+  env,
+  envState,
+  patch,
+  primed,
+  source,
+  world,
+}) {
   const p = progress || {};
   const console_ = chat || p;
   return (
@@ -40,6 +52,7 @@ export default function BuildingStage({ progress, chat, env, envState, patch, pr
           stopping={console_.stopping}
           frozen={console_.frozen}
           frozenReason={console_.frozenReason}
+          answerWithOptions={console_.answerWithOptions}
           onCollapse={collapse}
           collapseRef={collapseRef}
           active={open}
