@@ -90,6 +90,32 @@ def _instant_sizing(task) -> dict:
     return sizing
 
 
+def _dispatch_sync(task, task_queue, conflict_policy, *, workflow_confirmed_stopped):
+    workflow_class, workflow_input = _select(
+        task, task_queue, workflow_confirmed_stopped=workflow_confirmed_stopped
+    )
+    return start_workflow_sync(
+        workflow_class=workflow_class,
+        workflow_input=workflow_input,
+        workflow_id=_workflow_id(str(task.id)),
+        task_queue=task_queue,
+        cancel_existing=False,
+        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        id_conflict_policy=conflict_policy,
+    ).id
+
+
+def start_recovery_workflow_sync(task) -> str:
+    """Start only a new run after the sweep's CLOSED/ABSENT describe.
+
+    A successful start must have consumed this generation's input. FAIL makes
+    a racing live owner a conflict, never a success and never a termination.
+    """
+    return _dispatch_sync(
+        task, "tasks_s", WorkflowIDConflictPolicy.FAIL, workflow_confirmed_stopped=True
+    )
+
+
 def start_eval_task_workflow_sync(
     task,
     task_queue: str = "tasks_s",
@@ -107,8 +133,7 @@ def start_eval_task_workflow_sync(
     task's workflow id found nothing draining, because the first thing a fresh
     run does is reap: see ``_describe_says_nothing_is_draining``. The starter
     takes that describe itself unless the caller passes the answer of one it
-    has just taken — the sweep's restart does, so a restart costs one describe
-    and cannot lose the answer to a second call failing. Only a coalescing
+    has just taken. Only a coalescing
     start may bring its own answer. A coalescing start that finds a live
     execution is absorbed by it, input and all, so the answer only ever
     reaches a run that started with nothing draining. A replacing start
@@ -122,28 +147,16 @@ def start_eval_task_workflow_sync(
             "a replacing start must describe the workflow itself; "
             "workflow_confirmed_stopped is for coalescing starts only"
         )
-    workflow_class, workflow_input = _select(
-        task,
-        task_queue,
-        workflow_confirmed_stopped=workflow_confirmed_stopped,
-    )
-    conflict_policy = (
-        WorkflowIDConflictPolicy.TERMINATE_EXISTING
-        if replace_existing
-        else WorkflowIDConflictPolicy.USE_EXISTING
-    )
-    workflow_id = _workflow_id(str(task.id))
 
     def dispatch():
-        return start_workflow_sync(
-            workflow_class=workflow_class,
-            workflow_input=workflow_input,
-            workflow_id=workflow_id,
-            task_queue=task_queue,
-            cancel_existing=False,
-            id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
-            id_conflict_policy=conflict_policy,
-        ).id
+        return _dispatch_sync(
+            task,
+            task_queue,
+            WorkflowIDConflictPolicy.TERMINATE_EXISTING
+            if replace_existing
+            else WorkflowIDConflictPolicy.USE_EXISTING,
+            workflow_confirmed_stopped=workflow_confirmed_stopped,
+        )
 
     if replace_existing and getattr(task, "workflow_generation", None):
         from django.db import transaction
@@ -160,7 +173,7 @@ def start_eval_task_workflow_sync(
                 .first()
             )
             if current != task.workflow_generation:
-                return workflow_id
+                return _workflow_id(str(task.id))
             return dispatch()
     return dispatch()
 
@@ -302,6 +315,7 @@ __all__ = [
     "describe_eval_task_workflow_async",
     "describe_eval_task_workflow_sync",
     "start_eval_task_workflow_sync",
+    "start_recovery_workflow_sync",
     "start_eval_task_workflow_async",
     "signal_pause_eval_task_workflow",
 ]

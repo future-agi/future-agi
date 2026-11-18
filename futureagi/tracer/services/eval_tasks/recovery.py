@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import structlog
 from django.db import transaction
+from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from tfc.temporal.eval_tasks.types import ReapInput
 from tracer.models.eval_task import EvalTask, EvalTaskStatus
@@ -96,22 +97,15 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
     sweepable, nothing written — and a later tick restarts it once a claim is
     reclaimable. ``deferred`` reports it.
 
-    The restart coalesces (``replace_existing=False``) rather than terminating:
-    the workflow id is per task, so the Temporal server decides atomically
-    whether a live execution already owns it. A describe is a read taken a
-    moment earlier, so terminating on it would kill a workflow a user started
-    in between — the exact failure this whole change exists to prevent. For the
-    same reason ``restarted`` counts starts *issued*: one that coalesced onto an
-    execution started in the gap is counted too, because the server resolves
-    that and does not report which way it went. Coalescing is also what lets
-    the describe's answer travel with the start: a start absorbed by an
-    execution begun in the gap is discarded with its input, so the answer only
-    reaches a run that started with nothing draining.
+    A restart must both fence the closed run's late writes and leave a racing
+    live owner alone. Rotate the generation under the task lock and ask Temporal
+    to fail on conflict. Only a new start can then acknowledge our generation;
+    a conflict defers the task without committing the handoff.
     """
     from tfc.temporal.eval_tasks.client import (
         WF_PROGRESSING,
         describe_eval_task_workflow_sync,
-        start_eval_task_workflow_sync,
+        start_recovery_workflow_sync,
     )
 
     outcome = {
@@ -154,33 +148,32 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
             outcome["deferred"] = True
             return outcome
 
-        def restart(candidate):
-            # The sweep keeps USE_EXISTING: never terminate an execution that
-            # started after the describe above. Reuse its answer for the reap.
-            start_eval_task_workflow_sync(
-                candidate, replace_existing=False, workflow_confirmed_stopped=True
-            )
-
-        if task.status == EvalTaskStatus.FAILED:
-            # As with a manual Resume, a refused start must leave the failed
-            # row retryable with its original diagnostic. Check under the lock
-            # so a concurrent manual handoff, pause or delete wins.
-            with transaction.atomic():
-                failed = (
-                    EvalTask.objects.select_for_update()
-                    .filter(
-                        pk=task.pk,
-                        status=EvalTaskStatus.FAILED,
-                        workflow_generation=task.workflow_generation,
-                    )
-                    .first()
+        with transaction.atomic():
+            current = (
+                EvalTask.no_workspace_objects.select_for_update()
+                .filter(
+                    pk=task.pk,
+                    status=task.status,
+                    workflow_generation=task.workflow_generation,
                 )
-                if failed is None:
-                    return outcome
-                failed.prepare_workflow_replacement()
-                restart(failed)
-        else:
-            restart(task)
+                .first()
+            )
+            if current is None:
+                return outcome  # A committed handoff, pause or delete won the race.
+            # Preserve a running task's activation time: this repairs its drain,
+            # not its lifecycle. Failed tasks, like manual Resume, return to pending.
+            current.prepare_workflow_replacement(
+                status=EvalTaskStatus.RUNNING
+                if current.status == EvalTaskStatus.RUNNING
+                else EvalTaskStatus.PENDING
+            )
+            start_recovery_workflow_sync(current)
+    except WorkflowAlreadyStartedError:
+        # Outside atomic: keep the previous generation and diagnostic. If the
+        # existing execution lost its start ack it will exit at admission; the
+        # next tick can then start a fresh owner. Never terminate it here.
+        outcome["deferred"] = True
+        return outcome
     except Exception as exc:
         raise RecoveryInterrupted(outcome, exc) from exc
     outcome["restarted"] = True

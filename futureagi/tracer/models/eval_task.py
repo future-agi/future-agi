@@ -106,9 +106,9 @@ class EvalTask(BaseModel):
         db_index=True,
     )
 
-    def prepare_workflow_replacement(self):
+    def prepare_workflow_replacement(self, *, status=EvalTaskStatus.PENDING):
         self.workflow_generation = uuid.uuid4()
-        self.status = EvalTaskStatus.PENDING
+        self.status = status
         self.failure_reason = None
         self.save(update_fields=["workflow_generation", "status", "failure_reason"])
 
