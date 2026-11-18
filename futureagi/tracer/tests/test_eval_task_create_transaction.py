@@ -5,7 +5,6 @@ mutations are test doubles, not evidence of real Temporal acceptance semantics.
 """
 
 from traceback import format_exception
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -13,10 +12,7 @@ import structlog
 from django.db import connections, transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
-from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
-from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from tfc.temporal.eval_tasks import client as eval_task_client
 from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 from tracer.services.filter_principal_context import FilterPrincipalContextError
@@ -31,8 +27,6 @@ pytestmark = [
     pytest.mark.django_db(transaction=True),
 ]
 _CREATE = "/tracer/eval-task/"
-# Bind before the package's autouse fixture replaces this with a transport stub.
-_REAL_STARTER = eval_task_client.start_eval_task_workflow_sync
 
 
 def payload(project, config, **overrides):
@@ -53,43 +47,6 @@ def starter(monkeypatch):
     start = Mock(return_value="synthetic-workflow")
     monkeypatch.setattr("tracer.views.eval_task.start_eval_task_workflow_sync", start)
     return start
-
-
-@pytest.fixture
-def temporal_server(monkeypatch, starter):
-    """Policy-aware transport double; the view and sync starter remain real."""
-    executions = []
-
-    def describe(_task_id):
-        if not executions:
-            return eval_task_client.WF_ABSENT
-        if executions[-1] == "running":
-            return eval_task_client.WF_PROGRESSING
-        return eval_task_client.WF_CLOSED
-
-    def submit(**kwargs):
-        handle = SimpleNamespace(id=kwargs["workflow_id"])
-        if executions and executions[-1] == "running":
-            if kwargs["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING:
-                return handle
-            raise WorkflowAlreadyStartedError(handle.id, "HistoricalEvalTaskWorkflow")
-        if executions and (
-            kwargs["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
-        ):
-            raise WorkflowAlreadyStartedError(handle.id, "HistoricalEvalTaskWorkflow")
-        executions.append("running")
-        return handle
-
-    start = Mock(side_effect=submit)
-    monkeypatch.setattr(eval_task_client, "start_workflow_sync", start)
-    monkeypatch.setattr(eval_task_client, "describe_eval_task_workflow_sync", describe)
-    monkeypatch.setattr(
-        "tracer.views.eval_task.describe_eval_task_workflow_sync",
-        describe,
-        raising=False,
-    )
-    starter.side_effect = _REAL_STARTER
-    return SimpleNamespace(executions=executions, start=start, submit=submit)
 
 
 def task_snapshot(task_id):
@@ -124,32 +81,14 @@ def assert_safe_failure_log(caplog, event, failure_type, private_payload):
         assert "Traceback (most recent call last)" not in rendered
 
 
-def assert_already_started_log(caplog, task_id):
-    records = [
-        record for record in caplog.records if record.name == "tracer.views.eval_task"
-    ]
-    assert len(records) == 1
-    record = records[0]
-    assert record.levelname == "INFO"
-    assert record.msg["event"] == "eval_task.create_already_started"
-    assert record.msg["task_id"] == task_id
-    assert not record.args
-    assert not record.exc_info
-    assert record.exc_text is None
-    assert record.stack_info is None
-    assert not {"error_type", "exception", "exc_info", "stack_info"}.intersection(
-        record.msg
-    )
-
-
 def assert_saved(response, starter):
     assert response.status_code == 200, response.content
     assert response.json()["status"] is True
     task_id = response.json()["result"]["id"]
     starter.assert_called_once()
     assert str(starter.call_args.args[0].pk) == task_id
-    # Fence the initial start, without replacing or inferring "confirmed stopped".
-    assert starter.call_args.kwargs == {"start_once": True}
+    # No replacement, additional start, or inferred "confirmed stopped" input.
+    assert starter.call_args.kwargs == {}
     return task_id
 
 
@@ -279,7 +218,7 @@ def test_initial_dispatch_sees_committed_task_and_relations_from_another_connect
 ):
     seen = {}
 
-    def observe(task, **kwargs):
+    def observe(task):
         seen["in_atomic_block"] = connections["default"].in_atomic_block
         observer = connections["default"].copy()
         try:
@@ -327,138 +266,6 @@ def test_initial_dispatch_sees_committed_task_and_relations_from_another_connect
     assert saved["continuous_cursor"] is None
 
 
-def test_create_passes_start_once_to_workflow_client(
-    auth_client, project, custom_eval_config, starter, temporal_server
-):
-    response = auth_client.post(
-        _CREATE, payload(project, custom_eval_config), format="json"
-    )
-
-    task_id = assert_saved(response, starter)
-    temporal_server.start.assert_called_once()
-    submitted = temporal_server.start.call_args.kwargs
-    assert submitted["workflow_id"] == f"eval-task-{task_id}"
-    assert submitted["cancel_existing"] is False
-    assert submitted["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
-    assert submitted["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
-    assert temporal_server.executions == ["running"]
-
-
-@pytest.mark.parametrize("existing_state", ["running", "closed"])
-def test_create_dispatch_does_not_restart_an_existing_execution(
-    auth_client,
-    project,
-    custom_eval_config,
-    starter,
-    temporal_server,
-    existing_state,
-    caplog,
-):
-    caplog.set_level("INFO", logger="tracer.views.eval_task")
-    # At submission time a delayed create dispatch can find a retry's execution,
-    # including one that has already closed. The server arbitrates, not describe.
-    temporal_server.executions.append(existing_state)
-
-    response = auth_client.post(
-        _CREATE, payload(project, custom_eval_config), format="json"
-    )
-
-    task_id = assert_saved(response, starter)
-    temporal_server.start.assert_called_once()
-    assert temporal_server.start.call_args.kwargs["workflow_id"] == (
-        f"eval-task-{task_id}"
-    )
-    assert temporal_server.executions == [existing_state]
-    saved = task_snapshot(task_id)
-    assert saved["status"] == EvalTaskStatus.PENDING
-    assert saved["last_run"] is not None
-    assert saved["start_time"] is None
-    assert saved["end_time"] is None
-    if existing_state == "closed":
-        assert_already_started_log(caplog, task_id)
-    else:
-        assert not [
-            record
-            for record in caplog.records
-            if record.name == "tracer.views.eval_task"
-        ]
-
-
-def test_retry_completes_before_delayed_original_create_dispatch(
-    auth_client, project, custom_eval_config, starter, temporal_server, caplog
-):
-    caplog.set_level("INFO", logger="tracer.views.eval_task")
-    ordering = []
-    outcomes = {}
-
-    def retry_before_original_submit(**kwargs):
-        if ordering:
-            ordering.append("retry_submitted")
-            return temporal_server.submit(**kwargs)
-
-        # Pause the original dispatch after its describe, before server acceptance.
-        # A nested request deterministically models the other client's Start task.
-        ordering.append("original_dispatch_waiting")
-        outcomes["in_atomic_block"] = connections["default"].in_atomic_block
-        task_id = kwargs["workflow_id"].removeprefix("eval-task-")
-        outcomes["retry"] = auth_client.post(
-            f"/tracer/eval-task/unpause_eval_task/?eval_task_id={task_id}",
-            {"start": True},
-            format="json",
-        )
-        assert outcomes["retry"].status_code == 200
-        assert temporal_server.executions == ["running"]
-        # Simulate the accepted retry's worker finishing before the original RPC.
-        now = timezone.now()
-        EvalTask.all_objects.using("default").filter(pk=task_id).update(
-            status=EvalTaskStatus.COMPLETED,
-            start_time=now,
-            end_time=now,
-            last_run=now,
-        )
-        outcomes["worker_task"] = task_snapshot(task_id)
-        temporal_server.executions[-1] = "closed"
-        ordering.append("retry_completed")
-        try:
-            return temporal_server.submit(**kwargs)
-        finally:
-            ordering.append("original_dispatch_submitted")
-
-    temporal_server.start.side_effect = retry_before_original_submit
-    response = auth_client.post(
-        _CREATE, payload(project, custom_eval_config), format="json"
-    )
-
-    assert response.status_code == 200, response.content
-    assert response.json()["status"] is True
-    task_id = response.json()["result"]["id"]
-    assert outcomes["in_atomic_block"] is False
-    assert outcomes["retry"].status_code == 200
-    assert outcomes["retry"].json()["result"]["message"] == "Task start accepted"
-    assert ordering == [
-        "original_dispatch_waiting",
-        "retry_submitted",
-        "retry_completed",
-        "original_dispatch_submitted",
-    ]
-    assert temporal_server.executions == ["closed"]
-    assert task_snapshot(task_id) == outcomes["worker_task"]
-    assert starter.call_count == temporal_server.start.call_count == 2
-    assert starter.call_args_list[0].kwargs == {"start_once": True}
-    assert starter.call_args_list[1].kwargs == {
-        "start_once": True,
-        "workflow_confirmed_stopped": True,
-    }
-    for call in temporal_server.start.call_args_list:
-        assert call.kwargs["workflow_id"] == f"eval-task-{task_id}"
-        assert call.kwargs["cancel_existing"] is False
-        assert (
-            call.kwargs["id_conflict_policy"] == WorkflowIDConflictPolicy.USE_EXISTING
-        )
-        assert call.kwargs["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
-    assert_already_started_log(caplog, task_id)
-
-
 @pytest.mark.parametrize("outer_transaction", [False, True])
 @pytest.mark.parametrize(
     "failure_type", [RuntimeError, ValidationError, FilterPrincipalContextError]
@@ -476,7 +283,7 @@ def test_start_failure_before_acknowledgement_keeps_saved_pending_and_safe_logs(
     private_payload = "synthetic private provider payload must not be logged"
     before = {}
 
-    def unavailable(task, **kwargs):
+    def unavailable(task):
         before.update(task_snapshot(task.pk))
         raise failure_type(private_payload)
 
@@ -526,7 +333,7 @@ def test_uncertain_ack_after_simulated_worker_preserves_results_and_all_markers(
 ):
     worker = {}
 
-    def accepted_but_reply_lost(task, **kwargs):
+    def accepted_but_reply_lost(task):
         now = timezone.now()
         EvalTask.objects.using("default").filter(pk=task.pk).update(
             status=worker_status,
