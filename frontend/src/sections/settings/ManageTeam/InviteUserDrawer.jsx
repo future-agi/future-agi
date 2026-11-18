@@ -13,6 +13,7 @@ import { useSnackbar } from "src/components/snackbar";
 import { generateNameFromEmail } from "src/sections/auth/jwt/common";
 
 import { InviteMemberValidation } from "./validation";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const InviteUserDrawerForm = ({ onClose }) => {
   const { control, handleSubmit, setError } = useForm({
@@ -119,7 +120,7 @@ const InviteUserDrawerForm = ({ onClose }) => {
           Invite User
         </Typography>
         <IconButton onClick={() => onClose()}>
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       <Box
@@ -170,20 +171,23 @@ InviteUserDrawerForm.propTypes = {
 const InviteUserDrawer = (props) => {
   const theme = useTheme();
   const { open, onClose } = props;
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "80vh",
-          width: "550px",
+          width: "480px",
           position: "fixed",
           zIndex: 9999,
           top: "10%",
           right: 30,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           "& .MuiDrawer-paper": {
             boxShadow: theme.shadows[15],

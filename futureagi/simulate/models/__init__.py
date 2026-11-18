@@ -1,4 +1,5 @@
 from .agent_definition import AgentDefinition, ProviderCredentials
+from .agent_fix import AgentFixCandidate, AgentFixRun
 from .agent_optimiser import AgentOptimiser
 from .agent_optimiser_run import AgentOptimiserRun
 from .agent_prompt_optimiser_run import AgentPromptOptimiserRun
@@ -14,11 +15,12 @@ from .call_log_entry import CallLogEntry
 from .chat_message import ChatMessageModel
 from .chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
 from .component_evaluation import ComponentEvaluation
+from .eval_config import SimulateEvalConfig
+from .evidence_import import EvidenceImport, EvidenceImportCase
 from .harness_environment_credentials import (
     HarnessCredentialFile,
     HarnessEnvironmentCredentials,
 )
-from .eval_config import SimulateEvalConfig
 from .harness_versioning import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
@@ -31,6 +33,7 @@ from .harness_versioning import (
 from .hosted_harness import (
     HostedHarnessArtifact,
     HostedHarnessAttempt,
+    HostedHarnessBuilderTurnUsage,
     HostedHarnessCleanupReceipt,
     HostedHarnessConversation,
     HostedHarnessConversationEvent,
@@ -38,9 +41,9 @@ from .hosted_harness import (
     HostedHarnessConversationMessage,
     HostedHarnessConversationTranscript,
     HostedHarnessEvent,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessManifest,
-    HostedHarnessExecution,
     HostedHarnessReceipt,
     HostedHarnessScenario,
     HostedHarnessSecret,
@@ -57,11 +60,16 @@ from .test_execution import (
     CallExecution,
     CallExecutionSnapshot,
     CallTranscript,
+    CallTranscriptActor,
     TestExecution,
 )
 from .trial_item_result import TrialItemResult
 
 __all__ = [
+    "AgentFixCandidate",
+    "AgentFixRun",
+    "EvidenceImport",
+    "EvidenceImportCase",
     "Scenarios",
     "AgentDefinition",
     "ProviderCredentials",
@@ -91,6 +99,7 @@ __all__ = [
     "TestExecution",
     "CallExecution",
     "CallTranscript",
+    "CallTranscriptActor",
     "CallExecutionSnapshot",
     "CallLogEntry",
     "ScenarioGraph",
@@ -103,6 +112,7 @@ __all__ = [
     "TrialItemResult",
     "HostedHarnessArtifact",
     "HostedHarnessAttempt",
+    "HostedHarnessBuilderTurnUsage",
     "HostedHarnessCleanupReceipt",
     "HostedHarnessConversation",
     "HostedHarnessConversationEvent",

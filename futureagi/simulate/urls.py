@@ -1,6 +1,11 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from simulate.views.agent_fix import (
+    AgentFixEngineViewSet,
+    AgentFixModelView,
+    AgentFixRunViewSet,
+)
 from simulate.views.agent_prompt_optimiser import AgentPromptOptimiserRunViewSet
 from simulate.views.call_transcript import (
     CallBranchAnalysisView,
@@ -143,6 +148,8 @@ router.register(
     basename="agent-definition-operations",
 )
 router.register(r"agent-prompt-optimiser", AgentPromptOptimiserRunViewSet)
+router.register(r"agent-fix-runs", AgentFixRunViewSet, basename="agent-fix-run")
+router.register(r"agent-fix-engine", AgentFixEngineViewSet, basename="agent-fix-engine")
 router.register(
     r"alk-simulate", ALKSimulateIngestionViewSet, basename="alk-simulate-ingestion"
 )
@@ -165,6 +172,11 @@ router.register(
 
 urlpatterns = [
     path("api/", include(router.urls)),
+    path(
+        "api/agent-fix-engine/<uuid:pk>/v1/chat/completions",
+        AgentFixModelView.as_view(),
+        name="agent-fix-engine-model",
+    ),
     path(
         "test-executions/<uuid:test_execution_id>/debug-analysis/",
         TestExecutionDebugAnalysisView.as_view(),

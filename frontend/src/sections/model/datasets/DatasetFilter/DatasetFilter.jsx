@@ -1,93 +1,52 @@
-import { Box, Button, Card, Collapse, Typography } from "@mui/material";
-import React from "react";
+import { Box } from "@mui/material";
 import PropTypes from "prop-types";
-import Iconify from "src/components/iconify";
+import React, { useCallback, useMemo, useState } from "react";
+import { FilterPanel } from "src/components/filter";
+import {
+  blankDatasetFilter,
+  fromPanelValue,
+  propertiesToFields,
+  toPanelValue,
+} from "./panelAdapter";
 
-import DatasetFilterRow from "./DatasetFilterRow";
-
+/**
+ * Model dataset filter. Same props as before; the editing surface is the
+ * shared Filter panel, opened below the toolbar.
+ */
 const DatasetFilter = ({
   filterOpen,
+  setFilterOpen,
   filters,
   properties,
   setFilters,
   datasetOptions,
-  addFilter,
-  removeFilter,
 }) => {
-  const setValuesForIndex = (idx, values) => {
-    setFilters((f) =>
-      f.map((obj, index) => {
-        if (index === idx) {
-          return {
-            ...obj,
-            ...values,
-          };
-        }
-        return { ...obj };
-      }),
-    );
-  };
+  const [anchorEl, setAnchorEl] = useState(null);
+  const fields = useMemo(
+    () => propertiesToFields(properties, datasetOptions),
+    [properties, datasetOptions],
+  );
+  const value = useMemo(() => toPanelValue(filters, fields), [filters, fields]);
+  const handleChange = useCallback(
+    (rows) => {
+      const next = fromPanelValue(rows, fields);
+      setFilters(() => (next.length ? next : [blankDatasetFilter()]));
+    },
+    [fields, setFilters],
+  );
 
   return (
-    <Collapse in={filterOpen}>
-      <Box sx={{ paddingY: "10px", paddingX: "20px" }}>
-        <Box
-          sx={{
-            borderWidth: 2,
-            borderStyle: "dashed",
-            borderColor: "divider",
-            borderRadius: 2,
-            padding: "7px",
-          }}
-        >
-          <Typography
-            fontSize="16px"
-            fontWeight={700}
-            color="text.disabled"
-            sx={{ paddingX: 2, paddingY: "12px" }}
-          >
-            Filter
-          </Typography>
-
-          <Card sx={{ padding: 2, border: "none", display: "flex" }}>
-            <Box
-              sx={{
-                flex: 1,
-                display: "flex",
-                gap: "14px",
-                flexDirection: "column",
-              }}
-            >
-              {filters.map((filter, idx) => (
-                <DatasetFilterRow
-                  key={filter.id}
-                  properties={properties}
-                  setValuesForIndex={setValuesForIndex}
-                  idx={idx}
-                  filter={filter}
-                  options={datasetOptions?.[filter.key] || []}
-                  removeFilter={removeFilter}
-                  totalFilters={filters.length}
-                />
-              ))}
-            </Box>
-            <Box>
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={() => addFilter()}
-                startIcon={<Iconify icon="ic:round-plus" />}
-                sx={{
-                  "& .MuiButton-startIcon": {
-                    margin: 0,
-                  },
-                }}
-              />
-            </Box>
-          </Card>
-        </Box>
-      </Box>
-    </Collapse>
+    <>
+      <Box ref={setAnchorEl} sx={{ height: 0 }} />
+      <FilterPanel
+        anchorEl={anchorEl}
+        open={Boolean(filterOpen && anchorEl)}
+        onClose={() => setFilterOpen?.(false)}
+        fields={fields}
+        value={value}
+        onChange={handleChange}
+      />
+    </>
   );
 };
 

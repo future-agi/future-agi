@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, {
   useMemo,
   useState,

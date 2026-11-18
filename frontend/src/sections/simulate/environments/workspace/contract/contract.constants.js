@@ -1,5 +1,3 @@
-import { BUILD_TONES } from "src/sections/simulate/environments/buildEnvironment/buildTones";
-
 // The one monospace stack the contract uses for observation fields, action
 // verbs and verifier names. Kept as a constant so the string is not repeated
 // across the part components.
@@ -7,11 +5,12 @@ export const MONO_FONT = "ui-monospace, Menlo, monospace";
 
 // The three kinds of verifier that make up the reward spec. The verifiers ARE
 // the evals applied to the environment, given weights — grouped here only for
-// presentation. Colours read from BUILD_TONES.
+// presentation. Each kind is a category, so it takes a data-palette series
+// (`theme.palette.data[series]`), not a status colour.
 export const VERIFIER_KINDS = [
-  { id: "goal", label: "Goal", color: BUILD_TONES.green, blurb: "Did the task get done. Terminal, sparse." },
-  { id: "rubric", label: "Rubric", color: BUILD_TONES.blue, blurb: "How well, judged per turn. Dense." },
-  { id: "constraint", label: "Constraints", color: BUILD_TONES.red, blurb: "What must never happen. Penalty." },
+  { id: "goal", label: "Goal", series: 0, blurb: "Did the task get done. Terminal, sparse." },
+  { id: "rubric", label: "Rubric", series: 1, blurb: "How well, judged per turn. Dense." },
+  { id: "constraint", label: "Constraints", series: 2, blurb: "What must never happen. Penalty." },
 ];
 
 // Every copy string on the contract tab, so nothing is inlined in the JSX.
@@ -80,34 +79,6 @@ export const CONTRACT_COPY = {
   gapsSubtitle: "What compiling could not settle on its own",
   gapsFixGrading: "Fix in Evaluations",
   gapsReviewHere: "Review below",
-
-  actors: {
-    heading: "Actors",
-    headingBlurb:
-      "Other parties in the world, each with a goal that is not the task. They pull the episode off-course, which is what makes them part of the environment's dynamics rather than part of the task.",
-    calloutLead: "Not the same as a persona.",
-    calloutBody:
-      "The persona is who your agent is serving, the one whose goal the task is. An actor is someone else: you are trying to book a cab, and your colleague is saying let's get pizza instead.",
-    calloutLink: "See scenarios",
-    create: "Create actor",
-    castTitle: (n) => `In this environment (${n})`,
-    castSubtitle: "Injected into every run, at the version pinned here",
-    emptyIcon: "solar:users-group-two-rounded-linear",
-    emptyTitle: "No actors yet",
-    emptyBody:
-      "Without one, every run is a clean two-party conversation, which is rarely what happens in the wild.",
-    wants: "Wants:",
-    builtIn: "built in",
-    usedBy: (n) => `used by ${n}`,
-    detail: {
-      does: "What they do",
-      tests: "What it tests",
-      entry: "When they enter",
-      modalities: "Modalities",
-      traits: "Traits",
-      versions: "Versions",
-    },
-  },
 };
 
 export const GAP_LEGEND_ORDER = ["blocking", "assumed", "resolved"];

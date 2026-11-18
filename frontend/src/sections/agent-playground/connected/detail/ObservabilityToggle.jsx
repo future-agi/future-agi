@@ -8,7 +8,6 @@ import {
   Switch,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { useSetObservability } from "src/api/agents/agentDetail";
 import { useAuthContext } from "src/auth/hooks";
@@ -55,7 +54,7 @@ export default function ObservabilityToggle({ agent }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         bgcolor: "background.paper",
         overflow: "hidden",
       }}
@@ -65,7 +64,7 @@ export default function ObservabilityToggle({ agent }) {
         direction="row"
         alignItems="center"
         spacing={1}
-        sx={{ pl: 1, pr: 2, minHeight: 44 }}
+        sx={{ pl: 1, pr: 1.5, minHeight: 44 }}
       >
         <Stack
           component="label"
@@ -94,7 +93,7 @@ export default function ObservabilityToggle({ agent }) {
               />
             </span>
           </CustomTooltip>
-          <Typography sx={{ typography: "s2", fontWeight: 600, ml: 0.5 }}>
+          <Typography sx={{ typography: "s1", fontWeight: 500, ml: 0.5 }}>
             Observability
           </Typography>
         </Stack>
@@ -116,21 +115,19 @@ export default function ObservabilityToggle({ agent }) {
           alignItems="flex-start"
           spacing={1}
           sx={{
-            px: 2,
+            px: 1.5,
             py: 1,
             borderTop: "1px solid",
-            borderColor: (t) =>
-              alpha("#DC2626", t.palette.mode === "dark" ? 0.35 : 0.25),
-            bgcolor: (t) =>
-              alpha("#DC2626", t.palette.mode === "dark" ? 0.1 : 0.05),
+            borderColor: "divider",
+            bgcolor: "status.danger.bg",
           }}
         >
           <Iconify
             icon="solar:danger-circle-linear"
             width={16}
-            sx={{ color: "#DC2626", mt: 0.125, flexShrink: 0 }}
+            sx={{ color: "status.danger.fg", mt: 0.125, flexShrink: 0 }}
           />
-          <Typography sx={{ typography: "s3", color: "text.primary" }}>
+          <Typography sx={{ typography: "s2", color: "text.primary" }}>
             {error}
           </Typography>
         </Stack>
@@ -148,7 +145,7 @@ export function ObservabilityToggleSkeleton() {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         bgcolor: "background.paper",
       }}
     >
@@ -156,7 +153,7 @@ export function ObservabilityToggleSkeleton() {
         direction="row"
         alignItems="center"
         spacing={1}
-        sx={{ pl: 1, pr: 2, minHeight: 44 }}
+        sx={{ pl: 1, pr: 1.5, minHeight: 44 }}
       >
         <Stack direction="row" alignItems="center" sx={{ flexShrink: 0 }}>
           <Skeleton
@@ -165,7 +162,7 @@ export function ObservabilityToggleSkeleton() {
             height={20}
             sx={{ mx: 0.75, borderRadius: 10 }}
           />
-          <Typography sx={{ typography: "s2", fontWeight: 600, ml: 0.5 }}>
+          <Typography sx={{ typography: "s1", fontWeight: 500, ml: 0.5 }}>
             Observability
           </Typography>
         </Stack>

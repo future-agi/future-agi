@@ -86,7 +86,7 @@ describe("BudgetRBACSection", () => {
     render(<BudgetRBACSection />);
 
     expect(screen.getByText("Budgets")).toBeInTheDocument();
-    expect(screen.getByText("Budget Levels")).toBeInTheDocument();
+    expect(screen.getByText("Budget levels")).toBeInTheDocument();
     expect(screen.getByText("Hard Limit")).toBeInTheDocument();
     expect(screen.getByText("$125.00 / $1.0K")).toBeInTheDocument();
   });

@@ -15,7 +15,7 @@ function Stat({ label, value, help }) {
       <Box sx={{ minWidth: 0 }}>
         <Typography
           noWrap
-          sx={{ fontSize: 10, color: "text.secondary", lineHeight: 1.2 }}
+          sx={{ typography: "s3", color: "text.secondary" }}
         >
           {label}
         </Typography>
@@ -23,7 +23,7 @@ function Stat({ label, value, help }) {
           noWrap
           sx={{
             typography: "s2",
-            fontWeight: 700,
+            fontWeight: 500,
             fontVariantNumeric: "tabular-nums",
           }}
         >
@@ -116,6 +116,13 @@ export default function ReliabilityHeadline({ executionId, enabled }) {
           label="Inconclusive"
           value={`${reliability.inconclusive} trial${reliability.inconclusive === 1 ? "" : "s"}`}
           help="Infra, simulator or missing-evidence results. They say nothing about the agent, so they are left out of every rate."
+        />
+      )}
+      {reliability.excluded_not_comparable > 0 && (
+        <Stat
+          label="Not comparable"
+          value={`${reliability.excluded_not_comparable} trial${reliability.excluded_not_comparable === 1 ? "" : "s"}`}
+          help="Did not start from the seeded records, so they cannot show whether results repeat. They are left out of pass^1, pass^k and the range."
         />
       )}
     </Stack>

@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import PropTypes from "prop-types";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -29,16 +29,43 @@ function OverviewPanelStub({ envState, onGo }) {
     </div>
   );
 }
-OverviewPanelStub.propTypes = { envState: PropTypes.object, onGo: PropTypes.func };
+OverviewPanelStub.propTypes = {
+  envState: PropTypes.object,
+  onGo: PropTypes.func,
+};
 vi.mock("../overview/OverviewPanel", () => ({ default: OverviewPanelStub }));
-vi.mock("../contract/RlContractPanel", () => ({ default: () => <div>contract-body</div> }));
-vi.mock("../scenarios/ScenariosStep", () => ({ default: () => <div>scenarios-body</div> }));
+vi.mock("../contract/RlContractPanel", () => ({
+  default: () => <div>contract-body</div>,
+}));
+vi.mock("../actors/ActorsTab", () => ({
+  default: () => <div>actors-body</div>,
+}));
+vi.mock("../scenarios/ScenariosStep", () => ({
+  default: () => <div>scenarios-body</div>,
+}));
 vi.mock("../evals/EvalsStep", () => ({
   // eslint-disable-next-line react/prop-types
   default: ({ grading }) => <div>{`evals-body:grading=${grading}`}</div>,
 }));
-vi.mock("../runs/summary/RunsSummary", () => ({ default: () => <div>runs-body</div> }));
-vi.mock("../versions/VersionsPanel", () => ({ default: () => <div>versions-body</div> }));
+vi.mock("../runs/summary/RunsSummary", () => ({
+  default: () => <div>runs-body</div>,
+}));
+vi.mock("../versions/VersionsPanel", () => ({
+  default: () => <div>versions-body</div>,
+}));
+vi.mock("../improvements/ImprovementsPanel", () => ({
+  default: () => <div>improvements-body</div>,
+}));
+
+// No fixes unless an Improvements case says otherwise.
+const NO_FIXES = { fixes: [], count: 0, isLoading: false };
+const fixRuns = vi.hoisted(() => ({ value: null }));
+vi.mock("src/api/simulate-environments/fixRuns", () => ({
+  useEnvironmentFixRuns: () => fixRuns.value,
+}));
+beforeEach(() => {
+  fixRuns.value = NO_FIXES;
+});
 
 // The real runs hook by default; the loading cases override it.
 vi.mock("src/api/simulate-environments/runs", async (importOriginal) => {
@@ -61,7 +88,9 @@ const baseEnvState = (overrides = {}) => ({
 });
 
 function renderPanels(props = {}) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   const merged = {
     env: ENV,
     envState: baseEnvState(),
@@ -81,12 +110,35 @@ function renderPanels(props = {}) {
 }
 
 describe("WorkspacePanels", () => {
-  afterEach(() => runsApi.useEnvironmentRuns.mockImplementation(realUseEnvironmentRuns));
+  afterEach(() =>
+    runsApi.useEnvironmentRuns.mockImplementation(realUseEnvironmentRuns),
+  );
+
+  it("opens the actors tab when the environment says it has one", () => {
+    renderPanels({ env: { ...ENV, actorsTab: "edit" }, tab: "actors" });
+    expect(screen.getByRole("tab", { name: "Actors" })).toBeInTheDocument();
+    expect(screen.getByText("actors-body")).toBeInTheDocument();
+  });
+
+  it("falls back to Overview for ?tab=actors when the environment has no cast to show", () => {
+    renderPanels({ tab: "actors" });
+    expect(screen.queryByRole("tab", { name: "Actors" })).toBeNull();
+    expect(screen.getByText(/^overview-body/)).toBeInTheDocument();
+  });
 
   it("renders all workspace tabs with Overview first and Settings last once a run exists", () => {
     renderPanels({ envState: baseEnvState({ runs: [{ id: "r1" }] }) });
-    ["Overview", "Contract", "Scenarios", "Evaluations", "Runs", "Settings"].forEach((label) => {
-      expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument();
+    [
+      "Overview",
+      "Contract",
+      "Scenarios",
+      "Evaluations",
+      "Runs",
+      "Settings",
+    ].forEach((label) => {
+      expect(
+        screen.getByRole("tab", { name: new RegExp(label) }),
+      ).toBeInTheDocument();
     });
   });
 
@@ -110,9 +162,13 @@ describe("WorkspacePanels", () => {
   it("hides the Runs tab until the environment has a run", () => {
     renderPanels();
     expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
-    ["Overview", "Contract", "Scenarios", "Evaluations", "Settings"].forEach((label) => {
-      expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument();
-    });
+    ["Overview", "Contract", "Scenarios", "Evaluations", "Settings"].forEach(
+      (label) => {
+        expect(
+          screen.getByRole("tab", { name: new RegExp(label) }),
+        ).toBeInTheDocument();
+      },
+    );
   });
 
   it("falls back to the Overview for ?tab=runs while there are no runs", () => {
@@ -126,7 +182,10 @@ describe("WorkspacePanels", () => {
   it("keeps the Runs tab for ?tab=runs while the runs are loading", () => {
     runsApi.useEnvironmentRuns.mockReturnValue({ runs: [], isLoading: true });
     renderPanels({ tab: "runs" });
-    expect(screen.getByRole("tab", { name: /Runs/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /Runs/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     expect(screen.getByText("runs-body")).toBeInTheDocument();
     expect(screen.queryByText(/^overview-body:/)).toBeNull();
   });
@@ -139,11 +198,17 @@ describe("WorkspacePanels", () => {
 
   it("badges scenarios/evals from counts and runs from the live executions", () => {
     renderPanels({
-      envState: baseEnvState({ runs: [{ id: "r1" }, { id: "r2" }, { id: "r3" }] }),
+      envState: baseEnvState({
+        runs: [{ id: "r1" }, { id: "r2" }, { id: "r3" }],
+      }),
       counts: { scenarios: 5, evals: 2 },
     });
-    expect(screen.getByRole("tab", { name: /Scenarios 5/ })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Evaluations 2/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /Scenarios 5/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /Evaluations 2/ }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Runs 3/ })).toBeInTheDocument();
   });
 
@@ -217,42 +282,31 @@ describe("WorkspacePanels", () => {
     expect(screen.queryByRole("tab", { name: /Runs \d/ })).toBeNull();
   });
 
-  it("shows a gap badge whose tooltip lists the missing pieces", async () => {
-    const user = userEvent.setup();
-    renderPanels({
-      gapsByTab: { evals: [{ id: "no-evals", title: "No evaluations added" }] },
-      counts: { scenarios: 2, evals: 0 },
-    });
-
-    await user.hover(screen.getByText("Evaluations"));
-    expect(await screen.findByText("Needs your input before you can run:")).toBeInTheDocument();
-    expect(screen.getByText(/No evaluations added/)).toBeInTheDocument();
-  });
-
-  it("explains a tab on hover instead of repeating it as a heading", async () => {
-    const user = userEvent.setup();
-    renderPanels();
-    await user.hover(screen.getByText("Contract"));
-    expect(await screen.findByText(/What this environment is made of/)).toBeInTheDocument();
-    // The hint describes the tab; it never replaces the tab's name.
-    expect(screen.getByRole("tab", { name: "Contract" })).toBeInTheDocument();
-  });
-
-  it("keeps the gap list in the tooltip alongside the tab's explanation", async () => {
+  it("shows neither the hint nor the gap list when a gap tab is hovered", async () => {
     const user = userEvent.setup();
     renderPanels({
       gapsByTab: { evals: [{ id: "no-evals", title: "No evaluations added" }] },
       counts: { scenarios: 2, evals: 0 },
     });
     await user.hover(screen.getByText("Evaluations"));
-    expect(await screen.findByText(/These decide whether each task passed/)).toBeInTheDocument();
-    expect(screen.getByText("Needs your input before you can run:")).toBeInTheDocument();
+    // Wait past a tooltip's open delay so one would have shown by now.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(
+      screen.queryByText(/These decide whether each task passed/),
+    ).toBeNull();
+    expect(
+      screen.queryByText("Needs your input before you can run:"),
+    ).toBeNull();
   });
 
   it("falls back to the Overview body for an unknown tab", () => {
     renderPanels({ tab: "not-a-tab" });
     expect(screen.getByText(/^overview-body:/)).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("renders the body for the active tab", () => {
@@ -286,10 +340,14 @@ describe("WorkspacePanels", () => {
       serverEnvState: baseEnvState({ evals: serverEvals }),
     });
 
-    expect(screen.getByText("overview-body:no_misselling,no_pii_leak")).toBeInTheDocument();
+    expect(
+      screen.getByText("overview-body:no_misselling,no_pii_leak"),
+    ).toBeInTheDocument();
     // The step is satisfied by the server's evals: no "Add evaluations" ask,
     // and it counts towards the remaining-steps line.
-    expect(screen.queryByRole("button", { name: "Add evaluations" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Add evaluations" }),
+    ).toBeNull();
     expect(
       screen.getByText("3 of 5 complete, 2 left to run your first simulation"),
     ).toBeInTheDocument();
@@ -304,14 +362,19 @@ describe("WorkspacePanels", () => {
       serverEnvState: baseEnvState({ evals: [] }),
     });
 
-    expect(screen.getByRole("button", { name: "Add evaluations" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add evaluations" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("2 of 5 complete, 3 left to run your first simulation"),
     ).toBeInTheDocument();
   });
 
   it("falls back to envState for the Overview when no server state is passed (the build page)", () => {
-    renderPanels({ tab: "overview", envState: baseEnvState({ evals: [{ id: "e1" }] }) });
+    renderPanels({
+      tab: "overview",
+      envState: baseEnvState({ evals: [{ id: "e1" }] }),
+    });
     expect(screen.getByText("overview-body:e1")).toBeInTheDocument();
   });
 });
@@ -339,7 +402,10 @@ describe("gapsByTab", () => {
 
 describe("counts", () => {
   it("counts the scenarios and evals slices", () => {
-    expect(counts({ scenarios: [1, 2, 3], evals: [1] })).toEqual({ scenarios: 3, evals: 1 });
+    expect(counts({ scenarios: [1, 2, 3], evals: [1] })).toEqual({
+      scenarios: 3,
+      evals: 1,
+    });
   });
 
   it("is zero-safe on an empty state", () => {
@@ -409,3 +475,28 @@ describe("Versions tab", () => {
   });
 });
 
+describe("Improvements tab", () => {
+  it("is hidden until the environment has a fix", () => {
+    renderPanels({ tab: "improvements" });
+    expect(screen.queryByRole("tab", { name: /Epochs/ })).toBeNull();
+    expect(screen.queryByText("improvements-body")).toBeNull();
+  });
+
+  it("shows with its count and renders its panel once there are fixes", () => {
+    fixRuns.value = { fixes: [{}, {}, {}], count: 3, isLoading: false };
+    renderPanels({ tab: "improvements", counts: { scenarios: 0, evals: 0 } });
+    const tab = screen.getByRole("tab", { name: /Epochs/ });
+    expect(within(tab).getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("improvements-body")).toBeInTheDocument();
+  });
+
+  it("keeps the tab for ?tab=improvements while the list loads", () => {
+    fixRuns.value = { ...NO_FIXES, isLoading: true };
+    renderPanels({ tab: "improvements" });
+    expect(screen.getByRole("tab", { name: /Epochs/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("improvements-body")).toBeInTheDocument();
+  });
+});

@@ -19,6 +19,16 @@ const analytics = {
   dashboard: {
     metrics: [
       {
+        key: "trial_pass",
+        label: "Trials passed",
+        value: 66.67,
+        unit: "percent",
+        measured: 3,
+        total: 4,
+        note: "Passed, out of trials that passed or failed.",
+        no_score: false,
+      },
+      {
         key: "pass_rate",
         label: "Calls passed",
         value: 66.67,
@@ -155,6 +165,11 @@ const analytics = {
     },
   },
   summary: {
+    trials_passed: 2,
+    trials_evaluated: 3,
+    trials_inconclusive: 0,
+    trials_excluded_not_comparable: 0,
+    trial_pass_rate: 66.67,
     total: 4,
     measured: 3,
     pass_rate: 66.67,
@@ -284,7 +299,7 @@ describe("RunAnalytics", () => {
     render(<RunAnalytics executionId="execution-1" />);
 
     for (const label of [
-      "Calls passed",
+      "Trials passed",
       "Drop-off",
       "Response time p95",
       "Cost / pass",
@@ -342,25 +357,27 @@ describe("RunAnalytics", () => {
     useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
     render(<RunAnalytics executionId="execution-1" />);
   };
-  const tile = (label) => screen.getByText(label).parentElement;
+  // A tile's label is a <p>; a widget of the same name is an <h3>.
+  const tile = (label) =>
+    screen.getAllByText(label).find((el) => el.tagName === "P").parentElement;
 
   it("shows call and voice metric tiles", () => {
     renderWithMetrics([...callMetrics, ...voiceMetrics]);
 
-    expect(within(tile("Total Calls")).getByText("4")).toBeInTheDocument();
+    expect(within(tile("Total calls")).getByText("4")).toBeInTheDocument();
     expect(within(tile("Connected")).getByText("3")).toBeInTheDocument();
     expect(within(tile("Connected")).getByText("of 4")).toBeInTheDocument();
     expect(
-      within(tile("Calls Connected (%)")).getByText("75%"),
+      within(tile("Calls connected (%)")).getByText("75%"),
     ).toBeInTheDocument();
     expect(
-      within(tile("Agent Latency")).getByText("462ms"),
+      within(tile("Agent latency")).getByText("462ms"),
     ).toBeInTheDocument();
     expect(within(tile("Agent WPM")).getByText("167")).toBeInTheDocument();
     expect(
-      within(tile("Agent Stop Latency")).getByText("289ms"),
+      within(tile("Agent stop latency")).getByText("289ms"),
     ).toBeInTheDocument();
-    expect(within(tile("Talk Ratio")).getByText("48/52")).toBeInTheDocument();
+    expect(within(tile("Talk ratio")).getByText("48/52")).toBeInTheDocument();
     expect(within(tile("Avg duration")).getByText("11.9s")).toBeInTheDocument();
     expect(within(tile("Avg turns")).getByText("9.1")).toBeInTheDocument();
   });
@@ -371,12 +388,12 @@ describe("RunAnalytics", () => {
       callMetric("agent_latency", null, "ms"),
     ]);
 
-    for (const label of ["Agent WPM", "Agent Stop Latency", "Talk Ratio"]) {
+    for (const label of ["Agent WPM", "Agent stop latency", "Talk ratio"]) {
       expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
-    expect(within(tile("Agent Latency")).getByText("-")).toBeInTheDocument();
+    expect(within(tile("Agent latency")).getByText("-")).toBeInTheDocument();
     expect(
-      within(tile("Agent Latency")).getByText("Not reported"),
+      within(tile("Agent latency")).getByText("Not reported"),
     ).toBeInTheDocument();
   });
 
@@ -415,6 +432,59 @@ describe("RunAnalytics", () => {
         /2 scenarios × 2 trials · pass\^1 95% range 12.5%–95.1%/,
       ),
     ).toBeInTheDocument();
+  });
+
+  it("reads No score on Trials passed only when the server marks the rate no_score", () => {
+    const passedCard = () => screen.getByText("Trials passed").parentElement;
+    const nothingYet = structuredClone(analytics);
+    nothingYet.dashboard.metrics[0] = {
+      ...nothingYet.dashboard.metrics[0],
+      value: null,
+      measured: 0,
+      no_score: false,
+    };
+    useRunAnalytics.mockReturnValue({
+      data: nothingYet,
+      isPending: false,
+      isError: false,
+    });
+    const { unmount } = render(<RunAnalytics executionId="execution-1" />);
+    expect(
+      within(passedCard()).queryByText("No score"),
+    ).not.toBeInTheDocument();
+    unmount();
+
+    const unscored = structuredClone(nothingYet);
+    unscored.dashboard.metrics[0].no_score = true;
+    useRunAnalytics.mockReturnValue({
+      data: unscored,
+      isPending: false,
+      isError: false,
+    });
+    render(<RunAnalytics executionId="execution-1" />);
+    expect(within(passedCard()).getByText("No score")).toBeInTheDocument();
+  });
+
+  it("headlines the goal outcome donut with the server's headline", () => {
+    const data = structuredClone(analytics);
+    const chart = data.dashboard.breakdowns.find(
+      (item) => item.key === "goal_outcome",
+    );
+    chart.headline = { label: "no_score", count: 3, share: 100 };
+    chart.segments = [
+      { label: "passed", count: 0, share: 0 },
+      { label: "no_score", count: 3, share: 100 },
+    ];
+    useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
+    render(<RunAnalytics executionId="execution-1" />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Show detailed analytics" }),
+    );
+    const donut = screen.getByRole("region", {
+      name: "Goal outcome breakdown",
+    });
+    expect(within(donut).getByText("No score")).toBeInTheDocument();
+    expect(within(donut).getByText("100%")).toBeInTheDocument();
   });
 
   it("renders when the response has no reliability block", () => {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from decimal import Decimal
 from uuid import UUID, uuid5
 
 from django.core.serializers.json import DjangoJSONEncoder
@@ -11,17 +12,22 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+from simulate.models import (
+    HostedHarnessAttempt,
+    HostedHarnessBuilderTurnUsage,
+    HostedHarnessConversationMessage,
+    HostedHarnessJob,
+)
 from simulate.services.harness_environment import _VOICE_CONNECTORS
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import (
+    PLATFORM_FAILURE_DOMAINS,
+    HostedHarnessError,
+)
 from tfc.ee_gating import is_oss
 
-_ACTIONS = frozenset({"harness_authoring", "text_call", "voice_call"})
+_ACTIONS = frozenset({"agent_fix", "harness_authoring", "text_call", "voice_call"})
 _REPORT_KEY = "usage_reports"
 _AUTHORING_REPORT_KEY = "authoring_usage_reports"
-_NON_BILLABLE_FAILURE_DOMAINS = frozenset(
-    {"infrastructure", "connectivity", "platform_sync"}
-)
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +72,28 @@ def _require_harness_action(organization_id: str, action: str) -> None:
     raise UsageLimitExceeded(CheckResult.model_validate(decision))
 
 
+def usage_limit_error(exc: Exception) -> HostedHarnessError | None:
+    """A usage refusal as a hosted harness error, for a caller that reads only that shape:
+    the fix engine tells the organization's plan limit apart from the fix's own budget."""
+    if is_oss():
+        return None
+    from ee.usage.exceptions import UsageLimitExceeded
+
+    if not isinstance(exc, UsageLimitExceeded):
+        return None
+    return HostedHarnessError(
+        "usage_limit",
+        exc.check_result.reason or "the organization's usage limit is reached",
+        status_code=402,
+    )
+
+
 def require_harness_authoring(organization_id: str) -> None:
     _require_harness_action(organization_id, "harness_authoring")
+
+
+def require_agent_fix_usage(organization_id: str) -> None:
+    _require_harness_action(organization_id, "agent_fix")
 
 
 def require_harness_call_usage(job: HostedHarnessJob) -> None:
@@ -171,6 +197,16 @@ def record_harness_usage(
     return {"accepted": True}
 
 
+def is_billable_receipt(status: str, call: object, failure_domain: str | None) -> bool:
+    """Whether a result receipt's call is charged: it was not skipped, it ran, and the
+    platform's own infrastructure, connectivity or sync failure did not end it."""
+    return (
+        status != "skipped"
+        and bool(call)
+        and failure_domain not in PLATFORM_FAILURE_DOMAINS
+    )
+
+
 def _billable_records(
     attempt: HostedHarnessAttempt,
     report: dict,
@@ -204,14 +240,13 @@ def _billable_records(
                 continue
             receipt_status = historical["status"]
             receipt_body = historical["body"]
-        if receipt_status == "skipped" or not receipt_body.get("call"):
-            continue
-        record_failure_domain = item.get("failure_domain")
-        receipt_failure_domain = (receipt_body.get("failure") or {}).get("domain")
-        if (
-            record_failure_domain in _NON_BILLABLE_FAILURE_DOMAINS
-            or receipt_failure_domain in _NON_BILLABLE_FAILURE_DOMAINS
+        if not is_billable_receipt(
+            receipt_status,
+            receipt_body.get("call"),
+            (receipt_body.get("failure") or {}).get("domain"),
         ):
+            continue
+        if item.get("failure_domain") in PLATFORM_FAILURE_DOMAINS:
             continue
         # Hosted simulator usage is always platform-funded.  Keep the guest field in properties
         # for audit, but never let an untrusted value suppress a billable simulator call.
@@ -355,6 +390,13 @@ def record_harness_authoring_usage(attempt: HostedHarnessAttempt, spend: dict) -
         if (record := _authoring_stage_record(item)) is not None
     ]
     if not records:
+        if float(spend.get("total_usd") or 0.0) > 0:
+            # Spent but not priceable (no stage reported tokens): billing nothing must not be quiet.
+            logger.error(
+                "authoring spend has no billable stage attempt=%s total_usd=%s",
+                attempt.id,
+                spend.get("total_usd"),
+            )
         return
     stages = [item["stage"] for item in records]
     if len(stages) != len(set(stages)):
@@ -391,29 +433,47 @@ def record_harness_authoring_usage(attempt: HostedHarnessAttempt, spend: dict) -
 
 
 def emit_harness_authoring_usage(attempt: HostedHarnessAttempt, report: dict) -> None:
+    _emit_authoring_records(
+        attempt.job,
+        report,
+        key=UUID(str(attempt.id)),
+        timestamp=attempt.created_at,
+        identity={"attempt_id": str(attempt.id)},
+    )
+
+
+def _emit_authoring_records(
+    job: HostedHarnessJob,
+    report: dict,
+    *,
+    key: UUID,
+    timestamp,
+    identity: dict[str, str],
+) -> None:
+    """One authoring usage event per priced record. Each event id derives from ``key`` and
+    the record's stage, so sending a report again is dropped by the consumer as counted."""
     if is_oss():
         return
     from ee.usage.schemas.event_types import BillingEventType
     from ee.usage.schemas.events import UsageEvent
     from ee.usage.services.emitter import emit
 
-    job = attempt.job
     for item in report["records"]:
         if not item["credits"]:
             continue
-        event_id = uuid5(UUID(str(attempt.id)), f"authoring:{item['stage']}")
+        event_id = uuid5(key, f"authoring:{item['stage']}")
         emit(
             UsageEvent(
                 event_id=str(event_id),
                 org_id=str(job.organization_id),
                 event_type=BillingEventType.HARNESS_AUTHORING,
                 amount=item["credits"],
-                timestamp=attempt.created_at,
+                timestamp=timestamp,
                 properties={
                     "source": "rl_environment",
                     "source_id": str(job.id),
                     "harness_job_id": str(job.id),
-                    "attempt_id": str(attempt.id),
+                    **identity,
                     "workspace_id": str(job.workspace_id or ""),
                     "test_execution_id": str(job.test_execution_id or ""),
                     "phase": "authoring",
@@ -456,6 +516,172 @@ def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
                         "Authoring usage could not be finalized for attempt %s",
                         current.id,
                     )
+    price_fix_check_run(current.job_id)
+
+
+# The stage name a builder turn run outside any attempt is priced and billed under.
+BUILDER_TURN_STAGE = "builder-turn"
+
+
+def bill_builder_turn(conversation_id: str, payload: dict) -> None:
+    """Bill a builder chat turn run outside any attempt, priced as a build stage is.
+
+    Such a turn runs in a chat sandbox of its own, so no attempt's ledger covers it. Every
+    ending with usage bills it: success, interrupted and failed alike. One row per command
+    message: a replayed ending finds the row and re-sends only that turn's event, which the
+    consumer drops as counted. A rebuild's turn is metered on its nudge, and an ending with
+    no usage records nothing.
+    """
+    # The fields a rebuild's turn is metered with, so both keep the same ones.
+    from simulate.services.harness_versioning.rebuild import (
+        _USAGE_FIELDS,
+        nudge_for_command,
+    )
+
+    try:
+        usage = payload.get("usage")
+        command_id = payload.get("command_message_id")
+        if not isinstance(usage, dict) or not command_id:
+            return
+        command = (
+            HostedHarnessConversationMessage.no_workspace_objects.select_related(
+                "conversation__job"
+            )
+            .filter(id=command_id, conversation_id=UUID(conversation_id))
+            .first()
+        )
+        if command is None or nudge_for_command(command) is not None:
+            return
+        entry = {field: usage[field] for field in _USAGE_FIELDS if field in usage}
+        if not entry:
+            return
+        job = command.conversation.job
+        with transaction.atomic():
+            turn, created = (
+                HostedHarnessBuilderTurnUsage.no_workspace_objects.get_or_create(
+                    command_message=command,
+                    defaults={
+                        "job": job,
+                        "organization_id": job.organization_id,
+                        "workspace_id": job.workspace_id,
+                        "outcome": str(payload.get("outcome") or "")[:16],
+                        "usage": entry,
+                    },
+                )
+            )
+            if created:
+                turn.report = _builder_turn_report(turn)
+                if turn.report is not None:
+                    turn.save(update_fields=["report", "updated_at"])
+            report = turn.report
+            if report is not None:
+                transaction.on_commit(lambda: emit_builder_turn_usage(turn, report))
+    except Exception:  # noqa: BLE001 - billing must never fail the guest's event delivery
+        logger.exception(
+            "builder turn usage could not be billed conversation=%s", conversation_id
+        )
+
+
+def _builder_turn_report(turn: HostedHarnessBuilderTurnUsage) -> dict | None:
+    """The turn priced as one build stage, or None when it bills nothing."""
+    if is_oss():
+        return None
+    usage = turn.usage
+    if not isinstance(usage.get("models") or [], list):
+        logger.error(
+            "builder turn usage has malformed models command=%s",
+            turn.command_message_id,
+        )
+        return None
+    try:
+        record = _authoring_stage_record(
+            {
+                "stage": BUILDER_TURN_STAGE,
+                "tokens_in": usage.get("tokens_in", 0),
+                "tokens_out": usage.get("tokens_out", 0),
+                "tokens_cached": usage.get("tokens_cached", 0),
+                "models": usage.get("models") or [],
+            }
+        )
+    except HostedHarnessError as exc:
+        # As a build stage that cannot be priced: the usage is kept, nothing is billed.
+        logger.error(
+            "builder turn could not be priced command=%s: %s",
+            turn.command_message_id,
+            exc,
+        )
+        return None
+    if record is None:
+        if float(usage.get("usd") or 0.0) > 0:
+            logger.error(
+                "builder turn spent but reported no tokens command=%s usd=%s",
+                turn.command_message_id,
+                usage.get("usd"),
+            )
+        return None
+    return {
+        "schema_version": "futureagi.harness-authoring-usage.v1",
+        "records": [record],
+    }
+
+
+def emit_builder_turn_usage(turn: HostedHarnessBuilderTurnUsage, report: dict) -> None:
+    _emit_authoring_records(
+        turn.job,
+        report,
+        key=UUID(str(turn.command_message_id)),
+        timestamp=turn.created_at,
+        identity={
+            "command_message_id": str(turn.command_message_id),
+            "turn_outcome": turn.outcome,
+        },
+    )
+
+
+def billed_ai_usd(usd: Decimal) -> Decimal:
+    """What a model call bills the organization, in US dollars: its cost at the AI markup."""
+    if is_oss():
+        return usd
+    from ee.usage.services.config import BillingConfig
+
+    return usd * BillingConfig.get().get_ai_cost_markup()
+
+
+def _paid_unit_usd(config, dimension: str) -> Decimal:
+    """The first price a dimension charges past its free tiers."""
+    return next(
+        (
+            tier.price_per_unit
+            for tier in config.get_pricing_tiers(dimension)
+            if tier.price_per_unit > 0
+        ),
+        Decimal(0),
+    )
+
+
+def price_fix_check_run(job_id) -> None:
+    """Set what a fix's check run billed, once its usage is sealed: its conversations and
+    calls at their price per unit, plus any AI credits. A fix holds a worst case for a check
+    run until this replaces it."""
+    if is_oss():
+        return
+    job = HostedHarnessJob.all_objects.filter(id=job_id, fix_run__isnull=False).first()
+    if job is None:
+        return
+    from ee.usage.services.config import BillingConfig
+
+    config = BillingConfig.get()
+    used = harness_consumption(job) or {}
+    usd = sum(
+        (
+            Decimal(str(used.get(dimension) or 0)) * _paid_unit_usd(config, dimension)
+            for dimension in ("text_sim_tokens", "voice_sim_minutes")
+        ),
+        Decimal(str(used.get("ai_credits") or 0)) * Decimal("0.01"),
+    )
+    HostedHarnessJob.all_objects.filter(id=job.id).update(
+        fix_cost_usd=usd.quantize(Decimal("0.0001"))
+    )
 
 
 def harness_consumption(job: HostedHarnessJob) -> dict | None:
@@ -503,7 +729,20 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
         for attempt_id, attempt in attempts.items()
         if attempt.sandbox_runtime or attempt_id in legacy_runtimes
     }
-    if not reports and not authoring_reports and not runtimes and not authoring_spend:
+    # Builder turns after a build, each billed on its own outside any attempt: a selected
+    # run's chat turn is billed too, so it is counted too.
+    turn_reports = list(
+        HostedHarnessBuilderTurnUsage.no_workspace_objects.filter(
+            job_id=job.id, report__isnull=False
+        ).values_list("report", flat=True)
+    )
+    if (
+        not reports
+        and not authoring_reports
+        and not runtimes
+        and not authoring_spend
+        and not turn_reports
+    ):
         return None
 
     consumption = {"text_sim_tokens": 0, "voice_sim_minutes": 0, "ai_credits": 0}
@@ -518,7 +757,7 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
             consumption[dimension] += item["amount"]
     consumption["ai_credits"] = sum(
         record["credits"]
-        for report in authoring_reports.values()
+        for report in [*authoring_reports.values(), *turn_reports]
         for record in report["records"]
     )
     authoring_estimate_unavailable = False

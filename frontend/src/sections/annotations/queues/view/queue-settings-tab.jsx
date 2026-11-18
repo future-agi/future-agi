@@ -5,8 +5,6 @@ import {
   Alert,
   Box,
   Button,
-  Card,
-  CardContent,
   Chip,
   Dialog,
   DialogActions,
@@ -23,6 +21,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import Section from "src/components/section";
 import { LoadingButton } from "@mui/lab";
 import { Controller, useForm, FormProvider } from "react-hook-form";
 import Iconify from "src/components/iconify";
@@ -89,7 +88,6 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
   const { mutate: archiveQueue, isPending: isArchiving } =
     useArchiveAnnotationQueue();
   const isPending = isUpdating || isStatusUpdating;
-
 
   const handleArchive = () => {
     navigate("/dashboard/annotations/queues");
@@ -190,320 +188,313 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
       <Box component="form" onSubmit={handleSubmit(onSubmit)}>
         <Stack spacing={3}>
           {/* General */}
-          <Card
-            elevation={0}
+          <Section
+            variant="panel"
             sx={{
               boxShadow: "none",
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: 0.5,
+              borderRadius: "4px",
             }}
           >
-            <CardContent>
-              <Typography variant="subtitle1" sx={{ mb: 2 }}>
-                General
-              </Typography>
-              <Stack spacing={2.5}>
-                <RHFTextField
-                  name="name"
-                  size="small"
-                  label="Queue Name"
-                  required
-                  sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-                />
+            <Typography variant="subtitle1" sx={{ mb: 2 }}>
+              General
+            </Typography>
+            <Stack spacing={2.5}>
+              <RHFTextField
+                name="name"
+                size="small"
+                label="Queue Name"
+                required
+                sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
+              />
 
-                <RHFTextField
-                  name="description"
-                  label="Description"
-                  multiline
-                  rows={2}
-                  sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-                />
+              <RHFTextField
+                name="description"
+                label="Description"
+                multiline
+                rows={2}
+                sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
+              />
 
-                <RHFTextField
-                  name="instructions"
-                  label="Instructions for annotators"
-                  multiline
-                  rows={4}
-                  placeholder="Provide guidelines for annotators. Supports **markdown** formatting."
-                  helperText="Supports markdown: bold, italic, bullet lists, numbered lists, headings"
-                  sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-                />
+              <RHFTextField
+                name="instructions"
+                label="Instructions for annotators"
+                multiline
+                rows={4}
+                placeholder="Provide guidelines for annotators. Supports **markdown** formatting."
+                helperText="Supports markdown: bold, italic, bullet lists, numbered lists, headings"
+                sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
+              />
 
-                <Controller
-                  name="status"
-                  control={control}
-                  render={({ field }) => {
-                    const currentStatus = queue?.status || field.value;
-                    return (
-                      <TextField
-                        {...field}
-                        size="small"
-                        select
-                        label="Status"
-                        fullWidth
-                        FormHelperTextProps={{
-                          sx: { ml: 0, color: "warning.main" },
-                        }}
-                        sx={{
-                          "& .MuiOutlinedInput-root": { borderRadius: 0.5 },
-                        }}
-                        SelectProps={{
-                          renderValue: (v) => ALL_STATUS_OPTIONS[v]?.label || v,
-                          MenuProps: {
-                            PaperProps: {
-                              sx: { borderRadius: "4px !important" },
-                            },
-                          },
-                        }}
-                      >
-                        {getStatusOptions(currentStatus, {
-                          hasLabels: (labelIds || []).length > 0,
-                        }).map((opt) => (
-                          <MenuItem
-                            key={opt.value}
-                            value={opt.value}
-                            disabled={opt.disabled}
-                          >
-                            <Box>
-                              <Typography variant="body2">
-                                {opt.label}
-                              </Typography>
-                              <Typography
-                                variant="caption"
-                                color="text.disabled"
-                              >
-                                {opt.hint}
-                              </Typography>
-                            </Box>
-                          </MenuItem>
-                        ))}
-                      </TextField>
-                    );
-                  }}
-                />
-              </Stack>
-            </CardContent>
-          </Card>
-
-          {/* Labels & Members */}
-          <Card
-            elevation={0}
-            sx={{
-              boxShadow: "none",
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 0.5,
-            }}
-          >
-            <CardContent>
-              <Typography variant="subtitle1" sx={{ mb: 2 }}>
-                Labels
-              </Typography>
-              <Stack spacing={2.5}>
-                <LabelPicker
-                  selectedIds={labelIds}
-                  lockLastSelected
-                  onChange={(ids) =>
-                    setValue("label_ids", ids, { shouldDirty: true })
-                  }
-                />
-
-                <Divider />
-                <Typography variant="subtitle1">Members</Typography>
-                <AnnotatorPicker
-                  value={annotators}
-                  onChange={(a) =>
-                    setValue("annotators", a, { shouldDirty: true })
-                  }
-                  creatorId={creatorId}
-                  highlightAutoAssigned={autoAssign}
-                  isManager
-                />
-              </Stack>
-            </CardContent>
-          </Card>
-
-          {/* Workflow */}
-          <Card
-            elevation={0}
-            sx={{
-              boxShadow: "none",
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 0.5,
-            }}
-          >
-            <CardContent>
-              <Typography variant="subtitle1" sx={{ mb: 2 }}>
-                Workflow
-              </Typography>
-              <Stack spacing={2.5}>
-                <Controller
-                  name="annotations_required"
-                  control={control}
-                  rules={{
-                    validate: (value) => {
-                      const n = Number(value);
-                      if (!value && value !== 0) return "Required";
-                      if (n < 1) return "Must be at least 1";
-                      if (annotatorCount > 0 && n > annotatorCount)
-                        return `Cannot exceed annotator count (${annotatorCount})`;
-                      return true;
-                    },
-                  }}
-                  render={({ field, fieldState }) => (
+              <Controller
+                name="status"
+                control={control}
+                render={({ field }) => {
+                  const currentStatus = queue?.status || field.value;
+                  return (
                     <TextField
                       {...field}
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        field.onChange(raw === "" ? "" : parseInt(raw, 10));
-                      }}
-                      label="Annotations required per item"
-                      type="number"
                       size="small"
-                      fullWidth
-                      error={!!fieldState.error}
-                      inputProps={{ min: 1, max: 10 }}
-                      helperText={
-                        fieldState.error?.message ||
-                        "Number of members with the Annotator role that must complete each item"
-                      }
-                      FormHelperTextProps={{ sx: { ml: 0 } }}
-                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
-                    />
-                  )}
-                />
-
-                <Controller
-                  name="reservation_timeout_minutes"
-                  control={control}
-                  render={({ field }) => (
-                    <TextField
-                      {...field}
                       select
-                      size="small"
-                      label="Reservation timeout"
+                      label="Status"
                       fullWidth
-                      helperText="How long an item is reserved for an annotator"
-                      FormHelperTextProps={{ sx: { ml: 0 } }}
-                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+                      FormHelperTextProps={{
+                        sx: { ml: 0, color: "warning.main" },
+                      }}
+                      sx={{
+                        "& .MuiOutlinedInput-root": { borderRadius: "4px" },
+                      }}
+                      SelectProps={{
+                        renderValue: (v) => ALL_STATUS_OPTIONS[v]?.label || v,
+                        MenuProps: {
+                          PaperProps: {
+                            sx: { borderRadius: "4px !important" },
+                          },
+                        },
+                      }}
                     >
-                      {RESERVATION_TIMEOUT_OPTIONS.map((opt) => (
-                        <MenuItem key={opt.value} value={opt.value}>
-                          {opt.label}
+                      {getStatusOptions(currentStatus, {
+                        hasLabels: (labelIds || []).length > 0,
+                      }).map((opt) => (
+                        <MenuItem
+                          key={opt.value}
+                          value={opt.value}
+                          disabled={opt.disabled}
+                        >
+                          <Box>
+                            <Typography variant="body2">{opt.label}</Typography>
+                            <Typography variant="caption" color="text.disabled">
+                              {opt.hint}
+                            </Typography>
+                          </Box>
                         </MenuItem>
                       ))}
                     </TextField>
-                  )}
+                  );
+                }}
+              />
+            </Stack>
+          </Section>
+
+          {/* Labels & Members */}
+          <Section
+            variant="panel"
+            sx={{
+              boxShadow: "none",
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "4px",
+            }}
+          >
+            <Typography variant="subtitle1" sx={{ mb: 2 }}>
+              Labels
+            </Typography>
+            <Stack spacing={2.5}>
+              <LabelPicker
+                selectedIds={labelIds}
+                lockLastSelected
+                onChange={(ids) =>
+                  setValue("label_ids", ids, { shouldDirty: true })
+                }
+              />
+
+              <Divider />
+              <Typography variant="subtitle1">Members</Typography>
+              <AnnotatorPicker
+                value={annotators}
+                onChange={(a) =>
+                  setValue("annotators", a, { shouldDirty: true })
+                }
+                creatorId={creatorId}
+                highlightAutoAssigned={autoAssign}
+                isManager
+              />
+            </Stack>
+          </Section>
+
+          {/* Workflow */}
+          <Section
+            variant="panel"
+            sx={{
+              boxShadow: "none",
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "4px",
+            }}
+          >
+            <Typography variant="subtitle1" sx={{ mb: 2 }}>
+              Workflow
+            </Typography>
+            <Stack spacing={2.5}>
+              <Controller
+                name="annotations_required"
+                control={control}
+                rules={{
+                  validate: (value) => {
+                    const n = Number(value);
+                    if (!value && value !== 0) return "Required";
+                    if (n < 1) return "Must be at least 1";
+                    if (annotatorCount > 0 && n > annotatorCount)
+                      return `Cannot exceed annotator count (${annotatorCount})`;
+                    return true;
+                  },
+                }}
+                render={({ field, fieldState }) => (
+                  <TextField
+                    {...field}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      field.onChange(raw === "" ? "" : parseInt(raw, 10));
+                    }}
+                    label="Annotations required per item"
+                    type="number"
+                    size="small"
+                    fullWidth
+                    error={!!fieldState.error}
+                    inputProps={{ min: 1, max: 10 }}
+                    helperText={
+                      fieldState.error?.message ||
+                      "Number of members with the Annotator role that must complete each item"
+                    }
+                    FormHelperTextProps={{ sx: { ml: 0 } }}
+                    sx={{
+                      "& .MuiOutlinedInput-root": { borderRadius: "4px" },
+                    }}
+                  />
+                )}
+              />
+
+              <Controller
+                name="reservation_timeout_minutes"
+                control={control}
+                render={({ field }) => (
+                  <TextField
+                    {...field}
+                    select
+                    size="small"
+                    label="Reservation timeout"
+                    fullWidth
+                    helperText="How long an item is reserved for an annotator"
+                    FormHelperTextProps={{ sx: { ml: 0 } }}
+                    sx={{
+                      "& .MuiOutlinedInput-root": { borderRadius: "4px" },
+                    }}
+                  >
+                    {RESERVATION_TIMEOUT_OPTIONS.map((opt) => (
+                      <MenuItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                )}
+              />
+
+              <Stack spacing={0.5}>
+                <RHFCheckbox
+                  name="requires_review"
+                  label={
+                    <Typography
+                      variant="body2"
+                      fontWeight={500}
+                      color="text.primary"
+                    >
+                      Require reviewer approval
+                    </Typography>
+                  }
                 />
 
-                <Stack spacing={0.5}>
-                  <RHFCheckbox
-                    name="requires_review"
-                    label={
+                <RHFCheckbox
+                  name="autoAssign"
+                  label={
+                    <Box>
                       <Typography
                         variant="body2"
                         fontWeight={500}
                         color="text.primary"
                       >
-                        Require reviewer approval
+                        Auto-assign items to all annotator members
                       </Typography>
-                    }
-                  />
-
-                  <RHFCheckbox
-                    name="autoAssign"
-                    label={
-                      <Box>
-                        <Typography
-                          variant="body2"
-                          fontWeight={500}
-                          color="text.primary"
-                        >
-                          Auto-assign items to all annotator members
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          When on, all members with the Annotator role are
-                          assigned to every item and can annotate any item
-                        </Typography>
-                      </Box>
-                    }
-                    sx={{ alignItems: "flex-start" }}
-                  />
-                </Stack>
-
-                <FormControl>
-                  <FormLabel
-                    sx={{
-                      typography: "s1",
-                      color: "text.primary",
-                      fontWeight: "fontWeightBold",
-                    }}
-                  >
-                    Assignment Strategy
-                  </FormLabel>
-                  <Controller
-                    name="assignment_strategy"
-                    control={control}
-                    render={({ field }) => (
-                      <RadioGroup {...field}>
-                        <FormControlLabel
-                          value="manual"
-                          control={<Radio size="small" />}
-                          label="Manual"
-                        />
-                        <FormControlLabel
-                          value="round_robin"
-                          disabled
-                          control={<Radio size="small" />}
-                          label={
-                            <Stack
-                              direction="row"
-                              alignItems="center"
-                              spacing={1}
-                            >
-                              <Typography variant="body2" color="text.disabled">
-                                Round Robin
-                              </Typography>
-                              <Chip
-                                label="Coming soon"
-                                size="small"
-                                variant="outlined"
-                                color="primary"
-                              />
-                            </Stack>
-                          }
-                        />
-                        <FormControlLabel
-                          value="load_balanced"
-                          disabled
-                          control={<Radio size="small" />}
-                          label={
-                            <Stack
-                              direction="row"
-                              alignItems="center"
-                              spacing={1}
-                            >
-                              <Typography variant="body2" color="text.disabled">
-                                Load Balanced
-                              </Typography>
-                              <Chip
-                                label="Coming soon"
-                                size="small"
-                                variant="outlined"
-                                color="primary"
-                              />
-                            </Stack>
-                          }
-                        />
-                      </RadioGroup>
-                    )}
-                  />
-                </FormControl>
+                      <Typography variant="caption" color="text.secondary">
+                        When on, all members with the Annotator role are
+                        assigned to every item and can annotate any item
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{ alignItems: "flex-start" }}
+                />
               </Stack>
-            </CardContent>
-          </Card>
+
+              <FormControl>
+                <FormLabel
+                  sx={{
+                    typography: "s1",
+                    color: "text.primary",
+                    fontWeight: "fontWeightSemiBold",
+                  }}
+                >
+                  Assignment Strategy
+                </FormLabel>
+                <Controller
+                  name="assignment_strategy"
+                  control={control}
+                  render={({ field }) => (
+                    <RadioGroup {...field}>
+                      <FormControlLabel
+                        value="manual"
+                        control={<Radio size="small" />}
+                        label="Manual"
+                      />
+                      <FormControlLabel
+                        value="round_robin"
+                        disabled
+                        control={<Radio size="small" />}
+                        label={
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            spacing={1}
+                          >
+                            <Typography variant="body2" color="text.disabled">
+                              Round Robin
+                            </Typography>
+                            <Chip
+                              label="Coming soon"
+                              size="small"
+                              variant="outlined"
+                              color="primary"
+                            />
+                          </Stack>
+                        }
+                      />
+                      <FormControlLabel
+                        value="load_balanced"
+                        disabled
+                        control={<Radio size="small" />}
+                        label={
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            spacing={1}
+                          >
+                            <Typography variant="body2" color="text.disabled">
+                              Load Balanced
+                            </Typography>
+                            <Chip
+                              label="Coming soon"
+                              size="small"
+                              variant="outlined"
+                              color="primary"
+                            />
+                          </Stack>
+                        }
+                      />
+                    </RadioGroup>
+                  )}
+                />
+              </FormControl>
+            </Stack>
+          </Section>
 
           {/* Save */}
           <Box
@@ -556,40 +547,40 @@ function DangerZone({ queue }) {
   const matches = typed === queue.name;
   return (
     <>
-      <Card
+      <Section
+        variant="panel"
         sx={{ borderColor: "error.main", borderWidth: 1, borderStyle: "solid" }}
       >
-        <CardContent>
-          <Stack spacing={2}>
-            <Typography variant="h6" color="error.main">
-              Danger zone
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Permanently delete this queue. All automation rules, items,
-              assignments, and annotation scores attached to it are removed.
-              This cannot be undone — for a recoverable removal, use{" "}
-              <strong>Archive</strong> from the queue list instead.
-            </Typography>
-            <Box>
-              <Button
-                variant="outlined"
-                color="error"
-                onClick={() => {
-                  setTyped("");
-                  setDialogOpen(true);
-                }}
-              >
-                Delete queue permanently
-              </Button>
-            </Box>
-          </Stack>
-        </CardContent>
-      </Card>
+        <Stack spacing={2}>
+          <Typography variant="h6" color="error.main">
+            Danger zone
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Permanently delete this queue. All automation rules, items,
+            assignments, and annotation scores attached to it are removed. This
+            cannot be undone — for a recoverable removal, use{" "}
+            <strong>Archive</strong> from the queue list instead.
+          </Typography>
+          <Box>
+            <Button
+              variant="outlined"
+              color="error"
+              onClick={() => {
+                setTyped("");
+                setDialogOpen(true);
+              }}
+            >
+              Delete queue permanently
+            </Button>
+          </Box>
+        </Stack>
+      </Section>
 
       <Dialog
         open={dialogOpen}
         onClose={() => !isDeleting && setDialogOpen(false)}
-        maxWidth="sm"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 720 } }}
         fullWidth
       >
         <DialogTitle>Delete queue permanently</DialogTitle>

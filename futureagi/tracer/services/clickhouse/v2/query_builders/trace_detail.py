@@ -22,6 +22,7 @@ import structlog
 from tracer.services.clickhouse.query_builders.trace_detail import (
     TraceDetail,
     TraceDetailHandler,
+    compute_trace_capture_coverage,
     compute_trace_summary_and_graph,
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
@@ -271,7 +272,12 @@ def retrieve_trace_detail_ch(
             "total_tokens": row.get("total_tokens"),
             "response_time": None,
             "eval_id": None,
-            "cost": row.get("cost"),
+            "cost": (
+                None
+                if span_attrs.get("fi.cost.kind") == "unknown"
+                and span_attrs.get("fi.usage.contribution") != "none"
+                else row.get("cost")
+            ),
             "status": row.get("status"),
             "status_message": row.get("status_message"),
             "tags": _parse_json(row.get("tags"), default=[]),
@@ -560,9 +566,13 @@ def retrieve_trace_detail_ch(
             "tags": root_obs.get("tags") or [],
         }
 
-    return {
+    result: TraceDetail = {
         "trace": trace_data,
         "observation_spans": observation_spans_response,
         "summary": summary,
         "graph": graph,
     }
+    capture = compute_trace_capture_coverage(observation_spans_response)
+    if capture is not None:
+        result["capture_coverage"] = capture
+    return result

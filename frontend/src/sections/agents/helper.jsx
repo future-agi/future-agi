@@ -404,7 +404,7 @@ export const defaultAgentDefinitionValues = {
 export const icon = (name) => (
   <SvgColor
     src={`/assets/icons/agent/${name}.svg`}
-    sx={{ width: 20, height: 20 }}
+    sx={{ width: 16, height: 16 }}
   />
 );
 
@@ -551,7 +551,7 @@ const LoadingSkeleton = () => {
       width="80%"
       sx={{
         mx: 1,
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
       height={15}
     />
@@ -831,7 +831,8 @@ export const getCallLogsColumnDefs = (
       headerName: voiceColumnLabel("gen_ai.usage.total_tokens"),
       field: "gen_ai.usage.total_tokens",
       flex: 0,
-      minWidth: 220,
+      // Fit input, output, total, and icons without clipping leading digits.
+      minWidth: 300,
       cellRenderer: VoiceTokenCell,
     },
     {
@@ -1092,8 +1093,7 @@ export const useCallLogs = ({
         }
       : {
           retry: (failureCount, queryError) =>
-            !isListCursorContinuationLimitError(queryError) &&
-            failureCount < 1,
+            !isListCursorContinuationLimitError(queryError) && failureCount < 1,
         }),
   });
   return { queryKey, data, isLoading, error };
@@ -1212,17 +1212,20 @@ export const useCallExecutionDetail = (callExecutionId, enabled = false) => {
 // trace id can exist in several projects.
 export const useVoiceCallDetail = (
   traceId,
-  { enabled = false, projectId } = {},
+  { enabled = false, projectId, expectedSpanId } = {},
 ) => {
   return useQuery({
-    queryKey: projectId
-      ? ["voiceCallDetail", traceId, projectId]
-      : ["voiceCallDetail", traceId],
+    queryKey: expectedSpanId
+      ? ["voiceCallDetail", traceId, projectId, expectedSpanId]
+      : projectId
+        ? ["voiceCallDetail", traceId, projectId]
+        : ["voiceCallDetail", traceId],
     queryFn: () =>
       axios.get(endpoints.project.getVoiceCallDetail, {
         params: {
           trace_id: traceId,
           ...(projectId ? { project_id: projectId } : {}),
+          ...(expectedSpanId ? { expected_span_id: expectedSpanId } : {}),
         },
       }),
     enabled: !!traceId && enabled,

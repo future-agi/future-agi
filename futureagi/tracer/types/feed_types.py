@@ -291,10 +291,11 @@ class TracesAggregates:
     total_traces: int = 0
     failing_traces: int = 0
     passing_traces: int = 0
-    avg_score: float = 0.0
+    # None = nothing measured; the UI shows "no data", not a fake zero.
+    avg_score: float | None = None
     p50_latency: int = 0
     p95_latency: int = 0
-    avg_turns: float = 0.0
+    avg_turns: float | None = None
 
 
 @dataclass

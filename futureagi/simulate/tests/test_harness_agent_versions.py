@@ -1141,7 +1141,14 @@ class TestPreflight:
         result = _preflight(a2, [probe])
 
         assert installations == ["inst-42"]
-        assert headers == ["Authorization: Bearer installation-secret-token"] * 4
+        # GitHub takes an installation token as Basic x-access-token, not Bearer.
+        assert (
+            headers
+            == [
+                "Authorization: Basic eC1hY2Nlc3MtdG9rZW46aW5zdGFsbGF0aW9uLXNlY3JldC10b2tlbg=="
+            ]
+            * 4
+        )
         source = next(c for c in result.report["checks"] if c["id"] == "source")
         assert source["status"] == "passed"
         assert _side(a2).agent_payload["source_access"] == {

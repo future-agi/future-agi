@@ -1,7 +1,7 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Switch } from "@mui/material";
+import { Box, Stack, Tab, Typography, Switch } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import Field from "../components/Field";
 import CountryCodeSelect from "../components/CountryCodeSelect";
 import { COUNTRY_BY_ISO } from "../components/countryCodes";
@@ -62,10 +62,10 @@ export default function ContactInformation({
           direction="row"
           alignItems="center"
           spacing={1.5}
-          sx={{ px: 1.75, py: 1.25, borderRadius: 1, border: "1px solid", borderColor: "divider" }}
+          sx={{ px: 1.5, py: 1.25, borderRadius: "8px", border: "1px solid", borderColor: "divider" }}
         >
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 700 }}>{header.title}</Typography>
+            <Typography sx={{ typography: "s1", fontWeight: 500 }}>{header.title}</Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
               {header.body}
             </Typography>
@@ -84,7 +84,7 @@ export default function ContactInformation({
       {effectiveMode === "phone" && (
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
           <Box sx={{ width: { xs: "100%", sm: 180 } }}>
-            <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>Country Code</Typography>
+            <Typography sx={{ typography: "s1", fontWeight: 500, mb: 0.5 }}>Country Code</Typography>
             <CountryCodeSelect value={countryIso} onChange={onCountryIso} />
           </Box>
           <Box sx={{ flex: 1 }}>
@@ -140,57 +140,14 @@ ContactInformation.propTypes = {
   webOnly: PropTypes.bool,
 };
 
-// Two-value segmented control; the active pill reuses the tinted selected
-// surface the ChipCards use so it doesn't read as a foreign primitive.
+// Two-value segmented control: the shared SegmentedTabs, unstyled.
 function SegmentedToggle({ value, onChange, options }) {
   return (
-    <Stack
-      direction="row"
-      sx={{
-        display: "inline-flex",
-        alignSelf: "flex-start",
-        p: 0.375,
-        borderRadius: 1,
-        border: "1px solid",
-        borderColor: "divider",
-        bgcolor: (th) => alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.03 : 0.02),
-      }}
-    >
-      {options.map((o) => {
-        const on = value === o.value;
-        return (
-          <Box
-            key={o.value}
-            role="button"
-            tabIndex={0}
-            aria-pressed={on}
-            onClick={() => onChange(o.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onChange(o.value);
-              }
-            }}
-            sx={{
-              px: 1.75,
-              py: 0.625,
-              borderRadius: 0.75,
-              cursor: "pointer",
-              typography: "s2",
-              fontWeight: 600,
-              color: on ? "text.primary" : "text.subtitle",
-              bgcolor: (th) =>
-                on ? (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.1) : "#fff") : "transparent",
-              boxShadow: (th) =>
-                on ? (th.palette.mode === "dark" ? "none" : `0 1px 2px ${alpha(th.palette.text.primary, 0.08)}`) : "none",
-              transition: "background-color 120ms ease, color 120ms ease",
-            }}
-          >
-            {o.label}
-          </Box>
-        );
-      })}
-    </Stack>
+    <SegmentedTabs value={value} onChange={(_e, next) => onChange(next)} sx={{ alignSelf: "flex-start" }}>
+      {options.map((o) => (
+        <Tab key={o.value} value={o.value} disableRipple label={o.label} />
+      ))}
+    </SegmentedTabs>
   );
 }
 SegmentedToggle.propTypes = {
@@ -205,10 +162,10 @@ function ToggleRow({ checked, disabled = false, onChange, title, body }) {
       direction="row"
       alignItems="center"
       spacing={1.5}
-      sx={{ px: 1.75, py: 1.25, borderRadius: 1, border: "1px solid", borderColor: "divider" }}
+      sx={{ px: 1.5, py: 1.25, borderRadius: "8px", border: "1px solid", borderColor: "divider" }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>{title}</Typography>
+        <Typography sx={{ typography: "s1", fontWeight: 500 }}>{title}</Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{body}</Typography>
       </Box>
       <Switch

@@ -109,6 +109,28 @@ func TestRerankCost(t *testing.T) {
 	priced(t, rc, 0.002) // no billed units reported: one call
 }
 
+func TestSearchCostPerRequest(t *testing.T) {
+	db := modeldb.New(map[string]*modeldb.ModelInfo{
+		"perplexity/search": {ID: "perplexity/search", Mode: modeldb.ModeSearch, Pricing: modeldb.PricingInfo{InputPerQuery: 0.005}},
+	}, nil)
+	p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
+	search := func(provider string) *models.RequestContext {
+		rc := endpointRC("search", "")
+		rc.SearchRequest = &models.SearchRequest{SearchProvider: provider}
+		rc.SearchResponse = &models.SearchResponse{}
+		return rc
+	}
+	pricedBy(t, p, search("perplexity"), 0.005)
+	pricedBy(t, p, search("no-such-search"), 0) // no price: unpriced, not free
+
+	rc := endpointRC("search", "") // no response: nothing was used
+	rc.SearchRequest = &models.SearchRequest{SearchProvider: "no-such-search"}
+	p.ProcessResponse(context.Background(), rc)
+	if rc.Metadata["cost_source"] != "" {
+		t.Fatalf("cost_source = %q for a search that returned nothing", rc.Metadata["cost_source"])
+	}
+}
+
 // The table lists OCR under the provider ("mistral/mistral-ocr-latest") while
 // the request names the bare model; the lookup must add the prefix.
 func TestOCRCostByPagesUnderTheProviderKey(t *testing.T) {
@@ -179,9 +201,9 @@ func TestChatCostUnderTheNameTheProviderStates(t *testing.T) {
 			db := endpointDB()
 			p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
 			var asked [2]string
-			p.SetPriceTables(func(orgID, providerID string) string {
-				asked = [2]string{orgID, providerID}
-				return tables[providerID]
+			p.SetPriceTables(func(rc *models.RequestContext) string {
+				asked = [2]string{rc.Metadata[tenant.MetadataKeyOrgID], rc.Provider}
+				return tables[rc.Provider]
 			})
 			rc := endpointRC("chat", "gemini-4-argon")
 			rc.Provider = tc.provider

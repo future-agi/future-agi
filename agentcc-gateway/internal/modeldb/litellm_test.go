@@ -33,7 +33,7 @@ func TestParseLiteLLM_BasicChat(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestParseLiteLLM_SkipsSampleSpec(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestParseLiteLLM_ImageModel(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestParseLiteLLM_ModeMapping(t *testing.T) {
 				}
 			}`)
 
-			models, err := parseLiteLLM(data)
+			models, err := parseLiteLLM(data, false)
 			if err != nil {
 				t.Fatalf("parseLiteLLM error: %v", err)
 			}
@@ -250,7 +250,7 @@ func TestParseLiteLLM_ProviderPrefixStripped(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestParseLiteLLM_SkipsZeroPricingChat(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestParseLiteLLM_ProviderNormalization(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestParseLiteLLM_MaxTokensFallback(t *testing.T) {
 		}
 	}`)
 
-	models, err := parseLiteLLM(data)
+	models, err := parseLiteLLM(data, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM error: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestParseLiteLLM_MaxTokensFallback(t *testing.T) {
 }
 
 func TestParseLiteLLM_ActualFile(t *testing.T) {
-	models, err := parseLiteLLM(liteLLMData)
+	models, err := parseLiteLLM(liteLLMData, false)
 	if err != nil {
 		t.Fatalf("parseLiteLLM on actual file: %v", err)
 	}
@@ -423,5 +423,32 @@ func TestParseLiteLLM_ActualFile(t *testing.T) {
 	// Verify sample_spec is excluded.
 	if _, ok := models["sample_spec"]; ok {
 		t.Error("sample_spec should be excluded")
+	}
+}
+
+// models.dev fills the models LiteLLM does not list. These two are priced at
+// Perplexity's rates (USD per token).
+func TestBundledModels_PriceModelsDevEntries(t *testing.T) {
+	db := New(BundledModels, nil)
+	checks := []struct {
+		model              string
+		input, output, hit float64
+	}{
+		{"perplexity/google/gemini-4-argon", 2e-6, 1e-5, 1e-7},
+		{"perplexity/perplexity/nemotron-3.5-super-120b-a12b", 2e-7, 5e-7, 4e-8},
+	}
+	for _, c := range checks {
+		info, ok := db.Get(c.model)
+		if !ok {
+			t.Errorf("%s missing from the bundled table", c.model)
+			continue
+		}
+		p := info.Pricing
+		if info.Provider != "perplexity" {
+			t.Errorf("%s provider = %s, want perplexity", c.model, info.Provider)
+		}
+		if math.Abs(p.InputPerToken-c.input) > 1e-15 || math.Abs(p.OutputPerToken-c.output) > 1e-15 || math.Abs(p.CachedInputPerToken-c.hit) > 1e-15 {
+			t.Errorf("%s pricing = %g/%g/%g, want %g/%g/%g", c.model, p.InputPerToken, p.OutputPerToken, p.CachedInputPerToken, c.input, c.output, c.hit)
+		}
 	}
 }

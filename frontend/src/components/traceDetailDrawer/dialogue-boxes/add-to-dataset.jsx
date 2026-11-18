@@ -40,7 +40,7 @@ const AddToDataset = ({ open, onClose, onOpenCreateNewDataset }) => {
             zIndex: 1,
           }}
         >
-          <Iconify icon="eva:close-fill" width={24} />
+          <Iconify icon="solar:close-linear" width={24} />
         </IconButton>
         <DialogTitle variant="h4" sx={{ marginLeft: 2, paddingBottom: 1 }}>
           Add to Dataset
@@ -57,7 +57,7 @@ const AddToDataset = ({ open, onClose, onOpenCreateNewDataset }) => {
           }}
         >
           <Iconify
-            icon="clarity:error-solid"
+            icon="solar:danger-circle-linear"
             color="grey" // Icon color
             width={24}
             sx={{
@@ -94,13 +94,10 @@ const AddToDataset = ({ open, onClose, onOpenCreateNewDataset }) => {
               alignItems: "center",
               color: "primary.main",
               paddingLeft: 1,
-              textTransform: "none",
-              fontSize: "18px",
-              fontWeight: "bold",
             }}
             onClick={onOpenCreateNewDataset} // Trigger transition
           >
-            <Iconify icon="ic:round-plus" color="primary.main" width={24} />
+            <Iconify icon="solar:add-linear" color="primary.main" width={24} />
             Create New Dataset
           </Button>
         </DialogContent>

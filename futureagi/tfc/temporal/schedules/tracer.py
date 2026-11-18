@@ -38,6 +38,24 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
         queue="tasks_s",
         description="Recover eval tasks whose drain stopped",
     ),
+    # A Recalculate runs in the user's request; this finishes one whose
+    # request died mid-eval, which would otherwise leave the result retired:
+    # an eval-task result with its replacement running for ever, or a result
+    # with no task (inline Observe eval, experiment span) with none at all.
+    ScheduleConfig(
+        schedule_id="sweep-stale-recalculations",
+        activity_name="sweep_stale_recalculations",
+        interval_seconds=600,
+        queue="tasks_s",
+        description="Finish Recalculates whose request died mid-eval",
+    ),
+    ScheduleConfig(
+        schedule_id="sweep-lost-insight-runs",
+        activity_name="sweep_lost_insight_runs",
+        interval_seconds=60,
+        queue="tasks_xl",
+        description="Settle Insights reports whose workflow stopped",
+    ),
     ScheduleConfig(
         schedule_id="check-alerts",
         activity_name="check_alerts",

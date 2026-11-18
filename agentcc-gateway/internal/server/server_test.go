@@ -1631,75 +1631,82 @@ func TestShouldApplyOrgProviderOverride(t *testing.T) {
 	}
 }
 
-func TestListModels_MergesGlobalAndOrgModelsForRequestingOrg(t *testing.T) {
-	mock := startMockOpenAI(t)
-	defer mock.Close()
-
-	srv := createOrgScopedModelsTestServer(t, mock.URL)
-
-	req := httptest.NewRequest("GET", "/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer sk-agentcc-org-test")
+func listModelIDs(t *testing.T, srv *Server, path, key string) (int, map[string]bool) {
+	t.Helper()
+	req := httptest.NewRequest("GET", path, nil)
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 	w := httptest.NewRecorder()
 	srv.httpServer.Handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-
-	var resp models.ModelListResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("parsing response: %v", err)
-	}
-
-	if len(resp.Data) != 3 {
-		t.Fatalf("model count = %d, want 3; body=%s", len(resp.Data), w.Body.String())
-	}
 	ids := map[string]bool{}
-	for _, m := range resp.Data {
-		ids[m.ID] = true
+	if w.Code == http.StatusOK && path == "/v1/models" {
+		var resp models.ModelListResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("parsing response: %v", err)
+		}
+		for _, m := range resp.Data {
+			ids[m.ID] = true
+		}
 	}
-	if !ids["gpt-4o"] || !ids["claude-sonnet-4-6"] || !ids["gpt-4o-mini"] {
-		t.Fatalf("returned model ids = %#v, want gpt-4o, gpt-4o-mini, and claude-sonnet-4-6", ids)
+	return w.Code, ids
+}
+
+func TestListModels_TenantKeyListsOnlyOrgModels(t *testing.T) {
+	mock := startMockOpenAI(t)
+	defer mock.Close()
+	srv := createOrgScopedModelsTestServer(t, mock.URL)
+
+	code, ids := listModelIDs(t, srv, "/v1/models", "sk-agentcc-org-test")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	if len(ids) != 2 || !ids["gpt-4o"] || !ids["claude-sonnet-4-6"] {
+		t.Fatalf("ids = %#v, want only the org models gpt-4o and claude-sonnet-4-6", ids)
+	}
+	if ids["gpt-4o-mini"] {
+		t.Fatal("global-only model gpt-4o-mini is listed for a key that cannot call it")
 	}
 }
 
-func TestListModels_FallsBackToGlobalModelsForKeyWithoutOrg(t *testing.T) {
+func TestListModels_TenantKeyWithoutOrgListsNothing(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
-
 	srv := createOrgScopedModelsTestServer(t, mock.URL)
 
-	req := httptest.NewRequest("GET", "/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer sk-agentcc-no-org-test")
-	w := httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	code, ids := listModelIDs(t, srv, "/v1/models", "sk-agentcc-no-org-test")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
 	}
-
-	var resp models.ModelListResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("parsing response: %v", err)
-	}
-	if len(resp.Data) != 2 {
-		t.Fatalf("model count = %d, want 2 global models; body=%s", len(resp.Data), w.Body.String())
+	if len(ids) != 0 {
+		t.Fatalf("ids = %#v, want none for a tenant key with no org models", ids)
 	}
 }
 
-func TestGetModel_ReturnsGlobalModelForOrgRequest(t *testing.T) {
+func TestListModels_InternalKeyListsGlobalAndOrgModels(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
-
 	srv := createOrgScopedModelsTestServer(t, mock.URL)
 
-	req := httptest.NewRequest("GET", "/v1/models/gpt-4o-mini", nil)
-	req.Header.Set("Authorization", "Bearer sk-agentcc-org-test")
-	w := httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, req)
+	_, ids := listModelIDs(t, srv, "/v1/models", "sk-agentcc-org-internal-test")
+	if len(ids) != 3 || !ids["gpt-4o"] || !ids["gpt-4o-mini"] || !ids["claude-sonnet-4-6"] {
+		t.Fatalf("ids = %#v, want gpt-4o, gpt-4o-mini and claude-sonnet-4-6", ids)
+	}
+}
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+func TestGetModel_GlobalModelHiddenFromTenantKey(t *testing.T) {
+	mock := startMockOpenAI(t)
+	defer mock.Close()
+	srv := createOrgScopedModelsTestServer(t, mock.URL)
+
+	if code, _ := listModelIDs(t, srv, "/v1/models/gpt-4o-mini", "sk-agentcc-org-test"); code != http.StatusNotFound {
+		t.Fatalf("tenant key status = %d, want 404", code)
+	}
+	if code, _ := listModelIDs(t, srv, "/v1/models/gpt-4o", "sk-agentcc-org-test"); code != http.StatusOK {
+		t.Fatalf("tenant key own-model status = %d, want 200", code)
+	}
+	if code, _ := listModelIDs(t, srv, "/v1/models/gpt-4o-mini", "sk-agentcc-org-internal-test"); code != http.StatusOK {
+		t.Fatalf("internal key status = %d, want 200", code)
 	}
 }
 

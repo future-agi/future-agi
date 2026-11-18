@@ -1,27 +1,30 @@
-# Argo CD Application for the published chart (not Helm values: apply it with
-# kubectl in the Argo CD namespace). Argo CD renders the chart with `helm
-# template`, so the chart cannot `lookup` its generated Secret: set
-# secrets.existingSecret to a Secret with the application keys SECRET_KEY,
-# INTEGRATION_ENCRYPTION_KEY, AGENTCC_INTERNAL_API_KEY, AGENTCC_ADMIN_TOKEN,
-# PROPERTY_CATALOG_API_PASSWORD, PROPERTY_CATALOG_CONSUMER_PASSWORD and
-# AGENTCC_WEBHOOK_SECRET (examples/external-secrets.yaml creates it from a
-# store), and pass every other value here or from a values file in Git.
-# Argo CD runs the chart's hooks (the bootstrap job, the Secret) as PreSync
-# hooks on every sync.
+# Argo CD OCI Application (not Helm values). Use an Argo CD release with
+# native OCI application-source support. See the GitOps upgrade runbook.
+# Verify the published chart's exact digest and release-tag signing identity
+# BEFORE approving this file in Git. Argo CD's OCI source does not itself
+# enforce this chart's cosign policy: a digest pin is not a signature check.
+# Never replace the digest with a tag/range or enable floating image updates.
+#
+# Argo CD runs `helm template`, where lookup cannot preserve generated keys.
+# Pre-create futureagi-app with SECRET_KEY, INTEGRATION_ENCRYPTION_KEY,
+# AGENTCC_INTERNAL_API_KEY, AGENTCC_ADMIN_TOKEN, PROPERTY_CATALOG_API_PASSWORD,
+# PROPERTY_CATALOG_CONSUMER_PASSWORD and AGENTCC_WEBHOOK_SECRET. Keep all other
+# credentials in existing Secrets too; never commit their values here.
+# Apply argocd-project.yaml and create the destination namespace separately.
+# External stores must be reachable before the chart's PreSync bootstrap runs.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: futureagi
   namespace: argocd
 spec:
-  project: default
+  project: futureagi
   source:
-    # Helm OCI chart: repoURL without the oci:// scheme and the chart name
-    # (register ghcr.io/future-agi/charts as a Helm repository with
-    # enableOCI: "true" if your Argo CD version asks for it).
-    repoURL: ghcr.io/future-agi/charts
-    chart: futureagi
-    targetRevision: X.Y.Z
+    # Native OCI source: use the full chart repository and expanded root.
+    # prepare-release.py prints the authenticated digest for this field.
+    repoURL: oci://ghcr.io/future-agi/charts/futureagi
+    path: .
+    targetRevision: sha256:REPLACE_WITH_VERIFIED_CHART_DIGEST
     helm:
       releaseName: futureagi
       valuesObject:
@@ -56,8 +59,13 @@ spec:
     server: https://kubernetes.default.svc
     namespace: futureagi
   syncPolicy:
+    # A reviewed Git change authorizes a sync. Do not repeatedly retry a failed
+    # migration or automatically prune data-bearing resources during recovery.
     automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
+      enabled: true
+      prune: false
+      selfHeal: false
+    retry:
+      limit: 0
+    # Never add ApplyOutOfSyncOnly=true: selective sync skips migration hooks.
+    # No CreateNamespace: the operator creates and scopes the namespace first.

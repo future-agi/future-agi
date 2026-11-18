@@ -8,6 +8,7 @@ import { AuthGuard } from "src/auth/guard";
 import DashboardLayout from "src/layouts/dashboard";
 
 import { LoadingScreen } from "src/components/loading-screen";
+import EmptyContent from "src/components/empty-content";
 import { Events, getPageViewEvent, trackEvent } from "src/utils/Mixpanel";
 import HarnessToEnvironment from "../components/harness-to-environment";
 import RoleProtection from "../components/role-protection";
@@ -95,6 +96,9 @@ const UserManagementV2 = lazyWithRetry(
 );
 const BillingPageV2 = lazyWithRetry(
   () => import("src/sections/settings/BillingV2/BillingPage"),
+);
+const HostUpdatesPage = lazyWithRetry(
+  () => import("src/sections/settings/Updates/HostUpdatesPage"),
 );
 const LicensePage = lazyWithRetry(
   () => import("src/sections/settings/License/LicensePage"),
@@ -222,6 +226,9 @@ const IndividualExperimentSummary = lazyWithRetry(
 const PreviewScreen = lazyWithRetry(
   () => import("src/sections/develop-detail/AnnotationsTab/PreviewScreen"),
 );
+const SQLQueryView = lazyWithRetry(
+  () => import("src/sections/projects/SQLQuery/SQLQueryView"),
+);
 const ObserverWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/observe/ObserverWrapper"),
 );
@@ -236,6 +243,12 @@ const VoiceFullPage = lazyWithRetry(
 // );
 const SessionsView = lazyWithRetry(
   () => import("src/sections/projects/SessionsView/Sessions-view"),
+);
+const InsightsView = lazyWithRetry(
+  () => import("src/sections/projects/Insights/InsightsView"),
+);
+const AskPage = lazyWithRetry(
+  () => import("src/sections/projects/LLMTracing/InstantEval/page/AskPage"),
 );
 const LLMTracingView = lazyWithRetry(
   () => import("src/sections/projects/LLMTracing/LLMTracingView"),
@@ -327,6 +340,12 @@ const WorkspaceExecutionDetail = lazyWithRetry(
   () =>
     import(
       "src/sections/simulate/environments/workspace/runs/WorkspaceExecutionDetail"
+    ),
+);
+const WorkspaceImprovementDetail = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/improvements/WorkspaceImprovementDetail"
     ),
 );
 const RunTestDetail = lazyWithRetry(
@@ -583,6 +602,9 @@ export const dashboardRoutes = (
       ),
     },
 
+    // The page owns the strict organization/deployment gate, including direct
+    // navigation; workspace-inclusive RoleProtection is not sufficient here.
+    { path: "updates", element: <HostUpdatesPage /> },
     {
       path: "org-settings",
       element: (
@@ -723,8 +745,13 @@ export const dashboardRoutes = (
         </RoleProtection>
       ),
     },
+    // Old address of Connectors (was "Falcon AI Connectors"); keeps saved links working.
     {
       path: "falcon-ai-connectors",
+      element: <Navigate to="/dashboard/settings/connectors" replace />,
+    },
+    {
+      path: "connectors",
       element: (
         <RoleProtection
           allowedRoles={[
@@ -1153,16 +1180,16 @@ export const dashboardRoutes = (
         //   element: <LogsView />,
         // },
         {
+          path: "query",
+          element: <SQLQueryView />,
+        },
+        {
           path: "llm-tracing",
           element: <LLMTracingView />,
         },
         {
           path: "voice",
-          element: (
-            <div style={{ padding: 32, color: "#888", textAlign: "center" }}>
-              Voice observability coming soon.
-            </div>
-          ),
+          element: <EmptyContent title="Voice observability coming soon" />,
         },
         {
           path: "sessions",
@@ -1171,6 +1198,25 @@ export const dashboardRoutes = (
         {
           path: "users",
           element: <UsersView />,
+        },
+        // Insights and Instant eval are Enterprise: without the capability
+        // (e.g. open source) the route shows the upgrade gate, as Error Feed.
+        {
+          path: "insights",
+          element: (
+            <CapabilityGate feature={CAPABILITY.INSIGHTS}>
+              <InsightsView />
+            </CapabilityGate>
+          ),
+        },
+        // Instant eval: a question answered for every row of a view.
+        {
+          path: "ask",
+          element: (
+            <CapabilityGate feature={CAPABILITY.INSTANT_EVAL}>
+              <AskPage />
+            </CapabilityGate>
+          ),
         },
       ],
     },
@@ -1435,6 +1481,10 @@ export const dashboardRoutes = (
           path: "environments/:envId",
           element: <SimulateEnvironmentWorkspace />,
           children: [
+            {
+              path: "improvements/:fixId",
+              element: <WorkspaceImprovementDetail />,
+            },
             {
               path: "runs/:testId/:executionId",
               element: <WorkspaceExecutionDetail />,

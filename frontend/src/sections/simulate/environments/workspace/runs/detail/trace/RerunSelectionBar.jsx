@@ -15,14 +15,8 @@ import { MAX_CALLS_PER_RUN } from "src/api/simulate-environments/rerunScenarios"
 
 import TrialsPicker from "../../../scenarios/TrialsPicker";
 
-// The toolbar's height, without its outlined-button colours: a contained
-// button keeps its own text colour.
+// Size and type come from the button's size prop and the theme.
 const rerunButtonSx = {
-  typography: "s2",
-  fontWeight: "fontWeightBold",
-  textTransform: "none",
-  height: 28,
-  px: 1.25,
   minWidth: 0,
   flexShrink: 0,
   whiteSpace: "nowrap",
@@ -61,7 +55,7 @@ function RerunOption({ icon, title, description, blocked, onSelect }) {
     >
       <Iconify icon={icon} width={16} sx={{ mt: "2px", flexShrink: 0 }} />
       <Box sx={{ minWidth: 0 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
           {title}
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -160,7 +154,7 @@ export default function RerunSelectionBar({
       <Typography
         sx={{
           typography: "s2",
-          fontWeight: "fontWeightSemiBold",
+          fontWeight: 500,
           fontVariantNumeric: "tabular-nums",
           whiteSpace: "nowrap",
         }}
@@ -170,7 +164,7 @@ export default function RerunSelectionBar({
       <Button
         size="small"
         onClick={onClear}
-        sx={{ color: "text.subtitle", fontWeight: 600, minWidth: 0 }}
+        sx={{ color: "text.subtitle", minWidth: 0 }}
       >
         Clear
       </Button>
@@ -222,10 +216,8 @@ export default function RerunSelectionBar({
             <Typography
               sx={{
                 typography: "s3",
-                fontWeight: 700,
+                fontWeight: 500,
                 color: "text.subtitle",
-                textTransform: "uppercase",
-                letterSpacing: 0.4,
               }}
             >
               {failed
@@ -238,13 +230,7 @@ export default function RerunSelectionBar({
               <Button
                 size="small"
                 onClick={readSelection}
-                sx={{
-                  typography: "s3",
-                  fontWeight: 600,
-                  minWidth: 0,
-                  px: 1,
-                  py: 0.25,
-                }}
+                sx={{ minWidth: 0 }}
               >
                 Try again
               </Button>
@@ -280,7 +266,7 @@ export default function RerunSelectionBar({
                   component="output"
                   sx={{
                     typography: "s3",
-                    fontWeight: 600,
+                    fontWeight: 500,
                     fontVariantNumeric: "tabular-nums",
                     whiteSpace: "nowrap",
                   }}

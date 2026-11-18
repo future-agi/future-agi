@@ -1,3 +1,4 @@
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { useMemo, useState } from "react";
 import { Alert, Box, Button, Stack, Typography } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
@@ -173,13 +174,8 @@ export default function HarnessList() {
   const createButton = (
     <Button
       variant="contained"
-      startIcon={<Iconify icon="eva:plus-fill" />}
+      startIcon={<Iconify icon="solar:add-linear" />}
       onClick={goToCreate}
-      sx={{
-        bgcolor: "primary.main",
-        color: "primary.contrastText",
-        "&:hover": { bgcolor: "primary.dark" },
-      }}
     >
       Create environment
     </Button>
@@ -255,7 +251,7 @@ export default function HarnessList() {
                 rowCount={filtered.length}
                 onRowClick={(row) => goToDetail(row.job.job_id)}
                 getRowId={(row) => row.job.job_id}
-                rowHeight={44}
+                rowHeight={ROW_HEIGHT.default}
                 emptyMessage="No environments found"
               />
             </>
