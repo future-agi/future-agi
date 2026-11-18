@@ -441,13 +441,21 @@ def _preprocess_dead_air_detection(inputs):
     except Exception as e:
         # Raw uploads and own-bucket recordings aren't always readable by
         # libsndfile. A PCM retry avoids adding an MP3 encoder delay.
-        try:
-            from evaluations.engine.dead_air_audio import aac_to_wav
+        from evaluations.engine.dead_air_audio import RecordingDecodeError, aac_to_wav
+        from tfc.utils.media_tools import MediaToolUnavailable
 
+        try:
             y, sr = librosa.load(io.BytesIO(aac_to_wav(audio_bytes)), sr=None)
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
-            logger.warning("dead_air_preprocess_decode_failed", error=str(e))
-            inputs["_dead_air_error"] = f"Could not decode audio: {e}"
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as retry:
+            # Keep the first decoder's reason for unknown formats and on
+            # installations without FFmpeg. Otherwise report a concrete cause.
+            reason = e
+            if isinstance(retry, RecordingDecodeError) or (
+                isinstance(retry, MediaToolUnavailable) and retry.tool == "ffprobe"
+            ):
+                reason = retry
+            logger.warning("dead_air_preprocess_decode_failed", error=str(reason))
+            inputs["_dead_air_error"] = f"Could not decode audio: {reason}"
             return inputs
 
     duration = float(librosa.get_duration(y=y, sr=sr))

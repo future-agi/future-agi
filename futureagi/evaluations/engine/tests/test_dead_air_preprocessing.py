@@ -14,7 +14,7 @@ import base64
 import io
 import math
 import shutil
-import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -93,28 +93,17 @@ def test_silent_audio_is_mostly_dead_air():
     assert out["_dead_air_max_gap_ms"] > 1000.0
 
 
-def _synth_m4a_bytes(tmp_path, **kwargs):
-    if shutil.which("ffmpeg") is None:
-        pytest.skip("ffmpeg not installed")
-    wav = tmp_path / "clip.wav"
-    m4a = tmp_path / "clip.m4a"
-    wav.write_bytes(_synth_wav_bytes(**kwargs))
-    subprocess.run(
-        ["ffmpeg", "-v", "error", "-y", "-i", str(wav), "-c:a", "aac", str(m4a)],
-        check=True,
-        timeout=30,
-    )
-    return m4a.read_bytes()
+def _recording(name):
+    # Pre-encoded 440 Hz, 8 kHz mono clips. Audio-enabled slim workers can
+    # decode these formats but don't ship an AAC encoder or an M4A muxer.
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("ffmpeg and ffprobe required")
+    return (Path(__file__).parent / "fixtures" / "dead_air" / name).read_bytes()
 
 
-def test_m4a_audio_is_decoded(tmp_path):
-    """libsndfile can't read MP4/AAC, and m4a uploads, base64 and own-bucket
-    audio reach the preprocessor without being transcoded."""
-    body = _synth_m4a_bytes(
-        tmp_path,
-        duration_sec=2.0,
-        silence_segments=[(0.0, 1.6)],
-    )
+def test_m4a_audio_is_decoded():
+    """The loader supplies the original bucket object's bytes."""
+    body = _recording("silent-tail.m4a")
     with patch(
         "tfc.utils.storage.audio_bytes_from_url_or_base64",
         return_value=body,
@@ -129,11 +118,11 @@ def test_m4a_audio_is_decoded(tmp_path):
 
 
 @pytest.mark.parametrize("as_base64", [False, True], ids=["uploaded-bytes", "base64"])
-def test_short_m4a_matches_original_waveform(tmp_path, as_base64):
+def test_short_m4a_matches_original_waveform(as_base64):
     # 1600 samples do not end on an AAC frame boundary (1024 samples).
     duration = 0.2
     wav = _synth_wav_bytes(duration_sec=duration)
-    m4a = _synth_m4a_bytes(tmp_path, duration_sec=duration)
+    m4a = _recording("tone.m4a")
     value = base64.b64encode(m4a).decode("ascii") if as_base64 else {"bytes": m4a}
     reference = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": wav}})
     actual = preprocess_inputs("dead_air_detection", {"input_audio": value})
@@ -168,12 +157,40 @@ def test_missing_ffmpeg_keeps_original_decode_error(monkeypatch):
     assert "_dead_air_percentage" not in actual
 
 
-def test_oversize_pcm_is_not_scored(tmp_path, monkeypatch):
-    audio = _synth_m4a_bytes(tmp_path, duration_sec=2.0)
+def test_raw_aac_decodes_all_frames():
+    # Same tone as the M4A, but ADTS has three full AAC frames and no edit list.
+    audio = _recording("tone.aac")
+    actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
+    assert actual["_dead_air_duration_sec"] == pytest.approx(3 * 1024 / 8000)
+
+
+def test_incomplete_m4a_is_not_scored():
+    # The intact front index still declares 2 s; dropping the final 12 AAC
+    # packets leaves 512 ms of decodable PCM, losing almost all the silence.
+    audio = _recording("silent-tail.m4a")[:-48]
+    actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
+    assert "_dead_air_percentage" not in actual
+    assert "_dead_air_error" in actual
+
+
+def test_missing_ffprobe_names_tool(tmp_path, monkeypatch):
+    audio = _recording("tone.m4a")
+    (tmp_path / "ffmpeg").symlink_to(shutil.which("ffmpeg"))
+    monkeypatch.setenv("PATH", str(tmp_path))
+    actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
+    assert "ffprobe is not installed" in actual["_dead_air_error"]
+    assert "_dead_air_percentage" not in actual
+
+
+def test_oversize_pcm_is_not_scored(monkeypatch):
+    audio = _recording("silent-tail.m4a")
     # The compressed recording fits, but the 32 kB PCM recording does not.
     monkeypatch.setattr("tfc.utils.storage.MAX_AUDIO_FILE_SIZE", len(audio) + 1024)
     actual = preprocess_inputs("dead_air_detection", {"input_audio": {"bytes": audio}})
-    assert actual["_dead_air_error"].startswith("Could not decode audio:")
+    assert (
+        actual["_dead_air_error"]
+        == "Could not decode audio: Decoded audio recording is too large"
+    )
     assert "_dead_air_percentage" not in actual
 
 

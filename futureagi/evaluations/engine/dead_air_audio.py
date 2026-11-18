@@ -8,12 +8,17 @@ from pathlib import Path
 from tfc.utils.media_tools import require_ffmpeg
 
 
+class RecordingDecodeError(ValueError):
+    """A specific reason not to score this recording, rather than a format miss."""
+
+
 def aac_to_wav(audio_bytes: bytes) -> bytes:
+    from tfc.utils.lazy_extras import soundfile
     from tfc.utils.storage import MAX_AUDIO_FILE_SIZE
 
     ffmpeg = require_ffmpeg("dead-air audio decoding", ffprobe=True)
     if len(audio_bytes) > MAX_AUDIO_FILE_SIZE:
-        raise ValueError("Audio recording is too large")
+        raise RecordingDecodeError("Audio recording is too large")
 
     # A normal M4A can put its index at the end. Use a seekable input rather
     # than piping the recording through stdin. Both files disappear on error.
@@ -45,19 +50,19 @@ def aac_to_wav(audio_bytes: bytes) -> bytes:
         streams = metadata.get("streams")
         if not streams:
             raise ValueError("No audio stream in recording")
-        duration = streams[0].get("duration")
         # AAC frames can extend past the end of an MP4 audio track. Use its
         # declared playback length; raw ADTS has no such end marker. Never
         # pad or use an estimated bitrate-based duration to shorten raw AAC.
-        end = (
-            ["-t", duration]
-            if duration and "mov" in metadata["format"]["format_name"].split(",")
-            else []
+        duration = (
+            streams[0].get("duration")
+            if "mov" in metadata["format"]["format_name"].split(",")
+            else None
         )
         subprocess.run(
             [
                 ffmpeg,
                 "-nostdin",
+                "-xerror",
                 "-v",
                 "error",
                 *input_options,
@@ -69,7 +74,7 @@ def aac_to_wav(audio_bytes: bytes) -> bytes:
                 "-1",
                 "-map_chapters",
                 "-1",
-                *end,
+                *(["-t", duration] if duration else []),
                 "-ac",
                 "1",
                 "-c:a",
@@ -86,5 +91,13 @@ def aac_to_wav(audio_bytes: bytes) -> bytes:
         # -fs can finish successfully after writing a final packet across the
         # limit. Do not load or score a truncated recording.
         if wav.stat().st_size >= MAX_AUDIO_FILE_SIZE:
-            raise ValueError("Decoded audio recording is too large")
+            raise RecordingDecodeError("Decoded audio recording is too large")
+        if duration:
+            # A front-indexed M4A can end cleanly between packets but before
+            # its declared end. Allow 1 ms for container time-base rounding.
+            pcm = soundfile.info(wav)
+            if pcm.frames / pcm.samplerate + 0.001 < float(duration):
+                raise RecordingDecodeError(
+                    "Audio recording ends before its declared duration"
+                )
         return wav.read_bytes()
