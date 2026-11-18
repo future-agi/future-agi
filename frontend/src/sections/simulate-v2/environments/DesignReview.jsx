@@ -1,11 +1,19 @@
 import PropTypes from "prop-types";
 import { testIsOptional } from "./buildTestRule";
-import { Children, isValidElement, useEffect, useState } from "react";
+import {
+  Children,
+  createContext,
+  isValidElement,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 import {
   Box,
   Button,
   ButtonBase,
   CircularProgress,
+  Collapse,
   IconButton,
   Stack,
   TextField,
@@ -371,7 +379,7 @@ export default function DesignReview({
      proposal is all there is to look at. */
   const planBody = (
     <>
-      <Stack spacing={page ? 3 : 2.5}>
+      <Stack spacing={page ? 0 : 2.5}>
         <>
           <PlanRow
             label="Records"
@@ -704,7 +712,21 @@ export default function DesignReview({
             >
               {reading
                 ? `Reading ${readingNames} — the design fills in as it's read.`
-                : "Nothing is built until you approve — a clean build saves as v1."}
+                : `${[
+                    ["record", tables.length + fileTables.length],
+                    ["tool", tools.length],
+                    ["rule", rules.length],
+                    [
+                      "scenario",
+                      emptyWorld
+                        ? 0
+                        : groups.reduce((n, g) => n + g.n, 0) ||
+                          draftCount ||
+                          0,
+                    ],
+                  ]
+                    .map(([w, n]) => `${n} ${w}${n === 1 ? "" : "s"}`)
+                    .join(" · ")} — nothing is built until you approve.`}
             </Typography>
           </Box>
           {canAdd && (
@@ -875,7 +897,9 @@ export default function DesignReview({
           </Box>
         )}
 
-        <Box sx={{ mt: 3 }}>{planBody}</Box>
+        <PlanCollapse.Provider value>
+          <Box sx={{ mt: 2 }}>{planBody}</Box>
+        </PlanCollapse.Provider>
         {envState && (
           <SourceDrawer
             open={!!openSource}
@@ -1127,7 +1151,13 @@ const linkSx = {
 
 /* One section of the plan: a heading with its count, then its lines in a
    bordered list — the spec-sheet look the rest of the environment uses. */
+/* On the design page each section is one collapsed row — open it to check or
+   correct it; approving doesn't need any of them open. */
+const PlanCollapse = createContext(false);
+
 function PlanRow({ label, count, children, pending = false, reading = "" }) {
+  const collapsible = useContext(PlanCollapse) && !pending;
+  const [open, setOpen] = useState(false);
   const n = pending
     ? ""
     : count ??
@@ -1136,6 +1166,59 @@ function PlanRow({ label, count, children, pending = false, reading = "" }) {
       ).length;
   /* Design system list rows: the heading carries the count; rows sit on the
      page with a hairline under each one and no box around them. */
+  if (collapsible)
+    return (
+      <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
+        <ButtonBase
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          sx={{
+            width: "100%",
+            justifyContent: "flex-start",
+            gap: 1,
+            py: 1.25,
+            px: 0.5,
+            borderRadius: 0.5,
+            "&:hover": { bgcolor: "action.hover" },
+          }}
+        >
+          <Iconify
+            icon="solar:alt-arrow-right-linear"
+            width={16}
+            sx={{
+              color: "text.tertiary",
+              transition: "transform .15s ease",
+              transform: open ? "rotate(90deg)" : "none",
+            }}
+          />
+          <Typography sx={{ typography: "m3", fontWeight: 500 }}>
+            {label}
+          </Typography>
+          <Typography
+            sx={{
+              typography: "m3",
+              color: "text.tertiary",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {n}
+          </Typography>
+        </ButtonBase>
+        <Collapse in={open} unmountOnExit>
+          <Box
+            sx={{
+              mb: 1.5,
+              borderTop: "1px solid",
+              borderColor: "divider",
+              "& > *": { borderBottom: "1px solid", borderColor: "divider" },
+              "& > *:last-child": { borderBottom: 0 },
+            }}
+          >
+            {children}
+          </Box>
+        </Collapse>
+      </Box>
+    );
   return (
     <Box>
       <Typography sx={{ typography: "m3", fontWeight: 500, mb: 0.5 }}>
