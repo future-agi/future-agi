@@ -46,7 +46,7 @@ def stored_tool_result_call_id(item: dict, pending_ids: list[str]) -> str | None
     matched by id. A harness result that names none answers the earliest call
     still waiting, as tool results come back in call order.
     """
-    tool_call_id = item.get("tool_call_id") or None
+    tool_call_id: str | None = item.get("tool_call_id") or None
     if tool_call_id:
         if tool_call_id in pending_ids:
             pending_ids.remove(tool_call_id)
@@ -62,7 +62,7 @@ def stored_tool_call_function(tool_call: dict) -> dict:
     Chat-completions calls nest them under ``function``; harness receipts send
     them flat on the call (``{id, name, arguments}``).
     """
-    function = tool_call.get("function")
+    function: Any = tool_call.get("function")
     if isinstance(function, dict):
         return function
     if hasattr(function, "__dict__"):
