@@ -390,7 +390,8 @@ def test_mixed_groups_use_every_recognised_field(
 
 
 def _display_fallback_calls(add):
-    calls = [add(score=4), add(score=2), add(score=4)]
+    # Not symmetric, so a reversed order cannot pass for the creation order.
+    calls = [add(score=4), add(score=2), add(score=2)]
     for minutes, call in enumerate(calls):
         CallExecution.objects.filter(pk=call.pk).update(
             created_at=calls[0].created_at + timedelta(minutes=minutes)
@@ -424,7 +425,7 @@ def test_unrecognised_only_groups_keep_the_display_fallback(
 
     data = _detail(auth_client, execution, row_groups=["turn_count"], group_keys=keys)
     # The fallback also groups by each call's created_at, so equal scores split.
-    assert _groups(data, "overall_score") == [(4, 1), (2, 1), (4, 1)]
+    assert _groups(data, "overall_score") == [(4, 1), (2, 1), (2, 1)]
     assert all(set(row) == FALLBACK_ROW_KEYS for row in data["results"])
     assert (data["count"], data["next"], data["previous"]) == (3, None, None)
 
@@ -436,7 +437,7 @@ def test_unrecognised_only_groups_count_searched_calls_once(auth_client, chat_ru
     _add_transcripts(first, 2)
 
     data = _detail(auth_client, execution, row_groups=["turn_count"], search="Checkout")
-    assert _groups(data, "overall_score") == [(4, 1), (2, 1), (4, 1)]
+    assert _groups(data, "overall_score") == [(4, 1), (2, 1), (2, 1)]
 
 
 def test_unrecognised_only_group_links_keep_the_request(auth_client, chat_run):
@@ -447,5 +448,5 @@ def test_unrecognised_only_group_links_keep_the_request(auth_client, chat_run):
     first = _detail(auth_client, execution, row_groups=["turn_count"], limit=2)
     second = _follow(auth_client, execution, first["next"])
     assert _groups(first, "overall_score") == [(4, 1), (2, 1)]
-    assert _groups(second, "overall_score") == [(4, 1)]
+    assert _groups(second, "overall_score") == [(2, 1)]
     assert _follow(auth_client, execution, second["previous"]) == first
