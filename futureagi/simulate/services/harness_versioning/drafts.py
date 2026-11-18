@@ -1550,6 +1550,7 @@ def _changes(draft: Any, piece: str) -> dict[str, int]:
         ),
         "tools": size(tools.get("added"), tools.get("removed"), tools.get("changed")),
         "rules": size(rules.get("added"), rules.get("removed")),
+        "contract_fields": size(contract.get("fields")),
         "sub_goals": size(
             sub_goals.get("added"), sub_goals.get("removed"), sub_goals.get("changed")
         ),
