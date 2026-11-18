@@ -208,6 +208,15 @@ _CONTINUOUS_DATABASE_ADOPTION_PATCH = "continuous-eval-live-database-backoff-v1"
 # the same reason as ``_MAX_IDLE_FINALIZE_WAITS``.
 _HISTORICAL_CLAIM_OUTCOME_UNKNOWN_PATCH = "historical-eval-claim-outcome-unknown-v1"
 _MAX_CLAIM_OUTCOME_UNKNOWN_WAITS = 12
+# A historical run started with a ``workflow_generation`` first checks that
+# its generation is still the task's, before its first label/status command.
+# Workers predating that check ignore the unknown input field (Temporal's
+# dataclass converter drops it) and record ``get_workflow_labels_activity``
+# first, so a newer worker replaying such a history must not issue the check.
+# The marker is only consulted when the input carries a generation, so runs
+# without one, and every history recorded before this field existed, replay
+# unchanged.
+_HISTORICAL_GENERATION_FENCE_PATCH = "historical-eval-generation-fence-v1"
 # Explicit bound even when no batch can finish and the server has not suggested
 # CAN yet. All deferred paths, including pause cleanup, pass this checkpoint.
 _MAX_CONTINUOUS_POLLS = 100
@@ -611,6 +620,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
     async def _run(self, input: EvalTaskWorkflowInput) -> EvalTaskWorkflowOutput:
         if (
             input.workflow_generation
+            and workflow.patched(_HISTORICAL_GENERATION_FENCE_PATCH)
             and not (await _task_state(input.task_id, input.workflow_generation))[
                 "active"
             ]
