@@ -373,7 +373,14 @@ class AutomaticPublisher:
     def new_checkout(self, name):
         rehearsal.need(self.lane=='product' and self.product_factory is not None,'real ProductHarness required')
         rehearsal.need(all(v in self._prepared for v in self.versions),'qualify all releases before installing A')
-        return self.product_factory(self, name)
+        checkout = self.product_factory(self, name)
+        if len(self.versions) > 1:
+            # A host the first hop's proof certifies runs the dependency digests
+            # that proof locked. Install them by digest; the updater's own
+            # admission still compares the running images with the proof.
+            checkout.dependency_lock = tuple(
+                self.transition(self.versions[0], self.versions[1])['dependencies'])
+        return checkout
 
     def seed_and_check(self, checkout):
         rehearsal.need(self.lane=='product','synthetic transport is not product data qualification')

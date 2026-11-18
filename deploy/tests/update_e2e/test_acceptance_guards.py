@@ -10,6 +10,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 from deploy.tests.test_update_automatic_release import default_v2, fixture, versioned
@@ -1097,6 +1098,51 @@ class NativeBoundaryTests(unittest.TestCase):
                 h.install()
             boot.assert_not_called()
             self.assertFalse(any(c.args[:2] == ('image','tag') for c in command.call_args_list))
+
+    def test_source_install_pulls_locked_dependencies_by_digest_under_their_compose_tag(self):
+        manifest=versioned(default_v2(),'v1.53.0')
+        component=manifest['components']['standalone']
+        locked='sha256:'+'4'*64
+        h=real.ProductHarness(Path.home()/'fagi-unit-source-install',ROOT,'fagi-upd-e2e-real-unit')
+        h.source_manifest=manifest
+        h.model={'services':{'app':{'image':component['image']},'postgres':{'image':'postgres:16'},
+                            'clickhouse':{'image':'clickhouse/clickhouse-server:25.3-alpine'}}}
+        # Only postgres is locked here; clickhouse keeps the ordinary tag pull.
+        h.dependency_lock=(dict(service='postgres',image='docker.io/library/postgres:16',digest=locked),)
+        image=dict(Id='sha256:'+'d'*64,Os='linux',Architecture='amd64',
+                   RepoDigests=[component['image'].split(':v')[0]+'@'+component['digest']])
+        def docker(*args,**kwargs):
+            return SimpleNamespace(stdout=json.dumps([image]).encode() if args[:2] == ('image','inspect') else b'')
+        with patch.object(h,'prepare'),patch.object(h,'docker',side_effect=docker) as command, \
+             patch.object(h,'boot_source',return_value={'seconds':280}):
+            self.assertEqual(h.install(),{'seconds':280})
+        calls=[c.args for c in command.call_args_list]
+        pin='docker.io/library/postgres@'+locked
+        self.assertIn(('pull','--platform','linux/amd64',pin),calls)
+        self.assertLess(calls.index(('pull','--platform','linux/amd64',pin)),calls.index(('image','tag',pin,'postgres:16')))
+        self.assertNotIn(('pull','postgres:16'),calls)
+        self.assertIn(('pull','clickhouse/clickhouse-server:25.3-alpine'),calls)
+        # A lock row for another tag is not applied; the updater's admission refuses that host.
+        h.dependency_lock=(dict(service='postgres',image='docker.io/library/postgres:17',digest=locked),)
+        with patch.object(h,'prepare'),patch.object(h,'docker',side_effect=docker) as command, \
+             patch.object(h,'boot_source',return_value={'seconds':280}):
+            h.install()
+        calls=[c.args for c in command.call_args_list]
+        self.assertIn(('pull','postgres:16'),calls)
+        self.assertFalse([c for c in calls if c[:2] == ('image','tag') and c[-1] == 'postgres:16'])
+
+    def test_new_checkout_installs_at_the_first_hop_dependency_lock(self):
+        from deploy.tests.update_e2e.automatic_publisher import AutomaticPublisher
+        lock=[dict(service='postgres',image='docker.io/library/postgres:16',digest='sha256:'+'4'*64)]
+        versions=('v1.53.0','v1.54.0','v1.55.0')
+        publisher=SimpleNamespace(lane='product',product_factory=lambda pub,name:SimpleNamespace(),
+            versions=versions,_prepared={v:{} for v in versions},
+            transition=unittest.mock.Mock(return_value=dict(dependencies=lock)))
+        checkout=AutomaticPublisher.new_checkout(publisher,'one-opt-in')
+        publisher.transition.assert_called_once_with('v1.53.0','v1.54.0')
+        self.assertEqual(checkout.dependency_lock,tuple(lock))
+        publisher.versions=('v1.53.0',); publisher._prepared={'v1.53.0':{}}
+        self.assertFalse(hasattr(AutomaticPublisher.new_checkout(publisher,'one-opt-in'),'dependency_lock'))
 
     def test_measured_source_boot_sizes_bounded_waits_with_real_policy_and_clock_rules(self):
         from datetime import datetime,timezone

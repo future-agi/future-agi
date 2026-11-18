@@ -30,7 +30,7 @@ from types import SimpleNamespace
 import uuid
 
 from scripts.update_rehearsal_shipping import (
-    ShippingRehearsal, ProductWitnesses, configuration_preimage, producer, wire,
+    ShippingRehearsal, ProductWitnesses, configuration_preimage, producer, pull_compose_image, wire,
 )
 from deploy.tests.update_e2e.real_automatic import ProductHarness
 
@@ -431,8 +431,12 @@ class SnapshotMilestone(ShippingRehearsal):
         p.equal(parse_image_ref(model['services']['app']['image']), parse_image_ref(self.source_image),
                 'source is not digest-pinned')
         self.image_inspections = {}
+        # A retained dependency lock (QualificationRehearsal) is pulled by its
+        # digest; the boot still compares what the daemon holds with the lock.
+        locks = getattr(self, 'dependencies', None) or ()
         for name, service in model['services'].items():
-            self.installation.docker_run('pull','--platform',self.platform,service['image'])
+            pull_compose_image(self.installation.docker_run, self.platform, name, service['image'],
+                               () if name == 'app' else locks)
             image = self._json('image','inspect',service['image'])[0]
             p.equal(image['Os']+'/'+image['Architecture'], self.platform, 'non-native source image')
             self.image_inspections[name] = {k:image[k] for k in ('Id','Os','Architecture','RepoDigests')}
