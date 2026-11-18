@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { resolveFrontendTool } from "./resolve-frontend-tool.mjs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -66,22 +67,8 @@ const prettierFiles = uniqueFiles.filter((file) =>
   prettierExtensions.has(path.extname(file)),
 );
 
-// Resolve a package's bin script and run it with the current Node binary.
-// The .bin shims cannot be used here: on Windows they are .cmd files, which
-// Node refuses to spawn without a shell (the extensionless POSIX shim is not
-// executable there at all).
-const resolveBin = (pkg, binName = pkg) => {
-  const pkgDir = path.join(frontendDir, "node_modules", pkg);
-  const pkgJsonPath = path.join(pkgDir, "package.json");
-  if (!existsSync(pkgJsonPath)) return null;
-  const { bin } = JSON.parse(readFileSync(pkgJsonPath, "utf8"));
-  const relative = typeof bin === "string" ? bin : bin?.[binName];
-  if (!relative) return null;
-  return path.join(pkgDir, relative);
-};
-
 const run = (bin, args) => {
-  const script = resolveBin(bin);
+  const script = resolveFrontendTool(frontendDir, bin);
   if (!script || !existsSync(script)) {
     console.error(
       `Missing ${bin}. Run "yarn --cwd frontend install" before committing.`,

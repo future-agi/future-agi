@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { resolveFrontendTool } from "./resolve-frontend-tool.mjs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -8,23 +9,10 @@ const rootDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
-// Resolve prettier's bin script so it can run with the current Node binary.
-// The .bin shim cannot be used here: on Windows it is a .cmd file, which
-// Node refuses to spawn without a shell (the extensionless POSIX shim is not
-// executable there at all).
-const prettierPkgDir = path.join(
-  rootDir,
-  "frontend",
-  "node_modules",
+const prettier = resolveFrontendTool(
+  path.join(rootDir, "frontend"),
   "prettier",
 );
-const prettier = (() => {
-  const pkgJsonPath = path.join(prettierPkgDir, "package.json");
-  if (!existsSync(pkgJsonPath)) return null;
-  const { bin } = JSON.parse(readFileSync(pkgJsonPath, "utf8"));
-  const relative = typeof bin === "string" ? bin : bin?.prettier;
-  return relative ? path.join(prettierPkgDir, relative) : null;
-})();
 
 if (!prettier || !existsSync(prettier)) {
   console.error('Missing prettier. Run "yarn --cwd frontend install" first.');
