@@ -202,17 +202,21 @@ def _scrub(value: Any, depth: int = 0) -> Any:
 # quoted value runs to its matching closing quote, spaces and newlines
 # included; a quote after a backslash does not close it (``repr`` and JSON
 # double the backslash of an escaped quote, so any run of backslashes counts as
-# escaping the next character). A quoted value with no
-# matching closing quote (cut off, or closed by the other kind of quote) runs to
-# the end of the text: over-redacting is better than leaking. An unquoted value
+# escaping the next character). The quotes themselves may carry a run of
+# backslashes, as ``repr`` and nested JSON write them (``password=\'x\'``,
+# ``\"password\": \"x\"``); the value then closes only at the same escaped
+# quote. A quoted value with no matching closing quote (cut off, or closed by
+# the other kind of quote) runs to the end of the text: over-redacting is
+# better than leaking. An unquoted value
 # runs to the next whitespace or delimiter: there is no way to tell where an
 # unquoted value with spaces ends, so callers that log one as a %s argument are
 # covered by matching that argument by position instead.
 _SENSITIVE_PAIR_IN_TEXT = re.compile(
     r"""(?P<key>[\w.\-]*(?:"""
     + "|".join(re.escape(key) for key in SENSITIVE_KEY_SUBSTRINGS)
-    + r""")[\w.\-]*)(?P<sep>["']?\s*[:=]\s*)"""
-    r"""(?:(?P<quote>["'])(?P<quoted>(?:\\+[\s\S]?|(?!(?P=quote))[^\\])*)"""
+    + r""")[\w.\-]*)(?P<sep>(?:\\*["'])?\s*[:=]\s*)"""
+    r"""(?:(?P<quote>\\*["'])"""
+    r"""(?P<quoted>(?:(?!(?P=quote))(?:\\+[\s\S]?|[^\\]))*)"""
     r"""(?:(?P<close>(?P=quote))|\Z)"""
     r"""|(?P<value>(?:(?:Bearer|Basic|Token)\s+)?[^\s"',;&}\]]+))""",
     re.IGNORECASE,
@@ -221,6 +225,18 @@ _SENSITIVE_PAIR_IN_TEXT = re.compile(
 
 def _value_group(match: re.Match) -> str:
     return "quoted" if match["quote"] else "value"
+
+
+def _already_redacted(match: re.Match) -> bool:
+    """True when the whole value is a previous redaction, so scrubbing twice
+    does not nest it. A value that only starts with one (an unterminated
+    quote running on over later text) is redacted again."""
+    if match["quote"]:
+        return match["quoted"] == _REDACTED
+    # The unquoted value stops before the closing bracket.
+    return match["value"] == _REDACTED[:-1] and match.string.startswith(
+        _REDACTED, match.start("value")
+    )
 
 
 # LLM usage figures such as ``max_tokens=4096`` or ``token_count=12`` name a
@@ -245,9 +261,7 @@ def _scrub_text(value: Any) -> Any:
         return scrubbed
 
     def redact(match: re.Match) -> str:
-        if _TOKEN_USAGE_NAME.search(match["key"]) or match.string.startswith(
-            _REDACTED, match.start(_value_group(match))
-        ):
+        if _TOKEN_USAGE_NAME.search(match["key"]) or _already_redacted(match):
             return match[0]
         return (
             f"{match['key']}{match['sep']}{match['quote'] or ''}"
@@ -271,18 +285,70 @@ def _scrub_text_deep(value: Any, depth: int = 0) -> Any:
     return value
 
 
-def _redacted_starts(text: Any) -> set[int] | None:
-    """Where each value ``_scrub_text`` would redact in ``text`` starts; None
-    when it would redact all of it."""
+def _redacted_spans(text: Any) -> list[tuple[int, int]] | None:
+    """The ``(start, end)`` of each value ``_scrub_text`` would redact in
+    ``text``; None when it would redact all of it."""
     if not isinstance(text, str):
-        return set()
+        return []
     if _scrub(text) is not text:
         return None
-    return {
-        match.start(_value_group(match))
+    return [
+        match.span(_value_group(match))
         for match in _SENSITIVE_PAIR_IN_TEXT.finditer(text)
         if not _TOKEN_USAGE_NAME.search(match["key"])
-    }
+    ]
+
+
+# One %-style conversion specifier of a logging template.
+_FORMAT_SPEC = re.compile(
+    r"%(?:\((?P<name>[^)]*)\))?[#0\- +]*(?:\*|\d+)?(?:\.(?:\*|\d+))?[hlL]?"
+    r"(?P<conv>[diouxXeEfFgGcrsa%])"
+)
+
+
+def _param_spans(
+    message: Any, params: Any, formatted: str
+) -> dict[Any, list[tuple[int, int]]] | None:
+    """Where each argument (by index or mapping key) is rendered in
+    ``formatted``, found by rendering ``message`` one specifier at a time.
+    None when that does not reproduce ``formatted`` exactly."""
+    if not isinstance(message, str):
+        return None
+    mapping = isinstance(params, dict)
+    if not mapping and not isinstance(params, (list, tuple)):
+        return None
+    spans: dict[Any, list[tuple[int, int]]] = {}
+    pieces: list[str] = []
+    length = position = index = 0
+    try:
+        for spec in _FORMAT_SPEC.finditer(message):
+            literal = message[position : spec.start()]
+            pieces.append(literal)
+            length += len(literal)
+            position = spec.end()
+            if spec["conv"] == "%":
+                piece, key = "%", None
+            elif "*" in spec[0]:
+                return None
+            elif mapping:
+                key = spec["name"]
+                piece = spec[0] % params
+            else:
+                if spec["name"] is not None:
+                    return None
+                key = index
+                piece = spec[0] % (params[index],)
+                index += 1
+            pieces.append(piece)
+            if key is not None:
+                spans.setdefault(key, []).append((length, length + len(piece)))
+            length += len(piece)
+    except (TypeError, ValueError, KeyError, IndexError):
+        return None
+    pieces.append(message[position:])
+    if "".join(pieces) != formatted or (not mapping and index != len(params)):
+        return None
+    return spans
 
 
 def _occurrences(text: str, part: str) -> list[int]:
@@ -293,36 +359,61 @@ def _occurrences(text: str, part: str) -> list[int]:
     return found
 
 
-def _scrub_log_params(params: Any, formatted: Any) -> tuple[Any, bool]:
+def _overlaps(span: tuple[int, int], spans: list[tuple[int, int]]) -> bool:
+    return any(span[0] < end and start < span[1] for start, end in spans)
+
+
+def _scrub_log_params(
+    params: Any, formatted: Any, message: Any = None
+) -> tuple[Any, bool]:
     """Redact log arguments that ``formatted`` shows as credential values.
 
     ``logger.error("api_key=%s", key)`` passes the credential as a bare
-    argument with no name of its own. An argument is redacted when its
-    rendering starts exactly where a redacted value starts in the formatted
-    message (so a spaced credential goes whole, and a short argument such as
-    1 is not redacted merely for occurring inside one). Every argument is also
-    scrubbed on its own. Returns the params and whether any was redacted.
+    argument with no name of its own. Where each argument lands in
+    ``formatted`` is found by rendering the ``message`` template, and an
+    argument is redacted when its rendering overlaps a redacted value (so a
+    spaced credential goes whole, a later argument inside an unterminated
+    quoted value goes too, and a short argument such as 1 is not redacted
+    merely because the same text occurs inside a credential). If the template
+    cannot be replayed, an argument is redacted when one of its occurrences in
+    ``formatted`` starts where a redacted value starts or overlaps a value
+    that runs to the end of the text. Every argument is also scrubbed on its
+    own. Returns the params and whether any was redacted.
     """
-    starts = _redacted_starts(formatted)
+    spans = _redacted_spans(formatted)
+    located = (
+        _param_spans(message, params, formatted)
+        if spans and isinstance(formatted, str)
+        else None
+    )
     redacted = False
 
-    def one(param: Any) -> Any:
-        nonlocal redacted
+    def credential(param: Any, key: Any) -> bool:
         rendered = str(param)
-        if rendered and (
-            (starts is None and isinstance(param, str))
-            or (
-                starts
-                and isinstance(formatted, str)
-                and any(i in starts for i in _occurrences(formatted, rendered))
-            )
-        ):
+        if not rendered:
+            return False
+        if spans is None:
+            return isinstance(param, str)
+        if not spans or not isinstance(formatted, str):
+            return False
+        if located is not None:
+            return any(_overlaps(span, spans) for span in located.get(key, ()))
+        starts = {start for start, _ in spans}
+        to_end = [span for span in spans if span[1] == len(formatted)]
+        return any(
+            i in starts or _overlaps((i, i + len(rendered)), to_end)
+            for i in _occurrences(formatted, rendered)
+        )
+
+    def one(param: Any, key: Any) -> Any:
+        nonlocal redacted
+        if credential(param, key):
             redacted = True
             return _REDACTED
         return _scrub_text_deep(param)
 
     if isinstance(params, (list, tuple)):
-        return [one(param) for param in params], redacted
+        return [one(param, i) for i, param in enumerate(params)], redacted
     if isinstance(params, dict):
         scrubbed = {}
         for key, param in params.items():
@@ -330,7 +421,7 @@ def _scrub_log_params(params: Any, formatted: Any) -> tuple[Any, bool]:
                 redacted = True
                 scrubbed[key] = _REDACTED
             else:
-                scrubbed[key] = one(param)
+                scrubbed[key] = one(param, key)
         return scrubbed, redacted
     return params, redacted
 
@@ -347,7 +438,7 @@ def _scrub_message_fields(event: dict, values: list[dict]) -> None:
         redacted = False
         if "params" in logentry:
             logentry["params"], redacted = _scrub_log_params(
-                logentry["params"], logentry.get("formatted")
+                logentry["params"], logentry.get("formatted"), logentry.get("message")
             )
         if redacted and isinstance(logentry.get("message"), str):
             # Re-render from the redacted arguments: the formatted text would
