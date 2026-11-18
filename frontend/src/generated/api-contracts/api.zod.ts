@@ -51029,7 +51029,106 @@ export const SimulateApiHarnessEnvironmentsArchiveScenarioBody = zod.object({
 export const SimulateApiHarnessEnvironmentsArchiveScenarioResponse = zod.object(
   {
     scenario_key: zod.string().min(1),
-    lifecycle: zod.record(zod.string(), zod.string()),
+    lifecycle: zod.object({
+      state: zod
+        .enum(["draft", "validated", "active", "kept_as_written", "archived"])
+        .describe(
+          "active and kept_as_written run; kept_as_written runs labelled as not proved.",
+        ),
+      reason: zod
+        .string()
+        .min(1)
+        .describe(
+          "Why it is in this state, as a code; null when nothing holds it.",
+        ),
+      reason_text: zod.string().min(1),
+      warning: zod.string().min(1),
+      warning_text: zod.string().min(1),
+      legacy: zod
+        .boolean()
+        .describe("Proved before proofs were checked per case."),
+      proof: zod.object({
+        proved: zod
+          .boolean()
+          .describe("Its checks ran and held on these versions."),
+        outcome: zod.string().min(1),
+        assumed: zod
+          .array(zod.string().min(1))
+          .describe(
+            "Tools whose steps never ran because they have no endpoint here.",
+          ),
+        controls: zod.array(
+          zod.object({
+            name: zod.string().min(1),
+            why: zod.string(),
+            failed: zod
+              .boolean()
+              .describe(
+                "The checks failed the wrong behaviour, as they should.",
+              ),
+            assumed: zod.array(zod.string().min(1)),
+          }),
+        ),
+        leaks: zod.array(
+          zod.object({
+            who: zod.string().min(1).optional(),
+            field: zod.string().min(1).optional(),
+            grader_field: zod.string().min(1).optional(),
+            excerpt: zod.string().optional(),
+          }),
+        ),
+        judged_only: zod.boolean(),
+        proved_at: zod.string().min(1),
+        agent_version_id: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "The agent version the proof was made with; null for a proof made before it was recorded.",
+          ),
+        environment_version_id: zod.string().min(1).optional(),
+        suite_version_id: zod.string().min(1).optional(),
+      }),
+      sources: zod
+        .array(
+          zod
+            .object({
+              kind: zod.string().min(1),
+              ref: zod.string(),
+              quote: zod.string(),
+              supports: zod.string(),
+              resolved: zod.boolean(),
+              label: zod.string(),
+              link: zod.string().min(1),
+              problem: zod.string(),
+            })
+            .describe(
+              "Where each requirement of the case comes from, with its label.",
+            ),
+        )
+        .describe(
+          "Where each requirement of the case comes from, with its label.",
+        ),
+      source_changed: zod.array(zod.string()),
+      source_changed_version: zod.number(),
+      source_changed_version_id: zod.string().min(1),
+      must_pass: zod.boolean(),
+      negative_controls: zod.array(
+        zod.object({
+          name: zod.string().min(1).optional(),
+          why: zod.string().optional(),
+          steps: zod
+            .array(
+              zod.object({
+                tool: zod.string().min(1).optional(),
+                arguments: zod.record(zod.string(), zod.string()).optional(),
+              }),
+            )
+            .optional(),
+          must_fail: zod.array(zod.string().min(1)).optional(),
+        }),
+      ),
+    }),
     live: zod.boolean().optional(),
   },
 );
@@ -51079,7 +51178,106 @@ export const SimulateApiHarnessEnvironmentsRestoreScenarioBody = zod
 export const SimulateApiHarnessEnvironmentsRestoreScenarioResponse = zod.object(
   {
     scenario_key: zod.string().min(1),
-    lifecycle: zod.record(zod.string(), zod.string()),
+    lifecycle: zod.object({
+      state: zod
+        .enum(["draft", "validated", "active", "kept_as_written", "archived"])
+        .describe(
+          "active and kept_as_written run; kept_as_written runs labelled as not proved.",
+        ),
+      reason: zod
+        .string()
+        .min(1)
+        .describe(
+          "Why it is in this state, as a code; null when nothing holds it.",
+        ),
+      reason_text: zod.string().min(1),
+      warning: zod.string().min(1),
+      warning_text: zod.string().min(1),
+      legacy: zod
+        .boolean()
+        .describe("Proved before proofs were checked per case."),
+      proof: zod.object({
+        proved: zod
+          .boolean()
+          .describe("Its checks ran and held on these versions."),
+        outcome: zod.string().min(1),
+        assumed: zod
+          .array(zod.string().min(1))
+          .describe(
+            "Tools whose steps never ran because they have no endpoint here.",
+          ),
+        controls: zod.array(
+          zod.object({
+            name: zod.string().min(1),
+            why: zod.string(),
+            failed: zod
+              .boolean()
+              .describe(
+                "The checks failed the wrong behaviour, as they should.",
+              ),
+            assumed: zod.array(zod.string().min(1)),
+          }),
+        ),
+        leaks: zod.array(
+          zod.object({
+            who: zod.string().min(1).optional(),
+            field: zod.string().min(1).optional(),
+            grader_field: zod.string().min(1).optional(),
+            excerpt: zod.string().optional(),
+          }),
+        ),
+        judged_only: zod.boolean(),
+        proved_at: zod.string().min(1),
+        agent_version_id: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "The agent version the proof was made with; null for a proof made before it was recorded.",
+          ),
+        environment_version_id: zod.string().min(1).optional(),
+        suite_version_id: zod.string().min(1).optional(),
+      }),
+      sources: zod
+        .array(
+          zod
+            .object({
+              kind: zod.string().min(1),
+              ref: zod.string(),
+              quote: zod.string(),
+              supports: zod.string(),
+              resolved: zod.boolean(),
+              label: zod.string(),
+              link: zod.string().min(1),
+              problem: zod.string(),
+            })
+            .describe(
+              "Where each requirement of the case comes from, with its label.",
+            ),
+        )
+        .describe(
+          "Where each requirement of the case comes from, with its label.",
+        ),
+      source_changed: zod.array(zod.string()),
+      source_changed_version: zod.number(),
+      source_changed_version_id: zod.string().min(1),
+      must_pass: zod.boolean(),
+      negative_controls: zod.array(
+        zod.object({
+          name: zod.string().min(1).optional(),
+          why: zod.string().optional(),
+          steps: zod
+            .array(
+              zod.object({
+                tool: zod.string().min(1).optional(),
+                arguments: zod.record(zod.string(), zod.string()).optional(),
+              }),
+            )
+            .optional(),
+          must_fail: zod.array(zod.string().min(1)).optional(),
+        }),
+      ),
+    }),
     live: zod.boolean().optional(),
   },
 );
@@ -51104,10 +51302,114 @@ export const SimulateApiHarnessEnvironmentsScenarioRevisionsResponse =
         suite_versions: zod.array(zod.number()),
         first_suite_version: zod.number(),
         changed_fields: zod.array(zod.string().min(1)),
-        lifecycle_on_default_environment: zod.record(
-          zod.string(),
-          zod.string(),
-        ),
+        lifecycle_on_default_environment: zod.object({
+          state: zod
+            .enum([
+              "draft",
+              "validated",
+              "active",
+              "kept_as_written",
+              "archived",
+            ])
+            .describe(
+              "active and kept_as_written run; kept_as_written runs labelled as not proved.",
+            ),
+          reason: zod
+            .string()
+            .min(1)
+            .describe(
+              "Why it is in this state, as a code; null when nothing holds it.",
+            ),
+          reason_text: zod.string().min(1),
+          warning: zod.string().min(1),
+          warning_text: zod.string().min(1),
+          legacy: zod
+            .boolean()
+            .describe("Proved before proofs were checked per case."),
+          proof: zod.object({
+            proved: zod
+              .boolean()
+              .describe("Its checks ran and held on these versions."),
+            outcome: zod.string().min(1),
+            assumed: zod
+              .array(zod.string().min(1))
+              .describe(
+                "Tools whose steps never ran because they have no endpoint here.",
+              ),
+            controls: zod.array(
+              zod.object({
+                name: zod.string().min(1),
+                why: zod.string(),
+                failed: zod
+                  .boolean()
+                  .describe(
+                    "The checks failed the wrong behaviour, as they should.",
+                  ),
+                assumed: zod.array(zod.string().min(1)),
+              }),
+            ),
+            leaks: zod.array(
+              zod.object({
+                who: zod.string().min(1).optional(),
+                field: zod.string().min(1).optional(),
+                grader_field: zod.string().min(1).optional(),
+                excerpt: zod.string().optional(),
+              }),
+            ),
+            judged_only: zod.boolean(),
+            proved_at: zod.string().min(1),
+            agent_version_id: zod
+              .string()
+              .min(1)
+              .optional()
+              .describe(
+                "The agent version the proof was made with; null for a proof made before it was recorded.",
+              ),
+            environment_version_id: zod.string().min(1).optional(),
+            suite_version_id: zod.string().min(1).optional(),
+          }),
+          sources: zod
+            .array(
+              zod
+                .object({
+                  kind: zod.string().min(1),
+                  ref: zod.string(),
+                  quote: zod.string(),
+                  supports: zod.string(),
+                  resolved: zod.boolean(),
+                  label: zod.string(),
+                  link: zod.string().min(1),
+                  problem: zod.string(),
+                })
+                .describe(
+                  "Where each requirement of the case comes from, with its label.",
+                ),
+            )
+            .describe(
+              "Where each requirement of the case comes from, with its label.",
+            ),
+          source_changed: zod.array(zod.string()),
+          source_changed_version: zod.number(),
+          source_changed_version_id: zod.string().min(1),
+          must_pass: zod.boolean(),
+          negative_controls: zod.array(
+            zod.object({
+              name: zod.string().min(1).optional(),
+              why: zod.string().optional(),
+              steps: zod
+                .array(
+                  zod.object({
+                    tool: zod.string().min(1).optional(),
+                    arguments: zod
+                      .record(zod.string(), zod.string())
+                      .optional(),
+                  }),
+                )
+                .optional(),
+              must_fail: zod.array(zod.string().min(1)).optional(),
+            }),
+          ),
+        }),
       }),
     ),
     truncated: zod.boolean(),
@@ -54556,12 +54858,26 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
               .describe(
                 "Tools whose steps never ran because they have no endpoint here.",
               ),
-            controls: zod
-              .array(zod.record(zod.string(), zod.string()))
-              .describe(
-                "Each negative control: name, why, failed (the checks failed it, as they should), assumed.",
-              ),
-            leaks: zod.array(zod.record(zod.string(), zod.string())),
+            controls: zod.array(
+              zod.object({
+                name: zod.string().min(1),
+                why: zod.string(),
+                failed: zod
+                  .boolean()
+                  .describe(
+                    "The checks failed the wrong behaviour, as they should.",
+                  ),
+                assumed: zod.array(zod.string().min(1)),
+              }),
+            ),
+            leaks: zod.array(
+              zod.object({
+                who: zod.string().min(1).optional(),
+                field: zod.string().min(1).optional(),
+                grader_field: zod.string().min(1).optional(),
+                excerpt: zod.string().optional(),
+              }),
+            ),
             judged_only: zod.boolean(),
             proved_at: zod.string().min(1),
             agent_version_id: zod
@@ -54575,7 +54891,22 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
             suite_version_id: zod.string().min(1).optional(),
           }),
           sources: zod
-            .array(zod.record(zod.string(), zod.string()))
+            .array(
+              zod
+                .object({
+                  kind: zod.string().min(1),
+                  ref: zod.string(),
+                  quote: zod.string(),
+                  supports: zod.string(),
+                  resolved: zod.boolean(),
+                  label: zod.string(),
+                  link: zod.string().min(1),
+                  problem: zod.string(),
+                })
+                .describe(
+                  "Where each requirement of the case comes from, with its label.",
+                ),
+            )
             .describe(
               "Where each requirement of the case comes from, with its label.",
             ),
@@ -54583,12 +54914,25 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
           source_changed_version: zod.number(),
           source_changed_version_id: zod.string().min(1),
           must_pass: zod.boolean(),
-          negative_controls: zod.array(zod.record(zod.string(), zod.string())),
+          negative_controls: zod.array(
+            zod.object({
+              name: zod.string().min(1).optional(),
+              why: zod.string().optional(),
+              steps: zod
+                .array(
+                  zod.object({
+                    tool: zod.string().min(1).optional(),
+                    arguments: zod
+                      .record(zod.string(), zod.string())
+                      .optional(),
+                  }),
+                )
+                .optional(),
+              must_fail: zod.array(zod.string().min(1)).optional(),
+            }),
+          ),
         })
-        .optional()
-        .describe(
-          "Its lifecycle on the pair in view; null for an environment that is not versioned.",
-        ),
+        .optional(),
     }),
   ),
   draft: zod
