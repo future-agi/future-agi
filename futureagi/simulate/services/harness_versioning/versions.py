@@ -441,12 +441,12 @@ def _refuse_retired_keys(
     Only keys new to the environment's default suite are checked, compared as
     normalised tokens, so a scenario the default already holds is never refused.
     """
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    from simulate.services.harness_starting_records import scenario_token
 
     # Archiving changes no draft, so the default suite can still hold an archived case: an edit
     # that carries it is not adding it.
     held = {
-        _scenario_token(key)
+        scenario_token(key)
         for key in HarnessSuiteMember.no_workspace_objects.filter(
             suite_version_id=job.suite_version_id
         ).values_list("scenario_key", flat=True)
@@ -456,7 +456,7 @@ def _refuse_retired_keys(
         [
             doc
             for doc in documents
-            if _scenario_token(doc.get("scenario_key")) not in held
+            if scenario_token(doc.get("scenario_key")) not in held
         ],
     )
     if archived:
@@ -480,16 +480,16 @@ def _refuse_retired_keys(
 
 def retired_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list[str]:
     """The dropped scenarios' keys that documents new to the default suite reuse."""
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    from simulate.services.harness_starting_records import scenario_token
 
     keys = {
-        _scenario_token(doc.get("scenario_key"))
+        scenario_token(doc.get("scenario_key"))
         for doc in documents
         if str(doc.get("scenario_key") or "").strip()
     } - {""}
     if job.suite_version_id is not None:
         keys -= {
-            _scenario_token(key)
+            scenario_token(key)
             for key in HarnessSuiteMember.no_workspace_objects.filter(
                 suite_version_id=job.suite_version_id
             ).values_list("scenario_key", flat=True)
@@ -504,7 +504,7 @@ def retired_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list
             documents_.get("scenarios") if isinstance(documents_, dict) else None
         )
         keys -= {
-            _scenario_token(doc.get("scenario_key"))
+            scenario_token(doc.get("scenario_key"))
             for doc in scenarios or []
             if isinstance(doc, dict)
         }
@@ -515,16 +515,16 @@ def retired_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list
         for key in HostedHarnessScenario._base_manager.filter(
             job=job, deleted=True
         ).values_list("scenario_key", flat=True)
-        if _scenario_token(key) in keys
+        if scenario_token(key) in keys
     )
 
 
 def archived_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list[str]:
     """Archived scenarios' keys that documents new to the default suite reuse."""
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    from simulate.services.harness_starting_records import scenario_token
 
     keys = {
-        _scenario_token(doc.get("scenario_key"))
+        scenario_token(doc.get("scenario_key"))
         for doc in documents
         if str(doc.get("scenario_key") or "").strip()
     }
@@ -536,7 +536,7 @@ def archived_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> lis
         for key in HostedHarnessScenario._base_manager.filter(
             job=job, deleted=False, archived_at__isnull=False
         ).values_list("scenario_key", flat=True)
-        if _scenario_token(key) in keys
+        if scenario_token(key) in keys
     )
 
 
@@ -560,7 +560,7 @@ def _refuse_taken_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -
 def taken_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list[str]:
     """The keys of rows other scenarios hold that the documents ask for."""
     from simulate.services.harness_scenarios import _default_member_rows
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    from simulate.services.harness_starting_records import scenario_token
 
     if job.suite_version_id is None:
         return []
@@ -570,13 +570,13 @@ def taken_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list[s
     held = {
         token: row.scenario_key
         for key_token, row in paired.items()
-        if (token := _scenario_token(row.scenario_key)) != key_token
+        if (token := scenario_token(row.scenario_key)) != key_token
     }
     return sorted(
         {
             held[token]
             for doc in documents
-            if (token := _scenario_token(doc.get("scenario_key"))) in held
+            if (token := scenario_token(doc.get("scenario_key"))) in held
             and token not in paired
         }
     )
@@ -775,16 +775,16 @@ def record_proofs(
     because a prove-only and a with-certify job can finish on one pair. An incoming
     ``validation_incomplete`` entry never replaces an existing one: the case was not reached.
     """
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    from simulate.services.harness_starting_records import scenario_token
 
     if not isinstance(proofs, dict):
         return None
     members = suite_cases(suite_version)
-    by_token = {_scenario_token(key): key for key, _, _ in members}
+    by_token = {scenario_token(key): key for key, _, _ in members}
     incoming = {
-        by_token[_scenario_token(key)]: value
+        by_token[scenario_token(key)]: value
         for key, value in proofs.items()
-        if isinstance(value, dict) and _scenario_token(key) in by_token
+        if isinstance(value, dict) and scenario_token(key) in by_token
     }
     with transaction.atomic():
         validation, _ = HarnessSuiteValidation.no_workspace_objects.get_or_create(
@@ -949,11 +949,11 @@ def _validation(
     # TODO: require each proof's environment_hash once ALK writes it.
     if not isinstance(proofs, dict) or not paired:
         return
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    from simulate.services.harness_starting_records import scenario_token
 
     cutoff = proved_since - PROOF_CLOCK_SKEW
     by_token = {
-        _scenario_token(key): value
+        scenario_token(key): value
         for key, value in proofs.items()
         if isinstance(value, dict)
         and (proved := _proved_at(value)) is not None
@@ -968,8 +968,8 @@ def _validation(
         )
     kept: dict[str, Any] = _carried_proofs(environment_version, paired)
     for row, document in paired:
-        proof = by_token.get(_scenario_token(row.scenario_key)) or by_token.get(
-            _scenario_token(document.get("scenario_key"))
+        proof = by_token.get(scenario_token(row.scenario_key)) or by_token.get(
+            scenario_token(document.get("scenario_key"))
         )
         if proof is not None:
             kept[row.scenario_key] = proof

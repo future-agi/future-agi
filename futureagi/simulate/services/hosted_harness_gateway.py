@@ -6261,8 +6261,10 @@ _SEALED_ARCHIVE_ROOTS = frozenset({"environment-bundle", "generic-harness"})
 
 
 def _scenario_token(value: object) -> str:
-    """One spelling for a scenario's folder, name and key, which older outputs wrote differently."""
-    return Path(str(value or "").strip()).name.lower().replace("-", "_")
+    """One spelling for a scenario's folder, name and key: the one ``harness_starting_records.scenario_token``."""
+    from simulate.services.harness_starting_records import scenario_token
+
+    return scenario_token(str(value or ""))
 
 
 def _suite_tokens(suite: list[dict]) -> set[str]:

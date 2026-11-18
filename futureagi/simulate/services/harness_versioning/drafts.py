@@ -562,10 +562,10 @@ def _contract_carried(
 
 
 def _extend_exempt(locked: HostedHarnessJob, scenarios: list[dict[str, Any]]) -> set:
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    from simulate.services.harness_starting_records import scenario_token
 
     return {
-        _scenario_token(key)
+        scenario_token(key)
         for key in [*retired_keys(locked, scenarios), *taken_keys(locked, scenarios)]
     }
 
@@ -912,13 +912,13 @@ def archived_folder_files(environment: HostedHarnessJob, key: str) -> dict[str, 
     """The files of a case's scenario folder from the newest saved suite version that has
     it, so a restored case comes back with its setup and checks, not only its document."""
     from simulate.models import HarnessSuiteVersion
+    from simulate.services.harness_starting_records import scenario_token
     from simulate.services.hosted_harness_gateway import (
         _archive_parts,
         _document_tokens,
-        _scenario_token,
     )
 
-    token = _scenario_token(key)
+    token = scenario_token(key)
     versions = HarnessSuiteVersion._base_manager.filter(
         job_id=environment.id,
         deleted=False,
@@ -1485,20 +1485,18 @@ def drop_archived(locked: HostedHarnessJob, draft: Any, *, user: Any) -> Any:
     """The suite draft without the scenarios archived since it was opened, rewritten when it held any.
 
     Archiving changes no draft, so Save is where an archived case leaves the suite."""
+    from simulate.services.harness_starting_records import scenario_token
     from simulate.services.harness_versioning.versions import archived_keys
-    from simulate.services.hosted_harness_gateway import (
-        AuthoringArchiveKept,
-        _scenario_token,
-    )
+    from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
 
     scenarios = (draft.documents or {}).get("scenarios") or []
-    archived = {_scenario_token(key) for key in archived_keys(locked, scenarios)}
+    archived = {scenario_token(key) for key in archived_keys(locked, scenarios)}
     if not archived:
         return draft
     kept = [
         dict(one)
         for one in suite_documents(edit_sides(locked)["suite"])
-        if _scenario_token(one.get("scenario_key")) not in archived
+        if scenario_token(one.get("scenario_key")) not in archived
     ]
     try:
         write_suite_edit(locked, kept, user=user)
