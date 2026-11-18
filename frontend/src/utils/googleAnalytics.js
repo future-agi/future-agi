@@ -1,4 +1,5 @@
 import { GA_ID } from "src/config-global";
+import { ANALYTICS_ROUTE_SEGMENTS } from "src/utils/analyticsRouteSegments";
 
 // Google Analytics 4, loaded directly with gtag.js. A no-op unless the build
 // sets VITE_GA_ID, so self-hosted builds send nothing.
@@ -6,8 +7,10 @@ import { GA_ID } from "src/config-global";
 // Page views are sent manually, the way GitLab and Grafana's manual mode do
 // it: the app decides what each page view contains instead of letting gtag.js
 // read the raw browser address.
-// - page_location: origin + path with ID-like segments replaced by ":id",
-//   keeping only campaign query parameters (utm_*, gclid, gbraid, wbraid).
+// - page_location: origin + path in which every segment that is not a literal
+//   part of the app's routes (analyticsRouteSegments.js) becomes ":id", so
+//   record IDs, end-user IDs and folder or dataset names are never sent;
+//   only campaign query parameters (utm_*, gclid, gbraid, wbraid) are kept.
 // - page_referrer: the previous page's redacted location; for the first page,
 //   only the origin of an external referrer (index.html's no-referrer policy
 //   already leaves same-origin referrers empty; any that arrive are dropped).
@@ -46,24 +49,23 @@ const CAMPAIGN_PARAMS = new Set([
   "wbraid",
 ]);
 
-// UUIDs, long hex or digit runs, and long opaque tokens.
-const ID_SEGMENT =
-  /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{16,}|\d{4,}|[A-Za-z0-9_-]{24,})$/i;
-
 function redactSegment(segment) {
   if (!segment) return segment;
-  let decoded = segment;
   try {
-    decoded = decodeURIComponent(segment);
+    const decoded = decodeURIComponent(segment);
+    return ANALYTICS_ROUTE_SEGMENTS.has(decoded) ? decoded : ":id";
   } catch {
     return ":id";
   }
-  return ID_SEGMENT.test(decoded) || decoded.includes("@") ? ":id" : segment;
 }
 
 export function analyticsPageLocation(href) {
   const url = new URL(href);
-  const path = url.pathname.split("/").map(redactSegment).join("/");
+  const path = url.pathname
+    .replace(/\/{2,}/g, "/")
+    .split("/")
+    .map(redactSegment)
+    .join("/");
   const kept = new URLSearchParams();
   url.searchParams.forEach((value, key) => {
     if (CAMPAIGN_PARAMS.has(key)) kept.append(key, value);
@@ -104,32 +106,44 @@ export function initGoogleAnalytics() {
   window.gtag = gtag;
 
   const disableKey = `ga-disable-${id}`;
+  // Repeated on every configuration call, so no later update can bring
+  // Google signals or ads personalization back.
+  const tagSettings = {
+    send_page_view: false,
+    allow_google_signals: false,
+    allow_ad_personalization_signals: false,
+    linker: { domains: LINKER_DOMAINS, accept_incoming: true },
+  };
   let currentLocation = analyticsPageLocation(window.location.href);
   let currentReferrer = analyticsInitialReferrer(
     document.referrer,
     window.location.origin,
   );
+  let onBlockedPage = false;
 
-  const sendPageView = () => {
-    const fields = {
-      page_location: currentLocation,
-      page_referrer: currentReferrer,
-      page_title: PAGE_TITLE,
-    };
-    gtag("config", id, { ...fields, send_page_view: false, update: true });
-    gtag("event", "page_view", fields);
-  };
+  const pageFields = () => ({
+    page_location: currentLocation,
+    page_referrer: currentReferrer,
+    page_title: PAGE_TITLE,
+  });
 
   const onNavigation = () => {
     const allowed = urlAllowed(window.location.href);
     window[disableKey] = !allowed;
-    if (!allowed) return;
+    if (!allowed) {
+      onBlockedPage = true;
+      return;
+    }
     const next = analyticsPageLocation(window.location.href);
-    // Query or hash changes on the same page (filters, tabs) are not views.
-    if (next === currentLocation) return;
+    // Query or hash changes on the same page (filters, tabs) are not views,
+    // but coming back from a blocked page is.
+    if (next === currentLocation && !onBlockedPage) return;
+    onBlockedPage = false;
+    // The referrer is the last page analytics saw, never a blocked address.
     currentReferrer = currentLocation;
     currentLocation = next;
-    sendPageView();
+    gtag("config", id, { ...tagSettings, ...pageFields(), update: true });
+    gtag("event", "page_view", pageFields());
   };
 
   const { history } = window;
@@ -145,23 +159,11 @@ export function initGoogleAnalytics() {
   window.addEventListener("hashchange", onNavigation, true);
   window[disableKey] = false;
 
+  // Analytics only: no Google signals or ads personalization from the app,
+  // even when the GA4 property is linked to Google Ads.
   gtag("js", new Date());
-  gtag("config", id, {
-    page_location: currentLocation,
-    page_referrer: currentReferrer,
-    page_title: PAGE_TITLE,
-    send_page_view: false,
-    // Analytics only: no Google signals or ads personalization from the app,
-    // even when the GA4 property is linked to Google Ads.
-    allow_google_signals: false,
-    allow_ad_personalization_signals: false,
-    linker: { domains: LINKER_DOMAINS, accept_incoming: true },
-  });
-  gtag("event", "page_view", {
-    page_location: currentLocation,
-    page_referrer: currentReferrer,
-    page_title: PAGE_TITLE,
-  });
+  gtag("config", id, { ...tagSettings, ...pageFields() });
+  gtag("event", "page_view", pageFields());
 
   const script = document.createElement("script");
   script.async = true;

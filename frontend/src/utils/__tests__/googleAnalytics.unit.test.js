@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { cwd } from "node:process";
+import { JSDOM } from "jsdom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const MEASUREMENT_ID = "G-TEST123";
@@ -7,12 +11,18 @@ vi.mock("src/config-global", () => config);
 const originalPushState = window.history.pushState;
 const originalReplaceState = window.history.replaceState;
 
-// Mirrors index.html's address check closely enough to drive the loader.
-const blocked = /^\/(?:auth\/jwt\/verify\/|shared\/|sos(?:\/|$))/i;
+// The real address check from index.html (paths and query/hash keys), run in
+// its own document so its non-configurable globals don't leak between tests.
+const indexHtml = new JSDOM(
+  readFileSync(resolve(cwd(), "index.html"), "utf8"),
+  { runScripts: "dangerously", url: "https://app.test/" },
+);
+const indexHtmlPolicy = indexHtml.window.__analyticsUrlAllowed;
+
 function installPolicy({ allowedAtLoad = true, withCheck = true } = {}) {
   if (withCheck) {
     window.__analyticsUrlAllowed = (value) =>
-      !blocked.test(new URL(value, document.baseURI).pathname);
+      indexHtmlPolicy(new URL(value, document.baseURI).href);
   }
   window.__analyticsAllowedAtLoad = allowedAtLoad;
 }
@@ -47,24 +57,56 @@ afterEach(() => {
   delete window[`ga-disable-${MEASUREMENT_ID}`];
 });
 
+describe("index.html address check unit", () => {
+  it.each([
+    "https://app.test/auth/jwt/verify/u/t",
+    "https://app.test/shared/t",
+    "https://app.test/%73hared/t",
+    "https://app.test//shared/t",
+    "https://app.test/auth/jwt/invitation/set-password/u/t",
+    "https://app.test/SOS",
+    "https://app.test/dashboard?sso_token=x",
+    "https://app.test/dashboard?refresh_token=x",
+    "https://app.test/dashboard?code=x",
+    "https://app.test/dashboard#access_token=x",
+    "https://app.test/%E0%A4%A",
+  ])("blocks %s", (url) => {
+    expect(indexHtmlPolicy(url)).toBe(false);
+  });
+
+  it.each([
+    "https://app.test/dashboard/develop?tab=runs",
+    "https://app.test/auth/jwt/login?returnTo=%2Fdashboard",
+  ])("allows %s", (url) => {
+    expect(indexHtmlPolicy(url)).toBe(true);
+  });
+});
+
 describe("analyticsPageLocation unit", () => {
   it.each([
     ["https://app.test/dashboard", "https://app.test/dashboard"],
-    ["https://app.test/a?tab=x&q=secret#h", "https://app.test/a"],
     [
-      "https://app.test/a?utm_source=x&utm_campaign=y",
-      "https://app.test/a?utm_source=x&utm_campaign=y",
+      "https://app.test/dashboard/develop?tab=x&q=secret#h",
+      "https://app.test/dashboard/develop",
     ],
     [
-      "https://app.test/p/3F2C1E4B-9A7D-4C1E-8F00-1234567890AB",
-      "https://app.test/p/:id",
+      "https://app.test/dashboard?utm_source=x&utm_campaign=y",
+      "https://app.test/dashboard?utm_source=x&utm_campaign=y",
     ],
-    ["https://app.test/p/0123456789abcdef0123", "https://app.test/p/:id"],
-    ["https://app.test/p/12345", "https://app.test/p/:id"],
-    ["https://app.test/p/123", "https://app.test/p/123"],
-    ["https://app.test/p/eyJhbGciOiJIUzI1NiJ9abcdef", "https://app.test/p/:id"],
-    ["https://app.test/u/someone%40example.com", "https://app.test/u/:id"],
-    ["https://app.test/u/%E0%A4%A", "https://app.test/u/:id"],
+    [
+      "https://app.test/dashboard/develop/3F2C1E4B-9A7D-4C1E-8F00-1234567890AB/runs/42",
+      "https://app.test/dashboard/develop/:id/runs/:id",
+    ],
+    // End-user IDs and folder names are not route words, so they are redacted.
+    ["https://app.test/dashboard/users/alice", "https://app.test/dashboard/users/:id"],
+    [
+      "https://app.test/dashboard/workbench/My%20Folder",
+      "https://app.test/dashboard/workbench/:id",
+    ],
+    ["https://app.test/dashboard/users/someone%40example.com", "https://app.test/dashboard/users/:id"],
+    ["https://app.test/dashboard/%E0%A4%A", "https://app.test/dashboard/:id"],
+    ["https://app.test//dashboard//develop", "https://app.test/dashboard/develop"],
+    ["https://app.test/%64ashboard", "https://app.test/dashboard"],
     ["https://app.test/settings/billing", "https://app.test/settings/billing"],
   ])("maps %s to %s", async (input, expected) => {
     const { analyticsPageLocation } = await import("../googleAnalytics");
@@ -194,12 +236,46 @@ describe("initGoogleAnalytics unit", () => {
     const updates = window.dataLayer.filter(
       (args) => args[0] === "config" && args[2]?.update === true,
     );
+    // Every configuration call repeats the privacy settings.
     expect(updates.at(-1)[2]).toEqual({
       page_location: `${origin}/auth/jwt/register`,
       page_referrer: `${origin}/dashboard/develop`,
       page_title: "Future AGI",
       send_page_view: false,
+      allow_google_signals: false,
+      allow_ad_personalization_signals: false,
+      linker: {
+        domains: ["futureagi.com", "app.futureagi.com"],
+        accept_incoming: true,
+      },
       update: true,
+    });
+  });
+
+  it("blocks in-app navigation using the real query-key list", async () => {
+    installPolicy();
+    await loadAndInit();
+    const flag = `ga-disable-${MEASUREMENT_ID}`;
+    const before = window.dataLayer.length;
+    window.history.pushState(null, "", "/dashboard?oauth_code=x");
+    expect(window[flag]).toBe(true);
+    window.history.pushState(null, "", "/%73hared/token-1");
+    expect(window[flag]).toBe(true);
+    expect(window.dataLayer.length).toBe(before);
+  });
+
+  it("counts coming back from a blocked page as a page view", async () => {
+    installPolicy();
+    await loadAndInit();
+    const origin = window.location.origin;
+    window.history.pushState(null, "", "/shared/token-1");
+    window.history.replaceState(null, "", "/dashboard/develop");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(pageViews()).toHaveLength(2);
+    expect(pageViews().at(-1)).toEqual({
+      page_location: `${origin}/dashboard/develop`,
+      page_referrer: `${origin}/dashboard/develop`,
+      page_title: "Future AGI",
     });
   });
 
