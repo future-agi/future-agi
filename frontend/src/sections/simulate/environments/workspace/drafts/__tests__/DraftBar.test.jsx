@@ -109,6 +109,17 @@ describe("DraftBar", () => {
     expect(screen.queryByTestId("draft-bar")).toBeNull();
   });
 
+  it("shows edits added from files before any draft is open", () => {
+    state.drafts = { environment: null, suite: null, set_aside: [] };
+    state.review = {
+      is_sample: true,
+      changes: [{ ...KEPT, id: "source:rule-1", kind: "source" }],
+      failed: [],
+    };
+    render(<DraftBar env={ENV} />);
+    expect(screen.getByTestId("draft-bar")).toBeInTheDocument();
+  });
+
   it("keeps the way in and the save when the review won't load", async () => {
     const onReview = vi.fn();
     state.review = undefined;

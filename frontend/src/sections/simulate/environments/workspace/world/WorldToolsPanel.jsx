@@ -18,6 +18,7 @@ export default function WorldToolsPanel({
   patch,
   locked = false,
   graphData,
+  onReviewChanges,
 }) {
   const [params, setParams] = useSearchParams();
   const hasWorld = !!envState?.agent || (env.tools?.length || 0) > 0;
@@ -40,7 +41,11 @@ export default function WorldToolsPanel({
           <CapabilityGraph env={env} envState={envState} data={graphData} />
         </Box>
       )}
-      <SourcesSection envId={env.id} readOnly={locked} />
+      <SourcesSection
+        envId={env.id}
+        readOnly={locked}
+        onReviewChanges={onReviewChanges}
+      />
       <WorldInternalsSection
         env={env}
         envState={envState}
@@ -75,4 +80,6 @@ WorldToolsPanel.propTypes = {
   locked: PropTypes.bool,
   // Real capability-graph data for a backed env; undefined otherwise.
   graphData: PropTypes.object,
+  // Opens Review changes, from the snackbar after proposals are added.
+  onReviewChanges: PropTypes.func,
 };

@@ -258,6 +258,24 @@ export const withSampleDecisions = (review, decisions) =>
     review.failed,
   );
 
+// Changes and failed changes from added files, replacing any with the same id.
+// With no review loaded yet, they start an empty one.
+export const withSampleEdits = (review, changes = [], failed = []) => {
+  const upsert = (list, items) => {
+    const byId = new Map(items.map((item) => [item.id, item]));
+    const known = new Set(list.map((one) => one.id));
+    return [
+      ...list.map((one) => byId.get(one.id) || one),
+      ...items.filter((item) => !known.has(item.id)),
+    ];
+  };
+  const base = review || reviewOf([], []);
+  return reviewOf(
+    upsert(base.changes, changes),
+    upsert(base.failed || [], failed),
+  );
+};
+
 export const withSampleFailureDismissed = (review, id, dismissed) =>
   reviewOf(
     review.changes,
