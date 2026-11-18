@@ -72,6 +72,12 @@ write_config_entry() {
   printf '  %s: "%s",\n' "$config_name" "$config_value"
 }
 
+# A read-only root filesystem needs CONFIG_PATH on a writable mount
+# (deploy/README.md, "Read-only root filesystem").
+if ! (: > "$CONFIG_PATH") 2>/dev/null; then
+  echo "[entrypoint] cannot write ${CONFIG_PATH}: mount it writable on a read-only root filesystem" >&2
+  exit 1
+fi
 {
   printf '%s\n' 'window.__FUTURE_AGI_CONFIG__ = {'
   for config_name in $CONFIG_NAMES; do
@@ -205,7 +211,10 @@ fi
 
 # /tmp is writable even in the Helm read-only-root deployment. Its ConfigMap
 # nginx.conf need not include this file, but the image's nginx.conf does.
-mkdir -p /tmp/futureagi-nginx
+if ! (mkdir -p /tmp/futureagi-nginx && : > /tmp/futureagi-nginx/listen.conf) 2>/dev/null; then
+  echo '[entrypoint] cannot write /tmp/futureagi-nginx/listen.conf: mount a writable /tmp on a read-only root filesystem' >&2
+  exit 1
+fi
 {
   if [ "$http_enabled" = true ]; then
     printf 'listen %s;\nlisten [::]:%s;\n' "$http_port" "$http_port"
