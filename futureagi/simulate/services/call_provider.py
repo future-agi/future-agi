@@ -50,9 +50,12 @@ def execution_agent_provider(execution: TestExecution) -> str | None:
 def call_agent_provider(call: CallExecution) -> str | None:
     if hasattr(call, "result_provider"):
         return call.result_provider
-    return (call.call_metadata or {}).get(
-        HOSTED_TARGET_PROVIDER
-    ) or _configured_provider(call.test_execution, getattr(call, "agent_version", None))
+    metadata = call.call_metadata
+    if isinstance(metadata, dict) and metadata.get(HOSTED_TARGET_PROVIDER):
+        return metadata[HOSTED_TARGET_PROVIDER]
+    return _configured_provider(
+        call.test_execution, getattr(call, "agent_version", None)
+    )
 
 
 def call_agent_provider_expression() -> Coalesce:
