@@ -268,7 +268,9 @@ def file_bodies(version: Any, paths: set[str]) -> dict[str, bytes]:
         )
     except Exception:  # noqa: BLE001 - an unreadable archive reads as no files
         logger.warning(
-            "harness_source_files_unread", version_id=str(getattr(version, "id", ""))
+            "harness_source_files_unread",
+            version_id=str(getattr(version, "id", "")),
+            exc_info=True,
         )
         return {}
     found: dict[str, bytes] = {}
@@ -353,7 +355,11 @@ def stored_file_results(
         try:
             texts = archives.stream_members(archive_key, paths, FILE_READ_MAX)
         except Exception:  # noqa: BLE001 - an unreadable archive leaves the source unresolved
-            logger.warning("harness_scenario_source_file_unread", archive=archive_key)
+            logger.warning(
+                "harness_scenario_source_file_unread",
+                archive=archive_key,
+                exc_info=True,
+            )
     for one in wanted:
         ref = str(one.get("ref") or "")
         path = file_path(ref)

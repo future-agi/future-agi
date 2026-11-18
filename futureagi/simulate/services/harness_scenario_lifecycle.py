@@ -13,6 +13,7 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
+import structlog
 from django.db.models import F
 
 from simulate.models import (
@@ -32,9 +33,11 @@ from simulate.services.harness_seed_joins import (
     environment_broken_joins,
 )
 from simulate.services.harness_versioning.versions import proof_passes
+from simulate.services.hosted_harness import HostedHarnessError
+from simulate.types import LifecycleState
 
-LifecycleState = Literal["draft", "validated", "active", "kept_as_written", "archived"]
-# The states a run may pick (decision of 18 Nov): Active, and Kept as written, which runs labelled as not proved so a
+logger = structlog.get_logger(__name__)
+# The states a run may pick: Active, and Kept as written, which runs labelled as not proved so a
 # case the harness cannot prove (an agent-bound tool) can still be run. Tighten here if product asks.
 RUNNABLE_STATES: frozenset[LifecycleState] = frozenset({"active", "kept_as_written"})
 # Shown for a reason or a warning code this release has no words for: never the code itself.
@@ -410,7 +413,7 @@ def _legacy_keys(
         ):
             found[key] = entry
         elif suite_id in certified and (entry is None or incomplete):
-            # A `validation_incomplete` entry counts as no format-2 proof (section 4.15).
+            # A `validation_incomplete` entry counts as no format-2 proof: the case was never reached.
             found.setdefault(key, None)
     return found
 
@@ -720,7 +723,9 @@ def uncaptured(
         statuses = {
             row["id"]: row["status"] for row in readiness_report(pairing)["rows"]
         }
-    except Exception:  # noqa: BLE001 - unreadable readiness warns about nothing
+    except HostedHarnessError:
+        # A pairing readiness cannot be read for (not pickable, versioning off) warns about nothing.
+        logger.info("harness_uncaptured_readiness_unread", exc_info=True)
         return set()
     return {
         kind
