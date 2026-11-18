@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -184,6 +185,9 @@ func (t *StdioTransport) Start(ctx context.Context) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	if t.closed.Load() || t.cmd != nil {
+		return fmt.Errorf("stdio transport already started or closed")
+	}
 	cmd := stdioCommand(t.command, t.args...)
 
 	stdin, err := cmd.StdinPipe()
@@ -261,7 +265,11 @@ func (t *StdioTransport) readLoop() {
 	if err := t.scanner.Err(); err != nil && !t.closed.Load() {
 		slog.Error("mcp stdio read error", "error", err)
 	}
-	t.healthy.Store(false)
+	// No more responses are possible, even if the command itself is still
+	// running. Wake requests and reconnect exactly as for a local close.
+	if err := t.Close(); err != nil {
+		slog.Warn("closing ended stdio session", "error", err)
+	}
 }
 
 func (t *StdioTransport) Send(ctx context.Context, msg *Message) (*Message, error) {
@@ -303,7 +311,13 @@ func (t *StdioTransport) Send(ctx context.Context, msg *Message) (*Message, erro
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-t.done:
-		return nil, fmt.Errorf("transport closed")
+		// A command may write its last complete response just before EOF.
+		select {
+		case resp := <-ch:
+			return resp, nil
+		default:
+			return nil, fmt.Errorf("transport closed")
+		}
 	}
 }
 
@@ -348,11 +362,14 @@ func (t *StdioTransport) Close() error {
 		return nil
 	}
 	err := stopStdioCommand(t.cmd)
-	done := make(chan struct{})
-	go func() { _ = t.cmd.Wait(); close(done) }()
+	done := make(chan error, 1)
+	go func() {
+		_ = t.cmd.Wait() // a command stopped by signal has a nonzero status
+		done <- reapStdioGroup(t.cmd.Process.Pid)
+	}()
 	select {
-	case <-done:
-		return err
+	case reapErr := <-done:
+		return errors.Join(err, reapErr)
 	case <-time.After(5 * time.Second):
 		return fmt.Errorf("timed out waiting for stdio command to exit")
 	}

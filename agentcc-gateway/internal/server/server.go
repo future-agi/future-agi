@@ -132,6 +132,12 @@ func (s *Server) SetKeyRevocationPublisher(pub KeyRevocationPublisher) {
 
 // New creates a new gateway server.
 func New(cfg *config.Config, configPath string, registry *providers.Registry, engine *pipeline.Engine, keyStore *auth.KeyStore, guardrailEngine *guardrails.Engine, policyStore *policy.Store, metricsRegistry *metrics.Registry, modelDBPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, onOrgConfigChange func(string), redisClients ...*redisstate.Client) *Server {
+	return NewWithStartupContext(context.Background(), cfg, configPath, registry, engine, keyStore, guardrailEngine, policyStore, metricsRegistry, modelDBPtr, tenantStore, onOrgConfigChange, redisClients...)
+}
+
+// NewWithStartupContext lets shutdown interrupt an in-progress MCP handshake.
+// Accepted sessions are owned by the server, not by the handshake context.
+func NewWithStartupContext(startup context.Context, cfg *config.Config, configPath string, registry *providers.Registry, engine *pipeline.Engine, keyStore *auth.KeyStore, guardrailEngine *guardrails.Engine, policyStore *policy.Store, metricsRegistry *metrics.Registry, modelDBPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, onOrgConfigChange func(string), redisClients ...*redisstate.Client) *Server {
 	var redisClient *redisstate.Client
 	if len(redisClients) > 0 {
 		redisClient = redisClients[0]
@@ -820,7 +826,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 				},
 				ToolsCacheTTL: serverCfg.ToolsCacheTTL,
 			})
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if startup.Err() != nil {
+				break
+			}
+			ctx, cancel := context.WithTimeout(startup, 30*time.Second)
 			if err := client.Connect(ctx); err != nil {
 				slog.Error("failed to connect to MCP server", "server", id, "error", err)
 				cancel()
