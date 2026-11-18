@@ -148,61 +148,80 @@ export default function CompareVerdict({
               flexWrap="wrap"
               sx={{ flex: 1, minWidth: 0 }}
             >
-              {[
-                ...held.rows.filter((r) => !r.same),
-                ...held.rows.filter((r) => r.same),
-              ].map((r) => (
-                <Tooltip
-                  key={r.id}
-                  arrow
-                  title={
-                    r.same
-                      ? `${pinLabel(r)}: ${pinValue(r)} in every run`
-                      : `${pinLabel(r)} ${pinValue(r)}${PIN_EFFECT[r.id] ? ` — ${PIN_EFFECT[r.id]}` : ""}`
-                  }
-                >
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    spacing={0.5}
-                    sx={{
-                      height: 20,
-                      px: 0.75,
-                      borderRadius: "4px",
-                      cursor: "default",
-                      ...(r.same
-                        ? {
-                            bgcolor: "action.selected",
-                            color: "text.secondary",
-                          }
-                        : {
-                            bgcolor: "status.warning.bg",
-                            color: "status.warning.fg",
-                          }),
-                    }}
+              {held.rows
+                .filter((r) => !r.same)
+                .map((r) => (
+                  <Tooltip
+                    key={r.id}
+                    arrow
+                    title={
+                      r.same
+                        ? `${pinLabel(r)}: ${pinValue(r)} in every run`
+                        : `${pinLabel(r)} ${pinValue(r)}${PIN_EFFECT[r.id] ? ` — ${PIN_EFFECT[r.id]}` : ""}`
+                    }
                   >
-                    <Iconify
-                      icon={
-                        r.same
-                          ? "solar:check-read-linear"
-                          : "solar:danger-triangle-linear"
-                      }
-                      width={12}
-                    />
-                    <Typography
-                      noWrap
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={0.5}
                       sx={{
-                        fontSize: 11,
-                        lineHeight: "16px",
-                        fontWeight: 500,
-                        color: "inherit",
+                        height: 20,
+                        px: 0.75,
+                        borderRadius: "4px",
+                        cursor: "default",
+                        ...(r.same
+                          ? {
+                              bgcolor: "action.selected",
+                              color: "text.secondary",
+                            }
+                          : {
+                              bgcolor: "status.warning.bg",
+                              color: "status.warning.fg",
+                            }),
                       }}
                     >
-                      {r.same ? pinLabel(r) : `${pinLabel(r)} changed`}
-                    </Typography>
-                  </Stack>
+                      <Iconify
+                        icon={
+                          r.same
+                            ? "solar:check-read-linear"
+                            : "solar:danger-triangle-linear"
+                        }
+                        width={12}
+                      />
+                      <Typography
+                        noWrap
+                        sx={{
+                          fontSize: 11,
+                          lineHeight: "16px",
+                          fontWeight: 500,
+                          color: "inherit",
+                        }}
+                      >
+                        {r.same ? pinLabel(r) : `${pinLabel(r)} changed`}
+                      </Typography>
+                    </Stack>
+                  </Tooltip>
+                ))}
+              {held.rows.some((r) => r.same) && (
+                <Tooltip
+                  arrow
+                  title={held.rows
+                    .filter((r) => r.same)
+                    .map((r) => `${pinLabel(r)}: ${pinValue(r)}`)
+                    .join(" · ")}
+                >
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      cursor: "default",
+                      lineHeight: "20px",
+                    }}
+                  >
+                    {`${held.rows.filter((r) => r.same).length} matched`}
+                  </Typography>
                 </Tooltip>
-              ))}
+              )}
             </Stack>
             <Typography
               noWrap
@@ -219,41 +238,6 @@ export default function CompareVerdict({
             </Typography>
           </Stack>
         </Tooltip>
-      )}
-      {/* A confirmed regression: improve the agent from these failures. */}
-      {onImprove && (label.id === "regressed" || mustPass.length > 0) && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1}
-          sx={{
-            px: 2,
-            py: 1,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Typography
-            sx={{
-              typography: "s2",
-              color: "text.secondary",
-              flex: 1,
-              minWidth: 0,
-            }}
-          >
-            Confirmed regression — improve the agent from these failing cases.
-          </Typography>
-          <Button
-            size="small"
-            variant="contained"
-            color="primary"
-            onClick={onImprove}
-            startIcon={<Iconify icon="solar:magic-stick-3-linear" width={14} />}
-            sx={{ flexShrink: 0 }}
-          >
-            Improve agent
-          </Button>
-        </Stack>
       )}
       {/* A must-pass case that regressed comes first, whatever the average says. */}
       {mustPass.length > 0 && (
@@ -279,14 +263,9 @@ export default function CompareVerdict({
               component="span"
               sx={{ fontWeight: 600, color: "status.danger.fg" }}
             >
-              {`Must-pass regression${mustPass.length === 1 ? "" : "s"} · ${mustPass.length}`}
+              {`${mustPass.length} must-pass ${mustPass.length === 1 ? "test" : "tests"}`}
             </Box>
-            {` — ${mustPass
-              .slice(0, 2)
-              .map((r) => r.title)
-              .join(
-                ", ",
-              )}${mustPass.length > 2 ? ` and ${mustPass.length - 2} more` : ""} passed on the baseline and fail now. A better average doesn't make this run the winner.`}
+            {` passed on the baseline and fail now`}
           </Typography>
           {onShowMustPass && (
             <Button
@@ -545,6 +524,19 @@ export default function CompareVerdict({
             </Stack>
           )}
         </Box>
+        {/* A confirmed regression: improve the agent from these failures. */}
+        {onImprove && (label.id === "regressed" || mustPass.length > 0) && (
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            onClick={onImprove}
+            startIcon={<Iconify icon="solar:magic-stick-3-linear" width={14} />}
+            sx={{ flexShrink: 0 }}
+          >
+            Improve agent
+          </Button>
+        )}
         {/* Choosing the winner is its own reviewed step — comparing deploys
             nothing; that note is on hover. */}
         {promote && (

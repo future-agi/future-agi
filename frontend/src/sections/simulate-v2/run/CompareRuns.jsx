@@ -1590,7 +1590,7 @@ function TableView({
                       {row.title}
                     </Typography>
                   </Stack>
-                  {view.rowHeight !== "compact" && (
+                  {view.rowHeight === "large" && (
                     <Typography
                       sx={{
                         typography: "s3",
@@ -1639,11 +1639,11 @@ function TableView({
                           minWidth: 0,
                           typography: "s2",
                           color: "text.secondary",
-                          display: "-webkit-box",
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: "vertical",
+                          whiteSpace: "nowrap",
+                          textOverflow: "ellipsis",
                           overflow: "hidden",
                         }}
+                        title={c.deciding.text}
                       >
                         {view.diff && i > 0 ? (
                           <DiffText
