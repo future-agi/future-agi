@@ -2479,7 +2479,8 @@ def test_the_first_trace_goes_to_the_collector_url_the_app_shows(
     tmp_path: Path, setting: str, url: str
 ) -> None:
     """The compose files give the app FI_COLLECTOR_PUBLIC_URL with the same
-    default; the setup screen and SDK snippet in the UI show it."""
+    default; the setup screen and SDK snippet in the UI show it as
+    FI_TRACES_URL. FI_BASE_URL stays on the API."""
     script, environment, _ = _installer_sandbox(tmp_path, CI="1")
     (script.parents[1] / ".env").write_text(
         SANDBOX_ENV_EXAMPLE + setting, encoding="utf-8"
@@ -2488,8 +2489,26 @@ def test_the_first_trace_goes_to_the_collector_url_the_app_shows(
     code, stdout, stderr = _run_installer(script, environment, "--skip-user-creation")
 
     assert code == 0, stderr
-    assert f'FI_BASE_URL="{url}"' in stdout
+    assert f'FI_BASE_URL="http://localhost:8000" FI_TRACES_URL="{url}"' in stdout
     assert f"     Traces       {url}  (OTLP/HTTP" in stdout
+
+
+def test_the_first_trace_calls_the_api_url_the_app_shows(tmp_path: Path) -> None:
+    """BASE_URL in .env is the API URL the in-app SDK snippet shows as
+    FI_BASE_URL; the installer prints it without a trailing slash."""
+    script, environment, _ = _installer_sandbox(tmp_path, CI="1")
+    (script.parents[1] / ".env").write_text(
+        SANDBOX_ENV_EXAMPLE + "BASE_URL=https://api.example.com/\n",
+        encoding="utf-8",
+    )
+
+    code, stdout, stderr = _run_installer(script, environment, "--skip-user-creation")
+
+    assert code == 0, stderr
+    assert (
+        'FI_BASE_URL="https://api.example.com" FI_TRACES_URL="http://localhost:4318"'
+        in stdout
+    )
 
 
 def _standalone_build(text: str) -> str:

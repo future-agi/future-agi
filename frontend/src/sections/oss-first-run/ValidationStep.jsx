@@ -23,6 +23,7 @@ import { ROW_HEIGHT } from "src/theme/sizes";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { statusColors } from "src/utils/runStatus";
 import { useSetupChecks } from "src/api/ossSetup/oss-setup";
+import { HOST_API } from "src/config-global";
 import {
   CHECK_STATUS,
   CHECK_REVEAL_STAGGER_MS,
@@ -143,7 +144,13 @@ export default function ValidationStep({
   const collectorUrl = data?.collector_http_url;
   const accountExists = Boolean(data?.account_exists);
   const steps = useMemo(
-    () => nextSteps({ authenticated, accountExists, collectorUrl }),
+    () =>
+      nextSteps({
+        authenticated,
+        accountExists,
+        apiUrl: HOST_API,
+        collectorUrl,
+      }),
     [authenticated, accountExists, collectorUrl],
   );
 

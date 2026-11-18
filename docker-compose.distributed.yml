@@ -153,7 +153,7 @@ x-backend-env: &backend-env
   # port (./bin/install moves it when 4317 is taken).
   FI_COLLECTOR_HOST: fi-collector
   FI_COLLECTOR_OTLP_PORT: "4317"
-  # The OTLP/HTTP URL SDKs send traces to (their FI_BASE_URL), as the UI
+  # The OTLP/HTTP URL SDKs send traces to (their FI_TRACES_URL), as the UI
   # shows it.
   FI_COLLECTOR_PUBLIC_URL: ${FI_COLLECTOR_PUBLIC_URL:-http://localhost:${FI_COLLECTOR_OTLP_HTTP_PORT:-4318}}
   # The UI's host, without a scheme: invite and password-reset links.

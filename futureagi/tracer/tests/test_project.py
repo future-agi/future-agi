@@ -1096,11 +1096,13 @@ class TestProjectSDKCodeAPI:
         assert "a" * 32 not in payload_text
         assert "b" * 32 not in payload_text
 
-    def test_self_hosted_keys_point_at_the_install_collector(
+    def test_self_hosted_keys_point_at_the_install_api_and_collector(
         self, auth_client, settings
     ):
-        """The SDKs default FI_BASE_URL to Future AGI Cloud."""
+        """The SDKs default to Future AGI Cloud: FI_BASE_URL names this
+        install's API and FI_TRACES_URL its collector."""
         settings.CLOUD_DEPLOYMENT = ""
+        settings.BASE_URL = "http://localhost:8000"
         settings.FI_COLLECTOR_PUBLIC_URL = "http://localhost:4318"
 
         response = auth_client.get(
@@ -1109,9 +1111,13 @@ class TestProjectSDKCodeAPI:
 
         assert response.status_code == status.HTTP_200_OK
         keys = get_result(response)["keys"]
-        assert 'os.environ["FI_BASE_URL"] = "http://localhost:4318"' in keys["Python"]
+        assert 'os.environ["FI_BASE_URL"] = "http://localhost:8000"' in keys["Python"]
+        assert 'os.environ["FI_TRACES_URL"] = "http://localhost:4318"' in keys["Python"]
         assert (
-            'process.env.FI_BASE_URL = "http://localhost:4318";' in keys["TypeScript"]
+            'process.env.FI_BASE_URL = "http://localhost:8000";' in keys["TypeScript"]
+        )
+        assert (
+            'process.env.FI_TRACES_URL = "http://localhost:4318";' in keys["TypeScript"]
         )
 
     def test_get_sdk_code_observe(self, auth_client):

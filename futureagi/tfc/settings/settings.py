@@ -1298,9 +1298,10 @@ BASE_URL = os.getenv(
 )
 WEBSOCKET_ENDPOINT = os.getenv("WEBSOCKET_ENDPOINT", f"{BASE_URL}/call-websocket/")
 # fi-collector's OTLP/HTTP endpoint as an SDK outside the stack reaches it. The
-# SDKs default FI_BASE_URL to Future AGI Cloud, so the in-app SDK snippet and
-# the setup screen hand this out on a self-hosted install. Compose and the Helm
-# chart set it; the default is the port both compose files publish.
+# SDKs default to Future AGI Cloud, so on a self-hosted install the in-app SDK
+# snippet and the setup screen hand this out as FI_TRACES_URL, next to BASE_URL
+# as FI_BASE_URL. Compose and the Helm chart set it; the default is the port
+# both compose files publish.
 FI_COLLECTOR_PUBLIC_URL = (
     os.getenv("FI_COLLECTOR_PUBLIC_URL", "").strip() or "http://localhost:4318"
 ).rstrip("/")

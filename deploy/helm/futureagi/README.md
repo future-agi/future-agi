@@ -196,8 +196,8 @@ helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version "$VER
 
 ```sh
 kubectl -n futureagi port-forward svc/futureagi-frontend 3000:80 &
-kubectl -n futureagi port-forward svc/futureagi-backend 8000:8000 &
-kubectl -n futureagi port-forward svc/futureagi-fi-collector 4318:4318 &   # traces: FI_BASE_URL=http://localhost:4318
+kubectl -n futureagi port-forward svc/futureagi-backend 8000:8000 &   # API: FI_BASE_URL=http://localhost:8000
+kubectl -n futureagi port-forward svc/futureagi-fi-collector 4318:4318 &   # traces: FI_TRACES_URL=http://localhost:4318
 kubectl -n futureagi port-forward svc/futureagi-minio 9005:9000 &   # file downloads
 kubectl -n futureagi exec -it deploy/futureagi-backend -c backend -- python manage.py create_user
 open http://localhost:3000
@@ -809,11 +809,15 @@ reverse proxy in nginx are out of scope pending an owner decision.
 | Outside, without either | `fiCollector.service.type=LoadBalancer` | the same load balancer, port 4318 |
 | Through a port-forward | `kubectl -n futureagi port-forward svc/futureagi-fi-collector 4317:4317` | `kubectl -n futureagi port-forward svc/futureagi-fi-collector 4318:4318`, then `http://localhost:4318/v1/traces` |
 
-Future AGI SDKs take the OTLP/HTTP base URL as `FI_BASE_URL`. The app shows
-the same URL in its SDK snippet and setup screen (`FI_COLLECTOR_PUBLIC_URL`):
-`urls.otlp`, else the Gateway API or Ingress OTLP host, else
-`http://localhost:4318`. Set `urls.otlp` when you expose the collector
-another way.
+Future AGI SDKs take the OTLP/HTTP base URL as `FI_TRACES_URL` and the API
+URL as `FI_BASE_URL`. The app shows both in its SDK snippet: `FI_BASE_URL` is
+`BASE_URL` (`urls.api`, else `http://localhost:8000`), and `FI_TRACES_URL`,
+also on the setup screen, is `FI_COLLECTOR_PUBLIC_URL`: `urls.otlp`, else the
+Gateway API or Ingress OTLP host, else `http://localhost:4318`. Set
+`urls.otlp` when you expose the collector another way. `FI_TRACES_URL` needs
+fi-instrumentation-otel 1.5.0+ (Python) or @traceai/fi-core 1.4.0+
+(TypeScript); with an older SDK, set `FI_BASE_URL` to the collector URL
+instead.
 
 ### Timeouts and WebSockets
 
@@ -1305,7 +1309,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `urls.app` | `""` | Public URL of the UI, e.g. `https://futureagi.example.com` [FRONTEND_URL, APP_URL, EXTRA_CSRF_ORIGINS]. Invite and password-reset links and app emails point here, with its scheme. Empty: derived from `ingress.app.host` with `ingress.enabled`, else from `gatewayApi.app.host` with `gatewayApi.enabled` (https unless `gatewayApi.tls` is false), else `http://localhost:3000`. |
 | `urls.api` | `""` | Public URL of the API, e.g. `https://api.futureagi.example.com` [BASE_URL, and the UI's VITE_HOST_API]. Empty: derived from `ingress.api.host` with `ingress.enabled`, else from `gatewayApi.api.host` with `gatewayApi.enabled`, else `http://localhost:8000`. |
 | `urls.gateway` | `""` | [AGENTCC_GATEWAY_PUBLIC_URL] Public HTTPS base URL shown in the dashboard's gateway configuration, e.g. `https://gateway.example.com`. Empty: the backend's default URL (http://localhost:8090). |
-| `urls.otlp` | `""` | [FI_COLLECTOR_PUBLIC_URL] Public OTLP/HTTP base URL of fi-collector, e.g. `https://otlp.example.com`: what SDKs outside the cluster set as FI_BASE_URL, shown in the install notes, the in-app SDK snippet and the setup screen. Set it when the collector is exposed another way (e.g. `fiCollector.service.type=LoadBalancer`). Empty: derived from `ingress.otlp` with `ingress.enabled`, else from `gatewayApi.otlp` with `gatewayApi.enabled`, else `http://localhost:4318` (the port-forward in the install notes). |
+| `urls.otlp` | `""` | [FI_COLLECTOR_PUBLIC_URL] Public OTLP/HTTP base URL of fi-collector, e.g. `https://otlp.example.com`: what SDKs outside the cluster set as FI_TRACES_URL (their FI_BASE_URL is `urls.api`), shown in the install notes, the in-app SDK snippet and the setup screen. Set it when the collector is exposed another way (e.g. `fiCollector.service.type=LoadBalancer`). Empty: derived from `ingress.otlp` with `ingress.enabled`, else from `gatewayApi.otlp` with `gatewayApi.enabled`, else `http://localhost:4318` (the port-forward in the install notes). |
 | `urls.objects` | `""` | Public URL browsers download stored files from [MINIO_URL]; used when `objectStorage.backend` is `minio`. Empty: derived from `ingress.objects.host` with `ingress.enabled`, else the external endpoint, else `http://localhost:<objectStorage.bundled.service.downloadPort>` (9005). |
 | `config.envType` | `"production"` | [ENV_TYPE] `production`: JSON logs, DEBUG off, refuses published default secrets. `local`: colored console logs. |
 | `config.logLevel` | `"INFO"` | [LOG_LEVEL] of the backend, workers and bootstrap job. |
