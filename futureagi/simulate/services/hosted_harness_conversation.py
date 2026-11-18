@@ -172,6 +172,172 @@ def settle_interrupted_turn(conversation: HostedHarnessConversation) -> None:
         conversation.active_invocation_id = None
 
 
+_STOP_COMMANDS = ("interrupt", "cancel_operation")
+
+
+def settle_stop_only_queue(conversation: HostedHarnessConversation) -> bool:
+    """Under the conversation's lock, with no turn running: Stop commands that have
+    nothing to stop are settled, and no sandbox starts or stays for them."""
+    waiting = _unacked_commands(conversation)
+    count = waiting.count()
+    if (
+        not count
+        or waiting.filter(payload__command_kind__in=_STOP_COMMANDS).count() != count
+    ):
+        return False
+    waiting.update(
+        state=HostedHarnessConversationMessage.State.COMPLETED,
+        updated_at=timezone.now(),
+    )
+    settle_interrupted_turn(conversation)
+    conversation.state = HostedHarnessConversation.State.COLD
+    conversation.save(update_fields=["state", "active_invocation_id", "updated_at"])
+    return True
+
+
+def _platform_check_checkpoint(
+    turn: HostedHarnessConversationEvent | None,
+) -> HostedHarnessConversationEvent | None:
+    """The checkpoint a successful platform turn after the build (its check) committed,
+    chosen as its promotion chooses it."""
+    if turn is None or (turn.payload or {}).get("outcome") != "success":
+        return None
+    command = HostedHarnessConversationMessage.no_workspace_objects.filter(
+        conversation_id=turn.conversation_id,
+        id=(turn.payload or {}).get("command_message_id"),
+        role=HostedHarnessConversationMessage.Role.USER,
+    ).first()
+    if (
+        command is None
+        or (command.payload or {}).get("from_platform") is not True
+        # The check's own start comes right after the build's turn; it must not wait on it.
+        or (command.client_request_id or "").startswith("build-")
+    ):
+        return None
+    checkpoints = HostedHarnessConversationEvent.no_workspace_objects.filter(
+        conversation_id=turn.conversation_id,
+        kind="checkpoint_committed",
+        sequence__lt=turn.sequence,
+        payload__has_key="digest",
+    )
+    if turn.invocation_id:
+        checkpoints = checkpoints.filter(invocation_id=turn.invocation_id)
+    return checkpoints.order_by("-sequence").first()
+
+
+# Two sweep backoffs short of the give-up: a message sent after the turn is restarted,
+# not given up, when its publish never settles.
+PLATFORM_LANDING_WAIT_SECONDS = (
+    RUNTIME_GIVE_UP_SECONDS - 2 * RUNTIME_RETRY_BACKOFF_SECONDS
+)
+
+
+def platform_landing_pending(
+    job: HostedHarnessJob, conversation: HostedHarnessConversation, *, now=None
+) -> bool:
+    """The platform's own turn after the build (its check) succeeded and its files have
+    neither landed nor been refused: a sandbox started now would hold the files from
+    before it. A publish that never settles holds chat no longer than
+    ``PLATFORM_LANDING_WAIT_SECONDS``."""
+    now = now or timezone.now()
+    environment = job.environment or job
+    if environment.state != HostedHarnessJob.State.COMPLETED:
+        # The promotion publishes nothing to it, so nothing will land.
+        return False
+    turn = (
+        conversation.events.filter(kind="turn_completed").order_by("-sequence").first()
+    )
+    if turn is None or now - turn.created_at > timedelta(
+        seconds=PLATFORM_LANDING_WAIT_SECONDS
+    ):
+        return False
+    committed = _platform_check_checkpoint(turn)
+    if committed is None:
+        return False
+    settled = (
+        ((environment.payload or {}).get("metadata") or {}).get(
+            "conversation_checkpoints"
+        )
+        or {}
+    ).get(str(conversation.id)) or {}
+    return (
+        settled.get("digest") != committed.payload["digest"]
+        and int(settled.get("sequence") or 0) < committed.sequence
+        and int(settled.get("refused_sequence") or 0) < committed.sequence
+    )
+
+
+def record_platform_landing_refused(conversation_id: str, turn_sequence: int) -> None:
+    """A platform turn's files were refused for good: chat stops waiting for them."""
+    try:
+        committed = _platform_check_checkpoint(
+            HostedHarnessConversationEvent.no_workspace_objects.filter(
+                conversation_id=conversation_id,
+                kind="turn_completed",
+                sequence=turn_sequence,
+            ).first()
+        )
+        if committed is None:
+            return
+        job = (
+            HostedHarnessConversation.no_workspace_objects.select_related("job")
+            .get(id=conversation_id)
+            .job
+        )
+        with transaction.atomic():
+            environment = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=job.environment_id or job.id
+            )
+            payload = dict(environment.payload or {})
+            metadata = dict(payload.get("metadata") or {})
+            checkpoints = dict(metadata.get("conversation_checkpoints") or {})
+            entry = dict(checkpoints.get(str(conversation_id)) or {})
+            if int(entry.get("refused_sequence") or 0) >= committed.sequence:
+                return
+            entry["refused_sequence"] = committed.sequence
+            checkpoints[str(conversation_id)] = entry
+            metadata["conversation_checkpoints"] = checkpoints
+            payload["metadata"] = metadata
+            environment.payload = payload
+            environment.save(update_fields=["payload", "updated_at"])
+    except Exception:  # noqa: BLE001 - chat still starts at the give-up
+        logger.exception(
+            "conversation landing refusal not recorded conversation=%s",
+            conversation_id,
+        )
+
+
+def start_chat_after_platform_landing(conversation_id: str, turn_sequence: int) -> None:
+    """A platform turn's files landed or were refused: a person's message that waited on
+    them starts now, not at the recovery sweep's next pass."""
+    from simulate.services.hosted_harness_ingress import _public_base_url
+    from simulate.tasks.hosted_harness_conversation import schedule_conversation_runtime
+
+    try:
+        turn = HostedHarnessConversationEvent.no_workspace_objects.filter(
+            conversation_id=conversation_id,
+            kind="turn_completed",
+            sequence=turn_sequence,
+        ).first()
+        command = (
+            HostedHarnessConversationMessage.no_workspace_objects.filter(
+                id=(turn.payload or {}).get("command_message_id"),
+                role=HostedHarnessConversationMessage.Role.USER,
+            ).first()
+            if turn is not None
+            else None
+        )
+        if command is None or (command.payload or {}).get("from_platform") is not True:
+            return
+        if not _unacked_commands(command.conversation).exists():
+            return
+        schedule_conversation_runtime(conversation_id, _public_base_url(None))
+    except Exception:  # noqa: BLE001 - the recovery sweep starts it
+        logger.exception(
+            "conversation start after landing failed conversation=%s", conversation_id
+        )
+
+
 def _past_give_up(
     conversation: HostedHarnessConversation,
     oldest: HostedHarnessConversationMessage,
@@ -376,6 +542,14 @@ def _abandon_outstanding(conversation_id) -> int:
                 and lease.heartbeat_at > oldest.created_at
             )
         )
+        if (
+            lease is not None
+            and lease.attempt_id is None
+            and lease.state == HostedHarnessConversationLease.State.ACTIVE
+            and not lease.provider_ref.startswith("pending:")
+        ):
+            # Its process stopped answering; the sandbox is not left to idle.
+            stop_chat_sandbox_after_commit(conversation.id, lease.provider_ref)
         return _fail_outstanding(
             conversation,
             state=HostedHarnessConversation.State.DEGRADED,
@@ -388,6 +562,40 @@ def _abandon_outstanding(conversation_id) -> int:
                 "delivered. Send it again to retry."
             ),
         )
+
+
+def stop_chat_sandbox_after_commit(conversation_id, provider_ref: str) -> None:
+    """Delete a chat's own sandbox once this transaction commits; at once in autocommit.
+    A failure to schedule is logged and dropped, so it never fails the caller."""
+    stop_chat_sandboxes_after_commit([(conversation_id, provider_ref)])
+
+
+def stop_chat_sandboxes_after_commit(stops) -> None:
+    """Delete several chat sandboxes once this transaction commits, in one hook.
+
+    The first schedule that fails ends the hook: Temporal is slow or down, and each
+    further attempt would hold the request for its dispatch deadline again. The
+    sandboxes not scheduled fall back to their idle limit; the failure is logged
+    once, with how many were skipped."""
+    pending = [(str(conversation_id), ref) for conversation_id, ref in stops]
+    if not pending:
+        return
+
+    def stop_chat_sandboxes() -> None:
+        from simulate.tasks import harness_nudges as nudge_tasks
+
+        for index, (conversation_id, provider_ref) in enumerate(pending):
+            try:
+                nudge_tasks.schedule_sandbox_stop(conversation_id, provider_ref)
+            except Exception:  # noqa: BLE001 - the sandbox still dies at its idle limit
+                logger.exception(
+                    "stop_chat_sandboxes_failed conversation=%s skipped=%d",
+                    conversation_id,
+                    len(pending) - index - 1,
+                )
+                return
+
+    transaction.on_commit(stop_chat_sandboxes, robust=True)
 
 
 def _fail_outstanding(

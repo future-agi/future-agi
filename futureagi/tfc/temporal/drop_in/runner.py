@@ -99,7 +99,12 @@ def start_activity(
                 )
             return await coroutine
 
-        result = _run_async_in_sync_context(dispatch)
+        if dispatch_timeout_seconds is None:
+            result = _run_async_in_sync_context(dispatch)
+        else:
+            result = _run_async_in_sync_context(
+                dispatch, dispatch_timeout_seconds=dispatch_timeout_seconds
+            )
         logger.info(
             "start_activity_completed",
             activity_name=activity_name,
@@ -185,7 +190,7 @@ async def _start_activity_async(
         if start_delay is not None:
             _extra_start_kwargs["start_delay"] = start_delay
         await client.start_workflow(
-            TaskRunnerWorkflow.run,
+            (activity_metadata.get("workflow_class") or TaskRunnerWorkflow).run,
             TaskRunnerInput(
                 activity_name=activity_name,
                 args=safe_args,

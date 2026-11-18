@@ -32,6 +32,8 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tfc.temporal.background_tasks.activities",
     # agentcc gateway alert emails
     "agentcc.services.email_sender",
+    # agentcc gateway config re-sync after a health check on a cold sync cache
+    "agentcc.services.config_push",
     # model_hub tasks
     "model_hub.tasks.run_prompt",
     "model_hub.tasks.experiment_runner",
@@ -61,6 +63,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     # The sweep-lost-insight-runs schedule's activity
     "tfc.temporal.insights.activities",
     "tracer.tasks.outbox_cdc",
+    "tracer.sql_workbench.tasks",
     "tracer.utils.span",
     "tracer.utils.eval",
     "tracer.utils.observability_provider",
@@ -358,6 +361,13 @@ def _ensure_workflows_registered() -> None:
 
         get_logger(__name__).warning("could_not_load_dropin_workflow", error=str(e))
 
+    from tfc.temporal.sql_workbench import SQLExecutionWorkflow, SQLRetentionWorkflow
+
+    register_for_queues(
+        queues=["exact_aggregation", "tasks_xl"],
+        workflows=[SQLExecutionWorkflow, SQLRetentionWorkflow],
+    )
+
     # Register simulate workflows for tasks_xl queue
     # Note: Test execution workflows have been removed - using Celery tasks instead
     try:
@@ -648,10 +658,12 @@ def _ensure_activities_registered() -> None:
         exact_aggregation_activities = get_temporal_activities(
             queue="exact_aggregation"
         )
+        sql_activities = get_temporal_activities(queue="sql_workbench")
         runner_activities = get_temporal_activities(queue=QUEUE_RUNNER)
         dedicated_activities = {
             *exact_aggregation_activities,
             *runner_activities,
+            *sql_activities,
         }
         generic_drop_in_activities = [
             registered_activity
@@ -661,7 +673,7 @@ def _ensure_activities_registered() -> None:
         tasks_xl_drop_in_activities = [
             registered_activity
             for registered_activity in drop_in_activities
-            if registered_activity not in runner_activities
+            if registered_activity not in {*runner_activities, *sql_activities}
         ]
         log.info("registering_dropin_activities", count=len(drop_in_activities))
 
@@ -688,6 +700,7 @@ def _ensure_activities_registered() -> None:
             queues=["exact_aggregation"],
             activities=exact_aggregation_activities,
         )
+        register_for_queues(queues=["sql_workbench"], activities=sql_activities)
         register_for_queues(
             queues=[QUEUE_RUNNER],
             activities=runner_activities,

@@ -154,6 +154,16 @@ def _worker_plans() -> list[_QueuePlan]:
                 max_workflow_tasks=1,
             )
         )
+    if "sql_workbench" not in excluded:
+        plans.append(
+            _QueuePlan(
+                "sql_workbench",
+                [],
+                get_activities_for_queue("sql_workbench"),
+                max_activities=2,
+                max_workflow_tasks=2,
+            )
+        )
     return plans
 
 
