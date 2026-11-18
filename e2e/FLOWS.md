@@ -903,6 +903,31 @@
 - the widget query returns exactly the seeded per-bucket maxima (190, 250, 210) for latency/max
 - chart_config.chart_type round-trips as column and then as line through the widget detail endpoint
 
+### DASH-E2E-018 — rapid date presets query only the final range, custom Done and Refresh apply at once
+
+**Goal:** A user flicking through date presets sees each chip highlight as they click, while the widgets load only the range they land on; a custom range applies as soon as they press Done, and Refresh still brings the widgets to a completed result.
+
+**Spec:** `flows/dashboards/preset-burst-requests.spec.ts:53`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed 3 traces into a minted project and a dashboard with trace_count and span_count widgets stored at 7D
+2. open the dashboard on the Default chip and wait for both widgets to load
+3. click Today, 7D and 30D back to back
+4. see the 30D chip highlighted, then both widgets load the 30-day range with the seeded totals
+5. open Custom, type today's date as Start Date and End Date and press Done
+6. click Refresh with the custom range applied and wait for it to finish
+
+**Backend state verified:**
+
+- the preset burst sends exactly one time range per widget on POST /tracer/dashboard/query/, the 30-day one; no Today or 7D range is ever sent, the 30D chip is primary before the first 30D query, and that query starts at least 450 ms after the 30D click
+- each widget’s 30D response is query_complete and query_exact with 3 traces and 6 spans
+- custom Done sends exactly one range per widget, [local midnight today, local midnight tomorrow), dispatched under 450 ms after Done
+- the custom-range responses are complete and exact with the seeded totals
+- Refresh sends exactly one POST ?refresh=true per widget with the custom range, and a later response completes exactly with query_completed_at after the click and the seeded totals
+
 ## datasets
 
 ### DATA-E2E-001 — uploaded dataset values can be discovered and filtered
