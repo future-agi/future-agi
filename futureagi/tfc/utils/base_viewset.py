@@ -1,6 +1,48 @@
 from django.db import models
 
 
+def _default_workspace_q(workspace, workspace_lookup, model):
+    """Default-workspace filter. Null-workspace rows are included only when the
+    model can constrain them to this workspace's organization. A workspace-only
+    model must not see every null-workspace row.
+    """
+    q = models.Q(**{workspace_lookup: workspace}) | models.Q(
+        **{
+            f"{workspace_lookup}__is_default": True,
+            f"{workspace_lookup}__organization": workspace.organization,
+        }
+    )
+    if workspace_lookup == "workspace":
+        org_lookup = "organization_id"
+        has_org = any(
+            getattr(field, "attname", None) == "organization_id"
+            for field in model._meta.get_fields()
+        )
+    else:
+        org_lookup = f"{workspace_lookup.removesuffix('__workspace')}__organization_id"
+        has_org = True
+        probe = model
+        for part in workspace_lookup.split("__")[:-1]:
+            try:
+                probe = probe._meta.get_field(part).related_model
+            except Exception:
+                has_org = False
+                break
+        else:
+            has_org = any(
+                getattr(field, "attname", None) == "organization_id"
+                for field in probe._meta.get_fields()
+            )
+    if has_org:
+        q |= models.Q(
+            **{
+                f"{workspace_lookup}__isnull": True,
+                org_lookup: workspace.organization_id,
+            }
+        )
+    return q
+
+
 class BaseModelViewSetMixin:
     """
     Mixin for ViewSets that automatically applies workspace and organization
@@ -57,14 +99,7 @@ class BaseModelViewSetMixin:
             if workspace_lookup:
                 if getattr(workspace, "is_default", False):
                     queryset = queryset.filter(
-                        models.Q(**{workspace_lookup: workspace})
-                        | models.Q(
-                            **{
-                                f"{workspace_lookup}__is_default": True,
-                                f"{workspace_lookup}__organization": workspace.organization,
-                            }
-                        )
-                        | models.Q(**{f"{workspace_lookup}__isnull": True})
+                        _default_workspace_q(workspace, workspace_lookup, model)
                     )
                 else:
                     queryset = queryset.filter(**{workspace_lookup: workspace})
@@ -139,14 +174,7 @@ class BaseModelViewSetMixinWithUserOrg(BaseModelViewSetMixin):
             if workspace_lookup:
                 if getattr(workspace, "is_default", False):
                     queryset = queryset.filter(
-                        models.Q(**{workspace_lookup: workspace})
-                        | models.Q(
-                            **{
-                                f"{workspace_lookup}__is_default": True,
-                                f"{workspace_lookup}__organization": workspace.organization,
-                            }
-                        )
-                        | models.Q(**{f"{workspace_lookup}__isnull": True})
+                        _default_workspace_q(workspace, workspace_lookup, model)
                     )
                 else:
                     queryset = queryset.filter(**{workspace_lookup: workspace})
