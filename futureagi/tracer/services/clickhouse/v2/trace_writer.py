@@ -29,7 +29,7 @@ import json
 import os
 import threading
 import time
-from datetime import UTC, timezone
+from datetime import UTC
 from typing import Any, Iterable
 
 import structlog
