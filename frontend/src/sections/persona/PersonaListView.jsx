@@ -2,8 +2,11 @@ import {
   Avatar,
   Box,
   Button,
-  Chip,
   IconButton,
+  MenuItem,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -12,9 +15,10 @@ import PropTypes from "prop-types";
 import React, { useCallback, useMemo, useState } from "react";
 import { enqueueSnackbar } from "src/components/snackbar";
 import Iconify from "src/components/iconify";
+import ListToolbar from "src/components/list-toolbar";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
-import FilterPanel from "src/components/filter-panel/FilterPanel";
+import { ObjectFilterPanel } from "src/components/filter";
 import { useDebounce } from "src/hooks/use-debounce";
 import {
   useBulkDeletePersonas,
@@ -30,25 +34,6 @@ import PersonasBulkActionsBar from "./components/PersonasBulkActionsBar";
 import PersonasBulkDeleteDialog from "./components/PersonasBulkDeleteDialog";
 import PersonasColumnsPopover from "./components/PersonasColumnsPopover";
 import { extractTagsFromPersona } from "./common";
-
-const AVATAR_COLORS = [
-  "#7C4DFF",
-  "#FF6B6B",
-  "#5BE49B",
-  "#FFB547",
-  "#36B5FF",
-  "#FF85C0",
-  "#00BFA6",
-  "#8C9EFF",
-];
-
-const getAvatarColor = (name) => {
-  let hash = 0;
-  for (let i = 0; i < (name || "").length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-};
 
 const getInitials = (name) => {
   if (!name) return "?";
@@ -84,6 +69,10 @@ const PersonaListView = ({
   onCreatePersona,
   personaCreateEditType = null,
   lockedFilters = null,
+  toolbarActions = null,
+  /* Sits under a page header + tabs: the toolbar takes the shared 12px top
+     padding so it lines up with its sibling tab. */
+  framed = false,
 }) => {
   const { role } = useAuthContext();
   const canCreate = RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role];
@@ -99,7 +88,8 @@ const PersonaListView = ({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [typeFilter, setTypeFilter] = useState(lockedType);
-  const [simulationFilter, setSimulationFilter] = useState(lockedSimulationType);
+  const [simulationFilter, setSimulationFilter] =
+    useState(lockedSimulationType);
   const [rowSelection, setRowSelection] = useState({});
   const [columnVisibility, setColumnVisibility] = useState({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -215,7 +205,7 @@ const PersonaListView = ({
           <Typography
             variant="body2"
             noWrap
-            sx={{ fontWeight: 500, fontSize: "13px" }}
+            sx={{ fontWeight: 500, fontSize: "12px" }}
           >
             {row.original?.name}
           </Typography>
@@ -233,7 +223,7 @@ const PersonaListView = ({
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontSize: "13px", color: "text.secondary" }}
+              sx={{ fontSize: "12px", color: "text.secondary" }}
             >
               {getValue() || "—"}
             </Typography>
@@ -250,26 +240,26 @@ const PersonaListView = ({
           const type = getValue();
           const isVoice = type === AGENT_TYPES.VOICE;
           return (
-            <Chip
-              size="small"
-              icon={
-                <Iconify
-                  icon={
-                    isVoice
-                      ? "solar:microphone-3-bold"
-                      : "solar:chat-round-line-bold"
-                  }
-                  width={12}
-                />
-              }
-              label={isVoice ? "Voice" : "Chat"}
-              variant="outlined"
+            <Box
               sx={{
-                fontSize: "11px",
-                height: 22,
-                borderColor: "divider",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.75,
+                color: "text.secondary",
               }}
-            />
+            >
+              <Iconify
+                icon={
+                  isVoice
+                    ? "solar:microphone-3-bold"
+                    : "solar:chat-round-line-bold"
+                }
+                width={12}
+              />
+              <Typography variant="body2" sx={{ fontSize: "12px" }}>
+                {isVoice ? "Voice" : "Chat"}
+              </Typography>
+            </Box>
           );
         },
       },
@@ -294,22 +284,25 @@ const PersonaListView = ({
                 overflow: "hidden",
               }}
             >
-              {displayed.map((tag) => (
-                <Chip
-                  key={tag}
-                  label={tag}
-                  size="small"
-                  variant="outlined"
-                  sx={{ fontSize: "11px", height: 22, maxWidth: 120 }}
-                />
-              ))}
+              <Typography
+                variant="body2"
+                noWrap
+                sx={{ fontSize: "12px", color: "text.primary" }}
+              >
+                {displayed.join(" · ")}
+              </Typography>
               {remaining > 0 && (
-                <Chip
-                  label={`+${remaining}`}
-                  size="small"
-                  variant="outlined"
-                  sx={{ fontSize: "11px", height: 22 }}
-                />
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontSize: "12px",
+                    color: "text.tertiary",
+                    flexShrink: 0,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {`+${remaining}`}
+                </Typography>
               )}
             </Box>
           );
@@ -337,12 +330,8 @@ const PersonaListView = ({
                   sx={{
                     width: 24,
                     height: 24,
-                    fontSize: "10px",
-                    fontWeight: 700,
-                    bgcolor: isSystem
-                      ? "action.selected"
-                      : getAvatarColor(name),
-                    color: isSystem ? "text.secondary" : "common.white",
+                    fontSize: "12px",
+                    fontWeight: 600,
                   }}
                 >
                   {isSystem ? (
@@ -351,7 +340,7 @@ const PersonaListView = ({
                     getInitials(name)
                   )}
                 </Avatar>
-                <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+                <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
                   {name}
                 </Typography>
               </Box>
@@ -370,7 +359,7 @@ const PersonaListView = ({
           if (!val) return null;
           try {
             return (
-              <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
                 {formatDistanceToNow(new Date(val), { addSuffix: true })}
               </Typography>
             );
@@ -526,83 +515,105 @@ const PersonaListView = ({
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        gap: 1.5,
         overflow: "hidden",
         minHeight: 0,
       }}
     >
-      {/* Top Controls */}
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 1.5,
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-          <FormSearchField
+      {/* Toolbar: search, segmented toggle, filter selects, spacer, actions */}
+      <ListToolbar sx={framed ? undefined : { pt: 0 }}>
+        <FormSearchField
+          size="small"
+          placeholder="Search personas"
+          sx={{ width: 280 }}
+          searchQuery={searchQuery}
+          onChange={(e) => {
+            setSearchQuery(e.target.value);
+            setPage(0);
+          }}
+        />
+        {!lockedType && (
+          <ToggleButtonGroup
+            exclusive
             size="small"
-            placeholder="Search personas"
-            sx={{
-              minWidth: "250px",
-              "& .MuiOutlinedInput-root": { height: "30px" },
-            }}
-            searchQuery={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
+            value={typeFilter ?? "all"}
+            onChange={(_, v) => {
+              if (!v) return;
+              setTypeFilter(v === "all" ? null : v);
               setPage(0);
             }}
-          />
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<Iconify icon="mage:filter" width={16} />}
-            endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
-            onClick={(e) => setFilterAnchorEl(e.currentTarget)}
-            sx={{
-              textTransform: "none",
-              fontSize: "13px",
-              height: "32px",
-              borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
-              color: activeFilterCount > 0 ? "primary.main" : "text.secondary",
-            }}
           >
-            Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
-          </Button>
-          <Button
+            {QUICK_FILTERS.map((f) => (
+              <ToggleButton key={f.label} value={f.value ?? "all"}>
+                {f.label}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+        )}
+        {!lockedSimulationType && (
+          <TextField
+            select
             size="small"
-            variant="outlined"
-            startIcon={<Iconify icon="solar:list-check-bold" width={16} />}
-            onClick={(e) => setColumnsAnchorEl(e.currentTarget)}
-            sx={{
-              textTransform: "none",
-              fontSize: "13px",
-              height: "32px",
-              borderColor:
-                hiddenColumns.length > 0 ? "primary.main" : "divider",
-              color:
-                hiddenColumns.length > 0 ? "primary.main" : "text.secondary",
+            value={simulationFilter ?? "all"}
+            onChange={(e) => {
+              setSimulationFilter(
+                e.target.value === "all" ? null : e.target.value,
+              );
+              setPage(0);
             }}
+            inputProps={{ "aria-label": "Agent type" }}
+            sx={{ minWidth: 140 }}
           >
-            Columns
-          </Button>
-        </Box>
+            {SIMULATION_FILTERS.map((f) => (
+              <MenuItem key={f.label} value={f.value ?? "all"}>
+                {f.label}
+              </MenuItem>
+            ))}
+          </TextField>
+        )}
+        <Button
+          size="small"
+          variant="outlined"
+          startIcon={<Iconify icon="solar:filter-linear" width={16} />}
+          endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
+          onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+          sx={{
+            borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
+            color: activeFilterCount > 0 ? "primary.main" : "text.secondary",
+          }}
+        >
+          Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+        </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          startIcon={<Iconify icon="solar:list-check-bold" width={16} />}
+          onClick={(e) => setColumnsAnchorEl(e.currentTarget)}
+          sx={{
+            borderColor: hiddenColumns.length > 0 ? "primary.main" : "divider",
+            color: hiddenColumns.length > 0 ? "primary.main" : "text.secondary",
+          }}
+        >
+          Columns
+        </Button>
 
-        <Box>
-          {!isSelectable && selectedItems.length > 0 ? (
-            <PersonasBulkActionsBar
-              selectedCount={selectedItems.length}
-              deletableCount={deletableSelected.length}
-              onDelete={() => setDeleteDialogOpen(true)}
-              onCancel={handleCancelSelection}
-            />
-          ) : (
+        <Box sx={{ flex: 1 }} />
+
+        {!isSelectable && selectedItems.length > 0 ? (
+          <PersonasBulkActionsBar
+            selectedCount={selectedItems.length}
+            deletableCount={deletableSelected.length}
+            onDelete={() => setDeleteDialogOpen(true)}
+            onCancel={handleCancelSelection}
+          />
+        ) : (
+          <>
+            {toolbarActions}
             <Button
+              size="small"
               variant="contained"
               color="primary"
               disabled={!canCreate}
-              startIcon={<Iconify icon="mingcute:add-line" width={18} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={() => {
                 if (onCreatePersona) {
                   onCreatePersona();
@@ -614,76 +625,12 @@ const PersonaListView = ({
                   personaCreateEditType: null,
                 });
               }}
-              sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
             >
               Create persona
             </Button>
-          )}
-        </Box>
-      </Box>
-
-      {/* Quick filter chips */}
-      <Box
-        sx={{
-          display: "flex",
-          gap: 0.75,
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-      >
-        {!lockedType &&
-          QUICK_FILTERS.map((f) => {
-            const isActive = typeFilter === f.value;
-            return (
-              <Chip
-                key={f.label}
-                icon={<Iconify icon={f.icon} width={14} />}
-                label={f.label}
-                size="small"
-                variant={isActive ? "filled" : "outlined"}
-                color={isActive ? "primary" : "default"}
-                onClick={() => {
-                  setTypeFilter(f.value);
-                  setPage(0);
-                }}
-                sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-              />
-            );
-          })}
-
-        {!lockedSimulationType && (
-          <>
-            <Box
-              sx={{
-                width: "1px",
-                height: 18,
-                bgcolor: "divider",
-                mx: 0.5,
-              }}
-            />
-            {SIMULATION_FILTERS.map((f) => {
-              const isActive = simulationFilter === f.value;
-              return (
-                <Chip
-                  key={f.label}
-                  icon={
-                    f.icon ? <Iconify icon={f.icon} width={14} /> : undefined
-                  }
-                  label={f.label}
-                  size="small"
-                  variant={isActive ? "filled" : "outlined"}
-                  color={isActive ? "primary" : "default"}
-                  onClick={() => {
-                    setSimulationFilter(f.value);
-                    setPage(0);
-                  }}
-                  sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-                />
-              );
-            })}
           </>
         )}
-      </Box>
+      </ListToolbar>
 
       {/* Table */}
       <DataTable
@@ -727,7 +674,7 @@ const PersonaListView = ({
       />
 
       {/* Filter panel */}
-      <FilterPanel
+      <ObjectFilterPanel
         anchorEl={filterAnchorEl}
         open={Boolean(filterAnchorEl)}
         onClose={() => setFilterAnchorEl(null)}
@@ -791,12 +738,15 @@ const PersonaListView = ({
 };
 
 PersonaListView.propTypes = {
+  framed: PropTypes.bool,
   isSelectable: PropTypes.bool,
   lockedFilters: PropTypes.object,
   selectedPersonas: PropTypes.array,
   onToggleSelect: PropTypes.func,
   onCreatePersona: PropTypes.func,
   personaCreateEditType: PropTypes.string,
+  // Extra buttons shown just before Create persona (hidden while rows are selected).
+  toolbarActions: PropTypes.node,
 };
 
 export default PersonaListView;

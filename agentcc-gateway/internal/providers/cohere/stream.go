@@ -208,7 +208,7 @@ func (s *streamState) handleToolCallStart(event streamEvent) (*models.StreamChun
 							Index: idx,
 							ID:    tcs.Message.ToolCalls.ID,
 							Type:  "function",
-							Function: &models.FunctionCall{
+							Function: &models.FunctionCallDelta{
 								Name:      tcs.Message.ToolCalls.Function.Name,
 								Arguments: tcs.Message.ToolCalls.Function.Arguments,
 							},
@@ -251,7 +251,7 @@ func (s *streamState) handleToolCallDelta(event streamEvent) (*models.StreamChun
 					ToolCalls: []models.ToolCallDelta{
 						{
 							Index: tcIdx,
-							Function: &models.FunctionCall{
+							Function: &models.FunctionCallDelta{
 								Arguments: tcd.Message.ToolCalls.Function.Arguments,
 							},
 						},

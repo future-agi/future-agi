@@ -57,3 +57,17 @@ export const getLineSeriesName = (selectedGraphProperty) => {
 
   return `${baseUnit} (${label})`;
 };
+
+
+/** Optional generated monetary companion; absence keeps legacy presentation. */
+export const isIncompleteCost = (coverage) =>
+  Boolean(coverage && coverage.status !== "complete");
+
+/** A known subtotal must never be labelled as a complete total or mean. */
+export const monetaryCostLabel = (value, coverage) => {
+  if (coverage?.status === "unknown") return "Unknown";
+  if (coverage?.status === "partial") {
+    return `Partial · Known subtotal $${coverage.known_subtotal}`;
+  }
+  return value == null ? "—" : `$${value}`;
+};

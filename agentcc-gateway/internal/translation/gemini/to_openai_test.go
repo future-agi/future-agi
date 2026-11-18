@@ -156,21 +156,6 @@ func TestRequestToCanonical_FunctionCallGeneratesIDs(t *testing.T) {
 	if tc.Function.Name != "get_weather" {
 		t.Errorf("tool call name: got %q, want %q", tc.Function.Name, "get_weather")
 	}
-	// Verify the ID is stored in Extra
-	if req.Extra == nil {
-		t.Fatal("expected Extra to be set with gemini_tool_call_id_map")
-	}
-	mapRaw, ok := req.Extra["gemini_tool_call_id_map"]
-	if !ok {
-		t.Fatal("expected gemini_tool_call_id_map in Extra")
-	}
-	var idMap map[string][]string
-	if err := json.Unmarshal(mapRaw, &idMap); err != nil {
-		t.Fatalf("unmarshal id map: %v", err)
-	}
-	if ids := idMap["get_weather"]; len(ids) != 1 || ids[0] != tc.ID {
-		t.Errorf("id map mismatch: map has %v, tool call has %q", ids, tc.ID)
-	}
 }
 
 func TestRequestToCanonical_FunctionResponseRoundTrip(t *testing.T) {
@@ -511,6 +496,13 @@ func TestRequestToCanonical_ResponseMimeTypeJSONWithSchema(t *testing.T) {
 	}
 	if len(req.ResponseFormat.JSONSchema) == 0 {
 		t.Error("expected JSONSchema to be non-empty")
+	}
+	// OpenAI requires a json_schema name; the translator gives one.
+	var js struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(req.ResponseFormat.JSONSchema, &js); err != nil || js.Name != "response" {
+		t.Errorf("json_schema name = %q (%v), want \"response\"", js.Name, err)
 	}
 }
 

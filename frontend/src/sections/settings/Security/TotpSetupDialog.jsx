@@ -12,8 +12,8 @@ import {
   Tooltip,
   Typography,
   useTheme,
-  CircularProgress,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { LoadingButton } from "@mui/lab";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
@@ -124,7 +124,8 @@ const TotpSetupDialog = ({ open, onClose, onStatusChange }) => {
       <Dialog
         open={open && !recoveryDialogOpen}
         onClose={handleDialogClose}
-        maxWidth="sm"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 720 } }}
         fullWidth
       >
         <DialogTitle>
@@ -140,16 +141,7 @@ const TotpSetupDialog = ({ open, onClose, onStatusChange }) => {
         </DialogTitle>
         <DialogContent>
           {isSettingUp || !setupData ? (
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                minHeight: "200px",
-              }}
-            >
-              <CircularProgress />
-            </Box>
+            <LoadingScreen variant="orbit" sx={{ minHeight: "240px" }} />
           ) : (
             <Box
               sx={{
@@ -222,7 +214,11 @@ const TotpSetupDialog = ({ open, onClose, onStatusChange }) => {
                   <Tooltip title={secretCopied ? "Copied!" : "Copy secret"}>
                     <IconButton size="small" onClick={handleCopySecret}>
                       <Iconify
-                        icon={secretCopied ? "mdi:check" : "mdi:content-copy"}
+                        icon={
+                          secretCopied
+                            ? "solar:check-linear"
+                            : "solar:copy-linear"
+                        }
                         sx={{ width: "18px", height: "18px" }}
                       />
                     </IconButton>

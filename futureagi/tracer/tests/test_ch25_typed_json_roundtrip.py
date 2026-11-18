@@ -15,9 +15,9 @@ Background — the bug this test guards against:
     contract end-to-end against a live CH 25.3 instance.
 
 When to run:
-    Integration test — requires the local CH 25.3 container at port 19001
-    (the migration test rig). Marked `integration` so unit-test runs skip
-    it. CI runs it as part of the migration validation suite.
+    Integration test — requires a test CH 25.3 over HTTP, resolved by the
+    root conftest's `_open_ch_test_http_client` (CI names its own sidecar).
+    Marked `integration` so unit-test runs skip it.
 
 What it does:
     1. Creates a temp `_test_roundtrip_<uuid>` table with one row whose
@@ -34,6 +34,7 @@ If this test ever fails:
     we have typed Maps (`attrs_string`/`attrs_number`/`attrs_bool`) for
     queryable attribute access.
 """
+
 from __future__ import annotations
 
 import json
@@ -42,14 +43,15 @@ import uuid
 
 import pytest
 
+from conftest import _open_ch_test_http_client
+
 try:
     import clickhouse_connect
 except ImportError:  # pragma: no cover
     clickhouse_connect = None
 
 
-CH_HOST = os.environ.get("CH25_HOST", "127.0.0.1")
-CH_PORT = int(os.environ.get("CH25_HTTP_PORT", "19001"))
+CH_DATABASE = os.environ.get("CH25_DATABASE", "default")
 
 
 # NOTE (codex P3 finding 2026-05-26): the previous implementation called
@@ -70,16 +72,7 @@ def _require_ch25():
     """Fixture-time reachability gate (replaces collection-time skipif)."""
     if clickhouse_connect is None:
         pytest.skip("clickhouse-connect not installed")
-    try:
-        c = clickhouse_connect.get_client(
-            host=CH_HOST, port=CH_PORT, send_receive_timeout=5
-        )
-        c.command("SELECT 1")
-    except Exception as exc:
-        pytest.skip(
-            f"CH 25.3 not reachable on {CH_HOST}:{CH_PORT} ({exc!r}); "
-            f"integration test"
-        )
+    _open_ch_test_http_client(send_receive_timeout=5).close()
 
 
 # Fixture payloads. Each is a representative shape for a (observation_type,
@@ -131,10 +124,18 @@ _FIXTURES: dict[str, dict] = {
         "output": {
             "value": {
                 "logprobs": [
-                    {"token": "Hi", "logprob": -0.0008923, "top_5": [-0.01, -0.5, -1.2]},
+                    {
+                        "token": "Hi",
+                        "logprob": -0.0008923,
+                        "top_5": [-0.01, -0.5, -1.2],
+                    },
                     {"token": ".", "logprob": -2.7e-05, "top_5": [-0.001]},
                 ],
-                "usage": {"prompt_tokens": 47, "completion_tokens": 138, "total_tokens": 185},
+                "usage": {
+                    "prompt_tokens": 47,
+                    "completion_tokens": 138,
+                    "total_tokens": 185,
+                },
             },
         },
     },
@@ -181,7 +182,7 @@ _FIXTURES: dict[str, dict] = {
     # Large 64-bit integers that JS-serialization could lossy-convert.
     "large_ints": {
         "ts_ms": [1773816575961, 1773816575962, 1773816575963],
-        "ids":   [9007199254740992, -9007199254740992],
+        "ids": [9007199254740992, -9007199254740992],
     },
 }
 
@@ -197,9 +198,11 @@ _NESTED_FIXTURE = {
 
 @pytest.fixture(scope="module")
 def ch_client():
-    return clickhouse_connect.get_client(
-        host=CH_HOST, port=CH_PORT, send_receive_timeout=30
-    )
+    client = _open_ch_test_http_client(send_receive_timeout=30)
+    try:
+        yield client
+    finally:
+        client.close()
 
 
 @pytest.fixture()
@@ -278,10 +281,11 @@ def test_spans_table_attributes_extra_is_string(ch_client):
     """
     rows = ch_client.query(
         "SELECT type FROM system.columns "
-        "WHERE database = 'default' AND table = 'spans' "
-        "  AND name = 'attributes_extra'"
+        "WHERE database = %(db)s AND table = 'spans' "
+        "  AND name = 'attributes_extra'",
+        parameters={"db": CH_DATABASE},
     ).result_rows
-    assert rows, "spans.attributes_extra column missing"
+    assert rows, f"spans.attributes_extra column missing in database {CH_DATABASE!r}"
     actual_type = rows[0][0]
     assert actual_type == "String", (
         f"spans.attributes_extra is {actual_type!r}; expected 'String'. "
@@ -301,9 +305,9 @@ _EXPECTED_SPANS_TYPES = {
     # column: (kind, matcher) where matcher is either:
     #   "exact" — type string must match `expected` exactly
     #   "prefix" — type string must start with `expected`
-    "attributes_extra": ("exact",  "String"),
-    "resource_attrs":   ("prefix", "JSON("),
-    "metadata":         ("prefix", "JSON("),
+    "attributes_extra": ("exact", "String"),
+    "resource_attrs": ("prefix", "JSON("),
+    "metadata": ("prefix", "JSON("),
 }
 
 
@@ -319,12 +323,15 @@ def test_spans_table_typed_json_contract(ch_client):
     """
     rows = ch_client.query(
         "SELECT name, type FROM system.columns "
-        "WHERE database = 'default' AND table = 'spans' "
-        "  AND name IN ('attributes_extra', 'resource_attrs', 'metadata')"
+        "WHERE database = %(db)s AND table = 'spans' "
+        "  AND name IN ('attributes_extra', 'resource_attrs', 'metadata')",
+        parameters={"db": CH_DATABASE},
     ).result_rows
     actual = {name: type_ for name, type_ in rows}
     missing = set(_EXPECTED_SPANS_TYPES) - set(actual)
-    assert not missing, f"spans table missing columns: {sorted(missing)}"
+    assert not missing, (
+        f"spans table missing columns {sorted(missing)} in database {CH_DATABASE!r}"
+    )
     for col, (kind, expected) in _EXPECTED_SPANS_TYPES.items():
         got = actual[col]
         if kind == "exact":
@@ -345,9 +352,12 @@ def test_spans_table_typed_json_contract(ch_client):
     # which embeds the column-level codec and default in the table DDL.
     ddl_rows = ch_client.query(
         "SELECT create_table_query FROM system.tables "
-        "WHERE database = 'default' AND name = 'spans'"
+        "WHERE database = %(db)s AND name = 'spans'",
+        parameters={"db": CH_DATABASE},
     ).result_rows
-    assert ddl_rows, "spans table missing from system.tables"
+    assert ddl_rows, (
+        f"spans table missing from system.tables in database {CH_DATABASE!r}"
+    )
     ddl = ddl_rows[0][0]
     # Be tolerant of CH's DDL canonicalization (whitespace, quoting) but pin
     # both substrings — if either is missing, the column was re-created

@@ -90,6 +90,9 @@ const columns = (palette) => [
     headerName: "Volume",
     flex: 1,
     sortable: false,
+    renderCell: ({ value }) => (
+      <span style={{ fontVariantNumeric: "tabular-nums" }}>{value}</span>
+    ),
   },
   {
     field: "volume",

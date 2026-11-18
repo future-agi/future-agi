@@ -1,0 +1,88 @@
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=5000']
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: debug-statements
+
+  # Python linting, import sorting and formatting with ruff, configured in
+  # pyproject.toml. rev is the ruff that CI pins (RUFF_VERSION in
+  # .github/workflows/python-lint.yml); scripts/test_check_python_lint_delta.py
+  # checks they match. Like CI and the lint-staged hook, both hooks cover only
+  # Python files under futureagi/: the upstream ruff-format hook also takes
+  # Markdown, and the repo's other Python has no ruff config.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.3
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^futureagi/
+        types_or: [python, pyi]
+      - id: ruff-format
+        files: ^futureagi/
+        types_or: [python, pyi]
+
+  # TODO: fix and uncomment
+  # # Security scanning
+  # - repo: https://github.com/PyCQA/bandit
+  #   rev: 1.8.6
+  #   hooks:
+  #     - id: bandit
+  #       args: ['-c', 'pyproject.toml']
+  #       additional_dependencies: ['bandit[toml]']
+  #       exclude: '^tests/|^agentic_eval/tests/'
+  # TODO: fix and uncomment
+  # # Detect secrets in code
+  # - repo: https://github.com/Yelp/detect-secrets
+  #   rev: v1.5.0
+  #   hooks:
+  #     - id: detect-secrets
+  #       args: ['--baseline', '.secrets.baseline']
+  #       exclude: '.*\.(lock|sum|md|txt|json)$'
+  # TODO: fix and uncomment
+  # # Django template linting
+  # - repo: https://github.com/Riverside-Healthcare/djlint
+  #   rev: v1.36.4
+  #   hooks:
+  #     - id: djlint-reformat-django
+  #       files: '\.(html)$'
+  #       types_or: [html]
+  #     - id: djlint-django
+  #       files: '\.(html)$'
+  #       types_or: [html]
+
+  # No mypy hook: a whole-repo run takes minutes, too slow for every commit.
+  # CI's "Python types (advisory)" workflow checks it against
+  # mypy-baseline.txt; `make mypy` shows the same result before pushing.
+
+# Configuration for specific tools
+default_language_version:
+  python: python3
+
+# Files to exclude globally
+exclude: |
+  (?x)^(
+      .*migrations/.*|
+      .*\.min\.js|
+      .*\.min\.css|
+      node_modules/.*|
+      static/.*|
+      media/.*|
+      htmlcov/.*|
+      .pytest_cache/.*|
+      __pycache__/.*
+  )$
+
+# Fail fast - stop on first failure
+fail_fast: false

@@ -39,15 +39,13 @@ export default function ThemeModeToggle() {
       <IconButton
         onClick={handleToggle}
         sx={{
-          width: 36,
-          height: 36,
           color: "text.secondary",
           "&:hover": {
             bgcolor: "action.hover",
           },
         }}
       >
-        <Iconify icon={config.icon} width={22} />
+        <Iconify icon={config.icon} width={20} />
       </IconButton>
     </Tooltip>
   );

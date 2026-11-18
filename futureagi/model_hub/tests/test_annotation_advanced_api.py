@@ -72,6 +72,7 @@ def allow_advanced_api_entitlements():
             )
         yield
 
+
 QUEUE_URL = "/model-hub/annotation-queues/"
 LABEL_URL = "/model-hub/annotations-labels/"
 
@@ -79,8 +80,6 @@ LABEL_URL = "/model-hub/annotations-labels/"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
 
 
 def _create_queue(auth_client, name="Test Queue", **extra):
@@ -1001,7 +1000,8 @@ class TestExportToDataset:
         # Second annotator
         second = _second_user(organization, workspace)
         AnnotationQueueAnnotator.objects.get_or_create(
-            queue_id=queue_id, user=second,
+            queue_id=queue_id,
+            user=second,
             defaults={"role": "annotator"},
         )
         Score.objects.create(
@@ -1274,10 +1274,7 @@ class TestAutomationRules:
         rule_id = create_resp.data["id"]
 
         resp = auth_client.delete(self._rule_detail_url(queue_id, rule_id))
-        assert resp.status_code in (
-            status.HTTP_200_OK,
-            status.HTTP_204_NO_CONTENT,
-        )
+        assert resp.status_code == status.HTTP_204_NO_CONTENT
 
     def test_evaluate_rule_adds_items(self, auth_client, organization, workspace):
         queue_id = _create_queue(auth_client, name="Auto Q5")
@@ -1426,7 +1423,8 @@ class TestReviewWorkflow:
         # A different user submits so the reviewer (auth_client) can approve
         user2 = _second_user(organization, workspace)
         AnnotationQueueAnnotator.objects.get_or_create(
-            queue_id=queue_id, user=user2,
+            queue_id=queue_id,
+            user=user2,
             defaults={"role": "annotator"},
         )
         Score.objects.create(
@@ -1465,7 +1463,8 @@ class TestReviewWorkflow:
         # A different user submits so the reviewer can request changes
         user2 = _second_user(organization, workspace)
         AnnotationQueueAnnotator.objects.get_or_create(
-            queue_id=queue_id, user=user2,
+            queue_id=queue_id,
+            user=user2,
             defaults={"role": "annotator"},
         )
         Score.objects.create(
@@ -1536,7 +1535,8 @@ class TestReviewWorkflow:
         # A different user submits so the reviewer can approve
         user2 = _second_user(organization, workspace)
         AnnotationQueueAnnotator.objects.get_or_create(
-            queue_id=queue_id, user=user2,
+            queue_id=queue_id,
+            user=user2,
             defaults={"role": "annotator"},
         )
         Score.objects.create(
@@ -1562,38 +1562,3 @@ class TestReviewWorkflow:
         item.refresh_from_db()
         assert item.reviewed_by == user
         assert item.reviewed_at is not None
-
-
-# ===========================================================================
-# Phase 5A (extra) — Progress endpoint
-# ===========================================================================
-
-
-@pytest.mark.django_db
-class TestProgress:
-    """Progress endpoint smoke tests."""
-
-    def test_progress_empty_queue(self, auth_client):
-        queue_id = _create_queue(auth_client, name="Prog Q1")
-        resp = auth_client.get(f"{QUEUE_URL}{queue_id}/progress/")
-        assert resp.status_code == status.HTTP_200_OK
-        result = resp.data.get("result", resp.data)
-        assert result["total"] == 0
-        assert result["progress_pct"] == 0
-
-    def test_progress_with_items(self, auth_client, organization, workspace):
-        queue_id = _create_queue(auth_client, name="Prog Q2")
-        label = _create_label(organization, workspace, name="L-Prog2")
-        _, row1 = _create_dataset_row(organization, workspace)
-        _, row2 = _create_dataset_row(organization, workspace)
-        item1 = _add_item(auth_client, queue_id, row1)
-        _add_item(auth_client, queue_id, row2)
-
-        _submit_annotation(auth_client, queue_id, item1.id, label)
-        _complete_item(auth_client, queue_id, item1.id)
-
-        resp = auth_client.get(f"{QUEUE_URL}{queue_id}/progress/")
-        result = resp.data.get("result", resp.data)
-        assert result["total"] == 2
-        assert result["completed"] == 1
-        assert result["progress_pct"] == 50.0

@@ -1,8 +1,9 @@
 import React, { useMemo } from "react";
 import PropTypes from "prop-types";
-import { Box, useTheme, CircularProgress } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { Outlet } from "react-router";
 import { useAuthContext } from "src/auth/hooks";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import SvgColor from "src/components/svg-color";
 
@@ -28,17 +29,7 @@ const ICONS = {
 
 // Loading component for tab content
 const TabContentLoader = () => (
-  <Box
-    sx={{
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      height: "200px",
-      backgroundColor: "background.paper",
-    }}
-  >
-    <CircularProgress />
-  </Box>
+  <LoadingScreen sx={{ height: "100%", backgroundColor: "background.paper" }} />
 );
 
 // Error boundary component
@@ -55,7 +46,7 @@ TabErrorBoundary.propTypes = {
 const SettingsLayout = React.memo(() => {
   const theme = useTheme();
   const { user } = useAuthContext();
-  const { isOSS } = useDeploymentMode();
+  const { isCloud } = useDeploymentMode();
   const userOrgRole = user?.organization_role;
   const isOwner = userOrgRole === "Owner";
   const isAdmin = userOrgRole === "Admin";
@@ -67,15 +58,15 @@ const SettingsLayout = React.memo(() => {
       // Administration items - only shown to owners
       ...(isOwner
         ? [
-            ...(isOSS
-              ? []
-              : [
+            ...(isCloud
+              ? [
                   {
                     path: "/dashboard/settings/usage-summary",
                     title: "Usage Summary",
                     icon: ICONS.Summary,
                   },
-                ]),
+                ]
+              : []),
             {
               path: "/dashboard/settings/user-management",
               title: "User Management",
@@ -96,16 +87,23 @@ const SettingsLayout = React.memo(() => {
             //   title: "AI providers",
             //   icon: ICONS.Providers,
             // },
-            {
-              path: "/dashboard/settings/pricing",
-              title: "Plans & Pricing",
-              icon: ICONS.Pricing,
-            },
-            {
-              path: "/dashboard/settings/billing",
-              title: "Billing",
-              icon: ICONS.Billing,
-            },
+            // Plans & Pricing and Billing routes are cloud-only
+            // (registered under hasBillingAccess in dashboard.jsx). Gate the
+            // tabs the same way so off-cloud Owners don't 404.
+            ...(isCloud
+              ? [
+                  {
+                    path: "/dashboard/settings/pricing",
+                    title: "Plans & Pricing",
+                    icon: ICONS.Pricing,
+                  },
+                  {
+                    path: "/dashboard/settings/billing",
+                    title: "Billing",
+                    icon: ICONS.Billing,
+                  },
+                ]
+              : []),
             // {
             //   path: "/dashboard/settings/ee-licenses",
             //   title: "EE Licenses",
@@ -146,7 +144,7 @@ const SettingsLayout = React.memo(() => {
       },
     ];
     return allTabs;
-  }, [isOwner, isOwnerOrAdmin, isOSS]);
+  }, [isOwner, isOwnerOrAdmin, isCloud]);
 
   // Memoized styles to prevent recreation
   const containerStyles = useMemo(

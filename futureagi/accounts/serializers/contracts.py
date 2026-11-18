@@ -120,6 +120,33 @@ class AccountsMessageResponseSerializer(serializers.Serializer):
     result = AccountsMessageResultSerializer()
 
 
+class SignupResultSerializer(serializers.Serializer):
+    """What signup puts inside the success envelope, which differs by deployment.
+
+    Cloud/EE sends ``message`` — the account exists but needs the emailed
+    set-password link. OSS has no SMTP for that link, so the password is set on
+    the signup form itself and the new owner is logged straight in: the same
+    ``{access, refresh, new_org}`` trio ``POST /accounts/token/`` returns, so a
+    caller can route on a signup exactly as it routes on a login.
+
+    Every field is optional because no response carries all of them; which set
+    arrives is decided by the deployment, not by the request.
+    """
+
+    message = serializers.CharField(required=False)
+    access = serializers.CharField(required=False)
+    refresh = serializers.CharField(required=False)
+    new_org = serializers.BooleanField(required=False)
+
+
+class SignupResponseSerializer(serializers.Serializer):
+    """Both deployments share the standard success envelope; only the contents of
+    ``result`` differ. See :class:`SignupResultSerializer`."""
+
+    status = serializers.BooleanField()
+    result = SignupResultSerializer()
+
+
 class AccountsStringResultResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = serializers.CharField()
@@ -333,6 +360,16 @@ class AWSMarketplaceSignupResponseSerializer(serializers.Serializer):
     result = AWSMarketplaceSignupResultSerializer()
 
 
+class GCPMarketplaceSignupResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    user_email = serializers.EmailField()
+
+
+class GCPMarketplaceSignupResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GCPMarketplaceSignupResultSerializer()
+
+
 class OrganizationNameRequestSerializer(serializers.Serializer):
     organization_name = serializers.CharField(required=False, allow_blank=True)
 
@@ -358,6 +395,25 @@ class UserFullNameUpdateRequestSerializer(serializers.Serializer):
 
 class PasswordResetInitiateRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
+
+
+class PasswordResetInitiateResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    reset_link = serializers.CharField(
+        required=False,
+        help_text=(
+            "Password-reset link, returned on OSS deployments only, where SMTP "
+            "is usually not configured and the emailed link would never arrive. "
+            "Never present on Cloud/EE, and never present for an email with no "
+            "matching account. Treat as a credential: anyone holding it can set "
+            "that account's password."
+        ),
+    )
+
+
+class PasswordResetInitiateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = PasswordResetInitiateResultSerializer()
 
 
 class PasswordResetConfirmRequestSerializer(serializers.Serializer):
@@ -408,6 +464,16 @@ class AWSMarketplaceSignupRequestSerializer(serializers.Serializer):
 
 class AWSMarketplaceLaunchRequestSerializer(serializers.Serializer):
     x_amzn_marketplace_token = serializers.CharField()
+
+
+class GCPMarketplaceTokenFormSerializer(serializers.Serializer):
+    x_gcp_marketplace_token = serializers.CharField()
+
+
+class GCPMarketplaceSignupRequestSerializer(serializers.Serializer):
+    onboarding_token = serializers.CharField()
+    email = serializers.EmailField()
+    full_name = serializers.CharField()
 
 
 class WebAuthnRelyingPartySerializer(serializers.Serializer):
@@ -558,6 +624,8 @@ class SecretKeyListItemSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
     enabled = serializers.BooleanField()
     type = serializers.CharField()
+    expires_at = serializers.DateTimeField(allow_null=True)
+    is_expired = serializers.BooleanField()
 
 
 class SecretKeyListResultSerializer(serializers.Serializer):
@@ -577,6 +645,7 @@ class SecretKeyCreateResultSerializer(serializers.Serializer):
     masked_api_key = serializers.CharField()
     secret_key = serializers.CharField()
     masked_secret_key = serializers.CharField()
+    expires_at = serializers.DateTimeField(allow_null=True)
 
 
 class SecretKeyCreateResponseSerializer(serializers.Serializer):
@@ -630,6 +699,7 @@ class UserInfoResponseSerializer(serializers.Serializer):
     two_factor_methods = UserInfoTwoFactorMethodsSerializer(required=False)
     org_2fa_required = serializers.BooleanField(required=False)
     org_2fa_grace_ends_at = serializers.DateTimeField(required=False)
+    restrict_simulate_to_environments = serializers.BooleanField()
 
 
 class AccountOrganizationDetailSerializer(serializers.Serializer):
@@ -854,8 +924,18 @@ class TeamCreateErrorItemSerializer(serializers.Serializer):
     error = serializers.CharField()
 
 
+class TeamCreatedMemberResponseSerializer(AccountUserItemResponseSerializer):
+    goals = serializers.ListField(
+        child=serializers.CharField(), required=False, allow_null=True
+    )
+    invite_email_warning = serializers.CharField(
+        required=False,
+        help_text="Member was added, but the invitation email could not be sent.",
+    )
+
+
 class TeamCreateResultSerializer(serializers.Serializer):
-    created_members = AccountUserItemResponseSerializer(many=True)
+    created_members = TeamCreatedMemberResponseSerializer(many=True)
     workspace = WorkspaceSummarySerializer()
     errors = TeamCreateErrorItemSerializer(many=True, required=False)
 
@@ -863,6 +943,31 @@ class TeamCreateResultSerializer(serializers.Serializer):
 class TeamCreateResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = TeamCreateResultSerializer()
+
+
+class TeamCreateErrorResultField(AccountsErrorResultField):
+    """Preserve validation strings and structured per-member partial outcomes."""
+
+    class Meta:
+        swagger_schema_fields = {
+            **ACCOUNTS_ERROR_RESULT_SCHEMA,
+            "properties": {
+                **ACCOUNTS_ERROR_RESULT_SCHEMA["properties"],
+                "created_members": {
+                    "type": "array",
+                    "items": {"$ref": "#/definitions/TeamCreatedMemberResponse"},
+                },
+                "workspace": {"$ref": "#/definitions/WorkspaceSummary"},
+                "errors": {
+                    "type": "array",
+                    "items": {"$ref": "#/definitions/TeamCreateErrorItem"},
+                },
+            },
+        }
+
+
+class TeamCreateErrorResponseSerializer(AccountsErrorResponseSerializer):
+    result = TeamCreateErrorResultField(required=False, allow_null=True)
 
 
 class TeamRemoveResultSerializer(serializers.Serializer):

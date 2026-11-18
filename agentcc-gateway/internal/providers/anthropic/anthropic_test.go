@@ -271,6 +271,42 @@ func TestIntegration_NonStreamingChatCompletion(t *testing.T) {
 	}
 }
 
+// A base URL that already ends in "/v1" must not double it: the request has
+// to land on "/v1/messages", not "/v1/v1/messages".
+func TestChatCompletion_BaseURLAlreadyHasVersionSegment(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("path = %q, want /v1/messages", r.URL.Path)
+		}
+		resp := anthropicResponse{
+			ID:         "msg_v1_base",
+			Type:       "message",
+			Model:      "claude-3-sonnet-20240229",
+			Role:       "assistant",
+			Content:    []anthropicContentBlock{{Type: "text", Text: "ok"}},
+			StopReason: "end_turn",
+			Usage:      anthropicUsage{InputTokens: 1, OutputTokens: 1},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p := newTestProvider(t, server.URL+"/v1")
+	defer p.Close()
+
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-sonnet-20240229",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"Hello!"`)},
+		},
+	}
+
+	if _, err := p.ChatCompletion(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Integration: Streaming chat completion
 // ---------------------------------------------------------------------------
@@ -752,8 +788,11 @@ func TestIntegration_NonStreamingToolUseRoundtrip(t *testing.T) {
 		if len(ar.Tools) != 1 {
 			t.Errorf("tools length = %d, want 1", len(ar.Tools))
 		}
-		if ar.Tools[0].Name != "get_weather" {
-			t.Errorf("tool name = %q, want %q", ar.Tools[0].Name, "get_weather")
+		var tool anthropicTool
+		if err := json.Unmarshal(ar.Tools[0], &tool); err != nil {
+			t.Errorf("decoding tool: %v", err)
+		} else if tool.Name != "get_weather" {
+			t.Errorf("tool name = %q, want %q", tool.Name, "get_weather")
 		}
 
 		// Return a tool_use response.

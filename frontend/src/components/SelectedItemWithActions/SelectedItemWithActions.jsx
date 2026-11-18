@@ -59,10 +59,6 @@ export default function SelectedItemWithActions({
       <Stack direction={"row"} gap={0} alignItems={"center"}>
         {actions?.map((action, index) => (
           <IconButton
-            sx={{
-              paddingX: theme.spacing(1),
-              paddingY: 0,
-            }}
             onClick={() => handleAction(action.title)}
             key={index}
             title={action.title}

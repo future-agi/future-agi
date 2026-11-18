@@ -2,6 +2,7 @@ import structlog
 
 from model_hub.models.annotation_queues import AutomationRule
 from model_hub.utils.annotation_queue_helpers import (
+    AUTOMATION_RULE_MATCH_LIMIT,
     evaluate_rule,
     is_automation_rule_due,
 )
@@ -67,7 +68,11 @@ def run_due_automation_rules():
             # Run as the rule's creator so any non-user-scoped filter that
             # still uses request-time context (workspace fallback, etc.)
             # has a sensible identity to fall back on.
-            result = evaluate_rule(rule, user=rule.created_by)
+            result = evaluate_rule(
+                rule,
+                user=rule.created_by,
+                cap=AUTOMATION_RULE_MATCH_LIMIT,
+            )
         except Exception as exc:
             errors += 1
             logger.exception(
@@ -155,12 +160,15 @@ def evaluate_rule_manual_async(rule_id, triggered_by_user_id=None):
     result = None
     error_message = None
     try:
-        # cap=None → evaluate_rule fetches everything matching the filter.
-        # _evaluate_rule_inner pages internally via cap+1 sentinel; the
-        # watermark filter (last_triggered_at) bounds subsequent runs to
-        # the delta, so even unbounded runs are bounded in practice on
-        # rules that have run before.
-        result = evaluate_rule(rule, user=triggered_by, cap=10_000_000)
+        # Prove the full selection fits the supported ceiling before any queue
+        # write.  A cap+1 sentinel returns a specific error and zero additions
+        # when the rule matches more than 10,000 items.
+        result = evaluate_rule(
+            rule,
+            user=triggered_by,
+            cap=AUTOMATION_RULE_MATCH_LIMIT,
+        )
+        error_message = result.get("error") or None
     except Exception as exc:
         logger.exception(
             "automation_rule_manual_async_failed",

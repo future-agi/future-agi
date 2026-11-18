@@ -1,6 +1,6 @@
-/* eslint-disable react/prop-types */
 import {
   Box,
+  Button,
   ButtonBase,
   Chip,
   IconButton,
@@ -15,6 +15,7 @@ import React, { useCallback, useMemo, useState, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import Editor from "@monaco-editor/react";
 import { useQueryClient } from "@tanstack/react-query";
+import { format } from "date-fns";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
@@ -22,6 +23,10 @@ import CustomTooltip from "src/components/tooltip";
 import { useDebounce } from "src/hooks/use-debounce";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
+import EvalLogSourceHost from "src/sections/evals/EvalDetails/EvalsLog/EvalLogSourceHost";
+import { sourceScopeKey } from "src/sections/evals/EvalDetails/EvalsLog/useEvalLogSourceNavigation";
+import { useOrganization } from "src/contexts/OrganizationContext";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 import PartialInputWarningDetails from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 
@@ -46,6 +51,10 @@ import {
 } from "../Helpers/evalUsageColumns";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  AGGREGATION_POLLING_PAUSED_MESSAGE,
+  QUERY_FAILED_RETRY_MESSAGE,
+} from "src/utils/queryReadState";
 
 // ── Main ──
 const EvalUsageTab = ({
@@ -64,6 +73,11 @@ const EvalUsageTab = ({
   const [pageSize, setPageSize] = useState(25);
   const [searchQuery, setSearchQuery] = useState("");
   const [detailIndex, setDetailIndex] = useState(null); // index in filteredLogs
+  // The scope (org, workspace, log) whose trace or call the source host
+  // reported open; null once it closes.
+  const [openSourceScope, setOpenSourceScope] = useState(null);
+  const { currentOrganizationId } = useOrganization();
+  const { currentWorkspaceId } = useWorkspace();
   const debouncedSearch = useDebounce(searchQuery.trim(), 400);
   const columnConfigureRef = useRef(null);
 
@@ -77,25 +91,99 @@ const EvalUsageTab = ({
   }, [dateOption, dateFilter]);
 
   // Split queries
-  const { data: chartData, isLoading: chartLoading } = useEvalUsageChart(
-    templateId,
-    period,
-    dateOption,
-    dateFilter,
-  );
+  const {
+    data: chartData,
+    isLoading: chartLoading,
+    isFetching: chartFetching,
+    isError: chartError,
+    isPollingPaused: chartPollingPaused,
+    refresh: refreshChart,
+  } = useEvalUsageChart(templateId, period, dateOption, dateFilter);
   const {
     data: logsData,
     isLoading: logsLoading,
     isFetching: logsFetching,
-  } = useEvalUsageLogs(templateId, { page, pageSize, period, dateOption, dateFilter });
+    isError: logsError,
+    isPollingPaused: logsPollingPaused,
+    refresh: refreshLogs,
+  } = useEvalUsageLogs(templateId, {
+    page,
+    pageSize,
+    period,
+    dateOption,
+    dateFilter,
+  });
 
-  const stats = chartData?.stats || {};
-  const chart = chartData?.chart || [];
-  const totalLogs = logsData?.pagination?.total || 0;
+  const chartSnapshotKey = useMemo(
+    () => JSON.stringify([templateId, period, dateOption, dateFilter]),
+    [dateFilter, dateOption, period, templateId],
+  );
+  const logsSnapshotKey = useMemo(
+    () =>
+      JSON.stringify([
+        templateId,
+        period,
+        dateOption,
+        dateFilter,
+        page,
+        pageSize,
+      ]),
+    [dateFilter, dateOption, page, pageSize, period, templateId],
+  );
+  const [lastExactChart, setLastExactChart] = useState(null);
+  const [lastExactLogs, setLastExactLogs] = useState(null);
+  const currentExactChart =
+    chartData && !chartData.queryPending ? chartData : undefined;
+  const currentExactLogs =
+    logsData && !logsData.queryPending ? logsData : undefined;
+
+  React.useEffect(() => {
+    if (!currentExactChart) return;
+    setLastExactChart({ key: chartSnapshotKey, data: currentExactChart });
+  }, [chartSnapshotKey, currentExactChart]);
+
+  React.useEffect(() => {
+    if (!currentExactLogs) return;
+    setLastExactLogs({ key: logsSnapshotKey, data: currentExactLogs });
+  }, [currentExactLogs, logsSnapshotKey]);
+
+  const displayChartData =
+    currentExactChart ||
+    (lastExactChart?.key === chartSnapshotKey
+      ? lastExactChart.data
+      : undefined);
+  const displayLogsData =
+    currentExactLogs ||
+    (lastExactLogs?.key === logsSnapshotKey ? lastExactLogs.data : undefined);
+  const stats = displayChartData?.stats || {};
+  const chart = displayChartData?.chart || [];
+  const totalLogs = displayLogsData?.pagination?.total || 0;
+  // Empty/zero states are valid only after a complete exact response. Missing,
+  // pending, and failed responses remain neutral preparation states; a prior
+  // exact snapshot for the same query stays visible during refresh/polling.
+  const chartUnavailable = !displayChartData;
+  const logsUnavailable = !displayLogsData;
+  // Retained exact/pending data can still carry query_refreshing=true after
+  // this client has exhausted its bounded transport retries. A terminal hook
+  // error wins over that stale server metadata so Refresh/Retry is available.
+  const chartRefreshing =
+    !chartError && (chartFetching || chartData?.queryRefreshing);
+  const logsRefreshing =
+    !logsError && (logsFetching || logsData?.queryRefreshing);
+  const isRefreshing = chartRefreshing || logsRefreshing;
+  const completedAt = displayChartData?.queryCompletedAt
+    ? new Date(displayChartData.queryCompletedAt)
+    : null;
+  const validCompletedAt =
+    completedAt && !Number.isNaN(completedAt.getTime()) ? completedAt : null;
+  const handleRefresh = useCallback(() => {
+    refreshChart();
+    refreshLogs();
+  }, [refreshChart, refreshLogs]);
 
   const logItems = useMemo(
-    () => (logsData?.table || []).map(normalizeRow),
-    [logsData?.table],
+    () => (displayLogsData?.table || []).map(normalizeRow),
+    [displayLogsData?.table],
   );
 
   const baseColumnConfig = useMemo(() => {
@@ -103,7 +191,7 @@ const EvalUsageTab = ({
     // Discover input_var_* columns from the row data
     const seen = new Set(base.map((c) => c.value));
     const extra = [];
-    (logsData?.table || []).forEach((row) => {
+    (displayLogsData?.table || []).forEach((row) => {
       Object.keys(row).forEach((k) => {
         if (k.startsWith("input_var_") && !seen.has(k)) {
           seen.add(k);
@@ -118,7 +206,7 @@ const EvalUsageTab = ({
       });
     });
     return extra.length ? [...base, ...extra] : base;
-  }, [logsData?.table]);
+  }, [displayLogsData?.table]);
 
   const storageKey = columnConfigStorageKey(templateId);
 
@@ -126,7 +214,10 @@ const EvalUsageTab = ({
     const fromUrl = searchParams.get(COLUMN_CONFIG_URL_PARAM);
     const decodedUrl = decodeColumnConfig(fromUrl, baseColumnConfig);
     if (decodedUrl) return decodedUrl;
-    const decodedStorage = decodeColumnConfig(getStorage(storageKey), baseColumnConfig);
+    const decodedStorage = decodeColumnConfig(
+      getStorage(storageKey),
+      baseColumnConfig,
+    );
     if (decodedStorage) return decodedStorage;
     return baseColumnConfig;
   }, [searchParams, baseColumnConfig, storageKey]);
@@ -207,6 +298,20 @@ const EvalUsageTab = ({
   );
 
   const detailRow = detailIndex !== null ? filteredLogs[detailIndex] : null;
+  const detailSourceScope = sourceScopeKey(
+    currentOrganizationId,
+    currentWorkspaceId,
+    detailRow?.id,
+  );
+  // Another log, org or workspace remounts the source host, so a reported
+  // scope that no longer matches belongs to a host that is gone. Forget it
+  // now, so the same log opened again later does not start out "open".
+  if (openSourceScope !== null && openSourceScope !== detailSourceScope) {
+    setOpenSourceScope(null);
+  }
+  // True while the opened log's trace or call covers the page.
+  const sourceOpen =
+    openSourceScope !== null && openSourceScope === detailSourceScope;
 
   const handleFeedbackSubmitted = useCallback(() => {
     queryClient.invalidateQueries({
@@ -219,7 +324,12 @@ const EvalUsageTab = ({
     if (detailIndex === null) return;
     const handler = (e) => {
       if (e.repeat) return;
+      // A key something on the page already handled, such as the open
+      // trace's own Escape (DrawerHeader's document listener), is not ours.
+      if (e.defaultPrevented) return;
       if (isEditableElement(e)) return;
+      // The open trace or call owns the keyboard; its own Escape closes it.
+      if (sourceOpen) return;
       if (e.key === "k") {
         e.preventDefault();
         setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));
@@ -232,7 +342,7 @@ const EvalUsageTab = ({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [detailIndex, filteredLogs.length]);
+  }, [detailIndex, filteredLogs.length, sourceOpen]);
 
   return (
     <Box
@@ -253,7 +363,7 @@ const EvalUsageTab = ({
           minHeight: 0,
           minWidth: 0,
           marginRight: detailIndex !== null ? "420px" : 0,
-          transition: "margin-right 0.25s",
+          transition: "margin-right 0.2s",
         }}
       >
         {/* Date picker + stats — single row */}
@@ -267,7 +377,14 @@ const EvalUsageTab = ({
             gap: 2,
           }}
         >
-          <Box sx={{ flexShrink: 0 }}>
+          <Box
+            sx={{
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+            }}
+          >
             <DateTimeRangePicker
               dateOption={dateOption}
               setDateOption={(opt) => {
@@ -275,11 +392,43 @@ const EvalUsageTab = ({
                 setPage(0);
                 if (opt !== "Custom") setDateFilter(null);
               }}
-              setParentDateFilter={setDateFilter}
+              setParentDateFilter={(nextDateFilter) => {
+                setDateFilter(nextDateFilter);
+                setPage(0);
+              }}
               dateFilter={dateFilter}
             />
+            {validCompletedAt && (
+              <Typography variant="caption" color="text.secondary" noWrap>
+                Last updated {format(validCompletedAt, "MMM d, yyyy, h:mm a")}
+              </Typography>
+            )}
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
+              disabled={isRefreshing}
+              onClick={handleRefresh}
+            >
+              {isRefreshing ? "Refreshing" : "Refresh"}
+            </Button>
+            {(chartError ||
+              logsError ||
+              chartPollingPaused ||
+              logsPollingPaused) &&
+              (displayChartData || displayLogsData) && (
+                <Typography
+                  role="status"
+                  variant="caption"
+                  color="text.secondary"
+                >
+                  {chartError || logsError
+                    ? QUERY_FAILED_RETRY_MESSAGE
+                    : AGGREGATION_POLLING_PAUSED_MESSAGE}
+                </Typography>
+              )}
           </Box>
-          {!chartLoading && (
+          {!chartLoading && displayChartData && (
             <Box
               sx={{
                 display: "flex",
@@ -293,31 +442,8 @@ const EvalUsageTab = ({
                 py: 0.5,
               }}
             >
+              {/* Usage counts successful runs only; errors stay in the logs. */}
               <StatPill label="Runs" value={stats.runs_period ?? 0} />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Success"
-                value={stats.success_count ?? 0}
-                color="success.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Errors"
-                value={stats.error_count ?? 0}
-                color="error.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Task Completion Rate"
-                value={`${stats.pass_rate ?? 0}%`}
-                color="info.main"
-              />
             </Box>
           )}
         </Box>
@@ -332,14 +458,36 @@ const EvalUsageTab = ({
             borderColor: "divider",
             p: 1.5,
             mb: 1.5,
-            backgroundColor: (t) =>
-              t.palette.mode === "dark"
-                ? "rgba(255,255,255,0.01)"
-                : "background.default",
+            backgroundColor: "background.neutral",
           }}
         >
           {chartLoading ? (
             <Skeleton variant="rounded" width="100%" height="100%" />
+          ) : chartUnavailable ? (
+            <Box
+              role="status"
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                alignItems: "center",
+                gap: 1,
+                height: "100%",
+              }}
+            >
+              <Typography variant="caption" color="text.secondary">
+                {chartError
+                  ? QUERY_FAILED_RETRY_MESSAGE
+                  : chartPollingPaused
+                    ? AGGREGATION_POLLING_PAUSED_MESSAGE
+                    : "Loading results…"}
+              </Typography>
+              {!chartRefreshing && (
+                <Button size="small" onClick={handleRefresh}>
+                  Retry
+                </Button>
+              )}
+            </Box>
           ) : chart.length > 0 ? (
             <UsageChart data={chart} outputType={outputType} />
           ) : (
@@ -352,7 +500,8 @@ const EvalUsageTab = ({
               }}
             >
               <Typography variant="caption" color="text.disabled">
-              No data to show for selected period, update filters to view graph/data when no data is available.
+                No data to show for selected period, update filters to view
+                graph/data when no data is available.
               </Typography>
             </Box>
           )}
@@ -389,9 +538,10 @@ const EvalUsageTab = ({
                 </Typography>
               )}
             </Typography>
-            <Box sx={{ width: 200, display: "flex", alignItems: "center", gap: 1, }}>
+            <Box
+              sx={{ width: 200, display: "flex", alignItems: "center", gap: 1 }}
+            >
               <CustomTooltip
-
                 show={true}
                 title={"View Column"}
                 placement="bottom"
@@ -419,32 +569,61 @@ const EvalUsageTab = ({
                   minWidth: "120px",
                   "& .MuiOutlinedInput-root": { height: "30px" },
                 }}
-
               />
             </Box>
           </Box>
           <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
-            <DataTable
-              columns={columns}
-              data={filteredLogs}
-              isLoading={logsLoading && !logsData}
-              rowCount={totalLogs}
-              onRowClick={handleRowClick}
-              emptyMessage="No evaluation logs for this period"
-            />
+            {logsUnavailable ? (
+              <Box
+                role="status"
+                sx={{
+                  minHeight: 160,
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 1,
+                }}
+              >
+                <Typography variant="caption" color="text.secondary">
+                  {logsError
+                    ? QUERY_FAILED_RETRY_MESSAGE
+                    : logsPollingPaused
+                      ? AGGREGATION_POLLING_PAUSED_MESSAGE
+                      : "Loading results…"}
+                </Typography>
+                {!logsRefreshing && (
+                  <Button size="small" onClick={() => refreshLogs()}>
+                    Retry
+                  </Button>
+                )}
+              </Box>
+            ) : (
+              <DataTable
+                columns={columns}
+                data={filteredLogs}
+                isLoading={logsLoading && !displayLogsData}
+                rowCount={totalLogs}
+                onRowClick={handleRowClick}
+                emptyMessage="No evaluation logs for this period"
+              />
+            )}
           </Box>
-          <Box sx={{ flexShrink: 0 }}>
-            <DataTablePagination
-              page={page}
-              pageSize={pageSize}
-              total={totalLogs}
-              onPageChange={setPage}
-              onPageSizeChange={(s) => {
-                setPageSize(s);
-                setPage(0);
-              }}
-            />
-          </Box>
+          {!logsUnavailable && (
+            <Box sx={{ flexShrink: 0 }}>
+              <DataTablePagination
+                page={page}
+                pageSize={pageSize}
+                total={totalLogs}
+                onPageChange={setPage}
+                onPageSizeChange={(s) => {
+                  setPageSize(s);
+                  setPage(0);
+                }}
+              />
+            </Box>
+          )}
         </Box>
       </Box>
 
@@ -493,7 +672,7 @@ const EvalUsageTab = ({
                       setDetailIndex((i) => Math.max(0, (i ?? 0) - 1))
                     }
                   >
-                    <Iconify icon="mingcute:arrow-up-line" width={16} />
+                    <Iconify icon="solar:arrow-up-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -508,7 +687,7 @@ const EvalUsageTab = ({
                       )
                     }
                   >
-                    <Iconify icon="mingcute:arrow-down-line" width={16} />
+                    <Iconify icon="solar:arrow-down-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -526,8 +705,8 @@ const EvalUsageTab = ({
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -541,8 +720,8 @@ const EvalUsageTab = ({
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -559,13 +738,17 @@ const EvalUsageTab = ({
                 <Typography
                   variant="caption"
                   color="text.disabled"
-                  sx={{ fontFamily: "monospace", fontSize: "10px" }}
+                  sx={{ fontFamily: "monospace", fontSize: "12px" }}
                 >
                   {detailRow.id?.slice(0, 12)}
                 </Typography>
               )}
-              <IconButton size="small" onClick={() => setDetailIndex(null)}>
-                <Iconify icon="mingcute:close-line" width={16} />
+              <IconButton
+                size="small"
+                aria-label="Close log"
+                onClick={() => setDetailIndex(null)}
+              >
+                <Iconify icon="solar:close-linear" width={16} />
               </IconButton>
             </Box>
           </Box>
@@ -577,6 +760,7 @@ const EvalUsageTab = ({
               templateId={templateId}
               evalType={evalType}
               onFeedbackSubmitted={handleFeedbackSubmitted}
+              onSourceOpenChange={setOpenSourceScope}
             />
           )}
         </Box>
@@ -594,6 +778,10 @@ const EvalUsageTab = ({
   );
 };
 
+// Observe evaluations store source "tracer"; only those can lead back to a
+// trace or call, and the server decides whether this one does.
+const isObserveLog = (row) => !row.composite && row.source === "tracer";
+
 // ── Detail panel content with Formatted/JSON tabs + feedback ──
 const DetailPanelContent = ({
   row,
@@ -601,10 +789,11 @@ const DetailPanelContent = ({
   templateId,
   evalType = "llm",
   onFeedbackSubmitted,
+  onSourceOpenChange,
 }) => {
   const { role } = useAuthContext();
   const canEditEvals = Boolean(
-    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role]
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
   );
   const [viewMode, setViewMode] = useState("formatted");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -638,22 +827,14 @@ const DetailPanelContent = ({
             sx={{
               px: 1.5,
               py: 0.375,
-              borderRadius: "5px",
-              fontSize: "11px",
+              borderRadius: "6px",
+              fontSize: "12px",
               fontWeight: viewMode === m ? 600 : 400,
               color: viewMode === m ? "text.primary" : "text.secondary",
               backgroundColor:
-                viewMode === m
-                  ? (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.08)"
-                      : "action.hover"
-                  : "transparent",
+                viewMode === m ? "action.selected" : "transparent",
               "&:hover": {
-                backgroundColor: (t) =>
-                  t.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.04)"
-                    : "action.hover",
+                backgroundColor: "action.hover",
               },
             }}
           >
@@ -661,6 +842,24 @@ const DetailPanelContent = ({
           </ButtonBase>
         ))}
       </Box>
+
+      {/* View trace / View call for an Observe evaluation, in both views */}
+      {isObserveLog(row) && (
+        <Box
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
+          <EvalLogSourceHost
+            logId={row.id}
+            onSourceOpenChange={onSourceOpenChange}
+          />
+        </Box>
+      )}
 
       {/* Scrollable content area */}
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
@@ -707,10 +906,10 @@ const DetailPanelContent = ({
                 color={
                   typeof row.score === "number"
                     ? row.score >= 0.7
-                      ? "success.main"
+                      ? "status.success.fg"
                       : row.score >= 0.3
-                        ? "warning.main"
-                        : "error.main"
+                        ? "status.warning.fg"
+                        : "status.danger.fg"
                     : undefined
                 }
               />
@@ -781,7 +980,7 @@ const DetailPanelContent = ({
                   label="Version"
                   value={
                     typeof row.version === "number" ||
-                      !String(row.version).startsWith("v")
+                    !String(row.version).startsWith("v")
                       ? `v${row.version}`
                       : String(row.version)
                   }
@@ -897,15 +1096,15 @@ const DetailPanelContent = ({
                         <Iconify
                           icon={
                             row.feedback.value === "passed"
-                              ? "mingcute:thumb-up-2-fill"
-                              : "mingcute:thumb-down-2-fill"
+                              ? "solar:like-bold"
+                              : "solar:dislike-bold"
                           }
                           width={16}
                           sx={{
                             color:
                               row.feedback.value === "passed"
-                                ? "success.main"
-                                : "error.main",
+                                ? "status.success.fg"
+                                : "status.danger.fg",
                           }}
                         />
                         <Chip
@@ -923,7 +1122,6 @@ const DetailPanelContent = ({
                               : "error"
                           }
                           variant="outlined"
-                          sx={{ fontSize: "11px", height: 20 }}
                         />
                       </Box>
                       <Box
@@ -937,7 +1135,7 @@ const DetailPanelContent = ({
                           <Typography
                             variant="caption"
                             color="text.disabled"
-                            sx={{ fontSize: "10px" }}
+                            sx={{ fontSize: "12px" }}
                           >
                             {row.feedback.user}
                           </Typography>
@@ -948,7 +1146,7 @@ const DetailPanelContent = ({
                           onClick={() => setFeedbackOpen(true)}
                         >
                           <Iconify
-                            icon="mingcute:edit-line"
+                            icon="solar:pen-linear"
                             width={14}
                             sx={{ color: "text.secondary" }}
                           />
@@ -978,54 +1176,31 @@ const DetailPanelContent = ({
                         }
                         size="small"
                         variant="outlined"
-                        sx={{ fontSize: "10px", height: 18, mt: 0.75 }}
+                        sx={{ mt: 0.75 }}
                       />
                     )}
                   </Box>
                 ) : null}
 
-                <Box
-                  component="button"
+                <Button
+                  variant="outlined"
+                  size="small"
+                  fullWidth
                   disabled={!canEditEvals}
                   onClick={() => setFeedbackOpen(true)}
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 1,
-                    px: 2,
-                    py: 0.75,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "8px",
-                    backgroundColor: "transparent",
-                    color: "text.primary",
-                    cursor: canEditEvals ? "pointer" : "not-allowed",
-                    opacity: canEditEvals ? 1 : 0.5,
-                    fontSize: "12px",
-                    fontWeight: 500,
-                    width: "100%",
-                    "&:hover": canEditEvals
-                      ? {
-                          borderColor: "primary.main",
-                          backgroundColor: (t) =>
-                            t.palette.mode === "dark"
-                              ? "rgba(124,77,255,0.06)"
-                              : "rgba(124,77,255,0.04)",
-                        }
-                      : {},
-                  }}
+                  sx={{ gap: 1, color: "text.primary" }}
                 >
                   <Iconify
                     icon={
                       row.feedback
-                        ? "mingcute:edit-line"
-                        : "mingcute:message-3-line"
+                        ? "solar:pen-linear"
+                        : "solar:chat-round-line-linear"
                     }
                     width={14}
                     sx={{ color: "primary.main" }}
                   />
                   {row.feedback ? "Edit Feedback" : "Add Feedback"}
-                </Box>
+                </Button>
               </Box>
             )}
 
@@ -1050,6 +1225,15 @@ const DetailPanelContent = ({
       </Box>
     </Box>
   );
+};
+
+DetailPanelContent.propTypes = {
+  row: PropTypes.object.isRequired,
+  isDark: PropTypes.bool,
+  templateId: PropTypes.string.isRequired,
+  evalType: PropTypes.string,
+  onFeedbackSubmitted: PropTypes.func,
+  onSourceOpenChange: PropTypes.func,
 };
 
 // ── Composite children section in detail panel ──
@@ -1081,7 +1265,6 @@ const CompositeChildrenSection = ({ row }) => {
           label={aggFunction.replace("_", " ")}
           size="small"
           variant="outlined"
-          sx={{ fontSize: "10px", height: 18, textTransform: "capitalize" }}
         />
       </Box>
 
@@ -1127,7 +1310,6 @@ const CompositeChildrenSection = ({ row }) => {
                       size="small"
                       color="error"
                       variant="outlined"
-                      sx={{ fontSize: "10px", height: 18 }}
                     />
                   ) : (
                     <ScoreCell value={child.score} />
@@ -1139,7 +1321,7 @@ const CompositeChildrenSection = ({ row }) => {
                     variant="body2"
                     color="text.secondary"
                     sx={{
-                      fontSize: "11px",
+                      fontSize: "12px",
                       lineHeight: 1.4,
                       mb: 0.75,
                       display: "-webkit-box",
@@ -1162,7 +1344,7 @@ const CompositeChildrenSection = ({ row }) => {
                   <Typography
                     variant="caption"
                     color="text.disabled"
-                    sx={{ fontSize: "10px" }}
+                    sx={{ fontSize: "12px" }}
                   >
                     weight: {child.weight ?? 1}
                     {!isFailed && ` · score: ${scoreDisplay}`}
@@ -1176,10 +1358,9 @@ const CompositeChildrenSection = ({ row }) => {
                           "_blank",
                         )
                       }
-                      sx={{ p: 0.25 }}
                     >
                       <Iconify
-                        icon="mingcute:external-link-line"
+                        icon="solar:arrow-right-up-linear"
                         width={14}
                         sx={{ color: "primary.main" }}
                       />
@@ -1195,6 +1376,9 @@ const CompositeChildrenSection = ({ row }) => {
   );
 };
 
+CompositeChildrenSection.propTypes = {
+  row: PropTypes.object.isRequired,
+};
 
 const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
   <Box
@@ -1236,7 +1420,6 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
           size="small"
           color={chipColor || "default"}
           variant="outlined"
-          sx={{ fontSize: "11px", height: 20 }}
         />
       ) : (
         <Typography
@@ -1255,8 +1438,19 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
   </Box>
 );
 
+DetailRow.propTypes = {
+  label: PropTypes.string.isRequired,
+  value: PropTypes.node,
+  color: PropTypes.string,
+  chip: PropTypes.bool,
+  chipColor: PropTypes.string,
+  mono: PropTypes.bool,
+};
+
 EvalUsageTab.propTypes = {
   templateId: PropTypes.string.isRequired,
+  outputType: PropTypes.string,
+  evalType: PropTypes.string,
 };
 
 export default EvalUsageTab;

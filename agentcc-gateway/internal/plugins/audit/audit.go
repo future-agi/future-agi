@@ -89,7 +89,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	if len(rc.Errors) > 0 {
 		outcome = "error"
 		severity = "error"
-		reason = rc.Errors[0].Error()
+		// As the request log and span record it: a decision vendor's error
+		// text can quote the content being judged.
+		reason = models.LoggedError(rc.EndpointType, rc.Errors[0])
 	}
 
 	if rc.Flags.GuardrailTriggered {

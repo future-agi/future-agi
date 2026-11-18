@@ -22,7 +22,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
+import { trackEvent, Events } from "src/utils/Mixpanel";
 import Iconify from "src/components/iconify";
 import { useForm } from "react-hook-form";
 import { getRandomId } from "src/utils/utils";
@@ -95,6 +95,8 @@ import PromptImageInput from "./Components/PromptImageInput";
 import ChooseModelType from "./Components/ChooseModelType";
 import ModelOptionsState from "../Common/ModelOptionsState";
 import CustomAudioDialog from "../CustomAudioDialog";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import { runPromptEventFields } from "./runPromptEventFields";
 
 const DEFAULT_CONFIG_KEYS = [
   "responseFormat",
@@ -638,8 +640,14 @@ export const RunPromptForm = React.forwardRef(
           onClose();
           reset();
         },
-        onError: () => {
-          enqueueSnackbar("Failed to update Run Prompt", {
+        meta: { errorHandled: true },
+        onError: (error) => {
+          const message =
+            error?.detail ||
+            error?.message ||
+            error?.result ||
+            "Failed to update Run Prompt";
+          enqueueSnackbar(message, {
             variant: "error",
           });
         },
@@ -980,24 +988,10 @@ export const RunPromptForm = React.forwardRef(
       } else {
         // @ts-ignore
         createRunPrompt(submitObject);
-        trackEvent(Events.datasetRunpromptRunClicked, {
-          [PropertyName.id]: dataset,
-          [PropertyName.concurrency]: submitObject.config?.concurrency,
-          [PropertyName.promptTemplate]:
-            submitObject.config?.messages?.map((msg) => msg.content) || [],
-          [PropertyName.toolConfig]: {
-            toolChoice: submitObject.config?.toolChoice,
-            tools: submitObject.config?.tools?.map((tool) => tool.id) || [],
-          },
-          [PropertyName.modelName]: submitObject.config?.model,
-          [PropertyName.modelOptions]: {
-            maxTokens: submitObject.config?.maxTokens,
-            presencePenalty: submitObject.config?.presencePenalty,
-            temperature: submitObject.config?.temperature,
-            topP: submitObject.config?.topP,
-            responseFormat: submitObject.config?.responseFormat,
-          },
-        });
+        trackEvent(
+          Events.datasetRunpromptRunClicked,
+          runPromptEventFields(dataset, submitObject),
+        );
       }
     };
 
@@ -1121,7 +1115,12 @@ export const RunPromptForm = React.forwardRef(
         setAnchorEl(false);
         setOpenRunPreViewModal(false);
       } catch (error) {
-        enqueueSnackbar("Failed to run prompt", { variant: "error" });
+        const message =
+          error?.detail ||
+          error?.message ||
+          error?.result ||
+          "Failed to run prompt";
+        enqueueSnackbar(message, { variant: "error" });
         logger.error("Failed to run prompt", error);
       }
     };
@@ -1549,12 +1548,9 @@ export const RunPromptForm = React.forwardRef(
                           size="small"
                           onClick={handleOpenModelParams}
                           sx={{
-                            height: "28px",
                             width: "28px",
-                            borderRadius: 0.25,
                             border: "1px solid",
                             borderColor: "divider",
-                            padding: "3px",
                             flexShrink: 0,
                             color: "text.primary",
                           }}
@@ -1623,7 +1619,7 @@ export const RunPromptForm = React.forwardRef(
                     >
                       <HelperText
                         sx={{
-                          color: "red.500",
+                          color: "status.danger.fg",
                           typography: "s2",
                         }}
                         text="Voice support isn't available for the selected model."
@@ -1790,9 +1786,7 @@ export const RunPromptForm = React.forwardRef(
                   color="primary"
                   variant="contained"
                   sx={{
-                    borderRadius: "8px",
                     minWidth: "128px",
-                    py: "6px",
                     ml: "auto",
                   }}
                 >
@@ -1814,7 +1808,7 @@ export const RunPromptForm = React.forwardRef(
                   alignItems: "center",
                   p: "15px",
                   "& .MuiModal-backdrop": {
-                    backgroundColor: "#00000040",
+                    backgroundColor: "rgba(0,0,0,0.25)",
                   },
                 }}
               >
@@ -1822,7 +1816,7 @@ export const RunPromptForm = React.forwardRef(
                   <RunHeader>
                     <RunTitle>Run Preview on Custom Rows</RunTitle>
                     <IconButton onClick={() => setTestRun(false)}>
-                      <Iconify icon="mingcute:close-line" />
+                      <Iconify icon="solar:close-linear" />
                     </IconButton>
                   </RunHeader>
                   <RunBody>
@@ -1937,10 +1931,7 @@ export const RunPromptForm = React.forwardRef(
                       fullWidth
                       variant="contained"
                       sx={{
-                        borderRadius: "6px",
                         color: "text.primary",
-                        boxShadow:
-                          "-20px 20px 40px -4px rgba(145, 158, 171, 0.24)",
                         backgroundColor: "action.hover",
                         "&:hover": {
                           backgroundColor: "action.hover",
@@ -1974,7 +1965,6 @@ export const RunPromptForm = React.forwardRef(
                   variant="outlined"
                   sx={{
                     color: "text.secondary",
-                    minHeight: (theme) => theme.spacing(38 / 8),
                     "&:hover": {
                       borderColor: "transparent !important",
                     },
@@ -2022,9 +2012,6 @@ export const RunPromptForm = React.forwardRef(
                     isUpdatingPrompt ||
                     isLoadingModelParams
                   }
-                  sx={{
-                    minHeight: (theme) => theme.spacing(38 / 8),
-                  }}
                 >
                   <Typography typography="s1" fontWeight={"fontWeightSemiBold"}>
                     {isEditMode ? "Update" : "Run"}
@@ -2141,18 +2128,7 @@ export const RunPromptForm = React.forwardRef(
             size="small"
             variant="outlined"
             onClick={handleViewDocs}
-            startIcon={
-              <SvgColor
-                sx={{
-                  height: "16px",
-                  width: "16px",
-                }}
-                src="/assets/icons/ic_paper.svg"
-              />
-            }
-            sx={{
-              px: 1.5,
-            }}
+            startIcon={<SvgColor width={16} src="/assets/icons/ic_paper.svg" />}
           >
             View Docs
           </Button>
@@ -2163,7 +2139,7 @@ export const RunPromptForm = React.forwardRef(
               color: "text.primary",
             }}
           >
-            <Iconify icon="akar-icons:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
         <Box
@@ -2357,6 +2333,7 @@ const RunPrompt = () => {
     }
   };
 
+  const covered = useDrawerCovered(Boolean(openRunPrompt));
   return (
     <Drawer
       anchor="right"
@@ -2367,10 +2344,9 @@ const RunPrompt = () => {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           overflow: "visible",
-          // width: "613px",
+          // width: "640px",
         },
       }}
       ModalProps={{
@@ -2380,6 +2356,7 @@ const RunPrompt = () => {
       }}
       sx={{
         zIndex: 1099,
+        ...coveredDrawerSx(covered),
       }}
     >
       {showPromptForm && (

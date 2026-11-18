@@ -1,4 +1,3 @@
-import { useTheme } from "@emotion/react";
 import { Tab, Tabs } from "@mui/material";
 import React, { useMemo, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -11,7 +10,6 @@ import {
 } from "../store";
 
 export default function AgentPlayGroundTabs() {
-  const theme = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
   const { versionId, isDraftCreating } = useAgentPlaygroundStoreShallow(
@@ -63,44 +61,9 @@ export default function AgentPlayGroundTabs() {
     <Tabs
       value={currentTab?.id || AGENT_PLAYGROUND_TABS[0]?.id}
       onChange={handleTabChange}
-      textColor="primary"
       scrollButtons={false}
-      TabIndicatorProps={{
-        style: {
-          backgroundColor: theme.palette.primary.main,
-        },
-      }}
-      sx={{
-        minHeight: 42,
-        fontSize: 14,
-        "& .MuiTabs-flexContainer": {
-          gap: 0,
-        },
-        "& .MuiTab-root": {
-          minHeight: 42,
-          paddingX: theme.spacing(1.5),
-          margin: theme.spacing(0),
-          marginRight: theme.spacing(0) + "!important",
-          minWidth: "auto",
-          fontWeight: "fontWeightMedium",
-          typography: "s1",
-          color: "text.secondary",
-          textTransform: "none",
-          transition: theme.transitions.create(["color", "background-color"], {
-            duration: theme.transitions.duration.short,
-          }),
-          "&.Mui-selected": {
-            color: "primary.main",
-            fontWeight: "fontWeightSemiBold",
-          },
-          "&:not(.Mui-selected)": {
-            color: theme.palette.text.secondary,
-          },
-          "&:first-of-type": {
-            marginLeft: 0,
-          },
-        },
-      }}
+      // The wrapper draws the full-width line; the theme styles the rest.
+      sx={{ boxShadow: "none" }}
     >
       {AGENT_PLAYGROUND_TABS.map((tab) => {
         return (
@@ -113,7 +76,7 @@ export default function AgentPlayGroundTabs() {
               tab.iconSrc ? (
                 <SvgColor src={tab.iconSrc} />
               ) : (
-                <Iconify icon={tab.icon} width={20} />
+                <Iconify icon={tab.icon} width={16} />
               )
             }
           />

@@ -31,7 +31,8 @@ criteria: "You are evaluating how relevant and useful a set of contexts are for 
   \n<input>{{input}}</input>\n\n<context>{{context}}</context>"
 eval_tags:
 - RAG
-- Retrieval Systems
+- Ranking
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

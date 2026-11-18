@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import PageHeader from "src/components/page-header";
 import { Helmet } from "react-helmet-async";
 import {
   Box,
@@ -16,6 +17,10 @@ import Iconify from "src/components/iconify";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import OrgTwoFactorPolicySection from "src/sections/settings/Security/OrgTwoFactorPolicySection";
 import logger from "src/utils/logger";
+import {
+  SS_KEY_ORG_DISPLAY_NAME,
+  SS_KEY_ORG_NAME,
+} from "src/utils/sessionKeys";
 
 const OrgSettings = () => {
   const theme = useTheme();
@@ -46,8 +51,8 @@ const OrgSettings = () => {
       });
       setIsEditing(false);
       // Update sessionStorage so the context picks up the new name
-      sessionStorage.setItem("organizationName", editName.trim());
-      sessionStorage.setItem("organizationDisplayName", editName.trim());
+      sessionStorage.setItem(SS_KEY_ORG_NAME, editName.trim());
+      sessionStorage.setItem(SS_KEY_ORG_DISPLAY_NAME, editName.trim());
       // Reload to refresh all contexts with the new org name
       window.location.reload();
     },
@@ -89,27 +94,11 @@ const OrgSettings = () => {
       <Box
         sx={{ display: "flex", flexDirection: "column", gap: theme.spacing(2) }}
       >
-        <Box>
-          <Typography
-            sx={{
-              typography: "m2",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            Organization Settings
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightRegular",
-              color: "text.secondary",
-              marginTop: theme.spacing(0.5),
-            }}
-          >
-            Manage organization-level settings
-          </Typography>
-        </Box>
+        <PageHeader
+          title="Organization Settings"
+          description="Manage organization-level settings"
+          sx={{ mb: 0 }}
+        />
 
         <Box
           sx={{
@@ -199,7 +188,7 @@ const OrgSettings = () => {
                   </Typography>
                   <Tooltip title="Edit Organization Name">
                     <Iconify
-                      icon="fluent:edit-12-regular"
+                      icon="solar:pen-linear"
                       color="text.primary"
                       onClick={() => setIsEditing(true)}
                       sx={{

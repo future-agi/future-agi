@@ -36,7 +36,7 @@ class CallWebsocketView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             ).id
             if data.get("send_to_uuid"):
-                send_message_to_uuid(data.get("uuid"), message)
+                send_message_to_uuid(data.get("uuid"), message, org_id)
             else:
                 send_message_to_channel(org_id, message)
 
