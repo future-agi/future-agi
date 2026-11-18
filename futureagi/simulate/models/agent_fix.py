@@ -21,6 +21,8 @@ class AgentFixRun(BaseModel):
         OUT_OF_BUDGET = "out_of_budget", "Stopped at budget"
         STOPPED = "stopped", "Stopped"
         FAILED = "failed", "Failed"
+        # Even with variations of its failing cases, too few failed to prove a fix.
+        TOO_FEW_CASES = "too_few_cases", "Too few failing cases"
 
     ACTIVE_STATES = (State.QUEUED, State.RUNNING, State.STOPPING)
 
@@ -47,6 +49,15 @@ class AgentFixRun(BaseModel):
     )
     base_agent_version = models.ForeignKey(
         "simulate.AgentVersion", on_delete=models.PROTECT, related_name="+"
+    )
+    # The suite version the fix runs on when it wrote variations of its failing cases;
+    # null runs the source run's.
+    suite_version = models.ForeignKey(
+        "simulate.HarnessSuiteVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
     )
     # The failed fix this one starts again: check runs that one finished are reused.
     retried_from = models.ForeignKey(
@@ -76,6 +87,10 @@ class AgentFixRun(BaseModel):
     spent_usd = models.DecimalField(max_digits=10, decimal_places=4, default=0)
     # The engine's closing report (simulate.pydantic_schemas.agent_fix.FixReport).
     report = models.JSONField(null=True, blank=True)
+    # What the fix keeps from its engines' reports across launches: lost_models, each model
+    # a launch stopped using with when it was lost, and last_error, the last error an engine
+    # could not recover from.
+    engine_notes = models.JSONField(null=True, blank=True)
     failure = models.JSONField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render as rtlRender, screen, within } from "@testing-library/react";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
 import { MemoryRouter } from "react-router-dom";
 
 import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
@@ -7,6 +9,15 @@ import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtur
 import FixRunningView from "../FixRunningView";
 import TrialChart from "../TrialChart";
 import TrialsTable from "../TrialsTable";
+
+// The trials table reads theme.palette.data, so render with the app theme.
+const appTheme = createTheme({ palette: palette("light") });
+// eslint-disable-next-line react/prop-types
+const AppTheme = ({ children }) => (
+  <ThemeProvider theme={appTheme}>{children}</ThemeProvider>
+);
+const render = (ui, options) =>
+  rtlRender(ui, { wrapper: AppTheme, ...options });
 
 vi.mock("src/utils/axios", async (importOriginal) => {
   const { withFakeFixRunsApi } = await import(
@@ -48,7 +59,7 @@ describe("FixRunningView", () => {
     expect(screen.getAllByTestId("trial-point")).toHaveLength(1);
     expect(
       screen.getByText(
-        "2 of up to 4 trials · best so far 0% on 6 target scenarios",
+        "2 of up to 4 candidates · best so far 0% on 6 target scenarios",
       ),
     ).toBeInTheDocument();
 
@@ -97,6 +108,34 @@ describe("TrialsTable", () => {
     expect(trial).toHaveTextContent("Did not run");
     expect(trial).not.toHaveTextContent("Watch live");
   });
+
+  it("badges each candidate C1, C2, never T", () => {
+    render(
+      <MemoryRouter>
+        <TrialsTable fix={byId("fix-search")} />
+      </MemoryRouter>,
+    );
+    expect(
+      within(screen.getByTestId("trial-1")).getByText("C1"),
+    ).toBeInTheDocument();
+    expect(within(screen.getByTestId("trial-1")).queryByText("T1")).toBeNull();
+  });
+
+  it("says the agent was measured automatically only when the platform says so", () => {
+    const measured = byId("fix-search");
+    measured.request.measured_automatically = true;
+    const { unmount } = renderView(measured);
+    expect(screen.getByTestId("measured-notice")).toHaveTextContent(
+      "Measured automatically: model, tokens and timing only. Prompts and replies are never recorded.",
+    );
+    unmount();
+
+    // A read without the field, or with it false, shows no notice.
+    const missing = byId("fix-search");
+    delete missing.request.measured_automatically;
+    renderView(missing);
+    expect(screen.queryByTestId("measured-notice")).toBeNull();
+  });
 });
 
 describe("TrialChart", () => {
@@ -104,7 +143,20 @@ describe("TrialChart", () => {
     render(<TrialChart candidates={byId("fix-ready-archive").candidates} />);
     expect(screen.getAllByTestId("trial-point")).toHaveLength(3);
     expect(
-      screen.getByText(/^pass rate on the target scenarios · Trial 3 · winner/),
+      screen.getByText(
+        /^pass rate on the target scenarios · Candidate 3 · winner/,
+      ),
     ).toBeInTheDocument();
+  });
+
+  it("shows no arrow when the best trial did not move the pass rate", () => {
+    const [trial] = byId("fix-search").candidates;
+    trial.verdict.target_pass_rate = [0.5, 0.5];
+    render(<TrialChart candidates={[trial]} />);
+    const lead = screen.getByText(/^pass rate on the target scenarios/);
+    expect(lead).toHaveTextContent(
+      "Candidate 1 · best so far · no change from the agent before the change, on the same scenarios",
+    );
+    expect(lead).not.toHaveTextContent(/[▲▼]/);
   });
 });

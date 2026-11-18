@@ -1,9 +1,7 @@
 import PropTypes from "prop-types";
-import { alpha, keyframes } from "@mui/material/styles";
+import { keyframes, useTheme } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-
-import { BUILD_TONES } from "../buildTones";
 
 const chipLand = keyframes`
   0%   { opacity: 0; transform: translateY(6px) scale(0.9); }
@@ -29,31 +27,28 @@ export const TOKENS = [
 ];
 
 /*
-  Three semantic colours — teal for tools, green for rules, amber for data.
-  The neutral single-tone version read as too muted; at a glance the sandbox
-  filling up with distinct colours signals "different kinds of things
-  arriving", which is the story worth telling here.
+  Three kinds, three series colours — tools, rules and data each take a colour
+  from the data palette. The chip itself is a neutral tag; only the icon and the
+  legend dot carry the kind, so a filling sandbox still reads as "different
+  kinds of things arriving" without tinted pills.
 */
-export const KIND_COLOR = {
-  tool: BUILD_TONES.teal,
-  rule: BUILD_TONES.green,
-  data: BUILD_TONES.amberDeep,
-};
+const KIND_SERIES = { tool: 2, rule: 1, data: 3 };
 
-export function LandedChip({ item, dark }) {
+export const kindColor = (theme, kind) => theme.palette.data[KIND_SERIES[kind]];
+
+export function LandedChip({ item }) {
+  const theme = useTheme();
   return (
     <Stack
       direction="row" alignItems="center" spacing={0.5}
       sx={{
-        px: 0.75, py: 0.375, borderRadius: 0.75,
-        border: "1px solid",
-        borderColor: alpha(KIND_COLOR[item.kind], 0.35),
-        bgcolor: alpha(KIND_COLOR[item.kind], dark ? 0.14 : 0.08),
+        px: 0.75, py: 0.25, borderRadius: "4px",
+        bgcolor: "action.selected",
         animation: `${chipLand} 0.35s cubic-bezier(0.2, 0.9, 0.2, 1.2) forwards`,
       }}
     >
-      <Iconify icon={item.icon} width={10} sx={{ color: KIND_COLOR[item.kind] }} />
-      <Typography sx={{ typography: "s3", fontSize: 10, fontWeight: "fontWeightSemiBold", color: "text.primary" }}>
+      <Iconify icon={item.icon} width={12} sx={{ color: kindColor(theme, item.kind) }} />
+      <Typography sx={{ typography: "s3", fontWeight: 500, color: "text.secondary" }}>
         {item.label}
       </Typography>
     </Stack>
@@ -66,14 +61,13 @@ LandedChip.propTypes = {
     icon: PropTypes.string,
     label: PropTypes.string,
   }),
-  dark: PropTypes.bool,
 };
 
 export function MiniCount({ color, label }) {
   return (
     <Stack direction="row" alignItems="center" spacing={0.5}>
       <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: color }} />
-      <Typography sx={{ typography: "s3", fontSize: 10, color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+      <Typography sx={{ typography: "s3", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
         {label}
       </Typography>
     </Stack>

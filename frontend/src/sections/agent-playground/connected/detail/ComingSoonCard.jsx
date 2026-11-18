@@ -10,7 +10,7 @@ export default function ComingSoonCard({ title, description }) {
     <Box component="section" aria-label={title}>
       <Card title={title} action={<ComingSoonChip />}>
         <Typography
-          sx={{ px: 2, py: 1.5, typography: "s2", color: "text.subtitle" }}
+          sx={{ px: 1.5, py: 1.5, typography: "s1", color: "text.subtitle" }}
         >
           {description}
         </Typography>

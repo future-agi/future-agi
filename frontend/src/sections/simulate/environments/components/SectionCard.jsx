@@ -7,7 +7,7 @@ export default function SectionCard({ title, subtitle, action, children, sx, den
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1.5,
+        borderRadius: "8px",
         bgcolor: "background.paper",
         overflow: "hidden",
         ...sx,
@@ -21,8 +21,9 @@ export default function SectionCard({ title, subtitle, action, children, sx, den
           spacing={wrap ? 0 : 2}
           sx={{
             ...(wrap && { flexWrap: "wrap", columnGap: 2, rowGap: 1.25 }),
-            px: dense ? 1.5 : 2.5,
-            py: dense ? 1 : 1.75,
+            px: 1.5,
+            py: dense ? 0.5 : 0.75,
+            minHeight: 36,
             borderBottom: "1px solid",
             borderColor: "divider",
           }}
@@ -34,11 +35,11 @@ export default function SectionCard({ title, subtitle, action, children, sx, den
               producing invalid DOM — a div child inside a <p> triggers
               a browser auto-close and a hydration warning.
             */}
-            <Typography component="div" sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}>
+            <Typography component="div" sx={{ typography: "s1_2", fontWeight: 500 }}>
               {title}
             </Typography>
             {subtitle && (
-              <Typography component="div" sx={{ typography: "s2", color: "text.subtitle" }}>
+              <Typography component="div" sx={{ typography: "s3", color: "text.subtitle" }}>
                 {subtitle}
               </Typography>
             )}

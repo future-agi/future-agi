@@ -148,10 +148,12 @@ else:
             + "".join(f"      {key}: ${{{key}:?missing}}\n" for key in expected)
         )
         # Resolve outside the fake PATH. Only parse config: never a daemon call.
-        command = shutil.which("docker")
-        self.assertIsNotNone(command)
+        try:
+            from .compose_test_tools import compose_command
+        except ImportError:
+            from compose_test_tools import compose_command
         rendered = subprocess.run(
-            [command, "compose", "--env-file", str(self.config), "-f", str(fixture),
+            [*compose_command(), "--env-file", str(self.config), "-f", str(fixture),
              "config", "--format", "json"],
             env={k: v for k, v in os.environ.items() if k in ("PATH", "HOME")},
             text=True, capture_output=True, timeout=20,

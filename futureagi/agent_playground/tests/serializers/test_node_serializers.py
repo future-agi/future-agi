@@ -1121,9 +1121,9 @@ class TestPromptTemplateDataSerializer:
         s_no_id = PromptTemplateDataSerializer(data=data_no_id)
         assert s_no_id.is_valid(), s_no_id.errors
         vd_no_id = s_no_id.validated_data
-        assert (
-            "id" not in vd_no_id["response_format"]
-        ), "id should not be present when not provided"
+        assert "id" not in vd_no_id["response_format"], (
+            "id should not be present when not provided"
+        )
         assert vd_no_id["response_format"]["name"] == "ResponseSchema"
         assert "schema" in vd_no_id["response_format"]
 

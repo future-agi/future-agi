@@ -196,10 +196,19 @@ install's data to Distributed or Helm later
 - **Configure:** every variable in `.env` is described in
   [the configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference). Nothing is required for a
   local install; add LLM provider keys, a public URL or email when you need them.
-- **Manage:** `docker compose logs -f app` (Distributed: `backend`); stop with
-  `docker compose down` or `./bin/uninstall` (both keep your data); upgrade
-  with `git pull && ./bin/install`; remove everything, data included, with
-  `./bin/uninstall --purge`.
+- **Manage:** if enrolled in automatic updates, complete the
+  [safe handoff to manual operations](deploy/update/README.md#safe-handoff-to-manual-operations)
+  before stopping or uninstalling. Removing containers during backup or recovery
+  destroys identities the updater needs, even when volumes are kept. Use the
+  [enrolled Docker context for diagnostics](deploy/update/README.md#status-on-the-host-and-in-the-app)
+  and for subsequent manual commands. Otherwise, or after that handoff: `docker compose logs -f app` (Distributed:
+  `backend`); stop with `docker compose down` or `./bin/uninstall` (both keep your
+  data); remove everything, data included, with `./bin/uninstall --purge`.
+- **Upgrade:** use the [manual upgrade path](INSTALLATION.md#upgrading) for
+  `:latest` or pinned versions; rerunning the installer preserves pins. Supported
+  base Standalone installs can instead [opt in once to automatic updates](INSTALLATION.md#automatic-updates-opt-in).
+  Automatic apply requires published, signed proof for the exact transition;
+  leave the enrolled checkout unchanged (see the [operator guide](deploy/update/README.md#automatic-updates-standalone)).
 - **Develop:** on a branch other than `main`, add `--from-source` to build the
   images from your checkout; `./bin/dev` runs it with hot reload
   ([Local development](https://docs.futureagi.com/docs/self-hosting/development)).

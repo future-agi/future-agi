@@ -66,14 +66,14 @@ export default function AgentDetailHeader({
   return (
     <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1.5 }}>
       <IconButton size="small" onClick={onBack} aria-label="Back">
-        <Iconify icon="eva:arrow-ios-back-fill" width={18} />
+        <Iconify icon="solar:alt-arrow-left-linear" width={18} />
       </IconButton>
       <Box flex={1} minWidth={0}>
         <Stack direction="row" alignItems="center" spacing={1}>
           <Typography
             component="h1"
             noWrap
-            sx={{ typography: "m3", fontWeight: 700 }}
+            sx={{ typography: "m3", fontWeight: 600 }}
           >
             {agent.name}
           </Typography>
@@ -116,7 +116,7 @@ export function AgentDetailHeaderSkeleton({ onBack }) {
       sx={{ mb: 1.5 }}
     >
       <IconButton size="small" onClick={onBack} aria-label="Back">
-        <Iconify icon="eva:arrow-ios-back-fill" width={18} />
+        <Iconify icon="solar:alt-arrow-left-linear" width={18} />
       </IconButton>
       <Box flex={1} minWidth={0}>
         <Stack direction="row" alignItems="center" spacing={1}>

@@ -1,0 +1,3 @@
+# Keep the Go media ingress package despite the repository-wide media/ rule.
+!internal/video/media/
+!internal/video/media/**

@@ -159,7 +159,7 @@ describe("TemplateBuildPanel", () => {
 
   it("renders the surface header when showName is set", () => {
     renderPanel({ showName: true });
-    expect(screen.getByText("VOICE")).toBeInTheDocument();
+    expect(screen.getByText("Voice")).toBeInTheDocument();
     expect(screen.getByText("Customer Support Line")).toBeInTheDocument();
     expect(
       screen.getByText("Inbound phone support for an online storefront"),

@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from "react";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
 } from "../SpanAccordianElements";
-import { Box, IconButton, Tab, Tabs, Typography } from "@mui/material";
+import { Box, IconButton, Tab, Typography } from "@mui/material";
 import { copyToClipboard, getScorePercentage } from "src/utils/utils";
 import { JsonView, allExpanded } from "react-json-view-lite";
 import { enqueueSnackbar } from "notistack";
@@ -174,9 +175,9 @@ const GuardRail = ({
               }}
             >
               <Iconify
-                icon="basil:copy-outline"
+                icon="solar:copy-linear"
                 color="grey"
-                width={21}
+                width={20}
                 sx={{ color: "text.secondary" }}
               />
             </IconButton>
@@ -259,28 +260,10 @@ const GuardRail = ({
                   alignItems: "center",
                 }}
               >
-                <Tabs
-                  textColor="primary"
-                  value={tabValue}
-                  onChange={handleTabChange}
-                  TabIndicatorProps={{
-                    style: { display: "none" },
-                  }}
-                  sx={{
-                    minHeight: 32,
-                    "& .MuiTab-root": {
-                      minHeight: 32,
-                      marginRight: "15px",
-                    },
-                  }}
-                >
-                  <Tab
-                    value="markdown"
-                    label="Markdown"
-                    sx={{ fontSize: "12px", paddingLeft: 2 }}
-                  />
-                  <Tab value="raw" label="Raw" sx={{ fontSize: "12px" }} />
-                </Tabs>
+                <SegmentedTabs value={tabValue} onChange={handleTabChange}>
+                  <Tab value="markdown" label="Markdown" />
+                  <Tab value="raw" label="Raw" />
+                </SegmentedTabs>
                 {allowCopy && (
                   <Box
                     sx={{
@@ -298,9 +281,9 @@ const GuardRail = ({
                       }}
                     >
                       <Iconify
-                        icon="basil:copy-outline"
+                        icon="solar:copy-linear"
                         color="grey"
-                        width={21}
+                        width={20}
                         sx={{ color: "text.secondary" }}
                       />
                     </IconButton>
@@ -350,20 +333,20 @@ const GuardRail = ({
               justifyContent: "space-between",
               alignItems: "center",
               gap: 1,
-              backgroundColor: "red.o10",
+              backgroundColor: "status.danger.bg",
               paddingX: 1.3,
-              borderRadius: "5px",
+              borderRadius: "4px",
             }}
           >
             <Iconify
-              icon="material-symbols:warning-outline-rounded"
-              height={18}
-              width={18}
-              color="red.500"
+              icon="solar:danger-triangle-linear"
+              height={20}
+              width={20}
+              color="status.danger.fg"
             />
             <Typography
               typography="s1"
-              sx={{ color: "red.500" }}
+              sx={{ color: "status.danger.fg" }}
             >{`${rightRuleset} - Triggered`}</Typography>
           </Box>
         )}

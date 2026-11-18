@@ -33,6 +33,7 @@ from typing import Optional
 # ── Django bootstrap ─────────────────────────────────────────────────────────
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
 import django
+
 django.setup()
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -61,12 +62,12 @@ _fmt = logging.Formatter("%(message)s")
 
 log = logging.getLogger("real_tests")
 log.setLevel(logging.DEBUG)
-log.propagate = False          # don't forward to Django's root logger
+log.propagate = False  # don't forward to Django's root logger
 
 
 def _setup_logging(append: bool = False):
     """Configure file + console handlers. append=True when --filter is used."""
-    log.handlers = []              # clear any previously attached handlers
+    log.handlers = []  # clear any previously attached handlers
 
     _fh = logging.FileHandler(LOG_FILE, mode="a" if append else "w", encoding="utf-8")
     _fh.setLevel(logging.DEBUG)
@@ -78,9 +79,17 @@ def _setup_logging(append: bool = False):
     _ch.setFormatter(_fmt)
     log.addHandler(_ch)
 
+
 # Suppress noisy third-party loggers
-for _noisy in ("structlog", "clickhouse_driver", "urllib3", "httpcore", "httpx",
-               "django", "asyncio"):
+for _noisy in (
+    "structlog",
+    "clickhouse_driver",
+    "urllib3",
+    "httpcore",
+    "httpx",
+    "django",
+    "asyncio",
+):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
@@ -121,72 +130,81 @@ def _json_block(obj, prefix: str = "│  ", max_chars: int = 4000) -> str:
 # Real DB constants (from local Postgres)
 # ─────────────────────────────────────────────────────────────────────────────
 
-ORG_ID   = "8f22b8a3-f2c3-418e-880d-d6a72bf2b334"
-WS_ID    = "1cf34c23-3c50-445d-98e6-acaa205ddba3"
-PROJ_ID  = "40fc392d-cdbf-42a0-aaa9-8114b2e5474d"
+ORG_ID = "8f22b8a3-f2c3-418e-880d-d6a72bf2b334"
+WS_ID = "1cf34c23-3c50-445d-98e6-acaa205ddba3"
+PROJ_ID = "40fc392d-cdbf-42a0-aaa9-8114b2e5474d"
 
 # Individual spans (customer service dataset)
-SPAN_CLAUDE_BILLING_APOLOGY   = "52f9f7958b644085"   # claude-3-opus: "I apologize for the duplicate charge…"
-SPAN_CLAUDE_ESCALATION        = "fc26fb48b68a4f07"   # claude-3-opus: "I completely understand your concern. Let me escalate…"
-SPAN_CLAUDE_SONNET_CLOSING    = "5d93982710754eec"   # claude-3-sonnet: "You're very welcome! Anything else I can help you with today?"
-SPAN_GPT_CLASSIFIER           = "e575b0a2a3004d5b"   # gpt-3.5-turbo: "Category: account, Priority: medium"
-SPAN_AGENT_BILLING_RESOLUTION = "d13831b44e524546"   # agent span: full billing dispute resolution
-SPAN_AGENT_ESCALATE           = "4a9e06bd7c2c449e"   # agent span: "I completely understand… let me escalate…"
-SPAN_EVALUATOR_HIGH_QUALITY   = "d59d4b55956b4220"   # evaluator span
-SPAN_CHAIN_RETRIEVER_COMBO    = "63a00480667449ec"   # chain: retriever + LLM
+SPAN_CLAUDE_BILLING_APOLOGY = (
+    "52f9f7958b644085"  # claude-3-opus: "I apologize for the duplicate charge…"
+)
+SPAN_CLAUDE_ESCALATION = "fc26fb48b68a4f07"  # claude-3-opus: "I completely understand your concern. Let me escalate…"
+SPAN_CLAUDE_SONNET_CLOSING = "5d93982710754eec"  # claude-3-sonnet: "You're very welcome! Anything else I can help you with today?"
+SPAN_GPT_CLASSIFIER = (
+    "e575b0a2a3004d5b"  # gpt-3.5-turbo: "Category: account, Priority: medium"
+)
+SPAN_AGENT_BILLING_RESOLUTION = (
+    "d13831b44e524546"  # agent span: full billing dispute resolution
+)
+SPAN_AGENT_ESCALATE = (
+    "4a9e06bd7c2c449e"  # agent span: "I completely understand… let me escalate…"
+)
+SPAN_EVALUATOR_HIGH_QUALITY = "d59d4b55956b4220"  # evaluator span
+SPAN_CHAIN_RETRIEVER_COMBO = "63a00480667449ec"  # chain: retriever + LLM
 
 # Traces (one turn of a customer conversation)
-TRACE_APP_CRASH_TURN1         = "012cd701-eee7-4f48-afb5-8f4013aa844f"
-TRACE_APP_CRASH_TURN2         = "b87ebe03-09fb-41f6-94dd-ba3d97d7bdca"
-TRACE_BILLING_DISPUTE         = "acfd4b13-f169-4864-aff1-125fea18e594"
+TRACE_APP_CRASH_TURN1 = "012cd701-eee7-4f48-afb5-8f4013aa844f"
+TRACE_APP_CRASH_TURN2 = "b87ebe03-09fb-41f6-94dd-ba3d97d7bdca"
+TRACE_BILLING_DISPUTE = "acfd4b13-f169-4864-aff1-125fea18e594"
 
 # Session — photo upload issue, 5 turns
-SESSION_PHOTO_UPLOAD_ISSUE    = "e6f1003f-b750-4174-bb93-149e88f21b75"
+SESSION_PHOTO_UPLOAD_ISSUE = "e6f1003f-b750-4174-bb93-149e88f21b75"
 
-DUMMY_EVAL_TEMPLATE_ID        = "ca6b1561-aea8-4b69-b719-208cbbdb8224"
+DUMMY_EVAL_TEMPLATE_ID = "ca6b1561-aea8-4b69-b719-208cbbdb8224"
 
 # ── Dataset rows (model_hub_row) ─────────────────────────────────────────────
 # TEXT: "hi my name is wow fuck you okay you are amaze balls"
-ROW_TEXT_TOXIC                = "a97cd808-3e03-4602-8901-457ae95a3cd6"
-DATASET_TOXIC                 = "e28c1e8d-dab0-4745-91f1-f81a4fe40a58"
+ROW_TEXT_TOXIC = "a97cd808-3e03-4602-8901-457ae95a3cd6"
+DATASET_TOXIC = "e28c1e8d-dab0-4745-91f1-f81a4fe40a58"
 
 # TEXT: benign travel story — "On our family trip across the deserts…"
-ROW_TEXT_BENIGN               = "895005a9-2ce3-4192-b012-95c7607fc29d"
-DATASET_BENIGN                = "9229f0b8-ba16-4cf1-907f-b9ce8dbcb29c"
+ROW_TEXT_BENIGN = "895005a9-2ce3-4192-b012-95c7607fc29d"
+DATASET_BENIGN = "9229f0b8-ba16-4cf1-907f-b9ce8dbcb29c"
 
 # AUDIO: S3 audio file — severe electrical hum / noise (audio quality test)
 # Transcript: "my name is rishav and my birthday is on 21st june 1996"
-ROW_AUDIO_QUALITY             = "187d5f1c-2f0e-4459-a205-02e93af3a277"
-DATASET_AUDIO_QUALITY         = "4142a17f-716c-4f7e-83f3-73ef2983b7f1"
+ROW_AUDIO_QUALITY = "187d5f1c-2f0e-4459-a205-02e93af3a277"
+DATASET_AUDIO_QUALITY = "4142a17f-716c-4f7e-83f3-73ef2983b7f1"
 
 # AUDIO: S3 audio — TTS digit pronunciation test (dcs eval)
-ROW_AUDIO_TTS                 = "a2a0fb44-d8bb-4316-998e-8812bf38d9d5"
-DATASET_AUDIO_TTS             = "727c2be7-9375-4d90-b181-a19689085839"
+ROW_AUDIO_TTS = "a2a0fb44-d8bb-4316-998e-8812bf38d9d5"
+DATASET_AUDIO_TTS = "727c2be7-9375-4d90-b181-a19689085839"
 
 # IMAGE: "Give me something with a Renaissance manuscript vibe." + generated image URL
-ROW_IMAGE_FONT                = "4d3ee3b6-0c42-461c-a16d-d913db9c688f"
-DATASET_IMAGE_FONT            = "f7ee3669-b893-450c-a372-c0884b0eb941"
+ROW_IMAGE_FONT = "4d3ee3b6-0c42-461c-a16d-d913db9c688f"
+DATASET_IMAGE_FONT = "f7ee3669-b893-450c-a372-c0884b0eb941"
 
 # ── Multimodal dataset (ff0f3091) — has image, audio, document columns ──────
-DATASET_MULTIMODAL            = "ff0f3091-6203-4876-ba9f-6f74f284e580"
-ROW_MULTIMODAL                = "e1743c11-f8a9-4484-9c76-76c0235c27e9"
-CELL_MM_IMAGE                 = "680ed169-510c-4f4e-9e45-9bb966f0893e"  # Column 2 [image]
-CELL_MM_AUDIO                 = "91ae45bd-693b-4261-9489-cca41604012f"  # Column 3 [audio]
-CELL_MM_PDF                   = "29350c0b-6550-40f2-aa4a-6cdeccf82afe"  # pdf [document]
-CELL_MM_TEXT                  = "55c79ee0-bac2-4bb6-a505-3ae5263b15ef"  # Column 1 [text]
+DATASET_MULTIMODAL = "ff0f3091-6203-4876-ba9f-6f74f284e580"
+ROW_MULTIMODAL = "e1743c11-f8a9-4484-9c76-76c0235c27e9"
+CELL_MM_IMAGE = "680ed169-510c-4f4e-9e45-9bb966f0893e"  # Column 2 [image]
+CELL_MM_AUDIO = "91ae45bd-693b-4261-9489-cca41604012f"  # Column 3 [audio]
+CELL_MM_PDF = "29350c0b-6550-40f2-aa4a-6cdeccf82afe"  # pdf [document]
+CELL_MM_TEXT = "55c79ee0-bac2-4bb6-a505-3ae5263b15ef"  # Column 1 [text]
 
 # ── Knowledge bases (model_hub_knowledgebasefile) ────────────────────────────
-KB_KN  = "38284dd6-4d22-4728-abdd-590be1d3b7e8"   # "kn"  — 137KB, Completed
-KB_YTH = "54bcbd50-ee42-4253-b4ce-34811d66a08a"   # "yth" — 137KB, Completed
+KB_KN = "38284dd6-4d22-4728-abdd-590be1d3b7e8"  # "kn"  — 137KB, Completed
+KB_YTH = "54bcbd50-ee42-4253-b4ce-34811d66a08a"  # "yth" — 137KB, Completed
 
 # ── Eval templates with human feedback in DB ─────────────────────────────────
-EVAL_TEMPLATE_TOXICITY        = "afaecc83-0bb1-4e17-ae11-30453418a613"  # 1 feedback: "Passed"
-EVAL_TEMPLATE_AUDIO_QUALITY   = "3b44caa3-9be8-407c-aa3a-e4f2f17c9079"  # 1 feedback: "40"
-EVAL_TEMPLATE_DCS             = "3d520df4-09d0-4a49-80ca-fe74116ed6d6"   # 1 feedback: "40"
-EVAL_TEMPLATE_SCD             = "6206b61c-eef4-43c4-8160-10fec4bcd62e"   # 1 feedback: "1"
+EVAL_TEMPLATE_TOXICITY = "afaecc83-0bb1-4e17-ae11-30453418a613"  # 1 feedback: "Passed"
+EVAL_TEMPLATE_AUDIO_QUALITY = "3b44caa3-9be8-407c-aa3a-e4f2f17c9079"  # 1 feedback: "40"
+EVAL_TEMPLATE_DCS = "3d520df4-09d0-4a49-80ca-fe74116ed6d6"  # 1 feedback: "40"
+EVAL_TEMPLATE_SCD = "6206b61c-eef4-43c4-8160-10fec4bcd62e"  # 1 feedback: "1"
 
 
 # ── Cell lookup helpers (cell IDs resolved at runtime from known rows) ────────
+
 
 def _get_cell_id_from_row(row_id: str, data_type: str = None) -> str | None:
     """Look up a Cell UUID from a known Row at runtime.
@@ -196,6 +214,7 @@ def _get_cell_id_from_row(row_id: str, data_type: str = None) -> str | None:
     first cell in the row.
     """
     from model_hub.models.develop_dataset import Cell
+
     qs = Cell.objects.filter(row_id=row_id).select_related("column")
     if data_type:
         qs = qs.filter(column__data_type=data_type)
@@ -206,9 +225,9 @@ def _get_cell_id_from_row(row_id: str, data_type: str = None) -> str | None:
 def _find_pdf_cell() -> str | None:
     """Find any cell with a DOCUMENT column in the test org's datasets."""
     from model_hub.models.develop_dataset import Cell
+
     cell = (
-        Cell.objects
-        .filter(
+        Cell.objects.filter(
             column__data_type="document",
             dataset__organization_id=ORG_ID,
         )
@@ -221,6 +240,7 @@ def _find_pdf_cell() -> str | None:
 # ─────────────────────────────────────────────────────────────────────────────
 # Result tracking
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class CaseResult:
@@ -248,6 +268,7 @@ _results: list[CaseResult] = []
 # ─────────────────────────────────────────────────────────────────────────────
 # Core runner
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def run_case(
     name: str,
@@ -339,7 +360,9 @@ def run_case(
         log.info("│  ── Scout Brief ────────────────────────────────────────────────")
         log.info(f"│  complexity              : {brief.get('complexity')}")
         log.info(f"│  recommended_model       : {brief.get('recommended_model')}")
-        log.info(f"│  criteria_needs_formalize: {brief.get('criteria_needs_formalization')}")
+        log.info(
+            f"│  criteria_needs_formalize: {brief.get('criteria_needs_formalization')}"
+        )
         log.info(f"│  suggested_tools         : {brief.get('suggested_tools', [])}")
         log.info("│")
         log.info("│  reasoning:")
@@ -366,7 +389,9 @@ def run_case(
             turn_n = _turn_counter[0]
 
             log.info(f"│")
-            log.info(f"│  ┌── Turn {turn_n} · LLM call ──────────────────────────────────────")
+            log.info(
+                f"│  ┌── Turn {turn_n} · LLM call ──────────────────────────────────────"
+            )
             log.info(f"│  │  messages in context : {len(messages)}")
 
             # Show the last user/tool-result message so we know what prompted this turn
@@ -380,7 +405,9 @@ def run_case(
             content = _real_llm_call(messages)
 
             log.info(f"│  │")
-            log.info(f"│  │  ── Model Response ────────────────────────────────────────")
+            log.info(
+                f"│  │  ── Model Response ────────────────────────────────────────"
+            )
             log.info(_wrap(content, prefix="│  │  "))
             log.info(f"│  └───────────────────────────────────────────────────────────")
             return content
@@ -425,12 +452,18 @@ def run_case(
         tu = orch_result.get("token_usage", {})
         total = tu.get("total", {})
         scout_tu = tu.get("scout", {})
-        orch_tu  = tu.get("orchestrator", {})
+        orch_tu = tu.get("orchestrator", {})
         log.info("│")
         log.info("│  token usage:")
-        log.info(f"│    scout       : prompt={scout_tu.get('prompt_tokens', 0)}  completion={scout_tu.get('completion_tokens', 0)}")
-        log.info(f"│    orchestrator: prompt={orch_tu.get('prompt_tokens', 0)}  completion={orch_tu.get('completion_tokens', 0)}")
-        log.info(f"│    TOTAL       : prompt={total.get('prompt_tokens', 0)}  completion={total.get('completion_tokens', 0)}")
+        log.info(
+            f"│    scout       : prompt={scout_tu.get('prompt_tokens', 0)}  completion={scout_tu.get('completion_tokens', 0)}"
+        )
+        log.info(
+            f"│    orchestrator: prompt={orch_tu.get('prompt_tokens', 0)}  completion={orch_tu.get('completion_tokens', 0)}"
+        )
+        log.info(
+            f"│    TOTAL       : prompt={total.get('prompt_tokens', 0)}  completion={total.get('completion_tokens', 0)}"
+        )
         log.info("└" + "─" * 70 + "┘")
 
         return CaseResult(
@@ -453,15 +486,26 @@ def run_case(
 
     except Exception as e:
         import traceback
+
         elapsed = time.time() - t0
         log.error(f"\n│  ❌ CASE FAILED: {e}")
         log.error(traceback.format_exc())
         return CaseResult(
-            name=name, difficulty=difficulty, scope=input_scope,
-            source_id=source_id, criteria=criteria[:120], choices=choices,
-            result=None, confidence=0.0, explanation="",
-            eval_calls=0, orchestrator_turns=0, elapsed_s=elapsed,
-            scout_complexity="?", scout_model="?", token_usage={},
+            name=name,
+            difficulty=difficulty,
+            scope=input_scope,
+            source_id=source_id,
+            criteria=criteria[:120],
+            choices=choices,
+            result=None,
+            confidence=0.0,
+            explanation="",
+            eval_calls=0,
+            orchestrator_turns=0,
+            elapsed_s=elapsed,
+            scout_complexity="?",
+            scout_model="?",
+            token_usage={},
             error=str(e),
         )
 
@@ -469,6 +513,7 @@ def run_case(
 # ─────────────────────────────────────────────────────────────────────────────
 # Test cases — SIMPLE → HARD
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def define_cases():
     cases = [
@@ -621,7 +666,6 @@ def define_cases():
             criteria="Was the customer service helpful?",
             choices=["Yes", "No", "Somewhat"],
         ),
-
         # ── DATASET ROWS — TEXT modality ─────────────────────────────────
         dict(
             name="Dataset-Text-1 | toxic input | toxicity check",
@@ -633,7 +677,6 @@ def define_cases():
                 "Look for profanity, insults, slurs, or content that demeans others."
             ),
             choices=["Toxic", "Not Toxic"],
-
         ),
         dict(
             name="Dataset-Text-2 | benign travel story | toxicity + sentiment",
@@ -646,9 +689,7 @@ def define_cases():
                 "Pass only if the text is non-toxic AND positive in sentiment."
             ),
             choices=["Passed", "Failed"],
-
         ),
-
         # ── DATASET ROWS — AUDIO modality ────────────────────────────────
         dict(
             name="Dataset-Audio-1 | audio quality | noise assessment",
@@ -662,7 +703,6 @@ def define_cases():
                 "Score 0-100 where 100 is perfect studio quality and 0 is unintelligible."
             ),
             choices=[str(i) for i in range(0, 110, 10)],  # 0, 10, 20, ... 100
-
         ),
         dict(
             name="Dataset-Audio-2 | TTS dcs | digit pronunciation accuracy",
@@ -676,9 +716,7 @@ def define_cases():
                 "'1996' said as 'one nine nine six' instead of 'nineteen ninety-six')."
             ),
             choices=[str(i) for i in range(0, 110, 10)],
-
         ),
-
         # ── DATASET ROWS — IMAGE modality ────────────────────────────────
         dict(
             name="Dataset-Image-1 | generated image | Renaissance font style",
@@ -693,84 +731,90 @@ def define_cases():
                 "1=completely off-style, 5=perfectly matches Renaissance manuscript aesthetic."
             ),
             choices=["1", "2", "3", "4", "5"],
-
         ),
-
         # ── CELL-LEVEL evaluation (single cell from a dataset row) ────────
         # Cell IDs are resolved at runtime from known rows.
     ]
 
     # ── Resolve cell IDs at runtime ──────────────────────────────────────
-    cell_text_id  = _get_cell_id_from_row(ROW_TEXT_TOXIC, data_type="text")
+    cell_text_id = _get_cell_id_from_row(ROW_TEXT_TOXIC, data_type="text")
     cell_audio_id = _get_cell_id_from_row(ROW_AUDIO_QUALITY, data_type="audio")
     cell_image_id = _get_cell_id_from_row(ROW_IMAGE_FONT, data_type="image")
-    cell_pdf_id   = _find_pdf_cell()
+    cell_pdf_id = _find_pdf_cell()
 
     if cell_text_id:
-        cases.append(dict(
-            name="Cell-Text-1 | text cell | toxicity check",
-            difficulty="SIMPLE",
-            input_scope="cell",
-            source_id=cell_text_id,
-            criteria=(
-                "Evaluate whether this text cell contains toxic, harmful, or offensive "
-                "language. Look for profanity, insults, slurs, threats, or discriminatory "
-                "content. Pass if clean, Fail if toxic."
-            ),
-            choices=["Passed", "Failed"],
-        ))
+        cases.append(
+            dict(
+                name="Cell-Text-1 | text cell | toxicity check",
+                difficulty="SIMPLE",
+                input_scope="cell",
+                source_id=cell_text_id,
+                criteria=(
+                    "Evaluate whether this text cell contains toxic, harmful, or offensive "
+                    "language. Look for profanity, insults, slurs, threats, or discriminatory "
+                    "content. Pass if clean, Fail if toxic."
+                ),
+                choices=["Passed", "Failed"],
+            )
+        )
     else:
         log.warning("SKIP Cell-Text-1: no text cell found in ROW_TEXT_TOXIC")
 
     if cell_audio_id:
-        cases.append(dict(
-            name="Cell-Audio-1 | audio cell | recording quality",
-            difficulty="MODERATE",
-            input_scope="cell",
-            source_id=cell_audio_id,
-            criteria=(
-                "Evaluate the audio quality of this single audio cell. "
-                "Check for background noise, electrical hum, clipping, distortion, "
-                "and speech clarity. Score 0-100 where 100 is studio quality."
-            ),
-            choices=[str(i) for i in range(0, 110, 10)],
-        ))
+        cases.append(
+            dict(
+                name="Cell-Audio-1 | audio cell | recording quality",
+                difficulty="MODERATE",
+                input_scope="cell",
+                source_id=cell_audio_id,
+                criteria=(
+                    "Evaluate the audio quality of this single audio cell. "
+                    "Check for background noise, electrical hum, clipping, distortion, "
+                    "and speech clarity. Score 0-100 where 100 is studio quality."
+                ),
+                choices=[str(i) for i in range(0, 110, 10)],
+            )
+        )
     else:
         log.warning("SKIP Cell-Audio-1: no audio cell found in ROW_AUDIO_QUALITY")
 
     if cell_image_id:
-        cases.append(dict(
-            name="Cell-Image-1 | image cell | visual style assessment",
-            difficulty="MODERATE",
-            input_scope="cell",
-            source_id=cell_image_id,
-            criteria=(
-                "Evaluate the visual quality and style of this image cell. "
-                "The user requested a Renaissance manuscript style. "
-                "Does the image match this aesthetic? Look for calligraphic "
-                "letterforms, ornate decorations, and period-appropriate motifs. "
-                "1=completely off-style, 5=perfectly matches."
-            ),
-            choices=["1", "2", "3", "4", "5"],
-        ))
+        cases.append(
+            dict(
+                name="Cell-Image-1 | image cell | visual style assessment",
+                difficulty="MODERATE",
+                input_scope="cell",
+                source_id=cell_image_id,
+                criteria=(
+                    "Evaluate the visual quality and style of this image cell. "
+                    "The user requested a Renaissance manuscript style. "
+                    "Does the image match this aesthetic? Look for calligraphic "
+                    "letterforms, ornate decorations, and period-appropriate motifs. "
+                    "1=completely off-style, 5=perfectly matches."
+                ),
+                choices=["1", "2", "3", "4", "5"],
+            )
+        )
     else:
         log.warning("SKIP Cell-Image-1: no image cell found in ROW_IMAGE_FONT")
 
     if cell_pdf_id:
-        cases.append(dict(
-            name="Cell-PDF-1 | document cell | content quality check",
-            difficulty="MODERATE",
-            input_scope="cell",
-            source_id=cell_pdf_id,
-            criteria=(
-                "Evaluate the content of this PDF/document cell. "
-                "Is the document well-structured, readable, and does it contain "
-                "meaningful content? Check for proper formatting, logical flow, "
-                "and completeness. Pass if the document is coherent and useful, "
-                "Fail if it is garbled, empty, or poorly structured."
-            ),
-            choices=["Passed", "Failed"],
-        ))
+        cases.append(
+            dict(
+                name="Cell-PDF-1 | document cell | content quality check",
+                difficulty="MODERATE",
+                input_scope="cell",
+                source_id=cell_pdf_id,
+                criteria=(
+                    "Evaluate the content of this PDF/document cell. "
+                    "Is the document well-structured, readable, and does it contain "
+                    "meaningful content? Check for proper formatting, logical flow, "
+                    "and completeness. Pass if the document is coherent and useful, "
+                    "Fail if it is garbled, empty, or poorly structured."
+                ),
+                choices=["Passed", "Failed"],
+            )
+        )
     else:
         log.warning("SKIP Cell-PDF-1: no document/PDF cell found in org datasets")
 
@@ -851,7 +895,6 @@ def define_cases():
             choices=["Fully Compliant", "Partially Compliant", "Non-Compliant"],
             kb_id=KB_YTH,
         ),
-
         # ── FEEDBACK-ASSISTED evaluation ──────────────────────────────────
         dict(
             name="Feedback-1 | span + toxicity feedback | calibrated toxicity",
@@ -947,13 +990,14 @@ def define_cases():
 # Summary report
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def print_summary(results: list[CaseResult]):
     W = 72
     log.info("\n\n" + "━" * W)
     log.info(_banner("FINAL SUMMARY — ALL TEST CASES", "━"))
     log.info("━" * W)
 
-    passed  = [r for r in results if r.result is not None and not r.error]
+    passed = [r for r in results if r.result is not None and not r.error]
     errored = [r for r in results if r.error]
 
     log.info(f"\n  Total cases  : {len(results)}")
@@ -961,10 +1005,12 @@ def print_summary(results: list[CaseResult]):
     log.info(f"  Errored      : {len(errored)}")
 
     # Per-case table
-    log.info(f"\n  {'Case':<45} {'Diff':<8} {'Result':<12} {'Conf':>5} {'Turns':>5} {'Time':>7}")
-    log.info(f"  {'─'*45} {'─'*8} {'─'*12} {'─'*5} {'─'*5} {'─'*7}")
+    log.info(
+        f"\n  {'Case':<45} {'Diff':<8} {'Result':<12} {'Conf':>5} {'Turns':>5} {'Time':>7}"
+    )
+    log.info(f"  {'─' * 45} {'─' * 8} {'─' * 12} {'─' * 5} {'─' * 5} {'─' * 7}")
     for r in results:
-        res_str  = str(r.result)[:12] if r.result else ("ERROR" if r.error else "—")
+        res_str = str(r.result)[:12] if r.result else ("ERROR" if r.error else "—")
         conf_str = f"{r.confidence:.2f}" if r.result else "—"
         log.info(
             f"  {r.name[:45]:<45} {r.difficulty:<8} "
@@ -973,14 +1019,16 @@ def print_summary(results: list[CaseResult]):
 
     # Scout analysis
     log.info(f"\n  {'Case':<45} {'Complexity':<12} {'Model':<15} {'Formalize'}")
-    log.info(f"  {'─'*45} {'─'*12} {'─'*15} {'─'*9}")
+    log.info(f"  {'─' * 45} {'─' * 12} {'─' * 15} {'─' * 9}")
     for r in results:
         if not r.error:
-            log.info(f"  {r.name[:45]:<45} {r.scout_complexity:<12} {r.scout_model:<15}")
+            log.info(
+                f"  {r.name[:45]:<45} {r.scout_complexity:<12} {r.scout_model:<15}"
+            )
 
     # Token usage
     log.info(f"\n  {'Case':<45} {'Scout':>8} {'Orch':>8} {'Total':>8}")
-    log.info(f"  {'─'*45} {'─'*8} {'─'*8} {'─'*8}")
+    log.info(f"  {'─' * 45} {'─' * 8} {'─' * 8} {'─' * 8}")
     grand = 0
     for r in results:
         if not r.error and r.token_usage:
@@ -1009,10 +1057,16 @@ def print_summary(results: list[CaseResult]):
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def main():
     import argparse
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--filter", default="", help="Only run cases whose name contains this substring (case-insensitive)")
+    parser.add_argument(
+        "--filter",
+        default="",
+        help="Only run cases whose name contains this substring (case-insensitive)",
+    )
     args = parser.parse_args()
 
     # Append to results file when running filtered subset; overwrite for full suite
@@ -1032,7 +1086,9 @@ def main():
     cases = define_cases()
     if args.filter:
         cases = [c for c in cases if args.filter.lower() in c.get("name", "").lower()]
-        log.info(f"\n  Running {len(cases)} filtered cases (filter: '{args.filter}') …\n")
+        log.info(
+            f"\n  Running {len(cases)} filtered cases (filter: '{args.filter}') …\n"
+        )
     else:
         log.info(f"\n  Running {len(cases)} test cases (SIMPLE → HARD) …\n")
 

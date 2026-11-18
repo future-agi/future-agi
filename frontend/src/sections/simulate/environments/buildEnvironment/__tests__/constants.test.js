@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 
-import { BUILD_TONES } from "../buildTones";
 import { ORIGIN_KINDS, ORIGIN_ID } from "../provenance.constants";
 import {
   BUILD_PIPELINE,
@@ -17,8 +16,7 @@ describe("provenance constants", () => {
     expect(Object.keys(ORIGIN_KINDS)).toEqual(ids);
   });
 
-  it("every kind is self-keyed and fully described with a tone colour", () => {
-    const tones = Object.values(BUILD_TONES);
+  it("every kind is self-keyed and fully described", () => {
     ids.forEach((id) => {
       const kind = ORIGIN_KINDS[id];
       expect(kind.id).toBe(id);
@@ -26,7 +24,6 @@ describe("provenance constants", () => {
       expect(typeof kind.short).toBe("string");
       expect(typeof kind.label).toBe("string");
       expect(typeof kind.note).toBe("string");
-      expect(tones).toContain(kind.color);
     });
   });
 });

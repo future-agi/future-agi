@@ -3,7 +3,7 @@ import React, { useEffect } from "react";
 import { format } from "date-fns";
 import { Box, Button, Skeleton, Stack, Typography } from "@mui/material";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
-import { alpha } from "@mui/material/styles";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import EmptyState from "src/sections/simulate/environments/components/EmptyState";
 import ComingSoonCard from "./ComingSoonCard";
 import { Card, LineSkeleton } from "./bits";
@@ -11,7 +11,8 @@ import { MONO } from "./format";
 import useAgentRoute from "./useAgentRoute";
 import usePinnedVersions from "./usePinnedVersions";
 
-function Chip({ label, tone }) {
+// A neutral tag: 11/500 in secondary text on a quiet fill.
+function Chip({ label }) {
   return (
     <Box
       sx={{
@@ -19,25 +20,19 @@ function Chip({ label, tone }) {
         height: 18,
         display: "inline-flex",
         alignItems: "center",
-        borderRadius: 0.75,
-        bgcolor: (t) =>
-          tone === "primary"
-            ? alpha(
-                t.palette.primary.main,
-                t.palette.mode === "dark" ? 0.16 : 0.1,
-              )
-            : alpha(t.palette.text.primary, 0.07),
-        color: tone === "primary" ? "primary.main" : "text.secondary",
+        borderRadius: "4px",
+        bgcolor: "action.selected",
+        color: "text.secondary",
       }}
     >
-      <Typography sx={{ typography: "s3", fontWeight: 700 }}>
+      <Typography sx={{ typography: "s2", fontWeight: 500 }}>
         {label}
       </Typography>
     </Box>
   );
 }
 
-Chip.propTypes = { label: PropTypes.string, tone: PropTypes.string };
+Chip.propTypes = { label: PropTypes.string };
 
 // A timeline row while it loads, laid out like a real one: the dot and its
 // line, then label, message and date at the same sizes and spacing.
@@ -54,10 +49,10 @@ function VersionSkeleton() {
         <Box sx={{ width: 1.5, flex: 1, mt: 0.5, bgcolor: "divider" }} />
       </Stack>
       <Box flex={1} minWidth={0}>
-        <Typography sx={{ typography: "s2" }}>
+        <Typography sx={{ typography: "s1" }}>
           <LineSkeleton width={36} />
         </Typography>
-        <Typography sx={{ typography: "s3", mt: 0.375 }}>
+        <Typography sx={{ typography: "s3", mt: 0.5 }}>
           <LineSkeleton width="80%" />
         </Typography>
         <Typography sx={{ typography: "s3", mt: 0.25 }}>
@@ -142,8 +137,8 @@ export default function AgentVersionsTab() {
           ref={scrollRef}
           data-testid="versions-scroll"
           sx={{
-            px: 2,
-            py: 1.75,
+            px: 1.5,
+            py: 1.5,
             flex: 1,
             minHeight: 0,
             overflowY: "auto",
@@ -167,7 +162,7 @@ export default function AgentVersionsTab() {
           )}
           {isLoading && skeletons(3)}
           {loaded && versions.length === 0 && (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
               No versions yet
             </Typography>
           )}
@@ -217,10 +212,10 @@ export default function AgentVersionsTab() {
                       height: 10,
                       borderRadius: "50%",
                       bgcolor:
-                        v.id === versionId ? "primary.main" : "transparent",
+                        v.id === versionId ? "text.primary" : "transparent",
                       border: "2px solid",
                       borderColor:
-                        v.id === versionId ? "primary.main" : "text.disabled",
+                        v.id === versionId ? "text.primary" : "text.disabled",
                     }}
                   />
                   {i < versions.length - 1 && (
@@ -240,22 +235,22 @@ export default function AgentVersionsTab() {
                     <Typography
                       data-testid="version-label"
                       sx={{
-                        typography: "s2",
-                        fontWeight: 700,
+                        typography: "s1",
+                        fontWeight: 500,
                         fontFamily: MONO,
                       }}
                     >
                       {v.label}
                     </Typography>
-                    {v.isLatest && <Chip label="Latest" tone="primary" />}
-                    {v.isActive && <Chip label="Active" />}
+                    {v.isLatest && <Chip label="Latest" />}
+                    {v.isActive && <StatusBadge status="active" size="sm" />}
                   </Stack>
                   {v.commitMessage && (
                     <Typography
                       sx={{
-                        typography: "s3",
+                        typography: "s1",
                         color: "text.secondary",
-                        mt: 0.375,
+                        mt: 0.5,
                       }}
                     >
                       {v.commitMessage}

@@ -16,9 +16,9 @@ const InfoKnowledgeModal = ({ open, onClose, onCreateKnowledge }) => {
       open={open}
       onClose={onClose}
       fullWidth
-      maxWidth="sm"
+      maxWidth={false}
       PaperProps={{
-        width: "660px",
+        width: "720px",
         maxWidth: "none",
       }}
     >
@@ -34,7 +34,7 @@ const InfoKnowledgeModal = ({ open, onClose, onCreateKnowledge }) => {
               Steps to create knowledge base
             </Typography>
             <IconButton onClick={onClose}>
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
         </DialogTitle>

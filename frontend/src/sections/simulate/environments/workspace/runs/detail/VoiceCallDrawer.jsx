@@ -18,6 +18,8 @@ import {
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
 import CallTracesPanel from "./CallTracesPanel";
 import { CALL_TRACES_COPY } from "./callTraces.constants";
+import TrialChangesPanel from "./TrialChangesPanel";
+import { TRIAL_CHANGES_COPY } from "./trialChanges.constants";
 
 // The annotate / queue / dataset / tags actions need project + annotation
 // context this embedded drawer doesn't wire; hide them rather than leave dead
@@ -45,7 +47,7 @@ function StatePane({ children, onClose }) {
         onClick={onClose}
         sx={{ position: "absolute", top: 8, right: 8, color: "text.subtitle" }}
       >
-        <Iconify icon="mingcute:close-line" width={18} />
+        <Iconify icon="solar:close-linear" width={18} />
       </IconButton>
       {children}
     </Stack>
@@ -101,7 +103,7 @@ export default function VoiceCallDrawer({
       {
         label: CALL_TRACES_COPY.tab,
         value: "traces",
-        icon: "mdi:chart-gantt",
+        icon: "solar:chart-square-linear",
         content: (
           <CallTracesPanel
             traces={callTraces.traces}
@@ -112,8 +114,15 @@ export default function VoiceCallDrawer({
           />
         ),
       },
+      {
+        label: TRIAL_CHANGES_COPY.tab,
+        value: "world_changes",
+        icon: "solar:global-linear",
+        content: <TrialChangesPanel trialState={data?.trial_state ?? null} />,
+      },
     ],
     [
+      data?.trial_state,
       callTraces.projectId,
       callTraces.isError,
       callTraces.traces,

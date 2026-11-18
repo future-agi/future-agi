@@ -10,7 +10,7 @@ const PromptTooltip = ({ value }) => {
         maxHeight: "200px",
         width: "400px",
         backgroundColor: "background.paper",
-        borderRadius: "5px",
+        borderRadius: "6px",
         border: "1px solid",
         borderColor: "divider",
         padding: 2,

@@ -1,10 +1,8 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Collapse } from "@mui/material";
 
 import Iconify from "src/components/iconify";
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import { genderLabel } from "./personaLabels";
@@ -37,7 +35,7 @@ export default function ScenarioDetail({ row, defaultOpen = false }) {
         role="button" tabIndex={0}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={onKeyActivate(() => setOpen((o) => !o))}
-        sx={{ px: 2.5, py: 1.25, cursor: "pointer", "&:hover": { bgcolor: "action.hover" } }}
+        sx={{ px: 3, py: 1.25, cursor: "pointer", "&:hover": { bgcolor: "action.hover" } }}
       >
         <Iconify
           icon={open ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"}
@@ -47,7 +45,7 @@ export default function ScenarioDetail({ row, defaultOpen = false }) {
         <Typography
           noWrap
           sx={{
-            typography: "s2", fontWeight: "fontWeightSemiBold",
+            typography: "s1", fontWeight: "fontWeightRegular",
             fontFamily: "ui-monospace, Menlo, monospace",
             color: "text.primary", flexShrink: 0,
           }}
@@ -92,7 +90,7 @@ export function ScenarioDetailBody({ row, sx }) {
   const testsText = s.expected || s.outcome;
   const whatItTests = testsText ? (
     <Section title="What this tests">
-      <Typography sx={{ typography: "s2", color: "text.secondary", fontStyle: "italic" }}>
+      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
         {testsText}
       </Typography>
     </Section>
@@ -110,8 +108,8 @@ export function ScenarioDetailBody({ row, sx }) {
 
   return (
     <Stack
-      spacing={2.75}
-      divider={<Box sx={{ borderBottom: "1px dashed", borderColor: "divider" }} />}
+      spacing={3}
+      divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}
       sx={{
         "& p, & li, & > .MuiStack-root > .MuiTypography-root": { maxWidth: 780 },
         ...sx,
@@ -121,8 +119,8 @@ export function ScenarioDetailBody({ row, sx }) {
       <Section title="The person is told">
         <Typography
           sx={{
-            typography: "s2", color: "text.secondary",
-            borderLeft: "2px solid", borderColor: "divider", pl: 1.5,
+            typography: "s1", color: "text.secondary",
+            borderLeft: "1px solid", borderColor: "divider", pl: 1.5,
           }}
         >
           {s.task}{" "}
@@ -140,14 +138,14 @@ export function ScenarioDetailBody({ row, sx }) {
                   sx={{
                     width: 18, height: 18, borderRadius: "50%", flexShrink: 0, mt: "1px",
                     display: "grid", placeItems: "center",
-                    bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.16 : 0.1),
-                    color: BUILD_TONES.accent,
-                    typography: "s3", fontWeight: "fontWeightBold", fontVariantNumeric: "tabular-nums",
+                    bgcolor: "action.selected",
+                    color: "text.secondary",
+                    typography: "s3", fontWeight: "fontWeightMedium", fontVariantNumeric: "tabular-nums",
                   }}
                 >
                   {i + 1}
                 </Box>
-                <Typography sx={{ typography: "s2", color: "text.secondary" }}>{st.label}</Typography>
+                <Typography sx={{ typography: "s1", color: "text.secondary" }}>{st.label}</Typography>
               </Stack>
             ))}
           </Stack>
@@ -171,8 +169,7 @@ export function ScenarioDetailBody({ row, sx }) {
             {row.conversationBranch && (
               <PolicyRow label="Branch">
                 <Typography sx={{
-                  typography: "s2",
-                  fontFamily: "ui-monospace, Menlo, monospace",
+                  typography: "s1",
                   color: "text.primary", wordBreak: "break-word",
                 }}>
                   {branchText}
@@ -201,12 +198,12 @@ ScenarioDetail.propTypes = {
 function PolicyRow({ label, children }) {
   return (
     <Stack direction={{ xs: "column", sm: "row" }} spacing={{ xs: 0.5, sm: 2 }} sx={{ py: 0.5 }}>
-      <Typography sx={{ typography: "s2", color: "text.subtitle", width: { sm: 170 }, flexShrink: 0 }}>
+      <Typography sx={{ typography: "s1", color: "text.subtitle", width: { sm: 170 }, flexShrink: 0 }}>
         {label}
       </Typography>
       <Box sx={{ flex: 1, minWidth: 0 }}>
         {typeof children === "string"
-          ? <Typography sx={{ typography: "s2", color: "text.primary" }}>{children}</Typography>
+          ? <Typography sx={{ typography: "s1", color: "text.primary" }}>{children}</Typography>
           : children}
       </Box>
     </Stack>
@@ -217,7 +214,7 @@ PolicyRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
 function Section({ title, children }) {
   return (
     <Box>
-      <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold", color: "text.primary", mb: 1 }}>
+      <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium", color: "text.primary", mb: 1 }}>
         {title}
       </Typography>
       {children}

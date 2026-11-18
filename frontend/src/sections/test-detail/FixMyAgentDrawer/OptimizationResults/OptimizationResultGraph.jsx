@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Typography, useTheme } from "@mui/material";
+import { chartAxisColors } from "src/theme/data-colors";
 import ReactApexChart from "react-apexcharts";
 import { useState, useRef, useEffect, useMemo } from "react";
 import Logo from "../../../../components/logo/logo";
@@ -81,7 +82,7 @@ const OptimizationResultGraph = ({ optimizationId }) => {
         backgroundColor: "background.default",
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         display: "flex",
         flexDirection: "column",
         gap: "12px",
@@ -146,7 +147,7 @@ const OptimizationResultGraph = ({ optimizationId }) => {
                   flexShrink: 0,
                   cursor: "pointer",
                   paddingX: 0.5,
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   backgroundColor:
                     activeSeries === index
                       ? getUniqueColorPalette(index).solid
@@ -195,7 +196,7 @@ const OptimizationResultGraph = ({ optimizationId }) => {
                 id: "optimization-result-graph",
                 type: "line",
                 background: "transparent",
-                foreColor: isDark ? "#a1a1aa" : undefined,
+                foreColor: chartAxisColors(theme).foreColor,
                 toolbar: {
                   show: false,
                 },

@@ -13,4 +13,8 @@ export const ago = (iso) => {
 };
 
 export const rateTone = (rate) =>
-  rate >= 80 ? "#16A34A" : rate >= 50 ? "text.primary" : "#DC2626";
+  rate >= 80
+    ? "status.success.fg"
+    : rate >= 50
+      ? "text.primary"
+      : "status.danger.fg";

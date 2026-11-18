@@ -103,9 +103,9 @@ class TestDistributedLockManager:
             for j in range(3):
                 if i != j:
                     other_start = execution_order.index(f"start_{j}")
-                    assert not (
-                        start_idx < other_start < end_idx
-                    ), f"Worker {j} started while worker {i} was running"
+                    assert not (start_idx < other_start < end_idx), (
+                        f"Worker {j} started while worker {i} was running"
+                    )
 
     def test_lock_timeout(self):
         """Test that lock times out when it can't be acquired."""
@@ -212,9 +212,9 @@ class TestDistributedLockDecorator:
         # Check that executions don't overlap
         execution_times.sort(key=lambda x: x[0])
         for i in range(len(execution_times) - 1):
-            assert (
-                execution_times[i][1] <= execution_times[i + 1][0]
-            ), "Executions overlapped!"
+            assert execution_times[i][1] <= execution_times[i + 1][0], (
+                "Executions overlapped!"
+            )
 
 
 class TestDistributedEvaluationTracker:

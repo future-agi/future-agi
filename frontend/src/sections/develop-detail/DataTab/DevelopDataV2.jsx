@@ -7,6 +7,7 @@ import React, {
   Suspense,
 } from "react";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import {
   useDatapointDrawerStore,
   useDatapointDrawerStoreShallow,
@@ -499,7 +500,7 @@ export const getAverageColumnConfig = (columns, tableRows) => {
             }}
           >
             <Iconify
-              icon="material-symbols:schedule-outline"
+              icon="solar:clock-circle-linear"
               sx={{
                 display: "flex",
                 gap: 0.5,
@@ -522,7 +523,7 @@ export const getAverageColumnConfig = (columns, tableRows) => {
             />
             {Math.round(eachCol?.metadata?.averageTokens)}
             <Iconify
-              icon="material-symbols:attach-money"
+              icon="solar:dollar-minimalistic-linear"
               sx={{
                 display: "flex",
                 alignItems: "center",

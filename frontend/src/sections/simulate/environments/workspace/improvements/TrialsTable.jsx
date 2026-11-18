@@ -7,7 +7,7 @@ import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 
-import { runColor } from "../runs/runs.constants";
+import { runColor, runColorValue } from "../runs/runs.constants";
 
 import { outcomeLabel, pct, pts } from "./fixRunView";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
@@ -72,7 +72,7 @@ export default function TrialsTable({ fix }) {
           bgcolor: "background.neutral",
         }}
       >
-        <Typography sx={head}>Trial</Typography>
+        <Typography sx={head}>Candidate</Typography>
         <Typography sx={head}>Status</Typography>
         <Typography sx={head}>Pass</Typography>
       </Box>
@@ -105,22 +105,22 @@ export default function TrialsTable({ fix }) {
                   px: 0.75,
                   borderRadius: 0.75,
                   typography: "s3",
-                  fontWeight: 700,
+                  fontWeight: 600,
                   color: runColor(c.attempt),
                   bgcolor: (t) =>
                     alpha(
-                      runColor(c.attempt),
+                      runColorValue(t, c.attempt),
                       t.palette.mode === "dark" ? 0.22 : 0.14,
                     ),
                   flexShrink: 0,
                 }}
               >
-                {`T${c.attempt}`}
+                {`C${c.attempt}`}
               </Box>
               <Box minWidth={0}>
                 <Typography
                   sx={{ typography: "s2", fontWeight: 600 }}
-                >{`Trial ${c.attempt}`}</Typography>
+                >{`Candidate ${c.attempt}`}</Typography>
                 <Typography
                   noWrap
                   sx={{ typography: "s3", color: "text.subtitle" }}

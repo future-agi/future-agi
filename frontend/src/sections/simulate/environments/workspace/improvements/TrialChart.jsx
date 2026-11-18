@@ -7,7 +7,8 @@ import { hasTargetRate, pct, pts } from "./fixRunView";
 
 const DEFAULT_W = 720;
 const H = 190;
-const PAD = { l: 40, r: 44, t: 28, b: 24 };
+// The left pad fits the axis label, "Candidate".
+const PAD = { l: 66, r: 44, t: 28, b: 24 };
 const num = { fontVariantNumeric: "tabular-nums" };
 
 // The design's trial chart (RunsOverview in trial mode), hand-built SVG: the
@@ -50,9 +51,12 @@ export default function TrialChart({ candidates }) {
   const pick =
     trials.find((c) => c.outcome === "winner") || trials[rates.indexOf(best)];
   const gain = pts(pick.verdict.target_pass_rate);
-  const lead = `pass rate on the target scenarios · Trial ${pick.attempt} · ${
+  const versus = gain
+    ? `${gain > 0 ? "▲" : "▼"} ${Math.abs(gain)} pts vs the agent before the change`
+    : "· no change from the agent before the change";
+  const lead = `pass rate on the target scenarios · Candidate ${pick.attempt} · ${
     pick.outcome === "winner" ? "winner" : "best so far"
-  } ${gain >= 0 ? "▲" : "▼"} ${Math.abs(gain)} pts vs the agent before the change, on the same scenarios`;
+  } ${versus}, on the same scenarios`;
   return (
     <Box
       sx={{
@@ -75,7 +79,7 @@ export default function TrialChart({ candidates }) {
           borderColor: "divider",
         }}
       >
-        <Typography sx={{ typography: "m2", fontWeight: 700, ...num }}>
+        <Typography sx={{ typography: "m2", fontWeight: 600, ...num }}>
           {pct(pick.verdict.target_pass_rate[1])}
           <Box
             component="span"
@@ -90,7 +94,7 @@ export default function TrialChart({ candidates }) {
       </Stack>
       <Stack direction="row" alignItems="center" sx={{ px: 2.5, pt: 1.5 }}>
         <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-          {`Each point is one finished trial, oldest to latest · ${n} ${n === 1 ? "trial" : "trials"} · ${before}% before the change`}
+          {`Each point is one finished candidate, oldest to latest · ${n} ${n === 1 ? "candidate" : "candidates"} · ${before}% before the change`}
         </Typography>
         <Stack direction="row" alignItems="center" spacing={0.75}>
           <Box sx={{ width: 14, height: 2, bgcolor: "text.primary" }} />
@@ -104,7 +108,7 @@ export default function TrialChart({ candidates }) {
           width={W}
           height={H}
           role="img"
-          aria-label="Target pass rate per trial"
+          aria-label="Target pass rate per candidate"
           style={{ display: "block" }}
         >
           {[100, 50, 0].map((t) => (
@@ -134,7 +138,7 @@ export default function TrialChart({ candidates }) {
             fontSize="10.5"
             fill={sub}
           >
-            Trial
+            Candidate
           </text>
           <line
             x1={PAD.l}

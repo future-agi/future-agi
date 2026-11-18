@@ -63,6 +63,13 @@ beforeEach(() => {
           ...ENVIRONMENT_RUN,
           outcome_passed: 8,
           outcome_failed: 2,
+          pass_rate: 80,
+          scored: 10,
+          trials_passed: 8,
+          trials_evaluated: 10,
+          trials_inconclusive: 0,
+          trials_excluded_not_comparable: 0,
+          trial_pass_rate: 80,
           completed_at: twoHoursAgo,
         }),
       },
@@ -157,7 +164,10 @@ describe("AgentEnvironmentsTab", () => {
     envState.current = { isLoading: false, isError: false, data: [] };
     renderTab();
     expect(
-      screen.getByText("No environments test this agent yet"),
+      screen.getByText("Not used in any environment yet"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Build environment" }),
     ).toBeInTheDocument();
   });
 

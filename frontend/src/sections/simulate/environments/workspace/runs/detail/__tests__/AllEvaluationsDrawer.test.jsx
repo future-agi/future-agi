@@ -389,7 +389,7 @@ describe("AllEvaluationsDrawer", () => {
   it("opens the add flow", () => {
     const { onAddEvaluations } = setup();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add Evaluations" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add evaluations" }));
     expect(onAddEvaluations).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,7 +1,5 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
-import { BUILD_TONES } from "../buildEnvironment/buildTones";
 import { BUILD_STATUS } from "../myEnvironments.constants";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
@@ -24,9 +22,9 @@ export default function SystemBanners({ env }) {
           sx={{
             px: 3,
             py: 1.25,
-            bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.12 : 0.06),
+            bgcolor: "status.info.bg",
             borderBottom: "1px solid",
-            borderColor: () => alpha(BUILD_TONES.accent, 0.24),
+            borderColor: "divider",
           }}
         >
           <Box
@@ -34,7 +32,7 @@ export default function SystemBanners({ env }) {
               width: 8,
               height: 8,
               borderRadius: "50%",
-              bgcolor: BUILD_TONES.accent,
+              bgcolor: "status.info.solid",
               animation: "wb-pulse 1.4s ease-in-out infinite",
               "@keyframes wb-pulse": {
                 "0%,100%": { opacity: 0.4 },
@@ -45,15 +43,15 @@ export default function SystemBanners({ env }) {
           />
           <Typography
             sx={{
-              typography: "s2",
-              fontWeight: "fontWeightBold",
-              color: BUILD_TONES.accent,
+              typography: "s1",
+              fontWeight: 500,
+              color: "status.info.fg",
               flexShrink: 0,
             }}
           >
             {WORKSPACE_COPY.building.title}
           </Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
             {buildProgress?.done != null && buildProgress?.total != null
               ? WORKSPACE_COPY.building.progress(buildProgress.done, buildProgress.total)
               : WORKSPACE_COPY.building.deriving}{" "}

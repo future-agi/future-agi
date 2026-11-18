@@ -14,7 +14,7 @@ const DevelopExperimentRightSection = ({
         setExperimentSearch={setExperimentSearch}
       />
       {/* <IconButton size="small" sx={{ color: "text.secondary" }} onClick={() => {}}>
-        <Iconify icon="mingcute:filter-2-fill" />
+        <Iconify icon="solar:filter-linear" />
       </IconButton> */}
     </Box>
   );

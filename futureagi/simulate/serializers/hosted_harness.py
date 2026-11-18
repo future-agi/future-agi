@@ -18,6 +18,7 @@ class HarnessIngressResponseSerializer(serializers.Serializer):
     url = serializers.URLField()
     expires_in_seconds = serializers.IntegerField(min_value=60, max_value=86400)
 
+
 class HarnessIngressProxyRequestSerializer(serializers.Serializer):
     """Accept arbitrary callback payloads while keeping the relay in the API contract."""
 
@@ -74,6 +75,14 @@ class HarnessSubGoalSerializer(serializers.Serializer):
     held = serializers.BooleanField(allow_null=True)
     reason = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     judged = serializers.BooleanField()
+    verdict = serializers.ChoiceField(
+        choices=("pass", "fail", "not_applicable", "inconclusive", "unmeasured"),
+        required=False,
+    )
+    # What the sub-goal was decided from: world_state, transcript, recording, tool_calls.
+    evidence = serializers.ListField(
+        child=serializers.CharField(max_length=64), max_length=16, required=False
+    )
 
 
 class HarnessMetricEvaluationSerializer(serializers.Serializer):
@@ -146,18 +155,19 @@ class HarnessCallSerializer(serializers.Serializer):
     target_metrics = HarnessTargetMetricsSerializer(required=False, allow_null=True)
 
 
+HARNESS_FAILURE_DOMAINS = (
+    "agent",
+    "simulator",
+    "environment",
+    "connectivity",
+    "infrastructure",
+    "grading",
+    "platform_sync",
+)
+
+
 class HarnessFailureSerializer(serializers.Serializer):
-    domain = serializers.ChoiceField(
-        choices=(
-            "agent",
-            "simulator",
-            "environment",
-            "connectivity",
-            "infrastructure",
-            "grading",
-            "platform_sync",
-        )
-    )
+    domain = serializers.ChoiceField(choices=HARNESS_FAILURE_DOMAINS)
     stage = serializers.CharField(max_length=64)
     code = serializers.CharField(max_length=128)
     message = serializers.CharField(max_length=2000)
@@ -177,6 +187,8 @@ class HarnessResultReceiptSerializer(serializers.Serializer):
     evaluations = serializers.JSONField()
     call = HarnessCallSerializer(allow_null=True)
     failure = HarnessFailureSerializer(allow_null=True)
+    # Why a scenario was skipped, when the harness gave a reason.
+    reason = serializers.CharField(required=False, max_length=500)
     digest = serializers.RegexField(_SHA256)
 
     def validate_evaluations(self, value):

@@ -140,7 +140,6 @@ class TestUnifiedFeatureCheck:
 
 @pytest.mark.unit
 class TestPhoneHome:
-
     @override_settings(CLOUD_DEPLOYMENT="US", EE_LICENSE_KEY="")
     @patch("ee.usage.deployment._validate_cloud_secret", return_value=True)
     def test_phone_home_skips_on_cloud(self, _mock_secret):

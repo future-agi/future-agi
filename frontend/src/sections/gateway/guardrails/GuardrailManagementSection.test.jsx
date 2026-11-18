@@ -1,7 +1,10 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, userEvent } from "src/utils/test-utils";
+import { render, screen, userEvent, within } from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
+import { statusColors } from "src/utils/runStatus";
 import axiosInstance from "src/utils/axios";
 import { validateContractedRequestConfig } from "src/api/contracts/openapi-contract";
 import GuardrailManagementSection from "./GuardrailManagementSection";
@@ -244,7 +247,84 @@ describe("GuardrailManagementSection", () => {
       </QueryClientProvider>,
     );
 
-    const chip = (await screen.findByText("403")).closest(".MuiChip-root");
-    expect(chip).toHaveClass("MuiChip-colorError");
+    // The status code is a StatusBadge now; a block reads in the danger tint.
+    const badge = (await screen.findByText("403")).parentElement;
+    const theme = createTheme({ palette: palette("light") });
+    expect(badge).toHaveStyle({
+      backgroundColor: statusColors(theme, "danger").bg,
+    });
   });
+
+  describe.each(["light", "dark"])(
+    "Logs tab status colour by HTTP status class (%s theme)",
+    (mode) => {
+      it.each([
+        [400, "danger"],
+        [403, "danger"],
+        [429, "danger"],
+        [446, "danger"],
+        [499, "danger"],
+        [500, "danger"],
+        [502, "danger"],
+        [599, "danger"],
+        [246, "warning"],
+        [200, "success"],
+        [201, "success"],
+        [204, "success"],
+        [299, "success"],
+        [199, "neutral"],
+        [300, "neutral"],
+        [399, "neutral"],
+        [600, "neutral"],
+        [0, "neutral"],
+        [null, "neutral"],
+        [undefined, "neutral"],
+      ])("shows status %s in the %s colour", async (statusCode, role) => {
+        mockParams = { tab: "logs" };
+        vi.spyOn(axiosInstance, "get").mockResolvedValue({
+          data: {
+            results: [
+              {
+                id: "log-1",
+                request_id: "req-1",
+                started_at: "2026-10-28T19:46:17Z",
+                model: "gpt-4o-mini",
+                status_code: statusCode,
+                guardrail_triggered: true,
+              },
+            ],
+          },
+        });
+        const queryClient = new QueryClient({
+          defaultOptions: { queries: { retry: false } },
+        });
+        const theme = createTheme({ palette: palette(mode) });
+        render(
+          <QueryClientProvider client={queryClient}>
+            <GuardrailManagementSection />
+          </QueryClientProvider>,
+          { theme },
+        );
+
+        await screen.findByText("gpt-4o-mini");
+        // Columns: Time, Model, Status, Guardrail Details, Request ID.
+        const statusCell = screen.getAllByRole("cell")[2];
+        // A missing code (null, undefined or the API default 0) shows a dash.
+        const label = within(statusCell).getByText(
+          String(statusCode || "\u2014"),
+        );
+        const colors = statusColors(theme, role);
+        // StatusBadge draws a dot before the label in both of its variants.
+        expect(label.parentElement.firstChild).toHaveStyle({
+          backgroundColor: colors.solid,
+        });
+        if (role !== "neutral") {
+          // A status that means something gets the tinted badge.
+          expect(label.parentElement).toHaveStyle({
+            backgroundColor: colors.bg,
+          });
+        }
+      });
+    },
+  );
 });

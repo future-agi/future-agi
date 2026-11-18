@@ -10,6 +10,8 @@ import {
   Slide,
   Tooltip,
   Typography,
+  useTheme,
+  ButtonBase,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import CellMarkdown from "src/sections/common/CellMarkdown";
@@ -19,7 +21,7 @@ import { alpha } from "@mui/material/styles";
 import Editor from "@monaco-editor/react";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import Iconify from "src/components/iconify";
-import { useSettingsContext } from "src/components/settings/context";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 
 import { useTaskUsageChart, useTaskUsageLogs } from "../hooks/useTaskUsage";
@@ -48,11 +50,11 @@ const StatPill = ({ label, value }) => (
     <Typography
       variant="caption"
       color="text.secondary"
-      sx={{ fontSize: "11px" }}
+      sx={{ fontSize: "12px" }}
     >
       {label}:
     </Typography>
-    <Typography variant="caption" fontWeight={700} sx={{ fontSize: "12px" }}>
+    <Typography variant="caption" fontWeight={600} sx={{ fontSize: "12px" }}>
       {value}
     </Typography>
   </Box>
@@ -70,22 +72,21 @@ const ScoreCell = ({ value }) => {
         —
       </Typography>
     );
+  // Same bands as the eval Usage tab: 0.7 and up passes, below 0.3 fails.
   if (typeof value === "number")
     return (
-      <Chip
+      <StatusBadge
+        role={value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "danger"}
         label={value.toFixed(2)}
-        size="small"
-        color={value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "error"}
-        sx={{ fontSize: "11px", height: 20, fontWeight: 600 }}
+        variant="badge"
+        dot={false}
+        size="sm"
       />
     );
   return (
-    <Chip
-      label={String(value)}
-      size="small"
-      color="default"
-      sx={{ fontSize: "11px", height: 20 }}
-    />
+    <Typography variant="body2" color="text.primary">
+      {String(value)}
+    </Typography>
   );
 };
 
@@ -181,7 +182,6 @@ const useColumns = () =>
                       : "default"
                 }
                 variant="outlined"
-                sx={{ fontSize: "11px", height: 20 }}
               />
               {partialWarning && (
                 <Tooltip
@@ -217,8 +217,6 @@ const useColumns = () =>
                 size="small"
                 variant="outlined"
                 sx={{
-                  fontSize: "10px",
-                  height: 18,
                   maxWidth: 130,
                   "& .MuiChip-label": {
                     overflow: "hidden",
@@ -280,7 +278,7 @@ const useColumns = () =>
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontSize: "11px", color: "text.disabled" }}
+              sx={{ fontSize: "12px", color: "text.disabled" }}
             >
               {d.toLocaleDateString(undefined, {
                 month: "short",
@@ -392,7 +390,6 @@ const DetailRow = ({
             size="small"
             color={chipColor || "default"}
             variant="outlined"
-            sx={{ fontSize: "11px", height: 20 }}
           />
         ) : isJsonValue ? (
           <ExpandableJson value={resolvedValue} />
@@ -426,7 +423,7 @@ const DetailRow = ({
             sx={{ ml: 0.5, p: 0.25, flexShrink: 0 }}
           >
             <Iconify
-              icon="mdi:content-copy"
+              icon="solar:copy-linear"
               width={12}
               sx={{ color: "text.secondary" }}
             />
@@ -477,19 +474,16 @@ const ErrorDetails = ({ rawError }) => {
 
       {/* Title row — icon + classified title */}
       <Box
-        sx={(t) => ({
+        sx={{
           display: "flex",
           alignItems: "flex-start",
           gap: 1,
           p: 1.25,
           borderRadius: "6px",
           border: "1px solid",
-          borderColor: alpha(t.palette.error.main, 0.25),
-          bgcolor: alpha(
-            t.palette.error.main,
-            t.palette.mode === "dark" ? 0.1 : 0.05,
-          ),
-        })}
+          borderColor: "status.danger.border",
+          bgcolor: "status.danger.bg",
+        }}
       >
         <Box
           sx={(t) => ({
@@ -520,7 +514,7 @@ const ErrorDetails = ({ rawError }) => {
           <Typography
             variant="body2"
             sx={{
-              fontSize: "11px",
+              fontSize: "12px",
               fontFamily: "monospace",
               color: "text.secondary",
               wordBreak: "break-word",
@@ -540,8 +534,8 @@ const ErrorDetails = ({ rawError }) => {
             fontWeight={600}
             sx={{
               display: "block",
-              fontSize: "10px",
-              textTransform: "uppercase",
+              fontSize: "12px",
+              textTransform: "none",
               letterSpacing: "0.5px",
               color: "text.disabled",
               mb: 0.5,
@@ -566,7 +560,7 @@ const ErrorDetails = ({ rawError }) => {
                 component="li"
                 variant="body2"
                 sx={{
-                  fontSize: "11px",
+                  fontSize: "12px",
                   lineHeight: 1.5,
                   color: "text.secondary",
                 }}
@@ -580,9 +574,8 @@ const ErrorDetails = ({ rawError }) => {
 
       {/* Raw error — collapsed by default, available for support context */}
       <Box sx={{ mt: 1.25 }}>
-        <Box
-          component="button"
-          type="button"
+        <ButtonBase
+          disableRipple
           onClick={() => setShowRaw((v) => !v)}
           sx={{
             display: "flex",
@@ -591,8 +584,8 @@ const ErrorDetails = ({ rawError }) => {
             border: "none",
             background: "transparent",
             color: "text.disabled",
-            fontSize: "10px",
-            textTransform: "uppercase",
+            fontSize: "12px",
+            textTransform: "none",
             letterSpacing: "0.5px",
             fontWeight: 600,
             cursor: "pointer",
@@ -609,7 +602,7 @@ const ErrorDetails = ({ rawError }) => {
             width={12}
           />
           Raw error
-        </Box>
+        </ButtonBase>
         {showRaw && (
           <Box
             sx={(t) => ({
@@ -623,7 +616,7 @@ const ErrorDetails = ({ rawError }) => {
           >
             <Typography
               sx={{
-                fontSize: "11px",
+                fontSize: "12px",
                 fontFamily: "monospace",
                 color: "text.secondary",
                 whiteSpace: "pre-wrap",
@@ -686,18 +679,12 @@ const DetailPanelContent = ({ row, isDark, onOpenTrace }) => {
             sx={{
               px: 1.5,
               py: 0.375,
-              borderRadius: "5px",
-              fontSize: "11px",
+              borderRadius: "6px",
+              fontSize: "12px",
               cursor: "pointer",
               fontWeight: viewMode === m ? 600 : 400,
               color: viewMode === m ? "text.primary" : "text.disabled",
-              backgroundColor:
-                viewMode === m
-                  ? (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.08)"
-                        : "action.hover"
-                  : "transparent",
+              backgroundColor: viewMode === m ? "action.hover" : "transparent",
             }}
           >
             {m === "formatted" ? "Formatted" : "JSON"}
@@ -707,7 +694,7 @@ const DetailPanelContent = ({ row, isDark, onOpenTrace }) => {
           <Button
             size="small"
             variant="outlined"
-            startIcon={<Iconify icon="mdi:eye-outline" width={14} />}
+            startIcon={<Iconify icon="solar:eye-linear" width={14} />}
             onClick={onOpenTrace}
             sx={{ ml: "auto", fontSize: "11px", height: 26 }}
           >
@@ -799,7 +786,7 @@ const DetailPanelContent = ({ row, isDark, onOpenTrace }) => {
                 <Typography
                   variant="caption"
                   color="text.secondary"
-                  sx={{ display: "block", py: 0.75, fontSize: "11px" }}
+                  sx={{ display: "block", py: 0.75, fontSize: "12px" }}
                 >
                   Large span JSON and mapped input details are omitted from this
                   bounded list response.
@@ -885,8 +872,8 @@ const DetailPanelContent = ({ row, isDark, onOpenTrace }) => {
                         mt: 1.5,
                         mb: 0.5,
                         display: "block",
-                        fontSize: "11px",
-                        textTransform: "uppercase",
+                        fontSize: "12px",
+                        textTransform: "none",
                         letterSpacing: "0.5px",
                         color: "text.disabled",
                       }}
@@ -946,8 +933,7 @@ const DetailPanelContent = ({ row, isDark, onOpenTrace }) => {
 
 // ── Main ──
 const TaskUsageTab = ({ taskId, projectId }) => {
-  const settings = useSettingsContext();
-  const isDark = settings.themeMode === "dark";
+  const isDark = useTheme().palette.mode === "dark";
 
   const [dateOption, setDateOption] = useState(DATE_OPTION.THIRTY_DAYS);
   const [dateFilter, setDateFilter] = useState(null);
@@ -1131,7 +1117,7 @@ const TaskUsageTab = ({ taskId, projectId }) => {
           minHeight: 0,
           minWidth: 0,
           p: 2,
-          transition: "margin-right 0.25s",
+          transition: "margin-right 0.2s",
         }}
       >
         {/* Date picker + eval filter + stats */}
@@ -1187,11 +1173,9 @@ const TaskUsageTab = ({ taskId, projectId }) => {
                   minWidth: 180,
                 }}
               >
-                <MenuItem value="all" sx={{ fontSize: "12px" }}>
-                  All evaluations
-                </MenuItem>
+                <MenuItem value="all">All evaluations</MenuItem>
                 {evalsList.map((ev) => (
-                  <MenuItem key={ev.id} value={ev.id} sx={{ fontSize: "12px" }}>
+                  <MenuItem key={ev.id} value={ev.id}>
                     {ev.name}
                   </MenuItem>
                 ))}
@@ -1231,10 +1215,7 @@ const TaskUsageTab = ({ taskId, projectId }) => {
             borderColor: "divider",
             p: 1.5,
             mb: 1.5,
-            backgroundColor: (t) =>
-              t.palette.mode === "dark"
-                ? "rgba(255,255,255,0.01)"
-                : "background.default",
+            backgroundColor: "background.default",
           }}
         >
           {chartLoading ? (
@@ -1312,7 +1293,7 @@ const TaskUsageTab = ({ taskId, projectId }) => {
                 <Typography
                   variant="caption"
                   color="warning.main"
-                  sx={{ fontSize: "11px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   Bounded {(100 * pageSize).toLocaleString()}-run browsing
                   window
@@ -1322,7 +1303,7 @@ const TaskUsageTab = ({ taskId, projectId }) => {
                 <Typography
                   variant="caption"
                   color="text.disabled"
-                  sx={{ fontSize: "11px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   {totalLogs.toLocaleString()}
                   {logsCountIsLowerBound ? "+" : ""} total run
@@ -1449,7 +1430,7 @@ const TaskUsageTab = ({ taskId, projectId }) => {
                     disabled={detailIndex === 0}
                     onClick={() => showRunAt(detailIndex - 1)}
                   >
-                    <Iconify icon="mingcute:arrow-up-line" width={16} />
+                    <Iconify icon="solar:arrow-up-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -1460,7 +1441,7 @@ const TaskUsageTab = ({ taskId, projectId }) => {
                     disabled={detailIndex >= visibleLogs.length - 1}
                     onClick={() => showRunAt(detailIndex + 1)}
                   >
-                    <Iconify icon="mingcute:arrow-down-line" width={16} />
+                    <Iconify icon="solar:arrow-down-linear" width={16} />
                   </IconButton>
                 </span>
               </Tooltip>
@@ -1478,8 +1459,8 @@ const TaskUsageTab = ({ taskId, projectId }) => {
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -1493,8 +1474,8 @@ const TaskUsageTab = ({ taskId, projectId }) => {
                   sx={{
                     px: 0.5,
                     py: 0.125,
-                    borderRadius: "3px",
-                    fontSize: "9px",
+                    borderRadius: "4px",
+                    fontSize: "12px",
                     fontFamily: "monospace",
                     border: "1px solid",
                     borderColor: "divider",
@@ -1511,13 +1492,13 @@ const TaskUsageTab = ({ taskId, projectId }) => {
                 <Typography
                   variant="caption"
                   color="text.disabled"
-                  sx={{ fontFamily: "monospace", fontSize: "10px" }}
+                  sx={{ fontFamily: "monospace", fontSize: "12px" }}
                 >
                   {detailRow.id?.slice(0, 12)}
                 </Typography>
               )}
               <IconButton size="small" onClick={closeDetail}>
-                <Iconify icon="mingcute:close-line" width={16} />
+                <Iconify icon="solar:close-linear" width={16} />
               </IconButton>
             </Box>
           </Box>

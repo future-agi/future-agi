@@ -94,7 +94,7 @@ export default function OverviewPanel({
         spacing={2}
       >
         <Typography
-          sx={{ typography: "s2", color: "text.secondary", maxWidth: 820 }}
+          sx={{ typography: "m3", color: "text.secondary", maxWidth: 820 }}
         >
           {env.description}
         </Typography>
@@ -111,7 +111,7 @@ export default function OverviewPanel({
           px: 2,
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 1.5,
+          borderRadius: "8px",
           rowGap: 1,
           width: "fit-content",
           maxWidth: "100%",
@@ -163,12 +163,12 @@ export default function OverviewPanel({
             px: 2,
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 1.5,
+            borderRadius: "8px",
             bgcolor: "background.neutral",
           }}
         >
           <Typography
-            sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}
+            sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}
           >
             {PARALLELISM_COPY.degradedTitle(
               parallelism.effective,
@@ -178,7 +178,7 @@ export default function OverviewPanel({
           {degradeReasons.map((reason) => (
             <Typography
               key={reason}
-              sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+              sx={{ typography: "s1", color: "text.secondary", mt: 0.5 }}
             >
               {degradeReasonCopy(reason, parallelism.effective)}
             </Typography>
@@ -280,7 +280,7 @@ export default function OverviewPanel({
               alignItems="center"
               spacing={1.5}
               sx={{
-                px: 2.5,
+                px: 3,
                 py: 1.5,
                 pr: 6,
                 borderBottom: "1px solid",
@@ -296,7 +296,7 @@ export default function OverviewPanel({
               <Box flex={1} minWidth={0}>
                 <Typography
                   component="h2"
-                  sx={{ typography: "s1", fontWeight: "fontWeightBold" }}
+                  sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}
                 >
                   {AGENT_SUMMARY_COPY.label}
                 </Typography>

@@ -1,9 +1,8 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box } from "@mui/material";
 
-// A quiet status pill marking a surface that isn't live yet. Kept low-emphasis
-// (muted fill, secondary text) so it reads as state, not a call to action, and
+// A quiet neutral tag marking a surface that isn't live yet. Kept low-emphasis
+// (action.selected fill, secondary text) so it reads as state, not a call to action, and
 // carries a stable aria-label whatever the visible text.
 export default function ComingSoonChip({ compact = false, sx }) {
   return (
@@ -15,17 +14,13 @@ export default function ComingSoonChip({ compact = false, sx }) {
         alignItems: "center",
         flexShrink: 0,
         px: 0.75,
-        py: 0.125,
-        borderRadius: 10,
+        height: 18,
+        borderRadius: "4px",
         typography: "s3",
-        fontWeight: "fontWeightSemiBold",
-        letterSpacing: 0.2,
-        lineHeight: 1.5,
+        fontWeight: 500,
         whiteSpace: "nowrap",
         color: "text.secondary",
-        bgcolor: (th) => alpha(th.palette.text.primary, 0.08),
-        border: "1px solid",
-        borderColor: "divider",
+        bgcolor: "action.selected",
         ...sx,
       }}
     >

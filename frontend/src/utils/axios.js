@@ -21,6 +21,7 @@ import {
 import { resetUser } from "./Mixpanel";
 import logger from "./logger";
 import { RESPONSE_CODES } from "./constants";
+import { retryAfterSeconds } from "./retryAfter";
 import { SS_KEY_ORG_ID, SS_KEY_WORKSPACE_ID } from "./sessionKeys";
 
 // ----------------------------------------------------------------------
@@ -300,7 +301,17 @@ axiosInstance.interceptors.response.use(
       statusCode: error.response?.status,
       // Keep Axios' transport classification without overwriting a semantic
       // API error code from the response body (for example snapshot_changed).
-      transportCode: error.code,
+      transportCode:
+        error.code ||
+        (!error.response && error.request ? "ERR_NETWORK" : undefined),
+      // Preserve only the validated admission wait, not all response headers.
+      ...(status === 429 && {
+        retryAfterSeconds: retryAfterSeconds(
+          error.response?.headers?.get?.("retry-after") ??
+            error.response?.headers?.["retry-after"] ??
+            error.response?.headers?.["Retry-After"],
+        ),
+      }),
     };
 
     return Promise.reject(customError);
@@ -522,6 +533,8 @@ export const endpoints = {
     knowledgeBase: apiPath("/model-hub/knowledge-base/"),
     list: apiPath("/model-hub/knowledge-base/get/"),
     files: apiPath("/model-hub/knowledge-base/files/"),
+    downloadFile: (kbId) =>
+      apiPath("/model-hub/kb/{id}/download-file/", { id: kbId }),
   },
   customMetric: {
     list: (modelId) =>
@@ -1408,6 +1421,30 @@ export const endpoints = {
       `${apiPath("/tracer/observation-span/retrieve_loading/")}?observation_span_id=${id}`,
     getTracesForObserveProject: () =>
       apiPath("/tracer/trace/list_traces_of_session/"),
+    insightsConfigs: () => apiPath("/tracer/insights/configs/"),
+    insightsConfig: (configId) =>
+      apiPath("/tracer/insights/configs/{config_id}/", { config_id: configId }),
+    insightsDraft: () => apiPath("/tracer/insights/draft/"),
+    insightsPreview: () => apiPath("/tracer/insights/preview/"),
+    insightsEstimate: () => apiPath("/tracer/insights/estimate/"),
+    insightsRuns: () => apiPath("/tracer/insights/runs/"),
+    insightsRun: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/", { run_id: runId }),
+    insightsRunStop: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/stop/", { run_id: runId }),
+    insightsRunUnits: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/units/", { run_id: runId }),
+    insightsRunMedia: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/media/", { run_id: runId }),
+    insightsRunAsk: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/ask/", { run_id: runId }),
+    instantEvalRuns: () => apiPath("/tracer/instant-eval/runs/"),
+    instantEvalEstimate: () => apiPath("/tracer/instant-eval/estimate/"),
+    instantEvalStart: () => apiPath("/tracer/instant-eval/start/"),
+    instantEvalSummary: () => apiPath("/tracer/instant-eval/summary/"),
+    instantEvalRows: () => apiPath("/tracer/instant-eval/rows/"),
+    instantEvalExport: () => apiPath("/tracer/instant-eval/export/"),
+    instantEvalControl: () => apiPath("/tracer/instant-eval/control/"),
     getAgentGraph: () => apiPath("/tracer/trace/agent_graph/"),
     getTraceForObserveExport: apiPath("/tracer/trace/get_trace_export_data/"),
     getSpansForObserveProject: () =>
@@ -1448,6 +1485,8 @@ export const endpoints = {
     getEvalDetails: (observationSpanId, customEvalConfigId) =>
       `${apiPath("/tracer/observation-span/get_evaluation_details/")}?custom_eval_config_id=${customEvalConfigId}&observation_span_id=${observationSpanId}`,
     createEvalTask: () => apiPath("/tracer/eval-task/"),
+    samplingPreview: () => apiPath("/tracer/eval-task/sampling_preview/"),
+    samplingAudit: () => apiPath("/tracer/eval-task/sampling_audit/"),
     getEvalTaskDetails: (id) =>
       withQuery(apiPath("/tracer/eval-task/get_eval_details/"), {
         eval_id: id,
