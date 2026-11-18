@@ -87,6 +87,8 @@ test('SKILLS-E2E-104: F4 distinguish loaded and unread links', meta(4, 'See whic
   ['Read two skills in a context with a third linked skill', 'Open its Runtime and Linked skills tabs'], ['The linked but unread skill stays out of the loaded rows']),
 async ({ scenario: s, page },info) => {
   s.emit('python', [s.agent('support', [s.refund, s.tone])]);
+  // Wait for the collector projection before the UI fixes its query window.
+  await s.waitForTraces(1);
   await page.goto(`/dashboard/skills/contexts/${s.context.id}?tab=runtime`);
   const table = page.getByRole('table', { name: 'Skills loaded at runtime' });
   await expect(table).toContainText(s.refund.name);

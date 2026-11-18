@@ -371,9 +371,9 @@ export async function createDriver({ jobId, runId, registration }) {
           await expect(page.locator(`[data-execution-fingerprint="${state.runs.matched.execution_fingerprint}"]`)).toBeVisible();
           // The pipeline's identity is carried from the CI result into the packet by the operator: a counted reconciliation.
           await op.reconcile('pipeline-identity-into-packet', async () => {
-            await page.getByLabel('CI run link').fill(state.ci.summary.url);
-            await page.getByLabel('CI pipeline name').fill(state.ci.report.configuration_identity);
-            await page.getByLabel('CI result (pass or hold)').fill(state.ci.report.passed ? 'passed' : 'failed');
+            await op.fill(page.getByLabel('CI run link'), state.ci.summary.url, 'enter-ci-run-link');
+            await op.fill(page.getByLabel('CI pipeline name'), state.ci.report.configuration_identity, 'enter-ci-pipeline-name');
+            await op.fill(page.getByLabel('CI result (pass or hold)'), state.ci.report.passed ? 'passed' : 'failed', 'enter-ci-result');
           });
           await op.click(page.getByRole('button', { name: 'Share run and attach CI result', exact: true }), 'prepare-release-packet');
           await expect(page.getByText(/Packet ready/)).toBeVisible();

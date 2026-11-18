@@ -509,10 +509,13 @@ test('skills walkthrough', async ({ browser, request }) => {
 
     // ---------------- 7. Review and release
     if (ONLY.includes(7)) {
-      if (!ONLY.includes(6)) await goto(`/dashboard/skills/contexts/${ids.support}?version=2&tab=tests`, page.getByText('Release packet', { exact: true }));
+      const latest = page.getByRole('region', { name: 'Latest result' });
+      if (!ONLY.includes(6)) await goto(`/dashboard/skills/contexts/${ids.support}?version=2&tab=tests`, latest);
       await settle();
-      const packet = page.getByText('Release packet', { exact: true });
+      const packet = latest.getByRole('group', { name: 'Attach your CI run (optional)' });
       await hide(async () => {
+        const details = latest.getByRole('button', { name: 'Technical details', exact: true }).first();
+        if (await details.getAttribute('aria-expanded') !== 'true') await details.click();
         await page.getByRole('textbox', { name: 'CI run link', exact: true }).fill('https://ci.acme-support.example/runs/1842');
         await page.getByRole('textbox', { name: 'CI pipeline name', exact: true }).fill('support-agent-release');
         await page.getByRole('textbox', { name: 'CI result (pass or hold)', exact: true }).fill('pass');
@@ -522,28 +525,24 @@ test('skills walkthrough', async ({ browser, request }) => {
       await scrollTo(packet, 300);
       await chapter(7, 'Review and release', 'Moving production on a context needs a second person. Maya requests it.');
       await click(page.getByRole('button', { name: 'Share run and attach CI result', exact: true }), 1000);
-      const proceed = page.getByRole('link', { name: 'Request release review', exact: true }).or(page.getByRole('button', { name: 'Request release review', exact: true })).first();
+      const proceed = page.getByRole('link', { name: 'Request release for v2', exact: true }).or(page.getByRole('button', { name: 'Request release for v2', exact: true })).first();
       await expect(proceed).toBeVisible();
       await glide(proceed);
       await settle();
       const carried = page.getByRole('group', { name: 'Carried release candidate' });
       await quick(async () => { await proceed.click(); await carried.waitFor({ timeout: 90_000 }); await noPlaceholders(); });
-      await hide(async () => {
-        await page.getByRole('button', { name: 'Prepare exact review', exact: true }).click();
-        await expect(page.getByLabel('Assigned reviewer')).toBeVisible();
-        await noPlaceholders();
-      });
-      const evidence = page.getByText(/^Repair verified: v2 passed 1 of 1 case; the recorded failure reproduced on v1\.$/).first();
-      await point(evidence);
-      await caption('The verified run goes with the request: v2 passed, and the v1 failure reproduced.');
       const reviewer = page.getByLabel('Assigned reviewer');
       await click(reviewer, 500);
       await click(page.getByRole('option', { name: /^Priya Shah/ }), 600);
+      await click(page.getByRole('button', { name: 'Continue', exact: true }), 500);
+      const evidence = page.getByText(/^Repair verified: v2 passed 1 of 1 case; the recorded failure reproduced on v1\.$/).first();
+      await point(evidence);
+      await caption('The verified run goes with the request: v2 passed, and the v1 failure reproduced.');
       await hide(() => page.getByRole('checkbox', { name: "I've checked this version, where it's going and the evidence I'm attaching.", exact: true }).check());
       const send = page.getByRole('button', { name: 'Send request', exact: true });
       await glide(send);
-      await loading(page.getByText(/support-agent · production v1 → v2/), async () => { await send.click(); await page.waitForURL(/mine=1/); });
-      await point(page.getByText(/support-agent · production v1 → v2/));
+      await loading(page.getByText(/support-agent · Move production from v1 to v2/), async () => { await send.click(); await page.waitForURL(/mine=1/); });
+      await point(page.getByText(/support-agent · Move production from v1 to v2/));
       await caption('Sent to Priya, the workspace owner, by name. Nothing moves until she approves.');
       await settle();
       // The switch to the reviewer is shown explicitly.
@@ -552,7 +551,7 @@ test('skills walkthrough', async ({ browser, request }) => {
       mark('card', { label: 'priya' });
       await caption('Now signed in as Priya, the reviewer: the request waits in her review inbox.');
       await dwell(2200);
-      const inboxRow = page.getByRole('button', { name: 'support-agent', exact: true }).first();
+      const inboxRow = page.getByRole('row').filter({ hasText: 'support-agent' }).getByRole('button', { name: 'Open request', exact: true });
       await goto('/dashboard/skills/reviews', inboxRow);
       await noPlaceholders();
       const ack = page.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/, exact: true });

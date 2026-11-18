@@ -166,9 +166,12 @@ export async function createDriver({ jobId, runId, registration }) {
         const kept = preview.packet.evidence.map((ref) => ref.source_id);
         await operator.review(`${name}-changed-preconditions`, [...items.map((_, i) => `change-${i}`), ...removed.map((_, i) => `removed-${i}`)], removed.map((_, i) => `removed-${i}`), async () => {
           for (const item of items) await expect(dialog.locator(`tr[data-field="${item}"]`)).toBeVisible();
+          await expect(dialog.getByTestId('renewal-evidence')).toHaveText(kept.length ? `${kept.length} test result${kept.length === 1 ? " kept; it'll" : "s kept; they'll"} be rechecked when you renew.` : 'No test results kept.');
+          if (kept.length || removed.length) {
+            await reveal(dialog, 'Changed values', 'open-changed-values');
+            await reveal(dialog, 'Technical details', 'open-renewal-technical-details');
+          }
           for (const row of preview.removed_evidence) await expect(dialog.getByText(new RegExp(`${row.source_id} is removed from the renewed request`))).toBeVisible();
-          await expect(dialog.getByText(kept.length ? new RegExp(`renewed request keeps ${kept.length} results? for the same candidate`) : /renewed request keeps no evidence/)).toBeVisible();
-          if (kept.length) await reveal(dialog, 'Technical details', 'open-renewal-technical-details');
           for (const id of kept) await expect(dialog.getByTitle(id, { exact: true })).toBeVisible();
         }, decision);
         await operator.click(dialog.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again.", exact: true }), `${name}-acknowledge-changes`);
@@ -331,7 +334,7 @@ export async function createDriver({ jobId, runId, registration }) {
           requireValue(inbox.results.some((row) => row.id === submitted.id && row.unread), 'Assigned unread request absent');
           await shot(reviewer, 'reviewer-inbox-arrival');
           await op.transition('assigned-request', () => op.click(openRequestButton(reviewer, input.contextName), 'open-assigned-packet'));
-          await expect(ack(reviewer)).toBeVisible();
+          await expect(ack(reviewer)).toBeVisible({ timeout: 60_000 });
           await stamp('reviewer-arrival', inbox);
           return;
         }
