@@ -14,7 +14,9 @@ curated EndUser dimension and wraps the result in the standard
 
 Resolution reads the CDC ``tracer_enduser`` dimension (the collector writes
 all observe data to ClickHouse): the string ``user_id`` is mapped to end-user
-UUIDs via a ``SELECT id FROM tracer_enduser FINAL WHERE user_id = ...`` subquery.
+UUIDs via a ``SELECT ... id FROM tracer_enduser FINAL WHERE user_id = ...``
+subquery, and those IDs are expanded through ``end_user_id_remap`` to every
+old/new ID their spans may carry.
 """
 
 import unittest
