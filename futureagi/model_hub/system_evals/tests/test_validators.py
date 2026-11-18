@@ -423,6 +423,48 @@ def test_numeric_similarity_reads_grouped_and_exponent_numbers():
         assert ev(None, b, a, None)["score"] == 1.0, (b, a)
 
 
+def test_numeric_similarity_grouped_scientific_mantissa():
+    evaluate = _load_eval("numeric_similarity")
+    for text in ("1,234.e2", "1234.e2", "1,234.0e2"):
+        for left, right in [(text, 123400), (123400, text)]:
+            assert evaluate(None, left, right, None) == {
+                "score": 1.0,
+                "reason": "Numeric Similarity: 1.000",
+            }
+
+
+def test_numeric_similarity_long_id_label_not_measurement():
+    evaluate = _load_eval("numeric_similarity")
+    first, second = "1234567890123456", "1234567890123457"
+    for text in (first, f"invoice total: {first}"):
+        assert evaluate(None, text, int(first), None) == {
+            "score": 1.0,
+            "reason": "Numeric Similarity: 1.000",
+        }
+    assert evaluate(None, f"invoice ID {first}", f"invoice ID {second}", None) == {
+        "score": 0.0,
+        "reason": "Cannot calculate: Long integer identifier in output; Long integer identifier in expected",
+    }
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        ("version: 2.1", "Version identifier"),
+        ("VERSION = 2.1", "Version identifier"),
+        ("invoice ID: 1234567890123456", "Long integer identifier"),
+        ("identifier #1234567890123456", "Long integer identifier"),
+    ],
+)
+def test_numeric_similarity_explicit_identifier_on_either_side(value, reason):
+    evaluate = _load_eval("numeric_similarity")
+    for left, right, name in [(value, 2.1, "output"), (2.1, value, "expected")]:
+        assert evaluate(None, left, right, None) == {
+            "score": 0.0,
+            "reason": f"Cannot calculate: {reason} in {name}",
+        }
+
+
 def test_numeric_similarity_comma_without_thousands_group():
     ev = _load_eval("numeric_similarity")
     for a, b in [("1,2345", "1"), ("12,34", "12"), ("1,5", "1")]:
