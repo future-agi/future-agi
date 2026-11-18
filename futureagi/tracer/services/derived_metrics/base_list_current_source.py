@@ -23,7 +23,7 @@ import json
 import re
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from django.db import DEFAULT_DB_ALIAS, connections, transaction
@@ -63,7 +63,7 @@ class SourceUnavailable(SourceIntentError):
     pass
 
 
-class Store(str, Enum):
+class Store(StrEnum):
     SPANS = "spans"
     TRACES = "traces"
     SESSIONS = "trace_sessions"
@@ -72,16 +72,16 @@ class Store(str, Enum):
     USER_REMAP = "end_user_id_remap"
 
 
-class MemberState(str, Enum):
+class MemberState(StrEnum):
     LIVE = "live"
     TOMBSTONE = "tombstone"
 
 
-class ReceiptKind(str, Enum):
+class ReceiptKind(StrEnum):
     LOCAL_SYNCHRONOUS_INSERT = "local-synchronous-insert-v1"
 
 
-class ProgressState(str, Enum):
+class ProgressState(StrEnum):
     PENDING = "pending"
     SETTLED = "settled-not-qualified"
 

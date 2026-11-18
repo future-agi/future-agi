@@ -65,6 +65,9 @@ from tracer.services.derived_metrics.lease import (
 )
 from tracer.services.derived_metrics.refresh import RefreshWriter
 from tracer.services.derived_metrics.retention import expiry_interval
+from tracer.services.private_boundary_log import PrivateBoundaryLogger
+
+private_logger = PrivateBoundaryLogger(__name__)
 
 DISPATCH_SECONDS = 60
 RUN_NOW_THROTTLE = timedelta(seconds=60)
@@ -518,7 +521,7 @@ def dispatch(enqueue: Callable[[dict], None], *, clock: Callable = timezone.now)
             try:
                 enqueue(reservation.payload())
                 count += 1
-            except Exception:
+            except Exception as exc:
                 # A lost enqueue response may already have a running consumer.
                 # Catch inside the transaction so its claim is not rolled back.
                 if (
@@ -530,6 +533,7 @@ def dispatch(enqueue: Callable[[dict], None], *, clock: Callable = timezone.now)
                         reservation, now=clock(), code="metric_dispatch_failed"
                     )
                     _release_queued(reservation)
+                private_logger.exception("metric_dispatch_failed", exc)
     return count
 
 

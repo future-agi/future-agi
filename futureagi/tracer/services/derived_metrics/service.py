@@ -43,8 +43,10 @@ from tracer.services.derived_metrics.spec import (
 )
 from tracer.services.derived_metrics.uncertainty import CONFIDENCE_LEVEL, NOT_COMPUTED
 from tracer.services.derived_metrics.unit_reads import field_recipe
+from tracer.services.private_boundary_log import PrivateBoundaryLogger
 
 logger = structlog.get_logger(__name__)
+private_logger = PrivateBoundaryLogger(__name__)
 SEMANTICS = "One contribution per selection unit; complete cases only; inverse-probability weights apply once. Missing inputs are not zero. Zero denominator and invalid probabilities produce no value. Replay uses frozen inputs, not mutable raw history."
 DEFINITION_KEYS = SEMANTIC_KEYS
 
@@ -1161,10 +1163,11 @@ def _preview_evaluated(
                 f"DROP TEMPORARY TABLE IF EXISTS {table}",
                 settings={"max_execution_time": 2},
             )
-        except Exception:
+        except Exception as exc:
             # Never return a connection carrying somebody's preview evidence to
             # the pool if cleanup failed. Disconnect destroys its temp tables.
             connection.disconnect()
+            private_logger.exception("metric_preview_drop_failed", exc)
 
 
 def preview(

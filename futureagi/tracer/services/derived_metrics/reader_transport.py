@@ -20,6 +20,9 @@ from tracer.services.derived_metrics.reader_lifetime import (
     ReadNotSubmitted,
     ReadReceipt,
 )
+from tracer.services.private_boundary_log import PrivateBoundaryLogger
+
+private_logger = PrivateBoundaryLogger(__name__)
 
 # A deliberately small compiler subset, not a SQL security boundary or a public
 # SQL API. Unknown functions/sources stay native until separately qualified.
@@ -275,7 +278,8 @@ class MetricsReadTransport:
         try:
             self._check_identity(budget)
             self._check_local_sql(sql, budget)
-        except Exception:
+        except Exception as exc:
+            private_logger.exception("metric_read_preflight_refused", exc)
             # These probes only read identity/catalog metadata. No tracked data
             # query has been submitted; a completed child can attest that fact.
             raise ReadNotSubmitted("metrics lane refused before submission") from None

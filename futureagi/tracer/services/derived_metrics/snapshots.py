@@ -58,6 +58,9 @@ from tracer.services.derived_metrics.snapshot_sketches import (
 )
 from tracer.services.derived_metrics.spec import snapshot_support
 from tracer.services.derived_metrics.storage import FIELD_VALUES, RETIRED_PARTS
+from tracer.services.private_boundary_log import PrivateBoundaryLogger
+
+private_logger = PrivateBoundaryLogger(__name__)
 
 PIN_TTL = timedelta(hours=1)
 SUBMISSION_PROTOCOL = "metric_snapshot_submission"
@@ -109,9 +112,9 @@ def enqueue_capture(run_id):
         capture_derived_metric_snapshot.apply_async(
             args=[str(run_id)], dispatch_timeout_seconds=10
         )
-    except Exception:
+    except Exception as exc:
         # The durable queued row is recovered by the bounded 15-minute sweep.
-        pass
+        private_logger.exception("metric_snapshot_dispatch_pending", exc)
 
 
 def request_snapshot(metric, data, user):
@@ -1058,6 +1061,7 @@ def _execute_snapshot(run_id, *, store=None, policy=None):
             )
             # Even partial writes belong to a durable attempt-only cleanup.
             _capture_cleanup(run)
+            private_logger.exception("metric_snapshot_capture_failed", exc)
         finally:
             with serialized_project(scope.project):
                 if DerivedMetricRun.objects.filter(

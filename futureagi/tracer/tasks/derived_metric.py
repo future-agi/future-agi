@@ -6,8 +6,10 @@ from tfc.temporal import temporal_activity
 from tracer.services.derived_metrics import admission
 from tracer.services.derived_metrics.feature_flag import metrics_enabled
 from tracer.services.derived_metrics.service import execute_run
+from tracer.services.private_boundary_log import PrivateBoundaryLogger
 
 logger = structlog.get_logger(__name__)
+private_logger = PrivateBoundaryLogger(__name__)
 
 
 @temporal_activity(
@@ -96,9 +98,7 @@ def cleanup_derived_metric_snapshots() -> int:
             cleanup(limit=limit)
         except Exception as exc:
             # A policy-provider outage must not stop already-authorized erasure.
-            logger.warning(
-                "metric_source_expiry_pending", error_type=type(exc).__name__
-            )
+            private_logger.exception("metric_source_expiry_pending", exc)
     completed = sweep(limit=10)
     if metrics_enabled():
         # Never a completed namespace a (possibly failed) redaction reopened.

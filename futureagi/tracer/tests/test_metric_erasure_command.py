@@ -91,3 +91,50 @@ def test_real_erase_command_rejects_ordinary_process():
     )
     assert result.returncode != 0
     assert "erase_metric_data is disabled during mutation-free startup" in result.stderr
+
+
+@pytest.mark.parametrize("broken_sink", [False, True])
+def test_erase_failure_keeps_subjects_out_of_logs_and_command_error(
+    monkeypatch, caplog, capfd, broken_sink
+):
+    import logging
+
+    from django.core.management.base import CommandError
+
+    from tracer.management.commands import erase_metric_data as command
+
+    private = "synthetic-private-subject"
+
+    def reject(**kwargs):
+        raise ValueError(private) from RuntimeError(private)
+
+    def fail_handler(record):
+        raise OSError(private)
+
+    monkeypatch.setattr(command, "erase_metric_data", reject)
+    if broken_sink:
+        monkeypatch.setattr(logging.getLogger(command.__name__), "handle", fail_handler)
+    with pytest.raises(CommandError, match="Erasure was not queued") as raised:
+        command.Command().handle(
+            subjects_file=None,
+            organization=str(uuid4()),
+            project=None,
+            scope="organization",
+        )
+    assert private not in str(raised.value) and raised.value.__suppress_context__
+    captured = capfd.readouterr()
+    assert private not in caplog.text + captured.out + captured.err
+    if broken_sink:
+        assert "private_boundary_log_unavailable" in captured.err
+    else:
+        (record,) = [
+            record for record in caplog.records if record.name == command.__name__
+        ]
+        assert record.msg["event"] == "metric_erasure_queue_failed"
+        assert record.msg["error_type"] == "ValueError"
+        # Inspect the raw record as an exporter would, not just the renderer.
+        _, marker, tb = record.exc_info
+        assert (
+            tb is marker.__traceback__ is marker.__context__ is marker.__cause__ is None
+        )
+        assert private not in str(marker)

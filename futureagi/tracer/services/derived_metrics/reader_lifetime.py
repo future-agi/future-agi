@@ -33,6 +33,10 @@ from math import isfinite
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from tracer.services.private_boundary_log import PrivateBoundaryLogger
+
+private_logger = PrivateBoundaryLogger(__name__)
+
 
 class ReaderLifetimeError(RuntimeError):
     """Safe, payload-free errors for the opt-in reader."""
@@ -247,7 +251,8 @@ def _child_entry(output: socket.socket, function: Callable, args: tuple) -> None
             result = ("not_submitted", None)
         except IncapableReadLane:
             result = ("incapable", None)
-        except BaseException:
+        except BaseException as exc:
+            private_logger.exception("metric_read_child_failed", exc)
             # Driver exceptions can include SQL, data or headers: never transmit.
             result = ("failed", None)
         try:
@@ -313,7 +318,8 @@ def _run_stage(
                 process.join(max(0, reap_deadline - time.monotonic()))
                 if process.is_alive():
                     raise ReadWorkerUnreaped("client process could not be reaped")
-            except BaseException:
+            except BaseException as exc:
+                private_logger.exception("metric_read_worker_reap_failed", exc)
                 raise ReadWorkerUnreaped("client process drain is unproved") from None
     if outcome:
         return outcome, None
@@ -459,13 +465,13 @@ def bounded_read(
             raise ReadDeadlineExceeded("read execution deadline expired")
         if state != "ok":
             raise ReadExecutionFailed("read transport or execution failed")
-    except BaseException as error:
+    except BaseException as error:  # noqa: BLE001 - log after drain/release, then propagate the original interruption
         failure = error
     # The sole cleanup owner ignores request cancellation during drain/release.
     # Its own crash leaves the prepared lock for recover_read, never a TTL.
-    if isinstance(failure, ReadWorkerUnreaped):
-        raise ReadCleanupPending(receipt) from failure
     try:
+        if isinstance(failure, ReadWorkerUnreaped):
+            raise ReadCleanupPending(receipt) from failure
         if submitted:
             state, acknowledged = _run_stage(
                 control.drain,
@@ -487,6 +493,9 @@ def bounded_read(
             raise ReadCleanupPending(receipt) from failure
     except ReadWorkerUnreaped:
         raise ReadCleanupPending(receipt) from None
+    finally:
+        if failure is not None:
+            private_logger.exception("metric_read_supervisor_failed", failure)
     if failure:
         raise failure
     return value

@@ -19,6 +19,9 @@ from tracer.services.derived_metrics.storage import (
     BUCKET_STAT_SCHEMA,
     FIELD_CHECKPOINT_BUCKETS,
 )
+from tracer.services.private_boundary_log import PrivateBoundaryLogger
+
+private_logger = PrivateBoundaryLogger(__name__)
 
 PART_SCHEMA = (
     ("bucket_start", "DateTime('UTC')"),
@@ -80,8 +83,9 @@ class SessionCapture:
             try:
                 if socket is not None:
                     self.store.execute(f"DROP TEMPORARY TABLE IF EXISTS {self.name}")
-            except Exception:
+            except Exception as cleanup_error:
                 self.store.client.disconnect()
+                private_logger.exception("metric_capture_drop_failed", cleanup_error)
             raise
         relations = getattr(self.store, "_transient_relations", None)
         if relations is None:

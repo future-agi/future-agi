@@ -8,6 +8,7 @@ from django.utils import timezone
 from tfc.temporal import temporal_activity
 from tfc.temporal.sql_workbench import SQL_ACTIVITY_QUEUE, SQLExecutionWorkflow
 from tracer.models.sql_query import SQLExecution
+from tracer.services.private_boundary_log import PrivateBoundaryLogger
 
 from .access import Actor, authorize
 from .catalog import (
@@ -27,6 +28,7 @@ from .service import (
 )
 
 logger = logging.getLogger(__name__)
+private_logger = PrivateBoundaryLogger(__name__)
 
 
 @temporal_activity(
@@ -159,9 +161,8 @@ def purge_expired_sql_results():
     try:
         expire_results(limit=1000)
     except Exception as exc:
-        logger.warning(
-            "Metric SQL expiry pending", extra={"error_type": type(exc).__name__}
-        )
+        # Metric reads stay policy-gated; retry source expiry on the next tick.
+        private_logger.exception("metric_sql_expiry_pending", exc)
     return purge_expired_results(batch_size=1000)
 
 

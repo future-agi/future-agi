@@ -6,6 +6,9 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 
 from tracer.services.derived_metrics.erasure import erase_metric_data
+from tracer.services.private_boundary_log import PrivateBoundaryLogger
+
+private_logger = PrivateBoundaryLogger(__name__)
 
 
 class Command(BaseCommand):
@@ -39,7 +42,8 @@ class Command(BaseCommand):
                 scope_kind=options["scope"],
                 subject_ids=subjects,
             )
-        except Exception:
+        except Exception as exc:
+            private_logger.exception("metric_erasure_queue_failed", exc)
             raise CommandError(
                 "Erasure was not queued. Check scope and private subject-file format."
             ) from None

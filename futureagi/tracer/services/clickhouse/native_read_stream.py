@@ -6,8 +6,11 @@ from typing import Any
 
 import structlog
 
+from tracer.services.private_boundary_log import PrivateBoundaryLogger
+
 # Keep the original component logger shared after extracting the stream helper.
 logger = structlog.get_logger("tracer.services.clickhouse.client")
+private_logger = PrivateBoundaryLogger("tracer.services.clickhouse.client")
 
 
 class _ManagedNativeReadStream:
@@ -127,26 +130,26 @@ class _ManagedNativeReadStream:
         if self._socket is not None and self._original_socket_timeout_known:
             try:
                 self._socket.settimeout(self._original_socket_timeout)
-            except Exception:
+            except Exception as exc:
                 restored = False
-        if self._original_connect_timeout is not None:
-            try:
-                connection.connect_timeout = self._original_connect_timeout
-            except Exception:
-                restored = False
-        try:
-            connection.send_receive_timeout = self._original_send_receive_timeout
-        except Exception:
-            restored = False
+                private_logger.exception(
+                    "native_read_restore_failed", exc, setting="socket_timeout"
+                )
         for name, original in (
+            ("connect_timeout", self._original_connect_timeout),
+            ("send_receive_timeout", self._original_send_receive_timeout),
             ("sync_request_timeout", self._original_sync_request_timeout),
             ("disable_reconnect", self._original_disable_reconnect),
         ):
-            if original is not None:
-                try:
-                    setattr(connection, name, original)
-                except Exception:
-                    restored = False
+            if original is None and name != "send_receive_timeout":
+                continue
+            try:
+                setattr(connection, name, original)
+            except Exception as exc:
+                restored = False
+                private_logger.exception(
+                    "native_read_restore_failed", exc, setting=name
+                )
         return restored
 
     def _retire_client(self) -> None:

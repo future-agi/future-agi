@@ -12,7 +12,6 @@ from contextvars import ContextVar
 from datetime import timedelta
 from uuid import uuid4
 
-import structlog
 from django.db import connections, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -46,6 +45,9 @@ from tracer.services.derived_metrics.snapshots import (
     snapshot_execution_gate,
     snapshot_store,
 )
+from tracer.services.private_boundary_log import PrivateBoundaryLogger
+
+private_logger = PrivateBoundaryLogger(__name__)
 
 WRITER_PROTOCOLS = (
     "metric_submission",
@@ -156,9 +158,7 @@ def erase_metric_data(
     except Exception as exc:
         # Preserve the outbox. Readers deny its namespace once committed; the
         # worker retries payload removal before it can record completion.
-        structlog.get_logger(__name__).warning(
-            "metric_sql_cleanup_pending", error_type=type(exc).__name__
-        )
+        private_logger.exception("metric_sql_cleanup_pending", exc)
     return request
 
 
@@ -798,11 +798,11 @@ def _process_erasure(request_id, *, store=None, writer=None):
                 else code
             )
             MetricErasureRequest.fail(request.id, token=token, error_code=reported_code)
-            structlog.get_logger(__name__).warning(
+            private_logger.exception(
                 "metric_erasure_recovery_required",
+                exc,
                 erasure_request_id=str(request.id),
                 error_code=code,
-                error_type=type(exc).__name__,
                 failure_phase=phase,
                 native_error_code=getattr(exc, "code", None)
                 if type(getattr(exc, "code", None)) is int
