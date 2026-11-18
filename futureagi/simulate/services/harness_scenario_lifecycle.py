@@ -25,6 +25,11 @@ from simulate.models import (
 )
 from simulate.models.harness_versioning import VersionStatus
 from simulate.services.canonical_json import canonical_digest
+from simulate.services.harness_scenario_sources import file_path
+from simulate.services.harness_seed_joins import (
+    broken_join_text,
+    environment_broken_joins,
+)
 from simulate.services.harness_versioning.versions import proof_passes
 
 LifecycleState = Literal["draft", "validated", "active", "kept_as_written", "archived"]
@@ -51,6 +56,7 @@ REASON_TEXTS = {
     "no_negative_control": "No negative control: add a wrong behaviour that this case's checks must fail.",
     "not_active": "Validated on these versions, which are not saved yet: save them to run it.",
     "proved_on_other_agent": "Proved with another agent version; validate it with this one to run it.",
+    "broken_join": "Its seed records do not join up: {joins}. Map the field or add the rows.",
     "negative_control_passed": "The checks pass a wrong behaviour: {control} ({control_why}). Tighten {checks}.",
     "answer_leaked": 'What the {who} sees gives the answer away: {field} repeats "{excerpt}" from {grader_field}.',
     "source_unresolved": "A cited source is not in this environment: {kind} {ref}.",
@@ -438,6 +444,18 @@ def scenario_lifecycle(
         stored={key: list(row.get("sources") or []) for key, row in rows.items()},
     )
     changed = source_changed(environment_version, contents)
+    cited_files = {
+        key: {
+            file_path(str(one.get("ref") or ""))
+            for one in (content or {}).get("sources") or []
+            if isinstance(one, Mapping) and one.get("kind") == "file"
+        }
+        for key, content in contents.items()
+    }
+    joins = environment_broken_joins(
+        environment_version,
+        set().union(*cited_files.values()) if cited_files else set(),
+    )
     from simulate.services.hosted_harness_conversation import failed_changes
 
     failed = failed_changes(environment) if default else {}
@@ -526,6 +544,25 @@ def scenario_lifecycle(
                     entry,
                     kind=bad["kind"],
                     ref=bad["ref"] or bad["label"],
+                ),
+                warning=None,
+                warning_text=None,
+            )
+        broken = next(
+            (
+                joins.get(path) or joins.get(f"knowledge/{path}")
+                for path in sorted(cited_files.get(key) or ())
+                if joins.get(path) or joins.get(f"knowledge/{path}")
+            ),
+            None,
+        )
+        if broken and view["state"] != "archived":
+            # The rows it starts from do not join up: only the cases citing that file are held.
+            view.update(
+                state="draft",
+                reason="broken_join",
+                reason_text=reason_text(
+                    "broken_join", entry, joins=broken_join_text(broken)
                 ),
                 warning=None,
                 warning_text=None,

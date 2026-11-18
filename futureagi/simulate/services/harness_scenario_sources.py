@@ -269,7 +269,8 @@ def _rule_match(quote: str, rules: list[str]) -> int | None:
     )
 
 
-def _file_path(ref: str) -> str:
+def file_path(ref: str) -> str:
+    """The attached file a file source cites, as its path in the environment."""
     return ref.removeprefix("file:").strip().lstrip("/")
 
 
@@ -326,7 +327,7 @@ def stored_file_results(
     unread = [one for one in wanted if str(one.get("ref")) not in by_ref]
     texts: dict[str, bytes] = {}
     if unread and archive_key:
-        paths = {_file_path(str(one.get("ref") or "")) for one in unread}
+        paths = {file_path(str(one.get("ref") or "")) for one in unread}
         paths |= {f"knowledge/{path}" for path in paths}
         try:
             texts = archives.stream_members(archive_key, paths, FILE_READ_MAX)
@@ -334,7 +335,7 @@ def stored_file_results(
             logger.warning("harness_scenario_source_file_unread", archive=archive_key)
     for one in wanted:
         ref = str(one.get("ref") or "")
-        path = _file_path(ref)
+        path = file_path(ref)
         alk = by_ref.get(ref)
         if alk is not None:
             results.append(
@@ -373,7 +374,7 @@ def _label(
         text = rules[matched] if matched is not None else quote
         return text[:80]
     if kind == "file":
-        return _file_path(ref).rsplit("/", 1)[-1]
+        return file_path(ref).rsplit("/", 1)[-1]
     if kind == "chat_message":
         return (
             f"Builder chat, {created:%d %b %Y}"
@@ -444,7 +445,7 @@ def resolve(
                     else "no rule of this version contains the quoted words"
                 )
             elif kind == "file":
-                path = _file_path(ref)
+                path = file_path(ref)
                 result = kept.get(ref) or {}
                 current = _digest_for(path, digests)
                 if current is None:
