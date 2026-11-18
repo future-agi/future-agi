@@ -11,15 +11,17 @@ that keep the issue stream clean and safe:
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from google.auth.exceptions import MalformedError, RefreshError
+import sentry_sdk
+from google.auth.exceptions import InvalidValue, MalformedError, RefreshError
 from google.oauth2 import service_account
-from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.scope import global_event_processors
 
+from tfc.logging import sentry
 from tfc.logging.sentry import (
     _REDACTED,
     _event_scrubber,
@@ -29,7 +31,7 @@ from tfc.logging.sentry import (
     _scrub_deployment_telemetry_event,
     _scrub_event,
 )
-from tfc.tests.sentry_capture import sentry_capture
+from tfc.tests.sentry_capture import EnvelopeTransport
 
 before_send = _get_before_send()
 
@@ -156,6 +158,51 @@ def test_only_drops_litellm_credential_records_from_its_own_logger():
         assert before_send(event, _log_hint(name, error, msg)) is event
 
 
+@pytest.fixture
+def vertex_capture(monkeypatch):
+    monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    from litellm.llms.vertex_ai.vertex_llm_base import VertexBase
+
+    # Keep production hooks, locals, source context and scrubber. Replace the
+    # transport and don't auto-instrument unrelated packages in the test process.
+    transport = EnvelopeTransport()
+    real_init = sentry_sdk.init
+
+    def recording_init(**options):
+        return real_init(**options, transport=transport, default_integrations=False)
+
+    monkeypatch.setattr(sentry_sdk, "init", recording_init)
+    monkeypatch.setattr(sentry, "SENTRY_ENABLED", True)
+    monkeypatch.setattr(sentry, "SENTRY_DSN", "https://public@example.invalid/1")
+    monkeypatch.setattr(sentry, "_initialized_components", set())
+    scope = sentry_sdk.get_global_scope()
+    previous = scope.client
+    with sentry_sdk.isolation_scope() as isolated:
+        isolated.clear_breadcrumbs()
+        try:
+            assert sentry.init_sentry(component="temporal")
+            assert sentry_sdk.get_client().options["include_local_variables"]
+            yield VertexBase(), transport.events
+        finally:
+            if scope.client is not previous:
+                scope.client.close()
+            scope.set_client(previous)
+
+
+# Deliberately invalid test values, never signing material or usable tokens.
+_TEST_KEY = "SENTINEL-PK-vertex-privacy"
+_TEST_SECRET = "SENTINEL-CS-vertex-privacy"
+_TEST_REFRESH = "SENTINEL-RT-vertex-privacy"
+
+
+def _capture_later_failure():
+    # A separate traceback, so the only shared context is the breadcrumb trail.
+    try:
+        raise LookupError("unrelated failure")
+    except LookupError:
+        sentry_sdk.capture_exception()
+
+
 @pytest.mark.parametrize(
     ("endpoint_result", "error_type", "match", "event_count"),
     [
@@ -182,12 +229,38 @@ def test_only_drops_litellm_credential_records_from_its_own_logger():
             id="invalid-grant",
         ),
         pytest.param(
-            (False, {"error": "server_error"}, True),
+            (False, {"error": "invalid_client"}, False),
+            RefreshError,
+            "invalid_client",
+            0,
+            id="invalid-client",
+        ),
+        pytest.param(
+            (
+                False,
+                {
+                    "error": "server_error",
+                    "error_description": "invalid_grant: Token revoked",
+                },
+                True,
+            ),
             RefreshError,
             "server_error",
             1,
             id="server-error",
         ),
+        pytest.param(
+            (
+                False,
+                {"error": "invalid_grant", "error_description": "Token revoked"},
+                True,
+            ),
+            RefreshError,
+            "invalid_grant",
+            1,
+            id="retryable-invalid-grant",
+        ),
+        pytest.param(None, InvalidValue, _TEST_KEY, 1, id="invalid-key-value"),
         pytest.param(
             RuntimeError("unexpected token endpoint failure"),
             RuntimeError,
@@ -198,34 +271,53 @@ def test_only_drops_litellm_credential_records_from_its_own_logger():
     ],
 )
 def test_vertex_token_endpoint_sentry_events(
-    monkeypatch, endpoint_result, error_type, match, event_count
+    vertex_capture, endpoint_result, error_type, match, event_count
 ):
-    monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
-    from litellm.llms.vertex_ai.vertex_llm_base import VertexBase
-
-    # Explicit authorized-user data goes through google-auth's real refresh
-    # flow without using application default credentials or a signing key.
-    credentials = {
-        "type": "authorized_user",
-        "client_id": "test-id",
-        "client_secret": "test-secret",
-        "refresh_token": "test-refresh-token",
-    }
+    vertex, events = vertex_capture
+    if error_type is InvalidValue:
+        # google-auth's key converter includes the rejected value in its diagnostic.
+        credentials = {
+            "type": "service_account",
+            "client_email": "test@example.invalid",
+            "token_uri": "https://example.invalid/token",
+            "private_key": [_TEST_KEY],
+        }
+    else:
+        credentials = {
+            "type": "authorized_user",
+            "client_id": "test-id",
+            "client_secret": _TEST_SECRET,
+            "refresh_token": _TEST_REFRESH,
+        }
     with patch("google.oauth2._client._token_endpoint_request_no_throw") as endpoint:
         if isinstance(endpoint_result, Exception):
             endpoint.side_effect = endpoint_result
         else:
             endpoint.return_value = endpoint_result
-        with sentry_capture(
-            LoggingIntegration(), include_local_variables=False
-        ) as capture:
-            with pytest.raises(error_type, match=match):
-                VertexBase().get_access_token(credentials, project_id="test-project")
-    endpoint.assert_called_once()
-    assert len(capture.events) == event_count
-    for event in capture.events:
-        assert event["logger"] == "LiteLLM"
-        assert event["exception"]["values"][-1]["type"] == error_type.__name__
+        with pytest.raises(error_type, match=match):
+            vertex.get_access_token(credentials, project_id="test-project")
+        assert endpoint.call_count == int(error_type is not InvalidValue)
+
+    # Compare only counts/types, never print envelopes or raw frame locals on failure.
+    reported = len(events)
+    assert reported == event_count
+    if reported:
+        error = events[0]["exception"]["values"][-1]["type"]
+        assert error == error_type.__name__
+
+    _capture_later_failure()
+    total = len(events)
+    assert total == reported + 1
+    later_type = events[-1]["exception"]["values"][-1]["type"]
+    assert later_type == "LookupError"
+    for index, event in enumerate(events):
+        serialized = json.dumps(event)
+        if any(
+            marker in serialized for marker in (_TEST_KEY, _TEST_SECRET, _TEST_REFRESH)
+        ):
+            pytest.fail(
+                f"Credential marker present in serialized event {index + 1}/{total}"
+            )
 
 
 def test_expected_outcome_loggers_are_dropped_by_before_send_alone():

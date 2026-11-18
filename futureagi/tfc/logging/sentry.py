@@ -19,6 +19,7 @@ Usage:
 
 import json
 import os
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -148,6 +149,24 @@ SENSITIVE_KEY_SUBSTRINGS = (
     "environment_values",
     "credential_values",
 )
+# LiteLLM caches by the full credential document, not by a digest. These
+# aliases can hold a string or a tuple, neither of which has fields to scrub.
+_CREDENTIAL_ALIASES = {
+    "cache_credentials",
+    "credential_cache_key",
+    "resolved_cache_key",
+}
+_CREDENTIAL_FIELDS = {"private_key", "client_secret", "refresh_token"}
+# The SDK may already have rendered or truncated a JSON string or a dict repr.
+_CREDENTIAL_FIELD_IN_TEXT = re.compile(
+    r"""["'](?:private_key|client_secret|refresh_token)["']\s*:"""
+)
+_VERTEX_MODULE = "litellm.llms.vertex_ai.vertex_llm_base"
+_VERTEX_LOAD_MESSAGE = (
+    "Failed to load vertex credentials. Check to see if credentials "
+    "containing partial/invalid information. Error: "
+)
+_VERTEX_SAFE_MESSAGE = "Vertex credential loading failed"
 _REDACTED = "[Filtered]"
 
 # Sample rates - configurable via env, lower in production to reduce costs
@@ -167,7 +186,9 @@ def _is_sensitive_key(key: Any) -> bool:
     if not isinstance(key, str):
         return False
     lowered = key.lower()
-    return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
+    return lowered in _CREDENTIAL_ALIASES or any(
+        s in lowered for s in SENSITIVE_KEY_SUBSTRINGS
+    )
 
 
 _SAML_VALUE_MARKERS = ("<saml:", "<samlp:", "SAMLResponse=", "fai_saml_b_")
@@ -177,11 +198,15 @@ def _scrub(value: Any, depth: int = 0) -> Any:
     """Recursively redact values under sensitive keys (defensive, bounded)."""
     if depth > 6:
         return value
-    if isinstance(value, str) and any(
-        marker in value for marker in _SAML_VALUE_MARKERS
+    if isinstance(value, str) and (
+        any(marker in value for marker in _SAML_VALUE_MARKERS)
+        or _CREDENTIAL_FIELD_IN_TEXT.search(value)
     ):
         return _REDACTED
     if isinstance(value, dict):
+        if not _CREDENTIAL_FIELDS.isdisjoint(value):
+            # Sections such as extra or headers must remain mappings in Sentry.
+            return dict.fromkeys(value, _REDACTED)
         return {
             k: (_REDACTED if _is_sensitive_key(k) else _scrub(v, depth + 1))
             for k, v in value.items()
@@ -191,7 +216,51 @@ def _scrub(value: Any, depth: int = 0) -> Any:
     return value
 
 
-def _scrub_event(event: dict) -> None:
+def _vertex_log_message(logger: object, message: object) -> bool:
+    return (
+        logger == "LiteLLM"
+        and isinstance(message, str)
+        and message.startswith(
+            (_VERTEX_LOAD_MESSAGE, "Failed to load vertex credentials: ")
+        )
+    )
+
+
+def _vertex_auth_frame(module: object, function: object) -> bool:
+    return module == _VERTEX_MODULE and function in (
+        "load_auth",
+        "get_access_token",
+        "get_access_token_async",
+        "refresh_auth",
+    )
+
+
+def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
+    # A dropped log event still creates a breadcrumb on the *next* event.
+    # Strip the rendered message and its arguments before storing it in scope.
+    record = hint.get("log_record")
+    sensitive = _vertex_log_message(crumb.get("category"), crumb.get("message"))
+    if record is not None and record.exc_info:
+        tb = record.exc_info[2]
+        while tb is not None and not sensitive:
+            frame = tb.tb_frame
+            sensitive = _vertex_auth_frame(
+                frame.f_globals.get("__name__"), frame.f_code.co_name
+            )
+            tb = tb.tb_next
+    if sensitive:
+        crumb["message"] = _VERTEX_SAFE_MESSAGE
+        crumb.pop("data", None)
+    else:
+        # Other breadcrumbs can carry a serialized credential without coming
+        # from the provider logger (for example, an HTTP breadcrumb's data).
+        for key in ("message", "data"):
+            if key in crumb:
+                crumb[key] = _scrub(crumb[key])
+    return crumb
+
+
+def _scrub_event(event: dict, *, vertex_log: bool = False) -> None:
     """
     Redact obvious secrets/PII in-place before the event leaves the process.
 
@@ -218,21 +287,38 @@ def _scrub_event(event: dict) -> None:
     if isinstance(contexts, dict):
         event["contexts"] = _scrub(contexts)
 
-    # Sentry captures local variables (include_local_variables=True). An
-    # uncaught error in the ACS candidate-store path leaves the raw assertion
-    # in the view's stack frame; redact those vars the same way as request data
-    # so the assertion body never leaves the process (review finding 1, B7).
-    exception = event.get("exception")
-    if isinstance(exception, dict):
-        for value in exception.get("values") or []:
-            if not isinstance(value, dict):
-                continue
-            stacktrace = value.get("stacktrace")
-            if not isinstance(stacktrace, dict):
-                continue
-            for frame in stacktrace.get("frames") or []:
-                if isinstance(frame, dict) and isinstance(frame.get("vars"), dict):
-                    frame["vars"] = _scrub(frame["vars"])
+    def entries(container: object, key: str) -> list[dict]:
+        items = container.get(key) if isinstance(container, dict) else None
+        if not isinstance(items, (list, tuple)):
+            return []
+        return [item for item in items if isinstance(item, dict)]
+
+    values = entries(event.get("exception"), "values")
+    threads = entries(event.get("threads"), "values")
+    frames = [
+        frame
+        for item in (*values, *threads)
+        for frame in entries(item.get("stacktrace"), "frames")
+    ]
+    if vertex_log or any(
+        _vertex_auth_frame(frame.get("module"), frame.get("function"))
+        for frame in frames
+    ):
+        # Both the provider and its callers can hold raw credential fields under
+        # unrelated names. Keep the stack and exception types, not locals or
+        # free-form diagnostics (which can quote the rejected input verbatim).
+        for frame in frames:
+            frame.pop("vars", None)
+        for value in values:
+            value["value"] = _VERTEX_SAFE_MESSAGE
+        if "logentry" in event:
+            event["logentry"] = {"message": _VERTEX_SAFE_MESSAGE}
+        if "message" in event:
+            event["message"] = _VERTEX_SAFE_MESSAGE
+    else:
+        for frame in frames:
+            if isinstance(frame.get("vars"), dict):
+                frame["vars"] = _scrub(frame["vars"])
 
 
 def _event_scrubber() -> Any:
@@ -244,9 +330,11 @@ def _event_scrubber() -> Any:
     """
     from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 
-    denylist = list(DEFAULT_DENYLIST) + [
-        k for k in SENSITIVE_KEY_SUBSTRINGS if k not in DEFAULT_DENYLIST
-    ]
+    denylist = (
+        list(DEFAULT_DENYLIST)
+        + sorted(_CREDENTIAL_ALIASES)
+        + [k for k in SENSITIVE_KEY_SUBSTRINGS if k not in DEFAULT_DENYLIST]
+    )
     return EventScrubber(denylist=denylist, recursive=True)
 
 
@@ -448,10 +536,7 @@ def _get_before_send() -> Callable:
             exc_info = getattr(record, "exc_info", None)
             if (
                 isinstance(msg, str)
-                and msg.startswith(
-                    "Failed to load vertex credentials. Check to see if credentials "
-                    "containing partial/invalid information. Error: "
-                )
+                and msg.startswith(_VERTEX_LOAD_MESSAGE)
                 and isinstance(exc_info, tuple)
                 and len(exc_info) == 3
                 and _expected_vertex_credential_error(exc_info[1])
@@ -466,7 +551,12 @@ def _get_before_send() -> Callable:
 
         # 3. Scrub secrets/PII from the surviving event.
         try:
-            _scrub_event(event)
+            _scrub_event(
+                event,
+                vertex_log=_vertex_log_message(
+                    record_name, getattr(record, "msg", None)
+                ),
+            )
         except Exception:
             # Never let scrubbing failures drop a real error.
             pass
@@ -645,6 +735,7 @@ def init_sentry(
             in_app_exclude=["celery", "kombu", "temporalio", "django"],
             # Hooks
             before_send=_get_before_send(),
+            before_breadcrumb=_before_breadcrumb,
             before_send_transaction=lambda event, hint: (
                 _scrub_deployment_telemetry_event(event)
             ),
