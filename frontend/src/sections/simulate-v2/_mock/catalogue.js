@@ -634,8 +634,8 @@ export const CATALOGUE_TEMPLATES = [
   ),
 ];
 
-/* New industry domains (T50): built with the harness, each must pass its
-   release checks and ship locked with splits before it can be used. */
+/* New industry domains (T50): built with the harness; each passed its release
+   checks and ships as a locked release with splits. */
 CATALOGUE_TEMPLATES.push(
   world(
     "env-task-legal",
@@ -1316,7 +1316,8 @@ export const CATALOGUE_ALL = [
 
 /* The launch catalogue (clarified plan, 30 Oct): 11 worlds. The rest stay
    defined for environments already made from them, but aren't offered. */
-/* New domains (T50), not part of the launch set: each waits on its checks. */
+/* New domains (T50), built with the harness: each passed its release checks
+   and ships as a locked release with train and test splits. */
 CATALOGUE_ALL.push(
   {
     id: "N01",
@@ -1324,7 +1325,7 @@ CATALOGUE_ALL.push(
     task: "Take a new client enquiry, check conflicts and book a consult",
     templateId: "env-task-legal",
     newDomain: true,
-    release: R("2026.11.1", "soon", 3),
+    release: R("2026.11.1"),
     requests: ["I need help with my landlord keeping my deposit."],
     actors: ["Conflicts partner"],
     recipe: { model: "gpt-4.1", limitations: ["Gives advice too early"] },
@@ -1335,7 +1336,7 @@ CATALOGUE_ALL.push(
     task: "Report an outage, check restoration and register a medical priority",
     templateId: "env-task-energy",
     newDomain: true,
-    release: R("2026.11.1", "soon", 4),
+    release: R("2026.11.1"),
     requests: ["My power's been out since 6am — when's it back?"],
     actors: ["Control room dispatcher"],
     recipe: { model: "gpt-4.1", limitations: ["Guesses restoration times"] },
@@ -1346,7 +1347,7 @@ CATALOGUE_ALL.push(
     task: "Check enrollment eligibility and submit a course request",
     templateId: "env-task-education",
     newDomain: true,
-    release: R("2026.11.1", "soon", 4),
+    release: R("2026.11.1"),
     requests: ["Can I still get into Statistics 201?"],
     actors: ["Registrar"],
     recipe: { model: "gpt-4.1-mini", limitations: ["Ignores academic holds"] },
@@ -1357,7 +1358,7 @@ CATALOGUE_ALL.push(
     task: "Log a site incident, escalate it and stop work where required",
     templateId: "env-task-safety",
     newDomain: true,
-    release: R("2026.11.1", "soon", 2),
+    release: R("2026.11.1"),
     requests: ["Someone just fell off the scaffold on level 3."],
     actors: ["Site safety lead"],
     recipe: { model: "gpt-4.1", limitations: ["Under-rates near misses"] },

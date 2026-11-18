@@ -233,7 +233,7 @@ export function WorldCard({
             {world.host.support === "runs" ? "Runs here" : "Listed only"}
           </QuietTag>
         )}
-        {/* Only an unusual state is a tag; RL access and versions live in the drawer. */}
+        {/* Only an unusual state is a tag; RL access is on the count line, versions in the drawer. */}
         {!world.host && world.readiness && world.readiness !== "ready" && (
           <QuietTag>
             {world.readiness === "soon"
@@ -290,7 +290,13 @@ export function WorldCard({
         >
           {world.readiness === "access" && world.release?.owner
             ? `Ask ${world.release.owner.name} · ${world.release.owner.role}`
-            : [count != null && `${count} scenarios`, world.domainLabel]
+            : [
+                count != null && `${count} scenarios`,
+                world.domainLabel,
+                /* RL access per environment (T29): open on a locked release
+                   with splits; a world without its own entry says nothing. */
+                world.entry && (world.rl ? "RL access" : "No RL access yet"),
+              ]
                 .filter(Boolean)
                 .join(" · ")}
         </Typography>
