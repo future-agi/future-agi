@@ -1006,6 +1006,22 @@ func (h *Handlers) servingProvider(rc *models.RequestContext) (providers.Provide
 	return h.registry.GetProvider(rc.Provider)
 }
 
+// servedVertexLocationKey carries, to the cost step, the Vertex AI location
+// of the provider instance that served a chat request.
+const servedVertexLocationKey = "served_vertex_location"
+
+// noteServedVertexLocation records where p, the instance that has just served
+// rc, sends its requests on Vertex AI. It is read from p itself rather than
+// looked up again by provider ID: an org's own instance and the config's can
+// share an ID, and an internal key or a fallback may be served by either.
+func noteServedVertexLocation(rc *models.RequestContext, p providers.Provider) {
+	if location := providers.VertexLocation(p); location != "" {
+		rc.Metadata[servedVertexLocationKey] = location
+		return
+	}
+	delete(rc.Metadata, servedVertexLocationKey)
+}
+
 // pinPriceTable records the price-table name of p, the instance that served rc.
 // Chat pins it where the successful instance is known, since retries and
 // failover can switch instances. Other handlers leave it unset and
@@ -1510,6 +1526,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			rc.ServedBy = provider
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
+			noteServedVertexLocation(rc, provider)
 			return nil
 		}
 
@@ -1530,6 +1547,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 			if fbCallErr == nil {
 				servingProvider = fbProvider
+				noteServedVertexLocation(rc, fbProvider)
 				pinPriceTable(rc, fbProvider)
 				rc.ServedBy = fbProvider
 				rc.Response = fbResp
@@ -1585,6 +1603,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				return err
 			}
 			servingProvider = p
+			noteServedVertexLocation(rc, p)
 			pinPriceTable(rc, p)
 			rc.ServedBy = p
 			rc.Response = resp
@@ -1620,6 +1639,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				fbResp, fbCallErr := h.callChatProvider(ctx, fbProvider, rc.Request)
 				if fbCallErr == nil {
 					servingProvider = fbProvider
+					noteServedVertexLocation(rc, fbProvider)
 					pinPriceTable(rc, fbProvider)
 					rc.ServedBy = fbProvider
 					rc.Response = fbResp
@@ -1726,6 +1746,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 		upstreamStreamCancel = attemptCancel
 		servingProvider = callProvider
+		noteServedVertexLocation(rc, callProvider)
 		pinPriceTable(rc, callProvider)
 		rc.ServedBy = callProvider
 		chunks = candidateChunks
@@ -2408,14 +2429,15 @@ func isBlockedMetadataKey(key string) bool {
 	// Block specific keys that don't follow a prefix pattern.
 	//
 	// The cost family is listed exactly rather than by prefix. The plugins own
-	// "cost", "cost_source" and the four cost_* keys below and nothing else,
-	// while any prefix wide enough to cover them also swallows cost_center and
+	// "cost", "cost_source" and the cost_* keys below and nothing else, while
+	// any prefix wide enough to cover them also swallows cost_center and
 	// cost_code — ordinary business dimensions. A new internal cost_* key must
 	// be added here by hand (the cost plugin's Metadata* constants).
 	switch lower {
 	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source",
 		"cost_reported_unit", "cost_is_byok", "cost_catalogue", "cost_reported_zero",
-		"translation_drops", usageEstimatedKey, metadataErrorKey:
+		"cost_cached_tokens", "cost_vertex_location", "cost_region_uplift",
+		"translation_drops", servedVertexLocationKey, usageEstimatedKey, metadataErrorKey:
 		return true
 	}
 	return false

@@ -137,11 +137,7 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 	}
 
 	if resp.UsageMetadata != nil {
-		chunk.Usage = &models.Usage{
-			PromptTokens:     resp.UsageMetadata.PromptTokenCount,
-			CompletionTokens: resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
-			TotalTokens:      resp.UsageMetadata.TotalTokenCount,
-		}
+		chunk.Usage = resp.UsageMetadata.toUsage()
 	}
 
 	return chunk, nil
