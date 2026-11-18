@@ -12,6 +12,7 @@ from model_hub.models.develop_dataset import KnowledgeBaseFile
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.function_eval_params import normalize_eval_runtime_config
 from simulate.models import SimulateEvalConfig
+from simulate.services.harness_evals import regrade_mapping
 
 
 class EvalConfigEditRefused(Exception):
@@ -27,6 +28,50 @@ def has_own_mapping(eval_config) -> bool:
     """
     mapping = eval_config.mapping
     return isinstance(mapping, dict) and bool(mapping)
+
+
+def harness_column_refusal(
+    eval_config, *, harness_run: bool, bare_rerun: bool = False
+) -> str | None:
+    """The refusal for editing a result column the harness fills, or None.
+
+    Later harness runs write into such a column by its fixed id, and grading
+    it again would replace the harness's verdict, so neither edit route may
+    change it. The caller asks whether the run is a harness run, so each route
+    keeps its own lookup and its own order.
+
+    ``bare_rerun`` is a request that changes no field and only grades the
+    column again. The platform can grade a built-in suite column (it has a
+    ``regrade_mapping``), and "Re-run evals" grades it the same way, so that
+    request is let through; any other column is refused with a pointer there.
+    """
+    if not harness_run or has_own_mapping(eval_config):
+        return None
+    name = eval_config.name or "This evaluation"
+    if not bare_rerun:
+        return f"{name} is set by the harness and can't be edited here."
+    if regrade_mapping(eval_config) is not None:
+        return None
+    return (
+        f"{name} is set by the harness and can't be re-run here. "
+        'Use "Re-run evals" on the run to grade again the evals the platform can.'
+    )
+
+
+def keeps_own_mapping(name: str):
+    """A ``before_save`` for ``update_eval_config`` that refuses an edit leaving no mapping of its own.
+
+    On a harness run an eval with no mapping reads as a result column the
+    harness fills, so an edit may not turn a person's eval into one. ``name``
+    is taken before the edit, so a rename sent in the same body doesn't change
+    the words.
+    """
+
+    def refuse_without_mapping(edited):
+        if not has_own_mapping(edited):
+            raise EvalConfigEditRefused(f"{name} needs at least one input mapped")
+
+    return refuse_without_mapping
 
 
 def visible_eval_template_query(user_organization, workspace):
