@@ -1344,13 +1344,17 @@ def prove_suite_command(
 
 
 AGENT_READING_PATH = "/work/reading/agent.json"
+# The module asked whether the harness takes --agent-document: it builds its parser before anything else, so --help
+# exits with no side effects. The hosted entrypoint is never probed: it sets up isolation and writes credential files
+# before it parses, and under required isolation it exits before --help is read.
+AGENT_DOCUMENT_PROBE = "fi.alk.harness.authoring_entrypoint"
 # The agent version's tools, for proving to refuse a case whose reference calls one it lacks: the document a reading
 # wrote or the version's stored one, given only when it is there and the harness takes the flag. The platform records
 # no harness version it could compare (the sandbox template is an opaque name), so the harness in the sandbox is asked
 # whether it lists the flag; an older one is never given an argument it would refuse. Drop the probe once every
 # template in use carries the flag.
 AGENT_DOCUMENT_FLAG = (
-    f"$(test -f {AGENT_READING_PATH} && python -m fi.alk.harness.hosted_authoring_entrypoint --help 2>/dev/null "
+    f"$(test -f {AGENT_READING_PATH} && python -m {AGENT_DOCUMENT_PROBE} --help 2>/dev/null "
     f"| grep -q -- --agent-document && echo ' --agent-document {AGENT_READING_PATH}')"
 )
 

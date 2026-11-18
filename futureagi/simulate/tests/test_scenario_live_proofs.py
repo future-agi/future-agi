@@ -195,10 +195,11 @@ def test_proving_is_given_the_agent_document_only_when_it_is_there_and_the_harne
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     fake = bin_dir / "python"
+    # The harness's own help, from the module the probe names only: any other module prints nothing.
     fake.write_text(
-        "#!/bin/sh\necho '"
+        '#!/bin/sh\nif [ "$1 $2 $3" = "-m fi.alk.harness.authoring_entrypoint --help" ]; then echo \''
         + ("--agent-document PATH" if takes_flag else "--prove-only")
-        + "'\n"
+        + "'; fi\n"
     )
     fake.chmod(0o755)
     fragment = assembly.AGENT_DOCUMENT_FLAG.replace(
@@ -216,3 +217,16 @@ def test_proving_is_given_the_agent_document_only_when_it_is_there_and_the_harne
     assert out == (f" --agent-document {document}" if given else "")
     assert assembly.AGENT_DOCUMENT_FLAG in assembly.certify_command(prove=True)
     assert assembly.AGENT_DOCUMENT_FLAG in assembly.prove_suite_command()
+
+
+def test_the_probe_asks_the_entrypoint_that_parses_before_anything_else():
+    """`authoring_entrypoint` builds its parser first, so --help has no side effects; the hosted entrypoint sets up
+    isolation and credential files before it parses, and is never the one asked."""
+    from simulate.services.harness_versioning import assembly
+
+    assert assembly.AGENT_DOCUMENT_PROBE == "fi.alk.harness.authoring_entrypoint"
+    assert (
+        f"python -m {assembly.AGENT_DOCUMENT_PROBE} --help"
+        in assembly.AGENT_DOCUMENT_FLAG
+    )
+    assert "hosted_authoring_entrypoint" not in assembly.AGENT_DOCUMENT_FLAG
