@@ -198,14 +198,24 @@ def _scrub(value: Any, depth: int = 0) -> Any:
 
 
 # ``<sensitive name>=<value>`` or ``<sensitive name>: <value>`` inside free
-# text, with an optional quote around either side and an optional auth scheme.
+# text, with an optional quote around the name and an optional auth scheme. A
+# quoted value runs to its matching closing quote, spaces included. An
+# unquoted value runs to the next whitespace or delimiter: there is no way to
+# tell where an unquoted value with spaces ends, so callers that log one as a
+# %s argument are covered by matching that argument by position instead.
 _SENSITIVE_PAIR_IN_TEXT = re.compile(
     r"""(?P<key>[\w.\-]*(?:"""
     + "|".join(re.escape(key) for key in SENSITIVE_KEY_SUBSTRINGS)
-    + r""")[\w.\-]*)(?P<sep>["']?\s*[:=]\s*["']?)"""
-    r"""(?P<value>(?:(?:Bearer|Basic|Token)\s+)?[^\s"',;&}\]]+)""",
+    + r""")[\w.\-]*)(?P<sep>["']?\s*[:=]\s*)"""
+    r"""(?:(?P<quote>["'])(?P<quoted>.*?)(?P=quote)"""
+    r"""|(?P<value>(?:(?:Bearer|Basic|Token)\s+)?[^\s"',;&}\]]+))""",
     re.IGNORECASE,
 )
+
+
+def _value_group(match: re.Match) -> str:
+    return "quoted" if match["quote"] else "value"
+
 
 # LLM usage figures such as ``max_tokens=4096`` or ``token_count=12`` name a
 # count, not a credential; keep them readable.
@@ -229,9 +239,12 @@ def _scrub_text(value: Any) -> Any:
         return scrubbed
 
     def redact(match: re.Match) -> str:
-        if _TOKEN_USAGE_NAME.search(match["key"]):
+        if _TOKEN_USAGE_NAME.search(match["key"]) or match.string.startswith(
+            _REDACTED, match.start(_value_group(match))
+        ):
             return match[0]
-        return f"{match['key']}{match['sep']}{_REDACTED}"
+        quote = match["quote"] or ""
+        return f"{match['key']}{match['sep']}{quote}{_REDACTED}{quote}"
 
     return _SENSITIVE_PAIR_IN_TEXT.sub(redact, value)
 
@@ -250,45 +263,68 @@ def _scrub_text_deep(value: Any, depth: int = 0) -> Any:
     return value
 
 
-def _redacted_spans(text: Any) -> list[str] | None:
-    """The values ``_scrub_text`` would redact in ``text``; None for all of it."""
+def _redacted_starts(text: Any) -> set[int] | None:
+    """Where each value ``_scrub_text`` would redact in ``text`` starts; None
+    when it would redact all of it."""
     if not isinstance(text, str):
-        return []
+        return set()
     if _scrub(text) is not text:
         return None
-    return [
-        match["value"]
+    return {
+        match.start(_value_group(match))
         for match in _SENSITIVE_PAIR_IN_TEXT.finditer(text)
         if not _TOKEN_USAGE_NAME.search(match["key"])
-    ]
+    }
 
 
-def _scrub_log_params(params: Any, formatted: Any) -> Any:
+def _occurrences(text: str, part: str) -> list[int]:
+    found, index = [], text.find(part)
+    while index != -1:
+        found.append(index)
+        index = text.find(part, index + 1)
+    return found
+
+
+def _scrub_log_params(params: Any, formatted: Any) -> tuple[Any, bool]:
     """Redact log arguments that ``formatted`` shows as credential values.
 
     ``logger.error("api_key=%s", key)`` passes the credential as a bare
-    argument with no name of its own, so it is matched against the redacted
-    spans of the formatted message as well as scrubbed on its own.
+    argument with no name of its own. An argument is redacted when its
+    rendering starts exactly where a redacted value starts in the formatted
+    message (so a spaced credential goes whole, and a short argument such as
+    1 is not redacted merely for occurring inside one). Every argument is also
+    scrubbed on its own. Returns the params and whether any was redacted.
     """
-    spans = _redacted_spans(formatted)
+    starts = _redacted_starts(formatted)
+    redacted = False
 
     def one(param: Any) -> Any:
+        nonlocal redacted
         rendered = str(param)
         if rendered and (
-            (spans is None and isinstance(param, str))
-            or any(rendered in span for span in spans or ())
+            (starts is None and isinstance(param, str))
+            or (
+                starts
+                and isinstance(formatted, str)
+                and any(i in starts for i in _occurrences(formatted, rendered))
+            )
         ):
+            redacted = True
             return _REDACTED
         return _scrub_text_deep(param)
 
     if isinstance(params, (list, tuple)):
-        return [one(param) for param in params]
+        return [one(param) for param in params], redacted
     if isinstance(params, dict):
-        return {
-            key: _REDACTED if _is_sensitive_key(key) else one(param)
-            for key, param in params.items()
-        }
-    return params
+        scrubbed = {}
+        for key, param in params.items():
+            if _is_sensitive_key(key):
+                redacted = True
+                scrubbed[key] = _REDACTED
+            else:
+                scrubbed[key] = one(param)
+        return scrubbed, redacted
+    return params, redacted
 
 
 def _scrub_message_fields(event: dict, values: list[dict]) -> None:
@@ -300,10 +336,22 @@ def _scrub_message_fields(event: dict, values: list[dict]) -> None:
         event["message"] = _scrub_text(event["message"])
     logentry = event.get("logentry")
     if isinstance(logentry, dict):
+        redacted = False
         if "params" in logentry:
-            logentry["params"] = _scrub_log_params(
+            logentry["params"], redacted = _scrub_log_params(
                 logentry["params"], logentry.get("formatted")
             )
+        if redacted and isinstance(logentry.get("message"), str):
+            # Re-render from the redacted arguments: the formatted text would
+            # otherwise keep whatever of an argument the text match missed,
+            # such as the second word of a spaced credential.
+            params = logentry["params"]
+            try:
+                logentry["formatted"] = logentry["message"] % (
+                    params if isinstance(params, dict) else tuple(params)
+                )
+            except (TypeError, ValueError, KeyError):
+                logentry["formatted"] = _REDACTED
         for key in ("message", "formatted"):
             if key in logentry:
                 logentry[key] = _scrub_text(logentry[key])

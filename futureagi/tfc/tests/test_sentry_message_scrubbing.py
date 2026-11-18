@@ -16,6 +16,10 @@ from tfc.logging.sentry import _before_breadcrumb
 from tfc.tests.sentry_capture import sentry_capture
 
 LOGGER = "tfc.tests.synthetic_scrubbing"
+# Spaced credentials, kept out of the test bodies so that the stack frames'
+# source lines in the envelope don't quote them.
+SPACED_SECRET = "Sntlcorrect Sntlhorse Sntlbattery"
+SPACED_ARGUMENT = "Sntlcorrect Sntlhorse"
 SENTINELS = (
     "SENTINEL-pw-7f3a",
     "SENTINEL-bearer-91c2",
@@ -102,3 +106,34 @@ def test_an_ordinary_error_keeps_its_message(transport):
     logentry = transport.events[1]["logentry"]
     assert logentry["message"] == "eval batch %s failed after %d retries"
     assert logentry["params"] == ["batch-7", 3]
+
+
+def test_a_quoted_spaced_credential_in_an_exception_is_not_sent(transport):
+    try:
+        raise PermissionError(f"login failed password='{SPACED_SECRET}' for bob")
+    except PermissionError as error:
+        sentry_sdk.capture_exception(error)
+
+    sent = _sent(transport)
+    for word in SPACED_SECRET.split():
+        assert word not in sent
+    value = transport.events[0]["exception"]["values"][-1]["value"]
+    assert value == "login failed password='[Filtered]' for bob"
+
+
+def test_a_spaced_credential_passed_as_a_log_argument_is_not_sent(transport):
+    logging.getLogger(LOGGER).error("db login with password=%s", SPACED_ARGUMENT)
+
+    sent = _sent(transport)
+    for word in SPACED_ARGUMENT.split():
+        assert word not in sent
+    logentry = transport.events[0]["logentry"]
+    assert logentry["params"] == ["[Filtered]"]
+    assert logentry["formatted"] == "db login with password=[Filtered]"
+
+
+def test_only_the_arguments_that_form_the_credential_are_redacted(transport):
+    logging.getLogger(LOGGER).error("%s step %s api_key=%s1", "abc", 1, "x")
+
+    assert transport.events[0]["logentry"]["params"] == ["abc", 1, "[Filtered]"]
+    assert "api_key=x1" not in _sent(transport)
