@@ -1,13 +1,16 @@
 """Server-side score and response-time distributions for run dashboards."""
 
+from __future__ import annotations
+
 from collections import Counter
+from collections.abc import Sequence
 from math import ceil, floor
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
-from django.db.models import Count, Max, Min, Q
 
-from simulate.services.run_results_v3_expressions import PercentileCont
+if TYPE_CHECKING:
+    from simulate.services.run_dashboard_v3 import DashboardCallRow
 
 
 def response_target_ms(*, voice: bool) -> int:
@@ -20,39 +23,40 @@ def response_target_ms(*, voice: bool) -> int:
     return int(getattr(settings, name, 1500 if voice else 3000))
 
 
-def csat_scalar_expressions() -> dict[str, Any]:
-    """Scalar CSAT aggregates, merged into the dashboard's single aggregate."""
-    compared = Q(
-        dashboard_provider_success__in=["true", "false"],
-        result_eval_outcome__in=["passed", "failed"],
-    )
-    return {
-        "csat_satisfied": Count("id", filter=Q(dashboard_csat__gte=8)),
-        "csat_compared": Count("id", filter=compared),
-        "csat_agreed": Count(
-            "id",
-            filter=compared
-            & (
-                Q(dashboard_provider_success="true", result_eval_outcome="passed")
-                | Q(dashboard_provider_success="false", result_eval_outcome="failed")
-            ),
-        ),
-    }
+def _percentile_cont(ordered: Sequence[float], fraction: float) -> float | None:
+    """PostgreSQL ``percentile_cont`` over float8 values sorted ascending."""
+    if not ordered:
+        return None
+    position = fraction * (len(ordered) - 1)
+    first, second = floor(position), ceil(position)
+    if first == second:
+        return ordered[first]
+    # float8_lerp: lo + (pct * (hi - lo)).
+    low = ordered[first]
+    return low + ((position - first) * (ordered[second] - low))
 
 
 def csat_distribution(
-    call_rows: list[dict[str, Any]], total: int, scalars: dict[str, Any]
+    call_rows: Sequence[DashboardCallRow], total: int
 ) -> dict[str, Any]:
+    # Bins, satisfied and agreement all read the same rows, so they never disagree.
+    scores = [
+        row["dashboard_csat"] for row in call_rows if row["dashboard_csat"] is not None
+    ]
     # FLOOR(csat + 0.5) in float8, as Python floats compute it.
-    counts = Counter(
-        floor(row["dashboard_csat"] + 0.5)
+    counts = Counter(floor(score + 0.5) for score in scores)
+    satisfied = sum(score >= 8 for score in scores)
+    verdicts = [
+        (row["dashboard_provider_success"], row["result_eval_outcome"])
         for row in call_rows
-        if row["dashboard_csat"] is not None
-    )
-    satisfied = scalars["csat_satisfied"]
+        if row["dashboard_provider_success"] in ("true", "false")
+        and row["result_eval_outcome"] in ("passed", "failed")
+    ]
     comparison = {
-        "compared": scalars["csat_compared"],
-        "agreed": scalars["csat_agreed"],
+        "compared": len(verdicts),
+        "agreed": sum(
+            verdict in (("true", "passed"), ("false", "failed")) for verdict in verdicts
+        ),
     }
     return {
         "bins": [
@@ -82,39 +86,23 @@ def csat_distribution(
     }
 
 
-def response_time_scalar_expressions() -> dict[str, Any]:
-    """Scalar response-time aggregates for both targets; the modality picks one."""
-    measured = Q(result_latency_ms__gte=0)
-    return {
-        "response_measured": Count("id", filter=measured),
-        "response_minimum": Min("result_latency_ms", filter=measured),
-        "response_maximum": Max("result_latency_ms", filter=measured),
-        "response_p50": PercentileCont("result_latency_ms", 0.5, filter=measured),
-        "response_p95": PercentileCont("result_latency_ms", 0.95, filter=measured),
-        **{
-            f"response_at_or_above_{modality}": Count(
-                "id",
-                filter=measured
-                & Q(result_latency_ms__gte=response_target_ms(voice=is_voice)),
-            )
-            for modality, is_voice in (("voice", True), ("chat", False))
-        },
-    }
-
-
 def response_time_distribution(
-    call_rows: list[dict[str, Any]], total: int, scalars: dict[str, Any], *, voice: bool
+    call_rows: Sequence[DashboardCallRow], total: int, *, voice: bool
 ) -> dict[str, Any]:
     target_ms = response_target_ms(voice=voice)
-    stats = {
-        "measured": scalars["response_measured"],
-        "minimum": scalars["response_minimum"],
-        "maximum": scalars["response_maximum"],
-        "p50": scalars["response_p50"],
-        "p95": scalars["response_p95"],
-        "at_or_above_target": scalars[
-            f"response_at_or_above_{'voice' if voice else 'chat'}"
-        ],
+    # Stats, bin bounds and bin counts all read the same rows.
+    latencies = sorted(
+        row["result_latency_ms"]
+        for row in call_rows
+        if row["result_latency_ms"] is not None and row["result_latency_ms"] >= 0
+    )
+    stats: dict[str, Any] = {
+        "measured": len(latencies),
+        "minimum": latencies[0] if latencies else None,
+        "maximum": latencies[-1] if latencies else None,
+        "p50": _percentile_cont(latencies, 0.5),
+        "p95": _percentile_cont(latencies, 0.95),
+        "at_or_above_target": sum(latency >= target_ms for latency in latencies),
     }
     # Keep the target on a bin boundary and the payload bounded for long tails.
     width = max(25, ceil((stats["maximum"] or 0) / 1000) * 25)
@@ -124,11 +112,7 @@ def response_time_distribution(
             return floor(latency / float(width)) * width
         return target_ms + floor((latency - target_ms) / float(width)) * width
 
-    counts = Counter(
-        bucket(row["result_latency_ms"])
-        for row in call_rows
-        if row["result_latency_ms"] is not None and row["result_latency_ms"] >= 0
-    )
+    counts = Counter(bucket(latency) for latency in latencies)
     bounds = [*range(0, target_ms, width)]
     bounds.extend(range(target_ms, int(stats["maximum"] or 0) + width, width))
     bins = []

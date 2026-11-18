@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import heapq
 import json
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
-from typing import Any
+from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime
+from typing import Any, Literal, TypedDict, cast
+from uuid import UUID
 
 from django.db.models import (
+    Aggregate,
     Avg,
     Case,
     Count,
@@ -28,9 +32,7 @@ from django.db.models.functions import Coalesce, Extract, Floor, Lower
 
 from simulate.services.run_dashboard_v3_distributions import (
     csat_distribution,
-    csat_scalar_expressions,
     response_time_distribution,
-    response_time_scalar_expressions,
 )
 from simulate.services.run_results_v3_expressions import (
     PercentileCont,
@@ -131,8 +133,8 @@ STAT_KEYS = ("measured", "average", "max", "p50", "p90", "p99")
 
 def _stats_expressions(
     fields: dict[str, str], prefix: str, scope: Q | None = None
-) -> dict[str, Any]:
-    expressions: dict[str, Any] = {}
+) -> dict[str, Aggregate]:
+    expressions: dict[str, Aggregate] = {}
     for name, field in fields.items():
         expressions[f"{prefix}{name}_measured"] = Count(field, filter=scope)
         expressions[f"{prefix}{name}_average"] = Avg(field, filter=scope)
@@ -251,21 +253,27 @@ def _tool_verdict(tool: dict) -> bool | None:
     return None
 
 
-def _tool_stats(arrays: Iterable[Any]) -> dict:
+def _tool_verdicts(tools: Any) -> list[tuple[str, bool | None]]:
+    """Each named tool call's name and verdict, so its payload can be dropped."""
+    verdicts = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        name = tool.get("name") or (
+            function.get("name") if isinstance(function, dict) else None
+        )
+        if name:
+            verdicts.append((str(name), _tool_verdict(tool)))
+    return verdicts
+
+
+def _tool_stats(calls: Iterable[list[tuple[str, bool | None]]]) -> dict:
     counts = defaultdict(lambda: {"invocations": 0, "measured": 0, "failures": 0})
-    for tools in arrays:
-        for tool in tools or []:
-            if not isinstance(tool, dict):
-                continue
-            function = tool.get("function")
-            name = tool.get("name") or (
-                function.get("name") if isinstance(function, dict) else None
-            )
-            if not name:
-                continue
-            count = counts[str(name)]
+    for verdicts in calls:
+        for name, verdict in verdicts:
+            count = counts[name]
             count["invocations"] += 1
-            verdict = _tool_verdict(tool)
             if verdict is not None:
                 count["measured"] += 1
                 count["failures"] += int(verdict)
@@ -301,33 +309,43 @@ def _tool_stats(arrays: Iterable[Any]) -> dict:
     }
 
 
-def _series(queryset: QuerySet, total: int, bounds: dict[str, Any]) -> list[dict]:
+def _series(
+    queryset: QuerySet,
+    call_rows: Sequence[DashboardCallRow],
+    total: int,
+    bounds: dict[str, Any],
+) -> list[dict]:
     if total <= CHART_BUCKETS:
-        rows = (
-            queryset.order_by(F("started_at").asc(nulls_last=True), "id")
-            .annotate(
-                latency_ms=Case(
-                    When(result_latency_ms__gte=0, then=F("result_latency_ms")),
-                    output_field=FloatField(),
-                ),
-                duration_ms=F("duration_seconds") * 1000.0,
-                llm_cents=F("llm_cost_cents"),
-                tts_cents=F("tts_cost_cents"),
-                stt_cents=F("stt_cost_cents"),
-                storage_cents=F("storage_cost_cents"),
-            )
-            .values(
-                "started_at",
-                "latency_ms",
-                "duration_ms",
-                "llm_cents",
-                "tts_cents",
-                "stt_cents",
-                "storage_cents",
-            )
+        # ORDER BY started_at NULLS LAST, id; uuids compare bytewise, as UUID does.
+        rows = sorted(
+            call_rows,
+            key=lambda row: (
+                row["started_at"] is None,
+                row["started_at"] or datetime.min,
+                row["id"],
+            ),
         )
         return [
-            {"label": str(index + 1), "calls": 1, **row}
+            {
+                "label": str(index + 1),
+                "calls": 1,
+                "started_at": row["started_at"],
+                "latency_ms": (
+                    row["result_latency_ms"]
+                    if row["result_latency_ms"] is not None
+                    and row["result_latency_ms"] >= 0
+                    else None
+                ),
+                "duration_ms": (
+                    row["duration_seconds"] * 1000.0
+                    if row["duration_seconds"] is not None
+                    else None
+                ),
+                "llm_cents": row["llm_cost_cents"],
+                "tts_cents": row["tts_cost_cents"],
+                "stt_cents": row["stt_cost_cents"],
+                "storage_cents": row["storage_cost_cents"],
+            }
             for index, row in enumerate(rows)
         ]
     if not bounds["first"]:
@@ -368,12 +386,16 @@ def _series(queryset: QuerySet, total: int, bounds: dict[str, Any]) -> list[dict
     ]
 
 
-def _tails(call_rows: list[dict[str, Any]], field: str) -> list[dict]:
+def _tails(
+    call_rows: Sequence[DashboardCallRow],
+    field: Literal["duration_seconds", "result_cost_cents"],
+) -> list[dict]:
     # ORDER BY field DESC, id: PostgreSQL orders uuids bytewise, as UUID.int does.
-    rows = sorted(
+    rows = heapq.nsmallest(
+        8,
         (row for row in call_rows if row[field] is not None),
-        key=lambda row: (-row[field], row["id"]),
-    )[:8]
+        key=lambda row: (-cast(float, row[field]), row["id"]),
+    )
     return [
         {
             "rank": index + 1,
@@ -432,9 +454,37 @@ def annotate_dashboard(queryset: QuerySet) -> QuerySet:
     return annotated
 
 
-def dashboard_call_rows(queryset: QuerySet) -> list[dict[str, Any]]:
-    """One row per call with only the scalars the count/tail breakdowns read."""
-    return list(
+class DashboardCallRow(TypedDict):
+    """One call as the dashboard reads it; ``None`` where the call has no value."""
+
+    id: UUID
+    started_at: datetime | None
+    result_turn_count: float | None
+    result_outcome: str
+    result_eval_outcome: str
+    dashboard_goal: str | None
+    dashboard_disconnection: str
+    dashboard_provider_success: str | None
+    dashboard_sentiment: str | None
+    dashboard_csat: float | None
+    result_latency_ms: float | None
+    duration_seconds: int | None
+    result_cost_cents: float | None
+    llm_cost_cents: int | None
+    tts_cost_cents: int | None
+    stt_cost_cents: int | None
+    storage_cost_cents: float | None
+    result_scenario: str | None
+    simulation_call_type: str | None
+    result_provider: str
+    # (name, verdict) per named tool call; the call payloads are not kept.
+    tool_calls: list[tuple[str, bool | None]]
+
+
+def dashboard_call_rows(*, queryset: QuerySet) -> list[DashboardCallRow]:
+    """Read each call once: its outcome, breakdown and series scalars, and
+    the name and verdict of each recorded tool call."""
+    rows = (
         annotate_dashboard(queryset)
         .order_by()
         .annotate(
@@ -448,19 +498,31 @@ def dashboard_call_rows(queryset: QuerySet) -> list[dict[str, Any]]:
         )
         .values(
             "id",
+            "started_at",
             "result_turn_count",
             "result_outcome",
+            "result_eval_outcome",
             *BREAKDOWN_FIELDS,
             "dashboard_csat",
             "result_latency_ms",
             "duration_seconds",
             "result_cost_cents",
+            "llm_cost_cents",
+            "tts_cost_cents",
+            "stt_cost_cents",
+            "storage_cost_cents",
             "result_scenario",
             "simulation_call_type",
             "result_provider",
             "recorded_tools",
         )
+        .iterator(chunk_size=2000)
     )
+    call_rows = []
+    for row in rows:
+        row["tool_calls"] = _tool_verdicts(row.pop("recorded_tools"))
+        call_rows.append(cast(DashboardCallRow, row))
+    return call_rows
 
 
 def build_run_dashboard(
@@ -471,7 +533,7 @@ def build_run_dashboard(
     comparison: dict | None = None,
     trials: Mapping[str, Any] | None = None,
     *,
-    call_rows: list[dict[str, Any]],
+    call_rows: Sequence[DashboardCallRow],
 ) -> dict[str, Any]:
     total = summary["total"]
     queryset = annotate_dashboard(queryset)
@@ -499,7 +561,6 @@ def build_run_dashboard(
         "stt": "stt_cost_cents",
         "storage": "storage_cost_cents",
     }
-    reported_fields = ("dashboard_provider_success", "dashboard_sentiment")
     # Every scalar the dashboard reads, in one scan; scopes are FILTER clauses.
     values = queryset.annotate(
         **{
@@ -567,9 +628,6 @@ def build_run_dashboard(
         **{f"cost_{key}": Sum(field) for key, field in cost_fields.items()},
         series_first=Min("started_at"),
         series_last=Max("started_at"),
-        **{f"{field}_reported": Count(field) for field in reported_fields},
-        **csat_scalar_expressions(),
-        **response_time_scalar_expressions(),
     )
     # A run is one modality in practice; a mixed run counts as voice.
     noun = "chat" if total and not values["voice_calls"] else "call"
@@ -771,6 +829,11 @@ def build_run_dashboard(
     breakdown_counts = _value_facets(
         call_rows, {field: field for field in BREAKDOWN_FIELDS}
     )
+    reported = {
+        field
+        for field in ("dashboard_provider_success", "dashboard_sentiment")
+        if any(item["value"] is not None for item in breakdown_counts[field])
+    }
     return {
         "run_health": run_health,
         "comparison": comparison
@@ -781,9 +844,9 @@ def build_run_dashboard(
             "newly_passing": [],
             "newly_failing": [],
         },
-        "csat": csat_distribution(call_rows, total, values),
+        "csat": csat_distribution(call_rows, total),
         "agent_response_time": response_time_distribution(
-            call_rows, total, values, voice=is_voice
+            call_rows, total, voice=is_voice
         ),
         "pipeline_cost": [
             {
@@ -850,7 +913,7 @@ def build_run_dashboard(
                     ),
                     ("dashboard_sentiment", "sentiment", "Provider sentiment"),
                 ]
-                if values[f"{field}_reported"]
+                if field in reported
             ],
         ],
         "voice_slos": [
@@ -868,6 +931,7 @@ def build_run_dashboard(
         },
         "series": _series(
             queryset,
+            call_rows,
             total,
             {"first": values["series_first"], "last": values["series_last"]},
         ),
@@ -904,7 +968,7 @@ def build_run_dashboard(
                 },
             },
         ],
-        "tools": _tool_stats(row["recorded_tools"] for row in call_rows),
+        "tools": _tool_stats(row["tool_calls"] for row in call_rows),
         "slowest_tasks": _tails(call_rows, "duration_seconds"),
         "most_expensive_tasks": _tails(call_rows, "result_cost_cents"),
         "unavailable_features": [

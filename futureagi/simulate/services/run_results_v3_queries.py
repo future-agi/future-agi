@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter, defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, TypeGuard, cast
 
 from django.core.cache import cache
@@ -1236,7 +1236,7 @@ def _collation_order(values: list[str]) -> dict[str, int]:
 
 
 def _value_facets(
-    rows: list[dict[str, Any]], fields: dict[str, str]
+    rows: Sequence[Mapping[str, Any]], fields: dict[str, str]
 ) -> dict[str, list[dict[str, Any]]]:
     """Count each field's values, ordered as ``ORDER BY -count, value`` would."""
     counts = {
@@ -1660,7 +1660,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     # One eval-config load serves scoring and every same-run-test queryset.
     live_evals = live_eval_specs(execution.run_test_id)
     queryset = run_calls_queryset(execution, live_evals=live_evals)
-    configs, _ = build_evaluation_catalog(execution)
+    configs, _ = build_evaluation_catalog(execution, live_evals=live_evals)
 
     risk = _breakdown_run_calls(queryset, "scenario")
     # Weakest first; slices with too few evaluated calls to rank go last.
@@ -1674,7 +1674,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     )
     # One per-call row fetch feeds every count-only breakdown below and in the
     # dashboard; aggregates with float/numeric averages stay in SQL.
-    call_rows = dashboard_call_rows(queryset)
+    call_rows = dashboard_call_rows(queryset=queryset)
     turn_counts = Counter(
         (row["result_turn_count"], row["result_outcome"])
         for row in call_rows
