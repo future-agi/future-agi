@@ -265,6 +265,7 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
       }}
     >
       <Box
+        data-builder-chat=""
         sx={{
           position: "relative",
           width: columnWidth,
