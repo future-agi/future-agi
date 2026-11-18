@@ -505,7 +505,14 @@ describe("SimulationTestMode exact snapshot pagination", () => {
     });
   }
 
-  async function runWithEmptyPreviewMapping(scenarioColumns) {
+  async function runWithEmptyPreviewMapping(
+    scenarioColumns,
+    {
+      sourceColumns = [{ id: selectedId, name: columnName }],
+      optionName = columnName,
+      savedKey = selectedId,
+    } = {},
+  ) {
     mockEmptyFirstExecution(scenarioColumns);
     mocks.post.mockResolvedValue({ data: { status: true, result: {} } });
     const ref = React.createRef();
@@ -517,15 +524,15 @@ describe("SimulationTestMode exact snapshot pagination", () => {
         templateId="test-template"
         initialRunTestId="run-1"
         variables={["output"]}
-        sourceColumns={[{ id: selectedId, name: columnName }]}
+        sourceColumns={sourceColumns}
         onReadyChange={ready}
         onTestResult={onTestResult}
       />,
     );
     await screen.findByText("No calls in this simulation");
     fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
-    fireEvent.click(await screen.findByRole("option", { name: columnName }));
-    expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
+    fireEvent.click(await screen.findByRole("option", { name: optionName }));
+    expect(ready).toHaveBeenLastCalledWith(true, { output: savedKey });
 
     fireEvent.click(screen.getByRole("button", { name: "Load more runs" }));
     fireEvent.mouseDown(await screen.findByText(/Run 1 — completed/));
@@ -533,8 +540,31 @@ describe("SimulationTestMode exact snapshot pagination", () => {
     await screen.findByText('"Populated preview"');
     act(() => ref.current.runTest());
     await waitFor(() => expect(onTestResult).toHaveBeenCalled());
-    expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
+    expect(ready).toHaveBeenLastCalledWith(true, { output: savedKey });
+    return onTestResult;
   }
+
+  it("runs Test Evaluation with the live path of a declared built-in field", async () => {
+    const field = "call.assistant_chat_transcript";
+    const onTestResult = await runWithEmptyPreviewMapping(undefined, {
+      sourceColumns: [
+        { field, headerName: field, dataType: "text" },
+        { id: selectedId, name: columnName },
+      ],
+      optionName: field,
+      savedKey: field,
+    });
+    expect(onTestResult).toHaveBeenLastCalledWith(true, {});
+    expect(mocks.post).toHaveBeenCalledWith(
+      endpoints.develop.eval.evalPlayground,
+      expect.objectContaining({
+        call_id: "call-3",
+        config: expect.objectContaining({
+          mapping: { output: "Populated preview" },
+        }),
+      }),
+    );
+  });
 
   it("runs Test Evaluation with the live value of the UUID selected before any calls", async () => {
     await runWithEmptyPreviewMapping({

@@ -1104,6 +1104,18 @@ const SimulationTestMode = React.forwardRef(
       }
       return fields;
     }, [sourceColumns]);
+    // Declared scenario columns carry only a dataset column UUID (`id`);
+    // built-ins such as `call.assistant_chat_transcript` declare a `field`
+    // path and are read from the call detail like any other path.
+    const declaredColumnIds = useMemo(
+      () =>
+        new Set(
+          (sourceColumns || [])
+            .filter((col) => !col.field && col.id)
+            .map((col) => col.id),
+        ),
+      [sourceColumns],
+    );
 
     // Field names for variable mapping. Expand nested object keys into
     // dot-notation paths; drop non-leaf intermediates so groups aren't picked.
@@ -1271,7 +1283,7 @@ const SimulationTestMode = React.forwardRef(
             const columnId = selection.columnId ?? mappedField;
             const isScenarioColumn =
               selection.columnId ||
-              declaredFields.has(mappedField) ||
+              declaredColumnIds.has(mappedField) ||
               preview.scenarioValuesById.has(mappedField);
             const val = isScenarioColumn
               ? preview.scenarioValuesById.get(columnId)
@@ -1375,7 +1387,7 @@ const SimulationTestMode = React.forwardRef(
       templateId,
       variables,
       selections,
-      declaredFields,
+      declaredColumnIds,
       preview,
       callDetail,
       currentCall,
