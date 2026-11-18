@@ -848,6 +848,7 @@ def create_native_run(
             "fence": fence,
             "callback_url": runtime_callback_url(),
             "registry_url": runtime_callback_url(),
+            "environment": {"FI_SKILLS_TRACING": "off"},
             "application_binding_id": str(plan["binding"].pk),
             "arms": secrets_by_arm,
             "payload": spec.guest_payload(),

@@ -7,7 +7,7 @@ name = "ctxhub-support-application"
 version = "0.1.0"
 description = "Synthetic refund and chargeback application for Skills native qualification"
 requires-python = ">=3.11"
-dependencies = ["futureagi==0.7.0", "httpx>=0.27,<1"]
+dependencies = ["futureagi==0.8.0", "httpx>=0.27,<1"]
 
 [project.scripts]
 ctxhub-support = "ctxhub_support.entrypoint:main"

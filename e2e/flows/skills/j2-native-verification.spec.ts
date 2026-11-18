@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { test, expect } from '../../lib/fixtures';
+import { test, expect } from '../../lib/skills-native-fixtures';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { sendTrace } from '../../lib/otlp';
@@ -12,7 +12,6 @@ import { ACTION, REQUESTS, ROOT, STATE, modelRules, neighborCase, publishRoot, s
 const API = '/model-hub/skills/';
 const RUNTIME_CONTAINER = process.env.J2_RUNTIME_CONTAINER ?? 'futureagi-e2e-standalone-native-runtime-1';
 // The credential the runtime container is started with (compose overlay). Scenario-scoped, synthetic.
-const PROVIDER_NAMESPACE = 'e2e-skills-native-runtime-fixture';
 
 // A pure oracle with a one-sided mutation below: it must reject a changed observation.
 export function assertMatchedOutcome(cells: any[], expected: { caseId: string; variant: string; selection: string; delivery: string; tools: string }[]) {
@@ -54,7 +53,7 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
       'a case without its business state fixture is Not reproduced and nothing launches',
     ],
   }),
-}, async ({ page, actor, probe, request }, testInfo) => {
+}, async ({ page, actor, probe, request, nativeNamespace }, testInfo) => {
   test.setTimeout(900_000);
   const evidence = process.env.J2_EVIDENCE_DIR;
   const shot = async (name: string) => {
@@ -101,14 +100,14 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     await writeFile(process.env.J2_PREPARE_OUT!, JSON.stringify({
       userId: (await actor.api.get<{ id: string }>('/accounts/user-info/')).id, v4Id: v4.id, production: { bindingId: production.id, revision: production.revision }, apiKey: actor.apiKey, secretKey: actor.secretKey, collectorInternalUrl: 'http://app:4318',
       appUrl: E2E.appUrl, apiUrl: E2E.apiUrl, pgUrl: E2E.pgUrl, chUrl: E2E.chUrl, chPassword: E2E.chPassword, fixtureOrigin: `http://localhost:${process.env.E2E_SKILLS_FIXTURE_PORT ?? '28082'}`,
-      providerNamespace: PROVIDER_NAMESPACE, runtimeContainer: RUNTIME_CONTAINER, contextId, contextName: `${prefix}-support`,
+      providerNamespace: nativeNamespace, runtimeContainer: RUNTIME_CONTAINER, contextId, contextName: `${prefix}-support`,
       versions: { recorded: 4, head: 6 }, skills, requests: REQUESTS, recordedRoot: ROOT.recorded, recordedRootSha256: createHash('sha256').update(ROOT.recorded).digest('hex'),
       controlRoots: { wordingOnly: ROOT.wordingOnly, overbroad: ROOT.overbroad },
       projectName, projectId: projects[0].id, traceId: trace.traceId, spanId: trace.spanIds[0],
       actor: { access: actor.tokens.access, refresh: actor.tokens.refresh, organizationId: actor.organizationId, workspaceId: actor.workspaceId },
     }), { mode: 0o600 });
   };
-  const fixtures = new SkillsFixtures(PROVIDER_NAMESPACE);
+  const fixtures = new SkillsFixtures(nativeNamespace);
   try {
     // Prerequisite: a funded workspace policy, a fifteen-member application context with recorded v4 failing and v6 head.
     const spend = await req('GET', 'spend-policy/');
@@ -217,6 +216,12 @@ test('SKILLS-E2E-022: verify a context repair on the real application and hold f
     expect(() => assertBusiness(business.map(row => ({ ...row, status: 'applied' })), historical)).toThrow();
     const credentials = await probe.pg<{ n: string }>('SELECT count(*) AS n FROM model_hub_hubskillcontextcredential WHERE workspace_id=$1 AND revoked_at IS NULL AND purpose=$2', [actor.workspaceId, 'consume']);
     expect(credentials[0].n).toBe('0');
+
+    // F8: the incident is retained, but completed native cells created no customer skill links.
+    const [incident] = await probe.ch<{ project: string }>('SELECT toString(project_id) AS project FROM spans FINAL WHERE trace_id={t:String} LIMIT 1', { t: trace.traceId });
+    expect(incident.project).toBeTruthy();
+    const [nativeLinks] = await probe.ch<{ n: string }>('SELECT count() AS n FROM skill_trace_links FINAL WHERE project_id={p:UUID} AND start_time >= fromUnixTimestamp64Nano({start:Int64})', { p: incident.project, start: String(start) });
+    expect(nativeLinks.n).toBe('0');
 
     // Human disagreement is appended beside the automatic grade.
     await page.getByRole('row', { name: /Original refund failure.*Was failing on v/ }).first().click();

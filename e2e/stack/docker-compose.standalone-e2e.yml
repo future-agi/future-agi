@@ -79,6 +79,16 @@ services:
       # Paths resolve against the project directory (repo root).
       - ./e2e/stack/mock-llm/server.mjs:/srv/server.mjs:ro
     restart: "no"
+  # On-demand application request; no ports, external route or persistent credentials.
+  skills-ts-runtime:
+    profiles: [skill-traces]
+    build: ./e2e/stack/skills-ts-runtime
+    image: futureagi/skills-ts-runtime:e2esa
+    read_only: true
+    user: node
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [native-net]
   # J2 native container runtime. No route outside native-net (internal), read-only
   # root/source/context mounts, separate writable state, context-only credentials.
   native-runtime:

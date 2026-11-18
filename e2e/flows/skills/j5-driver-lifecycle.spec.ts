@@ -32,6 +32,7 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
   }),
 }, async ({ page, actor, probe }, testInfo) => {
   test.setTimeout(2_400_000); // Three 33-37-target rounds (plus configured setup) and public API/storage probes.
+  page.setDefaultTimeout(30_000); // A missing row action must not consume the whole benchmark deadline.
   const python = process.env.CTXHUB_J5_PYTHON;
   if (!python) throw new Error('Select the installed SDK on the approved VM');
   const driverModule = '../../benchmarks/context-hub/drivers/j5.mjs';
@@ -111,7 +112,12 @@ test(`${id}: registered campaign driver ${configured ? 'reaches the configured p
         // current revision from the public API selects the live rollout.
         const current = await actor.api.get<{ result: { revision: number; status: string } }>(`/model-hub/skills/contexts/campaigns/${campaign.id}/`);
         expect(current.result.status).not.toBe('cancelled');
-        await page.getByRole('button', { name: `Review ${campaign.name}, revision ${current.result.revision}`, exact: true }).click();
+        const named = page.getByRole('table', {name:'Repository rollouts'}).getByRole('row')
+          .filter({has:page.getByText(campaign.name,{exact:true})});
+        for (const row of await named.all()) await row.getByRole('button',{name:'Rollout details'}).click();
+        const live = named.filter({has:page.getByText(`Revision ${current.result.revision}`,{exact:true})});
+        await expect(live).toHaveCount(1);
+        await live.click();
         await expect(page).toHaveURL(new RegExp(`/dashboard/skills/contexts/rollouts/${campaign.id}$`));
         const table = page.getByRole('table', { name: 'Fixed rollout targets' });
         await expect(table).toBeVisible({ timeout: 60_000 }); await expect(table.getByRole('row')).toHaveCount(41);

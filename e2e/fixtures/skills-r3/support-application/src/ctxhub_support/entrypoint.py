@@ -87,6 +87,7 @@ def execute(
     runtime_digest,
     provider_url,
     business_url,
+    context_id=None,
     report=None,
     provider_key=None,
     model="fixture-model",
@@ -124,7 +125,7 @@ def execute(
         result = run(
             request,
             store=store,
-            registry=Registry(sdk, binding_id, runtime_digest),
+            registry=Registry(sdk, binding_id, runtime_digest, context_id=context_id),
             provider=provider,
             business=business,
             model=model,

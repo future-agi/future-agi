@@ -160,7 +160,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     return { status: result.status(), code: (await result.json()).code };
   };
   const approve = async () => {
-    await expect(page.getByRole('button', { name: 'Renew review', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Renew request', exact: true })).toHaveCount(0);
     await ack.check();
     const decided = page.waitForResponse((res) => new URL(res.url()).pathname.endsWith(`/release-requests/${requestId}/decisions/`) && res.request().method() === 'POST');
     await page.getByRole('button', { name: 'Approve release', exact: true }).click();
@@ -177,7 +177,7 @@ test('SKILLS-E2E-041: an approved context packet is refused after each race and 
     const before = await api(reviewer, 'GET', `release-requests/${requestId}/renewal/`);
     const dialog = page.getByRole('dialog').filter({ hasText: 'Renew release review' });
     // A refusal opens the inspection directly; a reloaded page offers the button.
-    if (reloaded) await page.getByRole('button', { name: 'Renew review', exact: true }).click();
+    if (reloaded) await page.getByRole('button', { name: 'Renew request', exact: true }).click();
     await expect(dialog).toBeVisible();
     for (const row of before.changes) await expect(dialog.locator(`tr[data-field="${row.item}"]`)).toBeVisible();
     await page.screenshot({ path: `${output}/shots/renew-${label}.png` });

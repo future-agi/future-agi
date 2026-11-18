@@ -16,7 +16,13 @@ const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const input = JSON.parse(await readFile(inputPath, 'utf8'));
 const job = getJob('J2');
 const image = execFileSync('docker', ['image', 'inspect', 'futureagi/native-runtime:e2esa', '--format', '{{.Id}}'], { encoding: 'utf8' }).trim().replace(/^sha256:/, '');
-const wheels = execFileSync('sh', ['-c', `sha256sum ${process.env.HOME}/j2-wheels/*.whl | cut -d' ' -f1`], { encoding: 'utf8' }).trim().split('\n');
+const runtime = resolve(root, 'e2e/stack/native-runtime');
+const manifest = (await readFile(resolve(runtime, 'wheels.sha256'), 'utf8')).trim().split('\n');
+const wheels = await Promise.all(manifest.map(async line => {
+  const [, expected, name] = /^([a-f0-9]{64})\s+\.\/([a-zA-Z0-9_.-]+\.whl)$/.exec(line) ?? [];
+  if (!name || sha(await readFile(resolve(runtime, 'wheels', name))) !== expected) throw new Error('Native wheel does not match the declared distribution');
+  return expected;
+}));
 const lock = await Promise.all(['frontend/yarn.lock', 'e2e/yarn.lock'].map(async (path) => sha(await readFile(resolve(root, path)))));
 const titles = ['Original refund failure', 'Working chargeback case', 'Working shipping case'];
 const catalog = { skills: Object.keys(input.skills), requests: input.requests, titles };

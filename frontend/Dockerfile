@@ -24,6 +24,7 @@ FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS build
 # VITE_ at build time and bakes them into the bundle.
 ARG VITE_HOST_API=http://localhost:8000
 ARG VITE_ENVIRONMENT=production
+ARG VITE_SKILL_TRACES=off
 ENV VITE_HOST_API=${VITE_HOST_API} \
     VITE_ENVIRONMENT=${VITE_ENVIRONMENT}
 

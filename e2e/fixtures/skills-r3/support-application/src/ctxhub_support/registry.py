@@ -7,6 +7,7 @@ from dataclasses import asdict
 from uuid import UUID, uuid4
 
 from fi.context.client import ContextSnapshot
+from fi.context.sessions import ContextSessionClient
 from fi.context.snapshot import PAGE_SIZE, ManifestCollector, SnapshotIntegrityError
 from fi.context.source import ConsumptionSource, validate_access
 from fi.platform import RequestOptions
@@ -15,7 +16,10 @@ from .store import digest
 
 
 class Registry:
-    def __init__(self, client, binding_id, runtime_digest):
+    def __init__(self, client, binding_id, runtime_digest, *, context_id=None):
+        self.sessions = (ContextSessionClient(client, context_id=context_id, binding_id=binding_id)
+                         if context_id else None)
+        self.live_snapshot = None
         self.client = client
         self.binding_id = str(UUID(binding_id))
         self.runtime_digest = runtime_digest
@@ -58,6 +62,11 @@ class Registry:
         if on_session is not None:
             # Persist the mapping before file reads can fail or the lease can expire.
             on_session(response)
+        if self.sessions:
+            if match[1] != self.sessions.context_id:
+                raise SnapshotIntegrityError("Unexpected bound context")
+            self.live_snapshot = self.sessions.snapshot(response)
+            return response, self.live_snapshot.read_all()
         options = RequestOptions(resolution_id=response["resolution_id"])
         manifest = self.client.request(
             "GET",
@@ -82,6 +91,13 @@ class Registry:
         snapshot = ContextSnapshot(collector.finish(), self.source).read_all()
         self.authorize(response, snapshot)
         return response, snapshot
+
+    def read_skill_file(self, snapshot, path):
+        if path not in snapshot.files:
+            return None
+        if self.live_snapshot is not None:
+            return self.live_snapshot.read_file(path)
+        return snapshot.files[path]
 
     def authorize(self, session, snapshot):
         snapshot.manifest.lease.require_live()

@@ -367,7 +367,7 @@ class Application:
                 or any(p in {"", ".", ".."} for p in path.split("/"))
             ):
                 raise ValueError("invalid_skill_path")
-            content = self.snapshot.files.get(member["mount_path"] + path)
+            content = self.registry.read_skill_file(self.snapshot, member["mount_path"] + path)
             if content is None:
                 raise ValueError("skill_file_not_found")
             if args["skill_id"] not in state["selected"]:

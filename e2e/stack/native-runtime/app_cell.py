@@ -21,7 +21,7 @@ def run_cell(*, registry_url, credential, binding_id, runtime_digest, order_id, 
     request_path.write_text(json.dumps({"schema": 1, "thread": str(uuid4()),
         "case": {"case_id": case_id, "order_id": order_id, "request": request_text}}))
     env = {
-        "PATH": os.environ["PATH"], "HOME": str(workdir), "PYTHONPATH": str(measure.SOURCE / "src"),
+        "PATH": os.environ["PATH"], "HOME": str(workdir), "FI_SKILLS_TRACING": "off", "PYTHONPATH": str(measure.SOURCE / "src"),
         "CTXHUB_REGISTRY_URL": registry_url, "CTXHUB_CONTEXT_CREDENTIAL": credential,
         "CTXHUB_BINDING_ID": binding_id, "CTXHUB_RUNTIME_DIGEST": runtime_digest,
         "CTXHUB_PROVIDER_URL": measure.PROVIDER_URL, "CTXHUB_PROVIDER_KEY": os.environ.get("CTXHUB_PROVIDER_KEY", ""),

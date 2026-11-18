@@ -20,6 +20,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from uuid import uuid4
 
+# This process only accepts internal verification work. The separately invoked
+# production_request.py is an application entrypoint, not a child of this server.
+os.environ["FI_SKILLS_TRACING"] = "off"
+
 import httpx
 from app_cell import run_cell
 import measure  # puts the read-only application source on sys.path
@@ -174,6 +178,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(413, {"error": "payload_size"})
         try:
             launch = json.loads(self.rfile.read(size))
+            if launch.get("environment", {"FI_SKILLS_TRACING": "off"}) != {"FI_SKILLS_TRACING": "off"}:
+                raise ValueError("native_test_tracing_must_be_off")
             assert launch["protocol"] == measure.PROTOCOL and launch["schema"] == 1
             for key in ("attempt_id", "token", "fence", "callback_url", "registry_url", "arms", "payload"):
                 assert key in launch

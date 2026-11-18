@@ -187,7 +187,7 @@ export async function createDriver({ jobId, runId, registration }) {
           if (hasSuperseded) await operator.click(historyDisclosure, 'show-superseded-context-releases');
           // Identical active/history rows are not duplicated; superseded releases remain reviewable.
           await operator.review('inspect-dependent-inventory', [...input.parents.map((_, index) => `parent-${index}`), 'historical-references'], ['parent-2'], async () => {
-            for (const [index, parent] of input.parents.entries()) await expect(page.getByRole('link', { name: `Inspect ${parent.name} v1` }).first()).toBeVisible();
+            for (const [index, parent] of input.parents.entries()) await expect(page.getByRole('table', {name:'Published context dependents'}).getByText(`${parent.name} v1`, {exact:true})).toBeVisible();
             for (const parent of followers) await expect(page.getByRole('checkbox', { name: `Select ${parent.name} v1 for update` })).toBeChecked();
             await expect(page.getByRole('checkbox', { name: `Select ${input.parents[2].name} v1 for update` })).toBeDisabled();
             if (hasSuperseded) await expect(page.getByRole('table', { name: 'Historical context references' })).toBeVisible();
@@ -349,7 +349,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const reviewer = new MeasuredOperator({ ledger, actor: 'owner', step: stage.id, phase: stage.phase, signal });
           for (const [index, parent] of followers.entries()) {
             await reviewer.transition(`parent-${index}-reviewer-arrival`, () => reviewer.configurationEdit(`parent-${index}-request-link`, () => reviewerPage.goto(`/dashboard/skills/contexts/${parent.id}/review?request=${packets[index].id}`)));
-            const reviewed = reviewerPage.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true });
+            const reviewed = reviewerPage.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/ });
             await expect(reviewed).toBeEnabled();
             await reviewer.review(`parent-${index}-release-review`, ['parent-candidate', 'target', 'evidence-absence', 'release-consequence'], [], () => reviewed.check(), decision);
             await reviewer.approve(`parent-${index}-approve-packet`, [`parent-${index}`], () => reviewerPage.getByRole('button', { name: 'Approve release', exact: true }).click(), decision);

@@ -390,8 +390,8 @@ export async function createDriver({ jobId, runId, registration }) {
           state.production = produced;
           // Wait until the retained tracing store has the exported spans (independent of the UI).
           for (let attempt = 0; ; attempt++) {
-            const count = Number((await (await fetch(`${input.chUrl}/?query=${encodeURIComponent(`SELECT count() FROM spans FINAL WHERE trace_id='${produced.trace_id}'`)}`, { headers: { Authorization: `Basic ${Buffer.from(`default:${input.chPassword}`).toString('base64')}` } })).text()).trim());
-            if (count === 2) break;
+            const count = Number((await (await fetch(`${input.chUrl}/?query=${encodeURIComponent(`SELECT uniqExact(name) FROM spans FINAL WHERE name IN ('Production refund request', 'context.load', 'skill.load') AND trace_id='${produced.trace_id}'`)}`, { headers: { Authorization: `Basic ${Buffer.from(`default:${input.chPassword}`).toString('base64')}` } })).text()).trim());
+            if (count === 3) break;
             requireValue(attempt < 60 && !signal.aborted, 'The exported production trace did not arrive');
             await new Promise((r) => setTimeout(r, 2000));
           }

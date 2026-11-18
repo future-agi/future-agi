@@ -82,7 +82,8 @@ export async function createDriver({ jobId, runId, registration }) {
     return page;
   };
   const page = async (role) => { pages[role] = pages[role] || await open(input[role]); return pages[role]; };
-  const ack = (target) => target.getByRole('checkbox', { name: "I've checked this version, where it's going, the evidence and what the release will change.", exact: true });
+  const authorAck = (target) => target.getByRole('checkbox', { name: "I've checked this version, where it's going and the evidence I'm attaching.", exact: true });
+  const ack = (target) => target.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/ });
   const responseFor = (target, suffix, method = 'POST') => {
     const pending = target.waitForResponse((res) => new URL(res.url()).pathname.endsWith(suffix) && res.request().method() === method, { timeout: 60_000 });
     pending.catch(() => {});
@@ -179,7 +180,7 @@ export async function createDriver({ jobId, runId, registration }) {
         await expect(dialog).toHaveCount(0);
         detail = await read(`release-requests/${submitted.id}/`, signal);
         requireValue(detail.status === 'approved' && detail.fingerprint === preview.fingerprint && detail.revision === preview.revision + 1, 'Renewal silently differs from the inspected changes');
-        await expect(reviewer.getByRole('button', { name: 'Renew review', exact: true })).toHaveCount(0, { timeout: 60_000 });
+        await expect(reviewer.getByRole('button', { name: 'Renew request', exact: true })).toHaveCount(0, { timeout: 60_000 });
         return { preview, decision };
       };
       const approve = async (reviewer, operator, name, decision) => {
@@ -246,14 +247,14 @@ export async function createDriver({ jobId, runId, registration }) {
           await op.transition('publication-review', () => op.click(author.getByRole('button', { name: 'Review saved draft', exact: true }), 'open-publication-review'));
           const draft = await read(`contexts/${input.contextId}/draft/`, signal, input.author);
           await op.review('candidate-against-origin', ['AGENTS.md'], [], () => expect(author.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible());
-          await op.click(author.getByRole('checkbox', { name: 'I reviewed these changes against the current published version.', exact: true }), 'acknowledge-candidate');
+          await op.click(author.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?)(?: against v\d+)?(?: and the \d+ check warnings?)?$/ }), 'acknowledge-candidate');
           const warnings = author.getByRole('checkbox', { name: "I've read the check warnings for this version.", exact: true });
           if (await warnings.count()) await op.click(warnings, 'acknowledge-warnings');
           // One step: the same reviewed identity acknowledges the head,
           // publishes the immutable candidate and opens the review request
           // with resource and candidate carried forward. Production unchanged.
           const publication = responseFor(author, `/contexts/${input.contextId}/draft/publish/`);
-          await op.transition('review-request-composer', () => op.click(author.getByRole('button', { name: 'Publish and request review', exact: true }), 'publish-and-request-review'));
+          await op.transition('review-request-composer', () => op.click(author.getByRole('button', { name: 'Publish and request release', exact: true }), 'publish-and-request-review'));
           const result = await publication;
           requireValue(result.status() === 201, 'Candidate publication failed');
           published = (await result.json()).result.version;
@@ -268,7 +269,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const author = await page('author');
           // Carried forward from publication: kind, resource and candidate.
           // The only registered target is preselected and visible.
-          await expect(author.getByRole('heading', { name: 'Request release review', exact: true })).toBeVisible();
+          await expect(author.getByRole('heading', { name: `Request release for v${published.number}`, exact: true })).toBeVisible();
           const carriedCandidate = author.getByRole('group', { name: 'Carried release candidate', exact: true });
           await expect(carriedCandidate).toContainText(input.contextName);
           await expect(carriedCandidate).toContainText(new RegExp(` → v${published.number}(?!\\d)`));
@@ -296,10 +297,10 @@ export async function createDriver({ jobId, runId, registration }) {
           await expect(author.getByRole('dialog')).toHaveCount(0);
           requireValue(preview.packet.evidence.length === input.evidenceIds.length
             && preview.packet.evidence.every((ref) => input.evidenceIds.includes(ref.source_id)), 'Prepared packet differs from the shared selection');
-          await op.review('author-packet', ['candidate', 'transition', 'target', ...preview.packet.evidence.map((_, i) => `evidence-${i}`)], [], () => expect(ack(author)).toBeEnabled(), decisionFor({ ...preview, revision: 1 }));
-          await op.click(ack(author), 'acknowledge-author-packet');
+          await op.review('author-packet', ['candidate', 'transition', 'target', ...preview.packet.evidence.map((_, i) => `evidence-${i}`)], [], () => expect(authorAck(author)).toBeEnabled(), decisionFor({ ...preview, revision: 1 }));
+          await op.click(authorAck(author), 'acknowledge-author-packet');
           const sent = responseFor(author, '/release-requests/');
-          await op.handoff('assigned-reviewer', () => op.click(author.getByRole('button', { name: 'Send review request', exact: true }), 'submit-exact-review-packet'));
+          await op.handoff('assigned-reviewer', () => op.click(author.getByRole('button', { name: 'Send request', exact: true }), 'submit-exact-review-packet'));
           const response = await sent;
           requireValue(response.status() === 201, 'Author submission failed');
           submitted = (await response.json()).result;
