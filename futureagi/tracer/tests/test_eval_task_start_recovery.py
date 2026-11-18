@@ -1034,25 +1034,21 @@ def test_recovery_uses_current_configuration(
     assert (recovered.name, recovered.sampling_rate) == ("renamed", 25)
 
 
-def test_instant_restart_voids_before_replacing_and_rolls_back_with_task(
-    intent, transport
-):
-    from tracer.views.instant_eval_scale import InstantEvalControlView
+def test_instant_restart_cannot_replace_an_untouched_create(intent, transport):
+    from tracer.views.instant_eval_scale import InstantEvalControlView, _RestartRefused
 
     start, _ = transport
     task = intent.task
     task.status = "paused"
     task.save(update_fields=["status"])
-    for rollback in (True, False):
-        with transaction.atomic():
-            InstantEvalControlView()._restart(task)
-            check(intent, "void", 0)
-            start.assert_not_called()
-            transaction.set_rollback(rollback)
-        if rollback:
-            check(intent, "pending", 0)
-            assert EvalTask.objects.get(pk=intent.pk).status == "paused"
-    start.assert_called_once_with(task, replace_existing=True)
+    rows = EvalTaskStartRequest.objects.filter(pk=intent.pk)
+    before = rows.values().get()
+    with pytest.raises(_RestartRefused, match="couldn't confirm this task started"):
+        InstantEvalControlView()._restart(task)
+    assert rows.values().get() == before
+    task.refresh_from_db()
+    assert task.status == "paused"
+    start.assert_not_called()
 
 
 def test_retired_cron_cannot_bypass_durable_create(intent, transport):

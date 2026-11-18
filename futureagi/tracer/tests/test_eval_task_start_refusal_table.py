@@ -269,56 +269,94 @@ def test_only_an_explicit_submission_clears_the_native_pause_marker(
 
 @pytest.mark.django_db
 @pytest.mark.usefixtures("fake_view", "no_new_usage")
-@pytest.mark.parametrize(
-    "action,message",
-    [
-        pytest.param("read_more", "This task was paused before it started.", id="marked-sample-now-completed"),
-        pytest.param("retry_failed", "A pending task cannot be resumed.", id="legacy-pending-failed-answer-workflow-gone"),
-    ],
-)
-def test_refused_instant_replacements_leave_the_run_untouched(
-    auth_client, observe_project, yes_no, started, monkeypatch, action, message,  # noqa: F811
+@pytest.mark.parametrize("stale_read", [False, True], ids=["marked-sample-now-completed", "pause-marker-missed-at-load"])
+def test_refused_read_more_leaves_the_run_untouched(
+    auth_client, observe_project, yes_no, started, monkeypatch, stale_read,  # noqa: F811
 ):
-    if action == "read_more":
-        monkeypatch.setattr("tracer.views.instant_eval_scale.credits_per_answer", lambda: None)
-        response = _start(auth_client, observe_project, [yes_no], sample_size=5)
-        assert response.status_code == 200, response.content
-        task = EvalTask.objects.get(pk=response.json()["result"]["task_id"])
-        assert _control(auth_client, observe_project, task, "pause").status_code == 200
-        EvalTask.objects.filter(pk=task.pk).update(status="completed")
-        task.refresh_from_db()
-        assert task.instant_paused_before_start_at is not None
-        assert not task.instant_rows.exists()
-    else:
-        rid = str(UUID(int=1))
-        task = EvalTask.objects.create(
-            project=observe_project, status="pending", run_type="historical",
-            row_type="sessions", filters={"session_id": [rid]},
-        )
-        task.evals.add(yes_no)
-        _prepared_run(task, {}, rate=None)
-        [entry] = EvalLogger.objects.bulk_create([_answer(task, yes_no, rid, error=True)])
-        assert record_answer(entry.pk) == 1
-        monkeypatch.setattr(client, "describe_eval_task_workflow_sync", Mock(return_value=client.WF_ABSENT))
-
+    monkeypatch.setattr("tracer.views.instant_eval_scale.credits_per_answer", lambda: None)
+    response = _start(auth_client, observe_project, [yes_no], sample_size=5)
+    assert response.status_code == 200, response.content
+    task = EvalTask.objects.get(pk=response.json()["result"]["task_id"])
+    assert _control(auth_client, observe_project, task, "pause").status_code == 200
+    EvalTask.objects.filter(pk=task.pk).update(status="completed")
+    task.refresh_from_db()
+    assert task.instant_paused_before_start_at is not None
+    assert not task.instant_rows.exists()
     assert not EvalTaskStartRequest.objects.filter(task=task).exists()
     runs = InstantEvalRun.objects.filter(eval_task=task)
     assert _rows_left(task, runs.get()) == 0
     run_before = runs.values().get()
     task_before = (task.status, task.spans_limit, task.instant_paused_before_start_at)
+    if stale_read:
+        # The routed read missed the marker. The sender must see it on the
+        # writer and roll back Read more's new limit, version and credit estimate.
+        task.instant_paused_before_start_at = None
+        monkeypatch.setattr("tracer.views.instant_eval_scale._load", lambda *_: (task, None))
     started.clear()  # Do not count the native sample's original submission.
-    extra = {"more": 1} if action == "read_more" else {}
-    response = _control(auth_client, observe_project, task, action, **extra)
+    response = _control(auth_client, observe_project, task, "read_more", more=1)
     assert response.status_code == 400, response.content
-    assert response.json()["message"] == message
+    assert response.json()["message"] == "This task was paused before it started."
     assert started == []
     assert runs.values().get() == run_before
     task.refresh_from_db()
     assert (task.status, task.spans_limit, task.instant_paused_before_start_at) == task_before
-    if action == "retry_failed":
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("fake_view", "no_new_usage")
+@pytest.mark.parametrize(
+    "history,expected_status",
+    [
+        pytest.param(client.WF_ABSENT, 400, id="legacy-pending-failed-answer-workflow-gone"),
+        pytest.param(client.WF_CLOSED, 400, id="legacy-pending-failed-answer-workflow-closed"),
+        pytest.param(TimeoutError(), 503, id="legacy-pending-failed-answer-workflow-unknown"),
+        pytest.param(client.WF_PROGRESSING, 200, id="legacy-pending-failed-answer-workflow-running"),
+    ],
+)
+def test_retry_failed_on_active_task(
+    auth_client, observe_project, yes_no, started, monkeypatch, history, expected_status,  # noqa: F811
+):
+    rid = str(UUID(int=1))
+    task = EvalTask.objects.create(
+        project=observe_project, status="pending", run_type="historical",
+        row_type="sessions", filters={"session_id": [rid]},
+    )
+    task.evals.add(yes_no)
+    _prepared_run(task, {}, rate=None)
+    [entry] = EvalLogger.objects.bulk_create([_answer(task, yes_no, rid, error=True)])
+    assert record_answer(entry.pk) == 1
+    assert not EvalTaskStartRequest.objects.filter(task=task).exists()
+    runs = InstantEvalRun.objects.filter(eval_task=task)
+    assert _rows_left(task, runs.get()) == 0
+    entries = EvalLogger.objects.filter(pk=entry.pk)
+    entry_before = entries.values().get()
+    answer_before = task.instant_answers.values().get()
+    version = runs.get().answers_version
+    describe = Mock(side_effect=[history])
+    monkeypatch.setattr(client, "describe_eval_task_workflow_sync", describe)
+    # A cached stall-display answer is not evidence for a write.
+    cache.set(f"ie-wf-gone:{task.pk}", False)
+    response = _control(auth_client, observe_project, task, "retry_failed")
+    assert response.status_code == expected_status, response.content
+    describe.assert_called_once()
+    assert started == []
+    task.refresh_from_db()
+    assert task.status == "pending"
+    if expected_status == 200:
+        assert response.json()["result"]["retried"] == 1
         entry.refresh_from_db()
-        assert entry.status == "errored" and entry.error
-        assert task.instant_answers.count() == 1
+        assert entry.status == "pending" and not entry.error
+        assert not task.instant_answers.exists()
+        assert runs.get().answers_version == version + 1
+    else:
+        message = response.json()["message"]
+        if expected_status == 503:
+            assert "Try again shortly." in message
+        else:
+            assert message == "A pending task cannot be resumed."
+        assert entries.values().get() == entry_before
+        assert task.instant_answers.values().get() == answer_before
+        assert runs.get().answers_version == version
 
 
 @pytest.mark.django_db
