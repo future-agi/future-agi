@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Box, Typography, Button } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Typography,
+  Button,
+  ClickAwayListener,
+} from "@mui/material";
 import { useSnackbar } from "notistack";
 import { useSearchParams } from "react-router-dom";
 
@@ -389,7 +395,8 @@ export default function ScenariosStep({
 
   // Escape clears the selection, unless it is closing something on top
   // (drawer, editor, confirm) or the user is typing in a field.
-  const overlayOpen = !!openRow || !!editing || !!pendingDelete || adding;
+  const overlayOpen =
+    !!openRow || !!editing || !!pendingDelete || adding || !!importId;
   const clearSelection = sel.clear;
   const hasSelection = sel.count > 0;
   useEffect(() => {
@@ -409,6 +416,17 @@ export default function ScenariosStep({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [hasSelection, overlayOpen, clearSelection]);
+
+  const handleClickAway = (event) => {
+    // The builder chat uses the checked scenarios as context for its next message.
+    if (
+      hasSelection &&
+      !overlayOpen &&
+      !event.target.closest?.("[data-builder-chat]")
+    ) {
+      clearSelection();
+    }
+  };
 
   // The scenario names a bulk delete targets. Names — not ids — because the
   // amend route resolves drops by name.
@@ -493,21 +511,9 @@ export default function ScenariosStep({
       ) : !hasScenarios ? (
         <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
       ) : (
-        <>
-          {loadFailed && (
-            <Alert
-              severity="error"
-              sx={{ mb: 2, flexShrink: 0 }}
-              action={
-                <Button color="inherit" size="small" onClick={retryLoad}>
-                  Retry
-                </Button>
-              }
-            >
-              Couldn&apos;t refresh the scenarios. Showing the last loaded list.
-            </Alert>
-          )}
+        <ClickAwayListener onClickAway={handleClickAway}>
           <Box
+            role="presentation"
             sx={{
               flex: 1,
               minHeight: 320,
@@ -516,6 +522,20 @@ export default function ScenariosStep({
               flexDirection: "column",
             }}
           >
+            {loadFailed && (
+              <Alert
+                severity="error"
+                sx={{ mb: 2, flexShrink: 0 }}
+                action={
+                  <Button color="inherit" size="small" onClick={retryLoad}>
+                    Retry
+                  </Button>
+                }
+              >
+                Couldn&apos;t refresh the scenarios. Showing the last loaded
+                list.
+              </Alert>
+            )}
             {/* The bulk-action bar covers the toolbar's row while a selection is
                 active. Both sit in one grid cell, the toolbar staying mounted
                 underneath, so the row keeps the toolbar's height (no shift when
@@ -652,7 +672,7 @@ export default function ScenariosStep({
               />
             </Box>
           </Box>
-        </>
+        </ClickAwayListener>
       )}
 
       {importId && env?.id ? (
