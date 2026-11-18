@@ -19,7 +19,7 @@ import {
 } from "./drawerStyles";
 import { SectionHead } from "./starts/startBits";
 import { SaasSandboxRow, WorldCard } from "./starts/worldCards";
-import BuildForAgentDialog from "./starts/BuildForAgentDialog";
+import BuildEnvironmentDialog from "src/sections/agent-playground/connected/detail/BuildEnvironmentDialog";
 import {
   FROM_CODE_ITEM,
   MCP_ITEM,
@@ -213,8 +213,7 @@ function YourAgentsSection() {
     <Box>
       <SectionHead
         title="Your agents"
-        subtitle="Pick one to build its environment. The version to test and how many scenarios to start with come next."
-        action={<UiOnlyFlag />}
+        subtitle="Pick one to build its environment. The version to test, how many scenarios to start with and how many worlds run in parallel come next."
       />
       <Box sx={PANEL_SX}>
         <Stack
@@ -280,7 +279,13 @@ function YourAgentsSection() {
           </Typography>
         )}
       </Box>
-      <BuildForAgentDialog agent={buildFor} onClose={() => setBuildFor(null)} />
+      {buildFor && (
+        <BuildEnvironmentDialog
+          agent={buildFor}
+          open
+          onClose={() => setBuildFor(null)}
+        />
+      )}
     </Box>
   );
 }
@@ -289,14 +294,27 @@ function YourAgentsSection() {
  * The Build environment drawer's first screen, as in the design: every way
  * in. `onPick(item)` opens an item's setup; `onBrowseWorlds` every world.
  */
+const SHOW_BUILD_FROM_CODE = false;
+const SHOW_PREBUILT_WORLDS = false;
+const SHOW_MCP_WORLD = false;
+
 export default function DrawerCatalog({ onPick, onBrowseWorlds }) {
   return (
     <Stack spacing={4} sx={{ pb: 4 }}>
-      <Box component="ul" sx={{ listStyle: "none", m: 0, p: 0 }}>
-        <BuildFromCode onOpen={() => onPick(FROM_CODE_ITEM)} />
-      </Box>
-      <PrebuiltSection onPick={onPick} onBrowse={onBrowseWorlds} />
-      <ConnectSection onPick={onPick} onPickMcp={() => onPick(MCP_ITEM)} />
+      {SHOW_BUILD_FROM_CODE && (
+        <Box component="ul" sx={{ listStyle: "none", m: 0, p: 0 }}>
+          <BuildFromCode onOpen={() => onPick(FROM_CODE_ITEM)} />
+        </Box>
+      )}
+      {SHOW_PREBUILT_WORLDS ? (
+        <PrebuiltSection onPick={onPick} onBrowse={onBrowseWorlds} />
+      ) : (
+        <SaasSandboxRow disabled onOpen={() => onPick(SANDBOX_ITEM)} />
+      )}
+      <ConnectSection
+        onPick={onPick}
+        onPickMcp={SHOW_MCP_WORLD ? () => onPick(MCP_ITEM) : undefined}
+      />
       <YourAgentsSection />
     </Stack>
   );

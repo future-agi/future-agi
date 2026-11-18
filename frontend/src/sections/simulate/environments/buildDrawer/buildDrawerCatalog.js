@@ -156,7 +156,7 @@ const closed = (id, name, channels, icon, reach, keywords) => ({
   setup: { panel: "closed", platform: id, uiOnly: true },
 });
 
-export const CATALOG_ITEMS = [
+const ALL_CATALOG_ITEMS = [
   {
     id: "github",
     tab: "code",
@@ -346,6 +346,19 @@ export const CATALOG_ITEMS = [
     "zendesk sunshine",
   ),
 ];
+
+const LIVE_IN_PROD = new Set([
+  "github",
+  "upload",
+  "vapi",
+  "retell",
+  "livekit",
+  "phone",
+]);
+
+export const CATALOG_ITEMS = ALL_CATALOG_ITEMS.filter((it) =>
+  LIVE_IN_PROD.has(it.id),
+);
 
 /** The items whose name or keywords contain `query`; all of them for a blank one. */
 export function searchCatalog(items, query) {

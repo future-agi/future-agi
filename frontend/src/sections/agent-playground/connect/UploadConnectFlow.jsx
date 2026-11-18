@@ -1,3 +1,4 @@
+import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSnackbar } from "notistack";
@@ -36,13 +37,19 @@ const defaultName = (picked, folder) => folder?.name || picked?.name || "";
  * give it a name and its values, connect. The agent page then shows it being
  * read. A reload comes back to the same step; the upload is never sent twice.
  */
-export default function UploadConnectFlow() {
+export default function UploadConnectFlow({
+  onComplete,
+  completeLabel = "Connect agent",
+}) {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
   const { role } = useAuthContext();
   const canConnect =
     !!RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role];
-  const [draft] = useState(() => readConnectDraft(UPLOAD_SOURCE) || {});
+  const keepsDraft = !onComplete;
+  const [draft] = useState(
+    () => (keepsDraft && readConnectDraft(UPLOAD_SOURCE)) || {},
+  );
   const [folder, setFolder] = useState(draft.folder || null);
   const [uploading, setUploading] = useState(false);
   const [stage, setStage] = useState(
@@ -59,13 +66,14 @@ export default function UploadConnectFlow() {
   const connect = useConnectAgent();
 
   useEffect(() => {
+    if (!keepsDraft) return;
     const next = { stage, folder, scanId, picked, manual, name, named };
     if (draftHasProgress(next)) {
       saveConnectDraft(next, UPLOAD_SOURCE);
     } else {
       clearConnectDraft(UPLOAD_SOURCE);
     }
-  }, [stage, folder, scanId, picked, manual, name, named]);
+  }, [keepsDraft, stage, folder, scanId, picked, manual, name, named]);
 
   const source = folder?.sourceId
     ? { kind: "archive", archive_artifact_id: folder.sourceId }
@@ -107,6 +115,15 @@ export default function UploadConnectFlow() {
     }
     setStage("details");
   };
+
+  const complete = () =>
+    onComplete({
+      source,
+      folderName: folder?.name || "",
+      entry: chosenEntry,
+      name: name.trim(),
+      envValues: shownEnvValues(credentials, envNames),
+    });
 
   const connectAgent = () =>
     connect.mutate(
@@ -259,18 +276,20 @@ export default function UploadConnectFlow() {
       </>
     );
     hint = name.trim()
-      ? "We read the agent once it's connected"
+      ? onComplete
+        ? "Next: scenarios and parallel worlds"
+        : "We read the agent once it's connected"
       : "Name the agent";
     action = (
       <Button
         variant="contained"
         color="primary"
         disabled={!name.trim() || !canConnect || connect.isPending}
-        onClick={connectAgent}
+        onClick={onComplete ? complete : connectAgent}
         endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
         sx={{ flexShrink: 0 }}
       >
-        Connect agent
+        {completeLabel}
       </Button>
     );
   }
@@ -315,3 +334,8 @@ export default function UploadConnectFlow() {
     </Box>
   );
 }
+
+UploadConnectFlow.propTypes = {
+  onComplete: PropTypes.func,
+  completeLabel: PropTypes.string,
+};

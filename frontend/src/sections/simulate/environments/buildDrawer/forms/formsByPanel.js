@@ -1,5 +1,4 @@
-import RepoForm from "./RepoForm";
-import UploadForm from "./UploadForm";
+import { GitHubCodeForm, UploadCodeForm } from "./ConnectCodeForm";
 import HostedForm from "./HostedForm";
 import LiveKitForm from "./LiveKitForm";
 import PhoneForm from "./PhoneForm";
@@ -12,8 +11,8 @@ import WorldForm from "../starts/WorldForm";
 
 // Each way in's setup form, by its `setup.panel`.
 export const FORMS_BY_PANEL = {
-  repo: RepoForm,
-  upload: UploadForm,
+  repo: GitHubCodeForm,
+  upload: UploadCodeForm,
   hosted: HostedForm,
   livekit: LiveKitForm,
   phone: PhoneForm,

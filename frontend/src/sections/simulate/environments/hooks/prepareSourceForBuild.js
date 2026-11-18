@@ -25,6 +25,7 @@ export function redactSource(source) {
   delete safe.apiKey;
   delete safe.apiSecret;
   delete safe.envText;
+  delete safe.envValues;
   return safe;
 }
 
@@ -47,6 +48,10 @@ function collectCredentialValues(source) {
     if (value) values[alias] = value;
   });
   if (source?.envText) Object.assign(values, parseDotEnv(source.envText));
+  Object.entries(source?.envValues || {}).forEach(([alias, value]) => {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (alias && text) values[alias] = text;
+  });
   return Object.fromEntries(
     Object.entries(values).filter(([, value]) => value !== ""),
   );
