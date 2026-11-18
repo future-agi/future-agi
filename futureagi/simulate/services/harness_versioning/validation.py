@@ -265,7 +265,9 @@ def ended_on_our_side(job: HostedHarnessJob) -> bool:
         if job.assembled_bundle_id
         else None
     )
-    last = ((bundle.error or {}).get("last_attempt") or {}) if bundle is not None else {}
+    last = (
+        ((bundle.error or {}).get("last_attempt") or {}) if bundle is not None else {}
+    )
     return last.get("code") == CHECK_UNAVAILABLE and last.get("job_id") == str(job.id)
 
 

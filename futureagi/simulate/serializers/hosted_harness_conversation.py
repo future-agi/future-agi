@@ -290,7 +290,9 @@ class HarnessConversationPublishSerializer(serializers.Serializer):
     digest = serializers.CharField(max_length=128)
     # Scenarios the builder could not apply in this save.
     failed_scenarios = serializers.ListField(
-        child=HarnessConversationFailedScenarioSerializer(), required=False, max_length=200
+        child=HarnessConversationFailedScenarioSerializer(),
+        required=False,
+        max_length=200,
     )
 
 

@@ -1606,7 +1606,11 @@ def record_failed_changes(environment: HostedHarnessJob, failed: Any) -> dict[st
     why; each save replaces the set, so a fixed case leaves it."""
     kept = {
         str(one.get("scenario_key")).strip()[:255]: next(
-            (line.strip() for line in str(one.get("reason") or "").splitlines() if line.strip()),
+            (
+                line.strip()
+                for line in str(one.get("reason") or "").splitlines()
+                if line.strip()
+            ),
             "it could not be loaded",
         )[:300]
         for one in failed or []
