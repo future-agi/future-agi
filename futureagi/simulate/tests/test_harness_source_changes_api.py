@@ -10,9 +10,6 @@ from simulate.services import harness_scenario_actions
 from simulate.tests.test_harness_affected_scenarios import REFUND_KEYS, _suite, _ten
 from simulate.tests.test_harness_readiness import _environment
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
-    readiness_on as readiness_on,
-)
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     storage as storage,
 )
 from simulate.tests.test_harness_scenario_lifecycle import (
@@ -21,7 +18,7 @@ from simulate.tests.test_harness_scenario_lifecycle import (
     _with_rules_and_files,
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 BASE = "/simulate/api/harness-environments"
 
 

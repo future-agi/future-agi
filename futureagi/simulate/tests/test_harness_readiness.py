@@ -3822,7 +3822,7 @@ def test_a_scenario_with_an_acting_actor_on_an_in_process_agent_is_held_back():
     placed = _place(
         _case(acting),
         {},
-        proved=True,
+        view=None,
         voice=False,
         many=False,
         pair_validating=False,

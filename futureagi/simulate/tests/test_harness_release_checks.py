@@ -16,13 +16,10 @@ from simulate.services.harness_readiness.release import (
 from simulate.tests.test_harness_affected_scenarios import _suite, _ten
 from simulate.tests.test_harness_readiness import _environment
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
-    readiness_on as readiness_on,
-)
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     storage as storage,
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 FAILED_CONTROL = {"name": "twice", "failed": True, "assumed": []}
 
 

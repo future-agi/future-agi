@@ -13,13 +13,10 @@ from simulate.tests.test_harness_affected_scenarios import (
 )
 from simulate.tests.test_harness_readiness import _environment
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
-    readiness_on as readiness_on,
-)
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     storage as storage,
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 
 def test_proof_counts_on_list(user, workspace, storage):

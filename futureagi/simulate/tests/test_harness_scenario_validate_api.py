@@ -11,9 +11,6 @@ from simulate.services.harness_versioning import validation
 from simulate.tests.test_harness_affected_scenarios import _suite, _ten
 from simulate.tests.test_harness_readiness import _environment
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
-    readiness_on as readiness_on,
-)
-from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
 from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
@@ -21,7 +18,7 @@ from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
 )
 from simulate.tests.test_harness_versioning_assembly import _row
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 BASE = "/simulate/api/harness-environments"
 
 
@@ -149,7 +146,7 @@ def test_validate_one_key_keeps_other_proofs(auth_client, certified):
     record_proofs(
         certified.suite_version,
         certified.environment_version,
-        {key: PROVED for key in REFUND_KEYS + LOOKUP_KEYS},
+        dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED),
         None,
     )
     renewed = {**PROVED, "proved_at": "2026-11-15T00:00:00Z"}
@@ -180,7 +177,9 @@ def test_a_check_that_ended_on_our_side_says_so_when_read_again(auth_client, cer
     job_id = _post(auth_client, certified).json()["job_id"]
     job = HostedHarnessJob.no_workspace_objects.get(id=job_id)
     bundle = _row(certified)
-    bundle.error = {"last_attempt": {"code": validation.CHECK_UNAVAILABLE, "job_id": job_id}}
+    bundle.error = {
+        "last_attempt": {"code": validation.CHECK_UNAVAILABLE, "job_id": job_id}
+    }
     bundle.save(update_fields=["error"])
     HostedHarnessJob.no_workspace_objects.filter(id=job_id).update(
         state=HostedHarnessJob.State.FAILED,
@@ -191,14 +190,19 @@ def test_a_check_that_ended_on_our_side_says_so_when_read_again(auth_client, cer
     read = _get(auth_client, certified, job_id).json()
 
     assert job.state != HostedHarnessJob.State.FAILED
-    assert (read["state"], read["message"]) == ("unavailable", validation.UNAVAILABLE_REASON)
+    assert (read["state"], read["message"]) == (
+        "unavailable",
+        validation.UNAVAILABLE_REASON,
+    )
 
 
 def test_starting_a_check_that_would_end_on_our_side_says_so(auth_client, certified):
     with patch.object(
         validation,
         "start_validation",
-        return_value=validation.Validation(validation.CHECK_UNAVAILABLE, _row(certified), "prove"),
+        return_value=validation.Validation(
+            validation.CHECK_UNAVAILABLE, _row(certified), "prove"
+        ),
     ):
         response = _post(auth_client, certified)
 
