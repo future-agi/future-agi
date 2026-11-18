@@ -839,6 +839,18 @@ class TestExecutionUtils:
             ]
 
         if group_by_fields:
+
+            def nullable_chat_average(key, output_field):
+                lookup = f"conversation_metrics_data__{key}"
+                # PostgreSQL cannot cast a JSON null. AVG skips SQL NULL instead.
+                return models.Avg(
+                    models.Case(
+                        models.When(**{lookup: None}, then=None),
+                        default=Cast(lookup, output_field),
+                        output_field=output_field,
+                    )
+                )
+
             # Apply grouping with annotations for counts and chat metrics
             # Extract chat metrics from conversation_metrics_data JSONField
             call_executions = call_executions.values(*group_by_fields).annotate(
@@ -864,11 +876,8 @@ class TestExecutionUtils:
                         models.IntegerField(),
                     )
                 ),
-                avg_latency_ms=models.Avg(
-                    Cast(
-                        models.F("conversation_metrics_data__avg_latency_ms"),
-                        models.IntegerField(),
-                    )
+                avg_latency_ms=nullable_chat_average(
+                    "avg_latency_ms", models.IntegerField()
                 ),
                 turn_count=models.Avg(
                     Cast(
@@ -876,12 +885,7 @@ class TestExecutionUtils:
                         models.IntegerField(),
                     )
                 ),
-                csat_score=models.Avg(
-                    Cast(
-                        models.F("conversation_metrics_data__csat_score"),
-                        models.FloatField(),
-                    )
-                ),
+                csat_score=nullable_chat_average("csat_score", models.FloatField()),
             )
 
             # Apply group_keys filtering if provided
