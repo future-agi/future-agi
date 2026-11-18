@@ -742,46 +742,6 @@ def proof_passes(entry: object) -> bool:
     )
 
 
-def proof_counts(job: HostedHarnessJob) -> dict[str, int] | None:
-    """Proved, kept as written and not proved over the default suite, on the default pair."""
-    if not job.suite_version_id or not job.environment_version_id:
-        return None
-    return pair_proof_counts(job.suite_version_id, job.environment_version_id)
-
-
-def pair_proof_counts(
-    suite_version_id: Any, environment_version_id: Any
-) -> dict[str, int]:
-    """Proved, kept as written and not proved over a suite version, on one environment version."""
-    keys = list(
-        HarnessSuiteMember.no_workspace_objects.filter(
-            suite_version_id=suite_version_id
-        ).values_list("scenario_key", flat=True)
-    )
-    proofs = (
-        HarnessSuiteValidation.no_workspace_objects.filter(
-            suite_version_id=suite_version_id,
-            environment_version_id=environment_version_id,
-        )
-        .values_list("proofs", flat=True)
-        .first()
-    ) or {}
-    counts = {"proved": 0, "kept_as_written": 0, "not_proved": 0}
-    for key in keys:
-        entry = proofs.get(key) if isinstance(proofs, dict) else None
-        if proof_passes(entry):
-            counts["proved"] += 1
-        elif isinstance(entry, Mapping) and (
-            entry.get("kept_as_written") is True
-            # An older entry that held runs kept as written, as its case reads.
-            or (entry.get("format") != 2 and entry.get("holds") is True)
-        ):
-            counts["kept_as_written"] += 1
-        else:
-            counts["not_proved"] += 1
-    return counts
-
-
 def _validation_status(proofs: Mapping[str, Any], keys: list[str]) -> str:
     holding = [key for key in keys if proof_passes(proofs.get(key))]
     if keys and len(holding) == len(keys):

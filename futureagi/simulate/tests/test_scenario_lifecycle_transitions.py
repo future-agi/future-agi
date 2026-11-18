@@ -331,6 +331,8 @@ def test_dropped_and_restored_cases_are_served_with_why_and_whether_proved_again
         lifecycle = HarnessScenarioLifecycleSerializer(data=row["lifecycle"])
         assert lifecycle.is_valid(), lifecycle.errors
     assert HarnessLifecycleCountsSerializer(data=first["lifecycle_counts"]).is_valid()
+    # One counter of proved cases per response.
+    assert "proof_counts" not in first
     assert first["dropped"] == [
         {
             "key": "cancel-a-ride",
@@ -364,3 +366,54 @@ def test_kept_as_written_runs_labelled_as_not_proved(user, workspace, storage):
     assert view["proof"]["proved"] is False
     assert view["warning"] == "solution_assumed"
     assert view["warning_text"].startswith("Kept as written:")
+
+
+@pytest.mark.parametrize(
+    "entry, state, text",
+    [
+        # ALK's verdict decides; a code this release has no words for still reads kept as written.
+        (
+            {
+                "format": 2,
+                "holds": True,
+                "proved": False,
+                "kept_as_written": True,
+                "blocked_reason": "new_lane",
+            },
+            "kept_as_written",
+            "Kept as written: part of this case could not be proved here.",
+        ),
+        # An entry from a harness that does not write the verdict reads not proved.
+        (
+            {
+                "format": 2,
+                "holds": True,
+                "proved": False,
+                "blocked_reason": "solution_assumed",
+                "assumed": ["refund"],
+            },
+            "draft",
+            "Not proved on these versions: validate it again to see why.",
+        ),
+        # One assumed tool reads in the singular.
+        (
+            {**KEPT, "assumed": ["issue_refund"], "solution_steps": 1},
+            "kept_as_written",
+            "Kept as written: 1 of 1 solution steps never ran, because issue_refund has no endpoint here.",
+        ),
+    ],
+)
+def test_the_lifecycle_reads_alks_verdict_and_never_shows_a_raw_code(
+    user, workspace, storage, entry, state, text
+):
+    environment = _base(user, workspace, storage, f"lt-verdict-{state}-{len(entry)}")
+    _record(environment, {**dict.fromkeys(KEYS, PROVED), CASE: entry})
+
+    view = scenario_lifecycle(
+        environment,
+        suite_version=environment.suite_version,
+        environment_version=environment.environment_version,
+    )[CASE]
+
+    assert view["state"] == state
+    assert (view["warning_text"] or view["reason_text"]) == text

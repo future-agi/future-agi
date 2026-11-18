@@ -4,7 +4,10 @@ import pytest
 from django.utils import timezone
 
 from simulate.models import HarnessSuiteValidation
-from simulate.services.harness_versioning.versions import proof_counts
+from simulate.services.harness_scenario_lifecycle import (
+    lifecycle_counts,
+    scenario_lifecycle,
+)
 from simulate.tests.test_harness_affected_scenarios import (
     LOOKUP_KEYS,
     REFUND_KEYS,
@@ -19,7 +22,7 @@ from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("readiness_on")]
 
 
-def test_proof_counts_on_list(user, workspace, storage):
+def test_lifecycle_counts_on_list(user, workspace, storage):
     environment = _environment(user, workspace, storage, "proof-counts")
     _suite(environment, _ten())
     proofs = {key: {"format": 2, "holds": True, "proved": True} for key in REFUND_KEYS}
@@ -42,18 +45,24 @@ def test_proof_counts_on_list(user, workspace, storage):
         defaults={"status": "partial", "proved_at": timezone.now(), "proofs": proofs},
     )
 
-    counts = proof_counts(environment)
+    counts = lifecycle_counts(
+        scenario_lifecycle(
+            environment,
+            suite_version=environment.suite_version,
+            environment_version=environment.environment_version,
+        ).values()
+    )
 
-    # The older `holds` entry counts as its case reads: kept as written, never proved.
-    assert counts == {"proved": 4, "kept_as_written": 2, "not_proved": 4}
+    # One counter: the older `holds` entry counts as its case reads, kept as written, never proved; kept-as-written
+    # cases are neither proved nor not proved.
+    assert (counts["proved"], counts["kept_as_written"], counts["not_proved"]) == (
+        4,
+        2,
+        4,
+    )
 
 
 def test_judged_only_counts_as_kept(user, workspace, storage):
-    from simulate.services.harness_scenario_lifecycle import (
-        lifecycle_counts,
-        scenario_lifecycle,
-    )
-
     environment = _environment(user, workspace, storage, "proof-counts-judged")
     _suite(environment, _ten())
     proofs = {
@@ -74,7 +83,6 @@ def test_judged_only_counts_as_kept(user, workspace, storage):
         defaults={"status": "partial", "proved_at": timezone.now(), "proofs": proofs},
     )
 
-    assert proof_counts(environment)["kept_as_written"] == 1
     views = scenario_lifecycle(
         environment,
         suite_version=environment.suite_version,

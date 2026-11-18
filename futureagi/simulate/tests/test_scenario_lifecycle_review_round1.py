@@ -228,7 +228,8 @@ def test_a_known_defect_never_runs_as_unvalidated(user, workspace, storage):
 def test_a_legacy_holds_entry_never_counts_as_proved(user, workspace, storage):
     """Review round 1, SF4: an older entry's `holds` reads Kept as written, so its proof summary and counts never say
     proved."""
-    from simulate.services.harness_versioning.versions import proof_counts, proof_passes
+    from simulate.services.harness_scenario_lifecycle import lifecycle_counts
+    from simulate.services.harness_versioning.versions import proof_passes
 
     assert proof_passes({"holds": True}) is False
     assert proof_passes({"format": 2, "proved": True}) is True
@@ -237,7 +238,7 @@ def test_a_legacy_holds_entry_never_counts_as_proved(user, workspace, storage):
     _proofs(environment, dict.fromkeys(KEYS, {"holds": True}))
 
     assert all(not view["proof"]["proved"] for view in _views(environment).values())
-    assert (proof_counts(environment) or {}).get("proved", 0) == 0
+    assert lifecycle_counts(_views(environment).values())["proved"] == 0
 
 
 def test_validation_unavailable_is_read_for_the_pairing_s_own_agent(
