@@ -1285,6 +1285,81 @@ class TestResultIngest:
         assert call.call_metadata["eval_started"] is True
         assert "eval_completed" not in call.call_metadata
 
+    def test_a_fix_check_run_starts_no_grading_whatever_its_run_test_selects(
+        self, auth_client, run_test
+    ):
+        """A fix grades its check runs only once it has a winner, so a check run's receipt
+        takes the short circuit even with the tool-call judge switched on."""
+        run_test.enable_tool_evaluation = True
+        run_test.save(update_fields=["enable_tool_evaluation"])
+        _, call_ids = _start_and_batch(auth_client, run_test)
+
+        with (
+            patch(
+                "simulate.services.alk_simulate_ingestion.is_fix_check_run",
+                return_value=True,
+            ),
+            patch(
+                "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+            ) as dispatch,
+        ):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "ride_booked", "passed": False}
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        dispatch.assert_not_called()
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.call_metadata["eval_completed"] is True
+
+    @patch("model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate")
+    def test_a_fix_check_run_localizes_no_harness_judgement(
+        self, trigger_localizer, auth_client, run_test
+    ):
+        EvalTemplate.objects.create(
+            name="alk-platform-check",
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+            owner="user",
+            eval_type="llm",
+            output_type_normalized="pass_fail",
+        )
+        _, call_ids = _start_and_batch(auth_client, run_test)
+
+        with patch(
+            "simulate.services.alk_simulate_ingestion.is_fix_check_run",
+            return_value=True,
+        ):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {
+                                "name": "response_wording",
+                                "kind": "eval",
+                                "passed": True,
+                                "platform_template": "alk-platform-check",
+                            }
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        trigger_localizer.assert_not_called()
+
     @patch("model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate")
     def test_platform_judgement_is_linked_to_run_eval_config_and_output(
         self, trigger_localizer, auth_client, run_test
@@ -1350,6 +1425,55 @@ class TestResultIngest:
             )
         }
         assert localizer_call["eval_explanation"] == "matched the required response"
+
+    def test_not_applicable_and_inconclusive_results_are_stored_as_neither_pass_nor_fail(
+        self, auth_client, run_test
+    ):
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        evaluations = [
+            {
+                "name": name,
+                "kind": "checkpoint",
+                "passed": passed,
+                "result": result,
+                "reason": reason,
+            }
+            for name, passed, result, reason in (
+                ("done", True, "pass", "done"),
+                (
+                    "noticed",
+                    None,
+                    "not_applicable",
+                    "Not applicable: the caller never asked to cancel.",
+                ),
+                (
+                    "heard",
+                    None,
+                    "inconclusive",
+                    "Inconclusive: the deciding moment cannot be heard.",
+                ),
+            )
+        ]
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {"harness_evaluations": evaluations},
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        outputs = CallExecution.objects.get(id=call_ids[0]).eval_outputs
+        stored = sorted(
+            (one["name"], one["output"], one.get("result")) for one in outputs.values()
+        )
+        assert stored == [
+            ("done", "Passed", "pass"),
+            ("heard", "Inconclusive", "inconclusive"),
+            ("noticed", "Not applicable", "not_applicable"),
+        ]
 
     def test_ingest_computes_metrics_and_duration(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)
@@ -1555,6 +1679,46 @@ class TestResultIngest:
         resolver_log.error.assert_not_called()
         # Outbound: the tested agent speaks as "assistant", the simulator as "user".
         assert [row["speaker_role"] for row in rows] == ["user", "assistant", "user"]
+
+    def test_an_actor_turn_in_a_result_keeps_who_spoke_it(self, auth_client, run_test):
+        from simulate.models import CallTranscriptActor
+        from simulate.serializers.test_execution import (
+            CallExecutionDetailSerializer,
+        )
+
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        call_id = call_ids[0]
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_id}/result/",
+            {
+                "status": "completed",
+                "transcript": [
+                    *_transcript_payload()[:2],
+                    {
+                        "speaker_role": "actor",
+                        "speaker_name": "Rowan",
+                        "content": "Add a stop.",
+                        "start_time_ms": 11500,
+                        "end_time_ms": 11900,
+                    },
+                ],
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        call = CallExecution.objects.get(id=call_id)
+        assert list(
+            CallTranscriptActor.objects.filter(
+                transcript__call_execution=call
+            ).values_list("speaker_name", flat=True)
+        ) == ["Rowan"]
+        rows = CallExecutionDetailSerializer(
+            context={"detail_mode": True}
+        ).get_transcript(call)
+        assert [(row["speaker_role"], row["speaker_name"]) for row in rows][-1] == (
+            "actor",
+            "Rowan",
+        )
 
     def test_retell_inbound_result_swaps_speaker_roles(self, auth_client, run_test):
         """Same hosted Retell result, inbound direction: the simulator placed the
