@@ -659,15 +659,31 @@ def calculate_eval_average(eval_template, api_logs):
                     continue
                 output_json = json.loads(log["config"])
                 output = output_json.get("output")
+                result = output.get("output") if isinstance(output, dict) else None
 
                 if output_type == "Pass/Fail":
                     if output.get("output") == "Passed":
                         success_count += 1
                     valid_logs += 1
 
+                elif isinstance(result, dict) and eval_template.multi_choice:
+                    # Choice scores override the formatter's nominal output type,
+                    # including for percentage templates configured as "score".
+                    run_score = result.get("score")
+                    picks = result.get("choices")
+                    if (
+                        isinstance(picks, list)
+                        and picks
+                        and isinstance(run_score, (int, float))
+                        and not isinstance(run_score, bool)
+                        and 0 <= run_score <= 1
+                    ):
+                        success_count += run_score
+                        valid_logs += 1
+
                 elif output_type == "score":
                     try:
-                        score = round(float(output.get("output")), 2)
+                        score = round(float(result), 2)
                         success_count += score
                         valid_logs += 1
                     except (ValueError, TypeError):
@@ -675,7 +691,7 @@ def calculate_eval_average(eval_template, api_logs):
 
                 elif output_type in ["choices", "reason"]:
                     if choices_map and not eval_template.multi_choice:
-                        match choices_map.get(output.get("output")[0]):
+                        match choices_map.get(result[0]):
                             case "pass":
                                 success_count += 1
                                 valid_logs += 1
@@ -685,32 +701,16 @@ def calculate_eval_average(eval_template, api_logs):
                             case _:
                                 valid_logs += 1
                     elif eval_template.multi_choice:
-                        result = output.get("output")
-                        if isinstance(result, dict):
-                            # The formatter has already averaged the scored picks.
-                            run_score = result.get("score")
-                            picks = result.get("choices")
-                            if not (
-                                isinstance(picks, list)
-                                and picks
-                                and isinstance(run_score, (int, float))
-                                and not isinstance(run_score, bool)
-                                and 0 <= run_score <= 1
-                            ):
-                                continue
-                        elif isinstance(result, list) and result:
-                            if choices_map:
-                                weights = {"pass": 1, "neutral": 0.5}
-                                run_score = sum(
-                                    weights.get(choices_map.get(pick), 0)
-                                    for pick in result
-                                ) / len(result)
-                            else:
-                                # Preserve the fallback for unmapped legacy selections.
-                                run_score = 1
-                        else:
+                        if not isinstance(result, list) or not result:
                             continue
-                        success_count += run_score
+                        if choices_map:
+                            weights = {"pass": 1, "neutral": 0.5}
+                            success_count += sum(
+                                weights.get(choices_map.get(pick), 0) for pick in result
+                            ) / len(result)
+                        else:
+                            # Preserve the fallback for unmapped legacy selections.
+                            success_count += 1
                         valid_logs += 1
                     else:
                         success_count += 1
@@ -719,14 +719,7 @@ def calculate_eval_average(eval_template, api_logs):
             except Exception:
                 continue
 
-        if output_type == "Pass/Fail":
-            average = round((success_count / valid_logs) * 100, 2) if valid_logs else 0
-        elif output_type == "score":
-            average = round((success_count / valid_logs) * 100, 2) if valid_logs else 0
-        elif output_type in ["choices", "reason"]:
-            average = round((success_count / valid_logs) * 100, 2) if valid_logs else 0
-
-        return average
+        return round((success_count / valid_logs) * 100, 2) if valid_logs else 0
 
     except Exception as e:
         logger.error(f"Error calculating eval average: {str(e)}")

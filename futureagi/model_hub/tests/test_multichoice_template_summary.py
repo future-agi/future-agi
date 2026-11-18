@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from evaluations.engine.formatting import format_eval_value
+from model_hub.models.evals_metric import EvalTemplate
 from model_hub.views.separate_evals import GetEvalTemplates
 
 NOW = datetime(2026, 11, 1, 12, tzinfo=UTC)
@@ -39,12 +40,12 @@ def assert_summary(tpl, values, expected):
         for value in values
     ]
     view = GetEvalTemplates()
-    log_map = {tpl.id: logs}
+    log_map = {str(tpl.id): logs}
     summary = view.prepare_template_data(tpl, log_map)
     assert summary["last30_run"] == len(values)
     assert summary["average"]["average"] == expected
     daily = view.process_graph_data_and_send_ws(
-        [NOW.date()], log_map, summary, {tpl.id: tpl}, NOW
+        [NOW.date()], log_map, summary, {str(tpl.id): tpl}, NOW
     )
     assert daily["average"]["avg_graph_data"][0]["value"] == expected
 
@@ -55,6 +56,41 @@ def test_formatter_to_template_summary(choices_map):
     values = [formatted(tpl, picks) for picks in (["Excellent", "Average"], ["Poor"])]
     assert [value["score"] for value in values] == [0.75, 0]
     assert_summary(tpl, values, 37.5)
+
+
+@pytest.mark.django_db
+def test_saved_percentage_template_counts_formatted_selections(auth_client):
+    response = auth_client.post(
+        "/model-hub/eval-templates/create-v2/",
+        {
+            "name": "percentage-picks",
+            "eval_type": "llm",
+            "model": "gpt-4o",
+            "instructions": "Assess {{answer}}.",
+            "output_type": "percentage",
+            "multi_choice": True,
+            "choice_scores": {"Excellent": 1, "Average": 0.5, "Poor": 0},
+        },
+        format="json",
+    )
+    assert response.status_code == 200
+    tpl = EvalTemplate.objects.get(pk=response.data["result"]["id"])
+    assert tpl.config["output"] == "score"
+    values = [
+        format_eval_value({"output": tpl.config["output"], "data": picks}, tpl)
+        for picks in (["Excellent", "Average"], ["Poor"])
+    ]
+    assert [v["score"] for v in values] == [0.75, 0]
+    assert_summary(tpl, values, 37.5)
+
+
+def test_percentage_history_keeps_scalar_rounding_and_stored_mean_precision():
+    tpl = template(MAPPING)
+    tpl.config["output"] = "score"
+    tpl.choice_scores["Average"] = 0.125
+    stored = format_eval_value({"output": "score", "data": ["Average"]}, tpl)
+    # The scalar branch rounds .246 to .25. The formatter's .125 is already scored.
+    assert_summary(tpl, [0.246, stored, {"choices": [], "score": 1}], 18.75)
 
 
 def test_mixed_history_uses_stored_scores_and_legacy_map():
