@@ -1340,9 +1340,8 @@ def _move_agent_default(
     )
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
     from simulate.services.harness_versioning.validation import (
-        agent_move,
         drop_waiting_moves,
-        start_validation,
+        gate_agent_move,
     )
 
     # Locked, so a concurrent discard sees this move before its in-use check.
@@ -1360,15 +1359,8 @@ def _move_agent_default(
     if (current.id if current is not None else None) != expected_default_id:
         raise _conflict("agent", current)
     version = AgentVersion.no_workspace_objects.get(id=version_id)
-    validation = start_validation(
-        locked,
-        version,
-        locked.environment_version,
-        locked.suite_version,
-        purpose="agent_move",
-        move=agent_move("hand", locked, version, user=user),
-    )
-    if validation is not None and not validation.ready:
+    validation = gate_agent_move("hand", locked, version, user=user)
+    if validation is not None:
         # Moved by the validation once the pairing passes; shown on the version.
         _record_activation(version.id, {str(locked.id): "validating"})
         return locked, validation
@@ -1578,7 +1570,7 @@ def move_default(
     one transaction.
     """
     from simulate.services.harness_versioning.drafts import require_no_rebuild
-    from simulate.services.hosted_harness import _not_pickable
+    from simulate.services.hosted_harness import not_pickable
 
     if piece == "agent":
         return move_agent_default(
@@ -1598,7 +1590,7 @@ def move_default(
             versions = versions.filter(fix_run__isnull=True)  # type: ignore[misc]
         version = versions.first()
         if version is None:
-            raise _not_pickable(piece)
+            raise not_pickable(piece)
         current = getattr(locked, f"{piece}_version")
         # A repeated click after the move succeeded is the same no-op.
         if current is not None and current.id == version.id:
@@ -1623,7 +1615,7 @@ def move_default(
                 details={"piece": piece},
             )
         if environment_version is None:
-            raise _not_pickable(piece)
+            raise not_pickable(piece)
         payload = dict(locked.payload or {})
         metadata = dict(payload.get("metadata") or {})
         pair = pair_archive(locked, metadata, environment_version, suite_version, piece)

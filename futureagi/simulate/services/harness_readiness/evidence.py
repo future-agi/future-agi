@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
+import tarfile
+import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, TypedDict
@@ -16,6 +17,8 @@ from typing import Any, TypedDict
 import structlog
 from django.core.cache import cache
 from django.db.models import F
+from minio.error import S3Error
+from urllib3.exceptions import HTTPError
 
 from simulate.models import (
     HarnessAgentVersionRuntime,
@@ -28,6 +31,7 @@ from simulate.models import (
     HostedHarnessReceipt,
 )
 from simulate.models.harness_versioning import ArchiveLayout
+from simulate.selectors.runs import validation_jobs
 from simulate.services.harness_readiness.catalogue import (
     EvidenceCheck,
     EvidenceSource,
@@ -50,11 +54,9 @@ _MAX_CERTIFICATION_BYTES = 8 * 1024 * 1024
 # again soon.
 _FILES_TTL_SECONDS = 7 * 24 * 3600
 _UNREADABLE_TTL_SECONDS = 300
-# One reader per archive at a time, for as long as a read may take; the others wait up
-# to 10 s (in the request) for its result, then are told to try again.
+# One reader per archive at a time, for as long as a read may take; the others are told
+# to try again, never held in the request.
 _READING_TTL_SECONDS = 300
-_WAIT_STEP_SECONDS = 0.25
-_WAIT_STEPS = 40
 _RETRY_AFTER_SECONDS = 10
 _SANDBOX_SOURCES = frozenset(
     {
@@ -162,13 +164,9 @@ def _get(source: Any, name: str) -> Any:
     return source.get(name) if isinstance(source, Mapping) else None
 
 
-def _certification_files(
+def _kept_files(
     row: HarnessAssembledBundle | HarnessEnvironmentVersion, object_key: str
-) -> CertificationFiles:
-    """The per-tool and per-action certification and tool routing of the archive at
-    ``object_key``, kept on ``row``. A bundle stored since they are kept has them
-    already; an older row has its archive read once, and keeps what was read. An
-    archive that cannot be read is marked ``unreadable``."""
+) -> CertificationFiles | None:
     kept = row.certification_files
     if (
         isinstance(kept, Mapping)
@@ -176,9 +174,34 @@ def _certification_files(
         and kept.get("files_version") == _FILES_VERSION
     ):
         return _files_of(kept)
+    return None
+
+
+def _certification_files(
+    row: HarnessAssembledBundle | HarnessEnvironmentVersion, object_key: str
+) -> CertificationFiles:
+    """The per-tool and per-action certification and tool routing of the archive at
+    ``object_key``. A bundle stored since they are kept has them on its row; an older
+    row's archive is read through the cache, and a recheck keeps what it read on the row
+    (``keep_certification_files``). Writes nothing. An archive that cannot be read is
+    marked ``unreadable``."""
+    kept = _kept_files(row, object_key)
+    if kept is not None:
+        return kept
+    files, readable = _read_once(object_key)
+    return files if readable else {**files, "unreadable": True}
+
+
+def keep_certification_files(
+    row: HarnessAssembledBundle | HarnessEnvironmentVersion, object_key: str
+) -> None:
+    """Keep an older row's certification files on it, so readiness no longer reads its
+    archive. Run on a write path (a recheck), never on a read."""
+    if _kept_files(row, object_key) is not None:
+        return
     files, readable = _read_once(object_key)
     if not readable:
-        return {**files, "unreadable": True}
+        return
     key_field = (
         "object_key"
         if isinstance(row, HarnessAssembledBundle)
@@ -191,15 +214,13 @@ def _certification_files(
             **files,
         }
     )
-    return files
 
 
 def _read_once(object_key: str) -> _Read:
     """The archive's certification files and whether it could be read, by one reader
     per archive: archives are content-addressed, so a key never changes what it holds.
-    A request that finds another reading waits for its result, and is told to try again
-    when it does not come in time. An archive that cannot be read reads as holding
-    neither, for a few minutes."""
+    A request that finds another reading is told to try again; it never waits. An
+    archive that cannot be read reads as holding neither, for a few minutes."""
     cache_key = (
         f"harness-readiness-certification:v{_FILES_VERSION}:"
         + hashlib.sha256(object_key.encode()).hexdigest()
@@ -209,11 +230,6 @@ def _read_once(object_key: str) -> _Read:
         return cached
     reading = cache_key + ":reading"
     if not cache.add(reading, 1, timeout=_READING_TTL_SECONDS):
-        for _ in range(_WAIT_STEPS):
-            time.sleep(_WAIT_STEP_SECONDS)
-            cached = _cached_read(cache_key)
-            if cached is not None:
-                return cached
         raise HostedHarnessError(
             "certification_reading",
             "This pairing's certification is still being read. Try again in a few "
@@ -242,6 +258,17 @@ def _cached_read(cache_key: str) -> _Read | None:
     return None
 
 
+# What reading a stored archive can raise: the store, the network, or a truncated or corrupt archive.
+_ARCHIVE_READ_ERRORS = (
+    S3Error,
+    HTTPError,
+    tarfile.TarError,
+    OSError,
+    EOFError,
+    zlib.error,
+)
+
+
 def _read_certification_files(object_key: str, cache_key: str) -> _Read:
     try:
         found = archives.stream_members(
@@ -257,12 +284,12 @@ def _read_certification_files(object_key: str, cache_key: str) -> _Read:
             },
             _MAX_CERTIFICATION_BYTES,
         )
-    except Exception as exc:
+    except _ARCHIVE_READ_ERRORS:
         # Storage, network or a truncated archive.
         logger.warning(
             "harness_readiness_certification_unreadable",
             object_key=object_key,
-            error=type(exc).__name__,
+            exc_info=True,
         )
         unreadable: _Read = (_files_of({}), False)
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
@@ -665,13 +692,12 @@ def _cancel(pairing: Pairing) -> Reading:
         )
     attempt = (
         HostedHarnessAttempt.no_workspace_objects.filter(
+            ~validation_jobs("job__"),
             job__agent_version_id=pairing.agent_version.id,
             job__cancel_requested_at__isnull=False,
             # A run of an environment; a stopped build never ran the agent's cases.
             job__environment_id__isnull=False,
             attempt_number=F("job__current_attempt_number"),
-            # A validation job never started the agent; its key is set only on them.
-            job__payload__metadata__certify_only__isnull=True,
             provider_ref__isnull=False,
         )
         .exclude(provider_ref="")
@@ -733,10 +759,9 @@ def routed_from_runs(pairing: Pairing) -> RoutedInRun | None:
     if pairing.agent_version is None:
         return None
     runs = HostedHarnessJob.no_workspace_objects.filter(
+        ~validation_jobs(),
         environment_id=pairing.environment.id,
         test_execution_id__isnull=False,
-        # A validation job never ran the agent's cases; its key is set only on them.
-        payload__metadata__certify_only__isnull=True,
     )
     run = (
         runs.filter(
@@ -840,12 +865,11 @@ def recent_runs(pairing: Pairing) -> list[Any]:
         return []
     return list(
         HostedHarnessJob.no_workspace_objects.filter(
+            ~validation_jobs(),
             environment_id=pairing.environment.id,
             agent_version_id=pairing.agent_version.id,
             environment_version_id=pairing.environment_version.id,
             test_execution_id__isnull=False,
-            # A validation job never ran the agent's cases; its key is set only on them.
-            payload__metadata__certify_only__isnull=True,
         )
         .order_by("-created_at")
         .values_list("id", flat=True)[:_RUNS_READ]

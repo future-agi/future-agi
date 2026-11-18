@@ -1071,7 +1071,7 @@ def resolve_run_pins(
                 details={"piece": None},
             )
         return None
-    defaults = _pin_ids(environment)
+    defaults = pin_ids(environment)
     source, loaded, kept = environment, None, None
     if (
         rerun_of is not None
@@ -1082,7 +1082,7 @@ def resolve_run_pins(
         loaded = _load_pins(environment, rerun_of)
         _, environment_version, suite_version, runtime = loaded
         kept = _source_bundle(environment, rerun_of)
-        if _pin_ids(rerun_of) == defaults or (
+        if pin_ids(rerun_of) == defaults or (
             runtime is not None
             and (
                 certify_enabled()
@@ -1103,7 +1103,7 @@ def resolve_run_pins(
                 environment_id=str(environment.id),
                 rerun_of=str(rerun_of.id),
             )
-    ids = _pin_ids(source)
+    ids = pin_ids(source)
     if chosen:
         _check_picks(environment, picks, defaults, fix_run=fix_run)
         picked = tuple(
@@ -1112,10 +1112,10 @@ def resolve_run_pins(
         if picked != ids:
             ids, loaded = picked, None
     if loaded is None:
-        loaded = _load_ids(environment, ids)
+        loaded = load_ids(environment, ids)
     agent_version, environment_version, suite_version, runtime = loaded
     # A rerun of its source's very pins replays the bundle its source ran.
-    if source is not rerun_of or ids != _pin_ids(rerun_of) or runtime is None:
+    if source is not rerun_of or ids != pin_ids(rerun_of) or runtime is None:
         kept = None
     cached = (
         (
@@ -1224,7 +1224,7 @@ def _unpinned_agent_version(environment: HostedHarnessJob) -> Any:
     )
 
 
-def _not_pickable(piece: str) -> HostedHarnessError:
+def not_pickable(piece: str) -> HostedHarnessError:
     # Every refused pick of a piece reads the same, so its reason is not revealed.
     return HostedHarnessError(
         "version_not_pickable",
@@ -1237,27 +1237,10 @@ def _not_pickable(piece: str) -> HostedHarnessError:
 def agent_version_pickable(environment: HostedHarnessJob, agent_id: Any) -> bool:
     """A live version of the environment's agent, in its workspace, whose check
     passed, or a legacy or pre-versioning one."""
-    from simulate.models import AgentVersion, HarnessAgentVersionRuntime
-    from simulate.services.harness_agent_versions import lineage_version_ids
-    from simulate.services.harness_versioning.read import (
-        _agent_definition_id,
-        in_workspace,
-    )
+    from simulate.models import HarnessAgentVersionRuntime
+    from simulate.services.harness_versioning.read import agent_in_lineage
 
-    definition_id = _agent_definition_id(environment)
-    if (
-        definition_id is None
-        or not AgentVersion.no_workspace_objects.filter(
-            in_workspace(environment),
-            id=agent_id,
-            organization_id=environment.organization_id,
-            agent_definition_id=definition_id,
-        ).exists()
-    ):
-        return False
-    # An agent environments share: only this environment's own versions.
-    allowed = lineage_version_ids(environment, definition_id)
-    if allowed is not None and str(agent_id) not in allowed:
+    if not agent_in_lineage(environment, agent_id):
         return False
     status = (
         HarnessAgentVersionRuntime.no_workspace_objects.filter(
@@ -1272,6 +1255,33 @@ def agent_version_pickable(environment: HostedHarnessJob, agent_id: Any) -> bool
     )
 
 
+def require_active_pick(
+    environment: HostedHarnessJob,
+    piece: str,
+    pick: Any,
+    default: Any,
+    *,
+    run: bool = False,
+    fix_run: Any = None,
+) -> None:
+    """Refuse an environment or suite version pick that is not one of this environment's active versions. The
+    default is always pickable; for a ``run``, a suite version private to a fix only by that fix's check runs."""
+    from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
+    from simulate.models.harness_versioning import VersionStatus
+
+    if not pick or str(pick) == str(default):
+        return
+    model = HarnessEnvironmentVersion if piece == "environment" else HarnessSuiteVersion
+    versions = model.no_workspace_objects.filter(
+        job=environment, id=pick, status=VersionStatus.ACTIVE
+    )
+    if run and piece == "suite" and pick != getattr(fix_run, "suite_version_id", None):
+        # The model is HarnessSuiteVersion here; mypy checks both models.
+        versions = versions.filter(fix_run__isnull=True)  # type: ignore[misc]
+    if not versions.exists():
+        raise not_pickable(piece)
+
+
 def _check_picks(
     environment: HostedHarnessJob,
     picks: VersionPicks,
@@ -1284,24 +1294,15 @@ def _check_picks(
     A pick of the default is the default, so a dialog that sends it back always runs. A
     suite version private to a fix is the pick of that fix's check runs alone.
     """
-    from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
-    from simulate.models.harness_versioning import VersionStatus
     from simulate.services.harness_agent_versions import require_agent_pick
 
     agent_id, environment_id, suite_id = picks.ids()
-    for piece, model, pick, default in (
-        ("environment", HarnessEnvironmentVersion, environment_id, defaults[1]),
-        ("suite", HarnessSuiteVersion, suite_id, defaults[2]),
-    ):
-        if pick and pick != default:
-            versions = model.no_workspace_objects.filter(
-                job=environment, id=pick, status=VersionStatus.ACTIVE
-            )
-            if piece == "suite" and pick != getattr(fix_run, "suite_version_id", None):
-                # The model is HarnessSuiteVersion here; mypy checks both models.
-                versions = versions.filter(fix_run__isnull=True)  # type: ignore[misc]
-            if not versions.exists():
-                raise _not_pickable(piece)
+    require_active_pick(
+        environment, "environment", environment_id, defaults[1], run=True
+    )
+    require_active_pick(
+        environment, "suite", suite_id, defaults[2], run=True, fix_run=fix_run
+    )
     if not agent_id or agent_id == defaults[0]:
         return
     require_agent_pick(
@@ -1324,8 +1325,8 @@ def job_pins(
 
     if job.environment_version_id is None or job.suite_version_id is None:
         return None
-    ids = _pin_ids(job)
-    agent_version, environment_version, suite_version, runtime = _load_ids(
+    ids = pin_ids(job)
+    agent_version, environment_version, suite_version, runtime = load_ids(
         environment, ids
     )
     recorded = ((job.payload or {}).get("metadata") or {}).get("assembly") or {}
@@ -1340,7 +1341,7 @@ def job_pins(
         runtime=runtime,
         agent_version_id=ids[0],
         defaults=(
-            defaults if isinstance(defaults, bool) else ids == _pin_ids(environment)
+            defaults if isinstance(defaults, bool) else ids == pin_ids(environment)
         ),
         cached=(
             cached
@@ -1371,7 +1372,7 @@ def _replayed_run(
         resolved.agent_version_id,
         getattr(resolved.agent_version, "id", None),
     )
-    if not same_agent or _pin_ids(existing)[1:] != (
+    if not same_agent or pin_ids(existing)[1:] != (
         resolved.environment_version.id,
         resolved.suite_version.id,
     ):
@@ -1437,7 +1438,7 @@ def _pinned_versions(
     )
 
 
-def _pin_ids(job: HostedHarnessJob) -> tuple[Any, Any, Any]:
+def pin_ids(job: HostedHarnessJob) -> tuple[Any, Any, Any]:
     return (job.agent_version_id, job.environment_version_id, job.suite_version_id)
 
 
@@ -1446,10 +1447,10 @@ def _load_pins(
 ) -> tuple[Any, Any, Any, Any]:
     """The agent, environment and suite versions ``source`` is pinned to, and the agent's
     side row."""
-    return _load_ids(environment, _pin_ids(source))
+    return load_ids(environment, pin_ids(source))
 
 
-def _load_ids(
+def load_ids(
     environment: HostedHarnessJob, ids: tuple[Any, Any, Any]
 ) -> tuple[Any, Any, Any, Any]:
     """The agent, environment and suite versions of these ids, and the agent's side

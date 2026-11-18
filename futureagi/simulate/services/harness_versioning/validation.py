@@ -31,6 +31,7 @@ from simulate.models import (
     HarnessSuiteVersion,
     HostedHarnessJob,
 )
+from simulate.selectors.runs import validation_jobs
 from simulate.services.harness_versioning import assembly
 from simulate.services.hosted_harness import (
     CHECK_TIMED_OUT_CANCEL_REASON,
@@ -68,9 +69,13 @@ UNAVAILABLE_REASON = (
     "the check could not prepare this environment's test world on our side; runs go"
     " ahead without it"
 )
-# The processes ALK itself adds to a generated world (agent-learning-kit
-# bundle_author_v2: the managed world-db, the generated tool-proxy and mcp-toolbox). Any
-# other process is the agent's or one of its services, whatever it is called.
+# Whose failure it was, decided here because the agent can write the failure file it
+# reads. The tables below are ALK's: agent-learning-kit ``fi/alk/harness/failure_record.py``
+# (``_OWNED_PROCESSES``, ``_HARNESS_CODES``, ``_OWNED_SEED_DIAGNOSTICS``, ``_AGENT_OUTPUT``,
+# ``_TYPED``). This is the platform's one copy; ``test_harness_failure_tables_contract``
+# pins it to ALK's values, so a change on either side fails there.
+# The processes ALK itself adds to a generated world (the managed world-db, the generated
+# tool-proxy and mcp-toolbox). Any other process is the agent's or one of its services.
 _OWNED_PROCESSES = frozenset({"world-db", "tool-proxy", "mcp-toolbox"})
 # Codes ALK raises with an infrastructure domain at every raise site, whatever the process.
 _INFRASTRUCTURE_CODES = frozenset(
@@ -334,9 +339,9 @@ def live_validation(bundle_id: Any) -> HostedHarnessJob | None:
     """The validation job still certifying this bundle, if any."""
     return (
         HostedHarnessJob.no_workspace_objects.filter(
+            validation_jobs(),
             assembled_bundle_id=bundle_id,
             state__in=_LIVE_STATES,
-            payload__metadata__certify_only=True,
         )
         .order_by("-created_at")
         .first()
@@ -346,9 +351,9 @@ def live_validation(bundle_id: Any) -> HostedHarnessJob | None:
 def validating(environment_id: Any, agent_version_id: Any) -> bool:
     """Whether a move of ``environment``'s default to this agent version is validating."""
     return HostedHarnessJob.no_workspace_objects.filter(
+        validation_jobs(),
         environment_id=environment_id,
         state__in=_LIVE_STATES,
-        payload__metadata__certify_only=True,
         payload__metadata__validation_move__agent_version_id=str(agent_version_id),
     ).exists()
 
@@ -379,6 +384,26 @@ def agent_move(
             str(from_environment_version_id) if from_environment_version_id else None
         ),
     }
+
+
+def gate_agent_move(
+    caller: Caller,
+    locked: HostedHarnessJob,
+    version: AgentVersion,
+    **move: Any,
+) -> Validation | None:
+    """Validate ``version`` with the environment's default pieces before it becomes the default agent. Returns the
+    validation still running, which makes the move once the pairing passes; ``None`` when the move may be made now
+    (already certified, or validation is not available here)."""
+    validation = start_validation(
+        locked,
+        version,
+        locked.environment_version,
+        locked.suite_version,
+        purpose="agent_move",
+        move=agent_move(caller, locked, version, **move),
+    )
+    return validation if validation is not None and not validation.ready else None
 
 
 def start_validation(
@@ -542,9 +567,9 @@ def drop_waiting_moves(locked: HostedHarnessJob, agent_version_id: Any) -> None:
     from simulate.services.harness_agent_versions import _record_activation
 
     waiting = HostedHarnessJob.no_workspace_objects.select_for_update().filter(
+        validation_jobs(),
         environment_id=locked.id,
         state__in=_LIVE_STATES,
-        payload__metadata__certify_only=True,
         payload__metadata__validation_move__isnull=False,
     )
     for job in waiting:
@@ -638,7 +663,7 @@ def _create_job(
     # One key per check of this bundle, so two requests for the same check make one job,
     # and so one workflow; the bundle is the environment's for this pairing's hash.
     checks = HostedHarnessJob.no_workspace_objects.filter(
-        assembled_bundle_id=bundle.id, payload__metadata__certify_only=True
+        validation_jobs(), assembled_bundle_id=bundle.id
     ).count()
     job, _ = create_hosted_job(
         locked.organization,
@@ -809,7 +834,7 @@ def _unmade(jobs: Any) -> Any:
     """The settled validations among ``jobs`` whose move was not made."""
     return (
         jobs.filter(
-            payload__metadata__certify_only=True,
+            validation_jobs(),
             payload__metadata__validation_outcome__isnull=False,
             payload__metadata__validation_move__isnull=False,
         )

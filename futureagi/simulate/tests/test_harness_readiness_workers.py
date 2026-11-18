@@ -421,7 +421,7 @@ class TestBackCompat:
         assert absent["door_unreadable"] is False
 
     @pytest.mark.django_db
-    def test_a_row_kept_at_an_older_files_version_is_read_again_and_stamped(
+    def test_a_row_kept_at_an_older_files_version_is_read_again_and_stamped_on_recheck(
         self, monkeypatch
     ):
         from django.core.cache import cache
@@ -463,6 +463,9 @@ class TestBackCompat:
         row = _Bundle()
 
         files = evidence_module._certification_files(row, "k1")
+        # A read stamps nothing; a recheck keeps what it read.
+        assert saved == []
+        evidence_module.keep_certification_files(row, "k1")
         row.certification_files = saved[0]
         again = evidence_module._certification_files(row, "k1")
 
