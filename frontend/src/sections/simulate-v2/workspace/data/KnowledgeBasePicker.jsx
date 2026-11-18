@@ -1,13 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
-import {
-  Box,
-  Button,
-  MenuItem,
-  Select,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import ClosableDialog from "../../components/ClosableDialog";
 import {
   KB_LIMIT_LINE,
@@ -27,10 +19,9 @@ export default function KnowledgeBasePicker({
   open,
   onClose,
   onAddOrg,
-  onRequestAccess,
+  onAddMany = null,
   added = [],
 }) {
-  const [picked, setPicked] = useState({});
   return (
     <ClosableDialog
       open={open}
@@ -46,107 +37,97 @@ export default function KnowledgeBasePicker({
         title={`${KB_SNAPSHOT_LINE} ${KB_STATE_LINE} ${KB_LIMIT_LINE}`}
         sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
       >
-        {/* What this is for (#101) — opened from Add source. */}
-        Pick a file and the revision to copy into this environment · PDF, DOCX,
-        RTF, TXT up to 5 MB
+        {/* The Knowledge base has files, not versions or access requests: a
+            file is copied as it is now, and a later change there arrives as a
+            refresh to review. */}
+        Copy files into this environment · PDF, DOCX, RTF, TXT up to 5 MB
       </Typography>
 
       <Box sx={{ mt: 1.5, maxHeight: 420, overflowY: "auto" }}>
-        {kbCollections().map((c) => (
-          <Box key={c.name}>
-            <Typography
-              sx={{
-                typography: "s3",
-                fontWeight: 600,
-                color: "text.tertiary",
-                py: 0.75,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-              }}
-            >{`${c.name} · ${c.owner} · ${c.files.length} ${c.files.length === 1 ? "file" : "files"}`}</Typography>
-            {c.files.map((o) => {
-              const isAdded = o.access && added.includes(o.name);
-              const rev = picked[o.id] ?? o.revision;
-              return (
-                <Stack
-                  key={o.id}
-                  direction="row"
-                  alignItems="center"
-                  spacing={1.5}
+        {kbCollections().map((c) => {
+          /* Only files you can open are listed — the Knowledge base's own access. */
+          const files = c.files.filter((o) => o.access);
+          if (!files.length) return null;
+          const toAdd = files.filter((o) => !added.includes(o.name));
+          return (
+            <Box key={c.name}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                sx={{
+                  py: 0.5,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Typography
                   sx={{
-                    py: 1,
-                    "& + &": { borderTop: "1px solid", borderColor: "divider" },
+                    typography: "s3",
+                    fontWeight: 600,
+                    color: "text.tertiary",
+                    flex: 1,
                   }}
-                >
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography
-                      noWrap
-                      sx={{ typography: "s2", fontWeight: 600 }}
-                    >
-                      {o.access ? o.name : `${o.owner} file`}
-                    </Typography>
-                    <Typography
-                      sx={{ typography: "s3", color: "text.tertiary" }}
-                    >
-                      {isAdded
-                        ? "Already a source — a new revision arrives as a refresh to review"
-                        : o.access
-                          ? `${typeLabelOf(o)} · latest rev ${o.revision}`
-                          : "No access"}
-                    </Typography>
-                  </Box>
-                  {o.access && !isAdded && (
-                    <Select
-                      size="small"
-                      value={rev}
-                      onChange={(e) =>
-                        setPicked((cur) => ({ ...cur, [o.id]: e.target.value }))
-                      }
-                      inputProps={{ "aria-label": `Revision of ${o.name}` }}
-                      /* Closed, just the revision — what changed is in the list. */
-                      renderValue={(v) =>
-                        `rev ${v}${v === o.revision ? " · latest" : ""}`
-                      }
-                      sx={{
-                        minWidth: 128,
-                        "& .MuiSelect-select": { typography: "s1", py: 0.5 },
-                      }}
-                      MenuProps={{ PaperProps: { sx: { maxWidth: 360 } } }}
-                    >
-                      {[...o.revisions].reverse().map((r) => (
-                        <MenuItem
-                          key={r.rev}
-                          value={r.rev}
-                          sx={{ typography: "s1", whiteSpace: "normal" }}
-                        >
-                          {`rev ${r.rev}${r.rev === o.revision ? " (latest)" : ""} · ${r.note}`}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  )}
-                  {o.access ? (
+                >{`${c.name} · ${files.length} ${files.length === 1 ? "file" : "files"}`}</Typography>
+                {toAdd.length > 1 && (
+                  <Button
+                    size="small"
+                    color="inherit"
+                    onClick={() =>
+                      onAddMany
+                        ? onAddMany(toAdd)
+                        : toAdd.forEach((o) => onAddOrg({ ...o }))
+                    }
+                    sx={{ minWidth: 0, color: "text.secondary" }}
+                  >
+                    {`Add all ${toAdd.length}`}
+                  </Button>
+                )}
+              </Stack>
+              {files.map((o) => {
+                const isAdded = added.includes(o.name);
+                return (
+                  <Stack
+                    key={o.id}
+                    direction="row"
+                    alignItems="center"
+                    spacing={1.5}
+                    sx={{
+                      py: 1,
+                      "& + &": {
+                        borderTop: "1px solid",
+                        borderColor: "divider",
+                      },
+                    }}
+                  >
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography
+                        noWrap
+                        sx={{ typography: "s2", fontWeight: 600 }}
+                      >
+                        {o.name}
+                      </Typography>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
+                        {isAdded
+                          ? "Added — if it changes in the Knowledge base, you review the change"
+                          : typeLabelOf(o)}
+                      </Typography>
+                    </Box>
                     <Button
                       size="small"
                       variant="outlined"
                       disabled={isAdded}
-                      onClick={() => onAddOrg({ ...o, revision: rev })}
+                      onClick={() => onAddOrg({ ...o })}
                     >
-                      Copy rev {rev}
+                      {isAdded ? "Added" : "Add"}
                     </Button>
-                  ) : (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={() => onRequestAccess?.(o)}
-                    >
-                      Request access
-                    </Button>
-                  )}
-                </Stack>
-              );
-            })}
-          </Box>
-        ))}
+                  </Stack>
+                );
+              })}
+            </Box>
+          );
+        })}
       </Box>
     </ClosableDialog>
   );
@@ -156,6 +137,6 @@ KnowledgeBasePicker.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func.isRequired,
   onAddOrg: PropTypes.func.isRequired,
-  onRequestAccess: PropTypes.func,
+  onAddMany: PropTypes.func,
   added: PropTypes.arrayOf(PropTypes.string),
 };

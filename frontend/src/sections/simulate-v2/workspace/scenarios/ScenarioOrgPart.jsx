@@ -470,7 +470,7 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                       key={s.id}
                       value={s.id}
                       sx={{ typography: "s2" }}
-                    >{`${s.name} · ${s.kb ? `rev ${s.kb.revision}` : `v${s.version}`}`}</MenuItem>
+                    >{`${s.name} · ${s.kb ? "your copy" : `v${s.version}`}`}</MenuItem>
                   ))}
                   <MenuItem
                     value="__add"

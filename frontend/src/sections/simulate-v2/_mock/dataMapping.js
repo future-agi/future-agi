@@ -246,14 +246,42 @@ export const PERSONAL_CHOICES = [
     label: "No personal data present",
     note: "Nothing in this file identifies a person.",
   },
+  /* Shown only once a column is set differently from the file's choice. */
+  {
+    id: "custom",
+    label: "Custom, per column",
+    note: "Set column by column below.",
+  },
 ];
+
+/* A column's handling, with "Not personal" for one the builder didn't flag. */
+export const NOT_PERSONAL = "plain";
+const modeOfChoice = (choice) => (choice === "keep" ? "retain" : "replace");
+
+/** A column counts as personal when the builder flagged it or someone marked it. */
+export const isPersonalColumn = (source, c) => {
+  const m = source?.privacy?.[c.name];
+  if (m === NOT_PERSONAL) return false;
+  return !!c.sensitive || !!m;
+};
+
+/* One edit per file for personal data in Review changes, however many clicks. */
+const personalNote = (envState, source, detail) => {
+  if (!source?.inEnv) return {};
+  const prefix = `${source.name}: personal data`;
+  const before = envState.unsavedEnvChanges || [];
+  const kept = before.filter((c) => !String(c.detail || "").startsWith(prefix));
+  const res = envChangePatch({ ...envState, unsavedEnvChanges: kept }, "seed", detail);
+  if (before.length && res.draftBase) delete res.draftBase;
+  return { ...res, changeSource: `file:${source.name}` };
+};
 export const personalChoiceLabel = (id) =>
   PERSONAL_CHOICES.find((c) => c.id === id)?.label || "Not chosen yet";
 
 /** Does the source hold personal data, which columns, and what did the person choose? */
 export const personalDataOf = (source) => {
   const columns = (source?.parsed?.columns || [])
-    .filter((c) => c.sensitive)
+    .filter((c) => isPersonalColumn(source, c))
     .map((c) => c.name);
   const has =
     columns.length > 0 ||
@@ -269,17 +297,49 @@ export const personalDataOf = (source) => {
 
 /** Choosing sets how each personal column is handled; the person can still tune a column. */
 export const personalChoicePatch = (envState, source, choice) => {
+  if (choice === "custom") return {};
   const cols = personalDataOf(source).columns;
-  const mode = choice === "replace" ? "replace" : "retain";
+  /* The file's choice fills every personal column; "none" clears them. */
   const privacy = {
     ...(source.privacy || {}),
-    ...Object.fromEntries(cols.map((c) => [c, mode])),
+    ...Object.fromEntries(
+      cols.map((c) => [c, choice === "none" ? NOT_PERSONAL : modeOfChoice(choice)]),
+    ),
   };
   return {
     sources: (envState.sources || []).map((s) =>
       s.id === source.id ? { ...s, personalChoice: choice, privacy } : s,
     ),
-    ...changeNote(
+    ...personalNote(
+      envState,
+      source,
+      `${source.name}: personal data — ${personalChoiceLabel(choice).toLowerCase()}`,
+    ),
+  };
+};
+
+/**
+ * One column's handling. A column set apart from the file's choice makes the
+ * choice Custom; set back so all agree, the choice follows them again. A
+ * column the builder missed can be marked personal here.
+ */
+export const columnPrivacyPatch = (envState, source, column, mode) => {
+  const privacy = { ...(source.privacy || {}), [column]: mode };
+  const next = { ...source, privacy };
+  const cols = (source.parsed?.columns || []).filter((c) => isPersonalColumn(next, c));
+  const modes = new Set(cols.map((c) => privacy[c.name] || modeOfChoice(source.personalChoice)));
+  const choice = !cols.length
+    ? "none"
+    : modes.size === 1 && modes.has("replace")
+      ? "replace"
+      : modes.size === 1 && modes.has("retain")
+        ? "keep"
+        : "custom";
+  return {
+    sources: (envState.sources || []).map((s) =>
+      s.id === source.id ? { ...s, privacy, personalChoice: choice } : s,
+    ),
+    ...personalNote(
       envState,
       source,
       `${source.name}: personal data — ${personalChoiceLabel(choice).toLowerCase()}`,

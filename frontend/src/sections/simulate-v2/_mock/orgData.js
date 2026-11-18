@@ -436,7 +436,7 @@ export const sourceFromOrg = (o) => {
         v: 1,
         at,
         rev: o.revision,
-        note: `Copied from the Knowledge base · ${o.collection} · rev ${o.revision}`,
+        note: `Copied from the Knowledge base · ${o.collection}`,
       },
     ],
   };
@@ -1294,6 +1294,9 @@ export const draftDataPatches = (
             ...list[list.length - 1],
             before: beforeOfFields(cur, fields),
             source: file ? `file:${file}` : "hand",
+            /* Added from Review proposed changes: already accepted there, so
+               Review changes shows it decided (with Undo), not asked again. */
+            decision: "accepted",
             /* Where in the file: a passage or a row, so Open lands on it. */
             ...(cite && { cite }),
             ...(build && { build }),

@@ -272,7 +272,7 @@ export default function DataProposalCard({
       ]),
     );
     enqueueSnackbar(
-      `Copied ${o.name} rev ${o.revision} into the draft. Nothing reaches the world until you accept.`,
+      `Copied ${o.name} into the draft as it is now. Nothing reaches the world until you accept.`,
       { variant: "success" },
     );
   };

@@ -91,7 +91,7 @@ export default function ReviewRefreshDialog({
       const saved = kbRefreshPatch(env, envState, source, plan, accepted);
       patch(saved);
       enqueueSnackbar(
-        `Saved as environment ${saved.activeEnvVersion} with ${source.name} rev ${plan.latest}.`,
+        `Saved as environment ${saved.activeEnvVersion} with the current ${source.name}.`,
         { variant: "success" },
       );
       close();
@@ -107,7 +107,7 @@ export default function ReviewRefreshDialog({
       ),
     });
     enqueueSnackbar(
-      `Kept ${source.name} on rev ${plan.from}. Rev ${plan.latest} stays available to review.`,
+      `Kept your copy of ${source.name}. The change stays available to review.`,
       { variant: "info" },
     );
     close();
@@ -156,7 +156,7 @@ export default function ReviewRefreshDialog({
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {/* Why it's open and what to do (#100): a new revision in the
                   Knowledge base; every change is in unless rejected. */}
-              {`New in the Knowledge base: rev ${plan.from} → rev ${plan.latest} · ${plan.changes.length} ${plan.changes.length === 1 ? "change" : "changes"}, each accepted unless you reject it · then Save as ${next}`}
+              {`Changed in the Knowledge base since you added it · your copy vs the current file · ${plan.changes.length} ${plan.changes.length === 1 ? "change" : "changes"}, each accepted unless you reject it · then Save as ${next}`}
             </Typography>
           </Box>
           <IconButton size="small" onClick={close} aria-label="Close">
@@ -271,7 +271,7 @@ export default function ReviewRefreshDialog({
                   color: "status.warning.fg",
                 }}
               >
-                {`Validation failed — rev ${plan.from} stays pinned`}
+                {`Validation failed — your copy stays in use`}
               </Typography>
               {result.failures.map((f) => (
                 <Box key={f.id} sx={{ mt: 0.75 }}>
@@ -356,7 +356,7 @@ export default function ReviewRefreshDialog({
             {touched.length > 0 && <ScenarioCount list={touched} />}
           </Stack>
           <Button size="small" variant="outlined" onClick={keepPinned}>
-            {`Keep rev ${plan.from} pinned`}
+            {`Keep my copy`}
           </Button>
           <Button
             size="small"

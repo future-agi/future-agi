@@ -48,13 +48,13 @@ export default function SourceChangedNotice({ row, env, locked }) {
             sx={{ color: "warning.main" }}
           />
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            {`New revision available · ${cited.name} rev ${kbNew.latest}`}
+            {`${cited.name} changed in the Knowledge base since you added it`}
           </Typography>
         </Stack>
         <Typography
           sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
         >
-          {`This case cites rev ${kbNew.from}. Runs still use rev ${kbNew.from} until you review the refresh and save it.`}
+          {`This case cites your copy. Runs keep using it until you review the change and save it.`}
         </Typography>
         {!locked && (
           <Button

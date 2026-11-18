@@ -5,6 +5,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   Box,
   Button,
+  CircularProgress,
   IconButton,
   Stack,
   Tooltip,
@@ -69,6 +70,29 @@ export default function SourcesSection({
 }) {
   const [anchor, setAnchor] = useState(null);
   const [review, setReview] = useState(null);
+  /* Files are read in a sandbox and take a moment each: until then a row
+     says Reading and the review fills in file by file. */
+  const [now, setNow] = useState(Date.now());
+  const readingUntil = Math.max(
+    0,
+    ...(envState.sources || []).map((x) => x.readUntil || 0),
+  );
+  useEffect(() => {
+    if (readingUntil <= Date.now()) return undefined;
+    const t = setInterval(() => setNow(Date.now()), 250);
+    const stop = setTimeout(
+      () => {
+        clearInterval(t);
+        setNow(Date.now());
+      },
+      readingUntil - Date.now() + 300,
+    );
+    return () => {
+      clearInterval(t);
+      clearTimeout(stop);
+    };
+  }, [readingUntil]);
+  const isReading = (x) => (x?.readUntil || 0) > now;
   /* A source with a newer revision being reviewed; one asking to be reconnected. */
   const [refreshing, setRefreshing] = useState(null);
   const [reconnecting, setReconnecting] = useState(null);
@@ -114,8 +138,12 @@ export default function SourcesSection({
   const designing = env.buildStatus === "awaiting_approval";
   const addFiles = async (files) => {
     /* Text files are read for their words, not guessed from their name. */
-    const read = (await readDesignFiles(files)).map(readFile);
+    const at = Date.now();
+    const read = (await readDesignFiles(files))
+      .map(readFile)
+      .map((x, i) => ({ ...x, readUntil: at + 1800 + i * 1400 }));
     patch({ sources: [...(envState.sources || []), ...read] });
+    setNow(at);
     const usable = read.filter((s) => s.status !== "unsupported");
     if (usable.length && !designing) setReview(usable.map((s) => s.id));
   };
@@ -130,8 +158,9 @@ export default function SourcesSection({
     }
     /* From the Knowledge base, pinned to the revision chosen: a newer
        revision is offered as a refresh to review, never applied on its own. */
-    const s = sourceFromOrg(o);
+    const s = { ...sourceFromOrg(o), readUntil: Date.now() + 1800 };
     patch({ sources: [...(envState.sources || []), s] });
+    setNow(Date.now());
     if (!designing) setReview([s.id]);
   };
 
@@ -341,15 +370,17 @@ export default function SourcesSection({
                         }),
                       }}
                     >
-                      {s.revoked
-                        ? "Access revoked"
-                        : problem
-                          ? problem.short
-                          : s.inEnv
-                            ? STATUS[s.status]
-                            : s.status === "ready"
-                              ? "Not saved yet"
-                              : STATUS[s.status]}
+                      {isReading(s)
+                        ? "Reading…"
+                        : s.revoked
+                          ? "Access revoked"
+                          : problem
+                            ? problem.short
+                            : s.inEnv
+                              ? STATUS[s.status]
+                              : s.status === "ready"
+                                ? "Not saved yet"
+                                : STATUS[s.status]}
                     </Typography>
                   </Tooltip>
                   <Typography
@@ -360,7 +391,7 @@ export default function SourcesSection({
                   >
                     {/* data.md §4: a KB source is a copied snapshot — said
                         on the row, so a later KB edit can't pass for it. */}
-                    {`${s.kb ? `rev ${s.kb.revision} · copied snapshot` : `v${s.version}`}${s.pendingRefresh ? ` · v${s.pendingRefresh.v} kept` : ""}`}
+                    {`${s.kb ? "your copy" : `v${s.version}`}${s.pendingRefresh ? ` · v${s.pendingRefresh.v} kept` : ""}`}
                   </Typography>
                   <Typography
                     noWrap
@@ -413,7 +444,7 @@ export default function SourcesSection({
                         <Typography
                           sx={{ typography: "s3", color: "text.secondary" }}
                         >
-                          {`New revision available · rev ${refresh.latest}${s.kb.keptRev === refresh.latest ? ` · you kept rev ${refresh.from} pinned` : ""}`}
+                          {`Changed in the Knowledge base since you added it${s.kb.keptRev === refresh.latest ? " · you kept your copy" : ""}`}
                         </Typography>
                         {!readOnly && (
                           <Button
@@ -431,7 +462,7 @@ export default function SourcesSection({
                         <Typography
                           sx={{ typography: "s3", color: "status.warning.fg" }}
                         >
-                          {`Access revoked · keeping rev ${s.kb?.revision} · refresh blocked${s.revoked.requested ? " · access requested" : ""}`}
+                          {`Access revoked · keeping your copy · refresh blocked`}
                         </Typography>
                         {!readOnly && !s.revoked.requested && (
                           <Button
@@ -621,18 +652,64 @@ export default function SourcesSection({
             </IconButton>
           </Stack>
           <Box sx={{ flex: 1, minHeight: 0 }}>
-            {review && (
-              <DataProposalCard
-                layout="drawer"
-                env={env}
-                sourceIds={review}
-                onSaved={() => setReview(null)}
-                onOpenSource={(id) => {
-                  setReview(null);
-                  if (id) setOpen(id);
-                }}
-              />
-            )}
+            {/* Each file loads, then its proposals fill in. */}
+            {review &&
+              review
+                .map((id) => (envState.sources || []).find((x) => x.id === id))
+                .filter((x) => x && isReading(x))
+                .map((x) => (
+                  <Stack
+                    key={x.id}
+                    direction="row"
+                    alignItems="center"
+                    spacing={1}
+                    sx={{
+                      px: 2.5,
+                      py: 1.25,
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                    }}
+                  >
+                    <CircularProgress
+                      size={14}
+                      thickness={5}
+                      sx={{ color: "text.secondary", flexShrink: 0 }}
+                    />
+                    <Typography
+                      sx={{ typography: "s1", color: "text.secondary" }}
+                    >
+                      {`Reading ${x.name}…`}
+                    </Typography>
+                  </Stack>
+                ))}
+            {review &&
+              review.some((id) =>
+                (envState.sources || []).some(
+                  (x) => x.id === id && !isReading(x),
+                ),
+              ) && (
+                <DataProposalCard
+                  key={review
+                    .filter((id) =>
+                      (envState.sources || []).some(
+                        (x) => x.id === id && !isReading(x),
+                      ),
+                    )
+                    .join(",")}
+                  layout="drawer"
+                  env={env}
+                  sourceIds={review.filter((id) =>
+                    (envState.sources || []).some(
+                      (x) => x.id === id && !isReading(x),
+                    ),
+                  )}
+                  onSaved={() => setReview(null)}
+                  onOpenSource={(id) => {
+                    setReview(null);
+                    if (id) setOpen(id);
+                  }}
+                />
+              )}
           </Box>
         </Stack>
       </SideDrawer>
@@ -652,7 +729,7 @@ export default function SourcesSection({
         title="Ask for access again?"
         content={(() => {
           const r = sources.find((x) => x.id === reconnecting);
-          return `${r?.owner || "The owner"} took access to ${r?.name || "this file"} away. The environment keeps using the copy pinned at rev ${r?.kb?.revision}, refresh stays blocked until access is back, and nothing switches to another source.`;
+          return `${r?.owner || "The owner"} took access to ${r?.name || "this file"} away. The environment keeps using your copy, refresh stays blocked until access is back, and nothing switches to another source.`;
         })()}
         action={
           <Button

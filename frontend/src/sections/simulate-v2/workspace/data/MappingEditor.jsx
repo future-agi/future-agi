@@ -97,7 +97,7 @@ export default function MappingEditor({
   const edit = (name, fields, detail) =>
     patch(columnEditPatch(envState, source, name, fields, detail));
   const snapshot = source.kb
-    ? `${source.name} rev ${source.kb.revision}`
+    ? `${source.name} · your copy`
     : `${source.name} v${source.version}`;
 
   return (
@@ -108,7 +108,6 @@ export default function MappingEditor({
             {p.table}
           </Box>
         </Row>
-        <Row label="Key">{p.columns.find((c) => c.key)?.name}</Row>
         <Row label="Mapping version">{`v${source.mapping?.v || 1}${
           review.proposals.length +
           review.unmatched.length +
@@ -118,7 +117,7 @@ export default function MappingEditor({
         }`}</Row>
         <Row label="Source snapshot">{`${snapshot} · ${source.snapshot ? `snapshot ${source.snapshot}` : "not saved into the environment yet"}`}</Row>
         <Row label="Duplicates">
-          Rejected — a later row with the same key is listed, not merged
+          Rejected — a later row with the same stable ID is listed, not merged
         </Row>
       </Box>
 
@@ -453,14 +452,6 @@ export default function MappingEditor({
                 }}
               >
                 {c.name}
-                {c.key && (
-                  <Box
-                    component="span"
-                    sx={{ typography: "s3", color: "text.tertiary", ml: 0.5 }}
-                  >
-                    key
-                  </Box>
-                )}
               </Typography>
               <Select
                 size="small"

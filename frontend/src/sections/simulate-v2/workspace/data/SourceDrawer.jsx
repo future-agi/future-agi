@@ -41,6 +41,8 @@ import {
   mappingToReview,
   personalChoicePatch,
   personalDataOf,
+  columnPrivacyPatch,
+  NOT_PERSONAL,
   standInOf,
   supplyRecordsPatch,
 } from "../../_mock/dataMapping";
@@ -199,7 +201,7 @@ export default function SourceDrawer({
       supplyRecordsPatch(envState, source.id, supply.join, [sourceFromOrg(o)]),
     );
     enqueueSnackbar(
-      `Copied ${o.name} rev ${o.revision} into the draft. Nothing reaches the world until you accept it.`,
+      `Copied ${o.name} into the draft as it is now. Nothing reaches the world until you accept it.`,
       { variant: "success" },
     );
   };
@@ -219,7 +221,8 @@ export default function SourceDrawer({
     ...(p.kind === "table"
       ? [["mapping", toReview ? `Mapping · ${toReview} to review` : "Mapping"]]
       : []),
-    ...(pd.has ? [["privacy", "Sensitive values"]] : []),
+    /* A table always: a column the builder missed can be marked here. */
+    ...(pd.has || p.kind === "table" ? [["privacy", "Personal data"]] : []),
     ["usage", "Used by"],
     ["versions", "Versions"],
   ];
@@ -243,7 +246,7 @@ export default function SourceDrawer({
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {[
                 typeLabelOf(source),
-                source.kb ? `rev ${source.kb.revision}` : `v${source.version}`,
+                source.kb ? "your copy" : `v${source.version}`,
                 source.owner,
                 source.snapshot
                   ? `in snapshot ${source.snapshot}`
@@ -296,7 +299,7 @@ export default function SourceDrawer({
             <Typography
               sx={{ typography: "s3", color: "status.warning.fg", flex: 1 }}
             >
-              {`Access revoked · keeping pinned rev ${source.kb?.revision} · refresh is blocked`}
+              {`Access revoked · keeping your copy · refresh is blocked`}
             </Typography>
             {!readOnly && (
               <Button
@@ -653,76 +656,98 @@ export default function SourceDrawer({
                   }
                 />
               </Box>
-              {p.kind === "table" && (
+              {/* Every column, the builder's guesses filled in; "No personal
+                  data present" hides them. */}
+              {p.kind === "table" && pd.choice !== "none" && (
                 <Stack spacing={1}>
                   <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    Replace consistently keeps joins: the same customer gets the
-                    same stand-in across orders, refunds and conversations.
+                    Mark any column the builder missed. Replace consistently
+                    keeps joins.
                   </Typography>
-                  {p.columns
-                    .filter((c) => c.sensitive || c.stableId || c.key)
-                    .map((c) => {
-                      const mode = source.privacy?.[c.name] || "retain";
-                      return (
-                        <Stack
-                          key={c.name}
-                          direction="row"
-                          alignItems="center"
-                          spacing={1.5}
-                          sx={{ py: 0.5 }}
+                  {p.columns.map((c) => {
+                    const mode =
+                      source.privacy?.[c.name] ||
+                      (c.sensitive
+                        ? pd.choice === "keep"
+                          ? "retain"
+                          : "replace"
+                        : NOT_PERSONAL);
+                    return (
+                      <Stack
+                        key={c.name}
+                        direction="row"
+                        alignItems="center"
+                        spacing={1.5}
+                        sx={{ py: 0.5 }}
+                      >
+                        <Typography
+                          sx={{
+                            typography: "s2",
+                            fontFamily: MONO,
+                            width: 120,
+                            flexShrink: 0,
+                          }}
                         >
-                          <Typography
-                            sx={{
-                              typography: "s2",
-                              fontFamily: MONO,
-                              width: 120,
-                              flexShrink: 0,
-                            }}
-                          >
-                            {c.name}
-                          </Typography>
-                          <Select
-                            size="small"
-                            value={mode}
-                            disabled={readOnly}
-                            onChange={(e) =>
-                              edit(
-                                {
-                                  privacy: {
-                                    ...(source.privacy || {}),
-                                    [c.name]: e.target.value,
-                                  },
-                                },
-                                `${source.name}.${c.name}: ${PRIVACY.find((x) => x.id === e.target.value).label.toLowerCase()}`,
-                              )
-                            }
-                            sx={{ typography: "s3", width: 180 }}
-                          >
-                            {PRIVACY.map((x) => (
-                              <MenuItem
-                                key={x.id}
-                                value={x.id}
-                                sx={{ typography: "s3" }}
-                              >
-                                {x.label}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                          <Typography
-                            noWrap
-                            sx={{
-                              typography: "s3",
-                              fontFamily: MONO,
-                              color: "text.secondary",
-                              flex: 1,
-                              minWidth: 0,
-                            }}
-                          >
-                            {`${String(p.sample?.[c.name] ?? "")} → ${shown(p.sample?.[c.name] ?? "", mode)}`}
-                          </Typography>
-                        </Stack>
-                      );
-                    })}
+                          {c.name}
+                          {c.sensitive && (
+                            <Box
+                              component="span"
+                              sx={{
+                                color: "text.tertiary",
+                                ml: 0.5,
+                                typography: "s3",
+                              }}
+                            >
+                              found
+                            </Box>
+                          )}
+                        </Typography>
+                        <Select
+                          size="small"
+                          value={mode}
+                          disabled={readOnly}
+                          onChange={(e) =>
+                            patch(
+                              columnPrivacyPatch(
+                                envState,
+                                source,
+                                c.name,
+                                e.target.value,
+                              ),
+                            )
+                          }
+                          sx={{ typography: "s3", width: 180 }}
+                        >
+                          {[
+                            { id: NOT_PERSONAL, label: "Not personal" },
+                            ...PRIVACY,
+                          ].map((x) => (
+                            <MenuItem
+                              key={x.id}
+                              value={x.id}
+                              sx={{ typography: "s3" }}
+                            >
+                              {x.label}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                        <Typography
+                          noWrap
+                          sx={{
+                            typography: "s3",
+                            fontFamily: MONO,
+                            color: "text.secondary",
+                            flex: 1,
+                            minWidth: 0,
+                          }}
+                        >
+                          {mode === NOT_PERSONAL
+                            ? String(p.sample?.[c.name] ?? "")
+                            : `${String(p.sample?.[c.name] ?? "")} → ${shown(p.sample?.[c.name] ?? "", mode)}`}
+                        </Typography>
+                      </Stack>
+                    );
+                  })}
                 </Stack>
               )}
             </Stack>
@@ -776,7 +801,7 @@ export default function SourceDrawer({
               {source.kb && (
                 <Box>
                   <KV label="Knowledge base">
-                    {`${source.kb.collection} · pinned rev ${source.kb.revision}${source.kb.leftOut?.length ? ` · ${source.kb.leftOut.length} ${source.kb.leftOut.length === 1 ? "change" : "changes"} left out` : ""}`}
+                    {`${source.kb.collection} · your copy${source.kb.leftOut?.length ? ` · ${source.kb.leftOut.length} ${source.kb.leftOut.length === 1 ? "change" : "changes"} left out` : ""}`}
                   </KV>
                   <KV label="Snapshot">
                     A copy of that revision. It isn&apos;t linked live — edits
@@ -784,9 +809,9 @@ export default function SourceDrawer({
                   </KV>
                   <KV label="Refresh">
                     {source.revoked
-                      ? `Access revoked · keeping pinned rev ${source.kb.revision} · refresh is blocked`
+                      ? `Access revoked · keeping your copy · refresh is blocked`
                       : refresh
-                        ? `New revision available · rev ${refresh.latest}${refresh.note ? ` — ${refresh.note}` : ""}`
+                        ? `Changed in the Knowledge base since you added it${refresh.note ? ` — ${refresh.note}` : ""}`
                         : "Up to date. A new revision waits for you to review it; it is never pulled in on its own."}
                   </KV>
                   {(refresh || source.revoked) && !readOnly && (
@@ -816,7 +841,7 @@ export default function SourceDrawer({
               {[...source.versions].reverse().map((v) => (
                 <KV
                   key={v.v}
-                  label={`${v.rev ? `rev ${v.rev}` : `v${v.v}`}${v.v === source.version ? " · in use" : ""}`}
+                  label={`${v.rev ? (v.v === source.version ? "your copy" : "earlier copy") : `v${v.v}`}${v.v === source.version ? " · in use" : ""}`}
                 >
                   {`${v.note}${v.inVersion ? ` · environment ${v.inVersion}` : ""}`}
                 </KV>

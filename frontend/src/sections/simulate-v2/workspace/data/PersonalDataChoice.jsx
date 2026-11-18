@@ -28,7 +28,9 @@ export default function PersonalDataChoice({
         useFlexGap
         flexWrap="wrap"
       >
-        {PERSONAL_CHOICES.map((c) => {
+        {PERSONAL_CHOICES.filter(
+          (c) => c.id !== "custom" || choice === "custom",
+        ).map((c) => {
           const on = choice === c.id;
           return (
             <Tooltip key={c.id} title={c.note} arrow>
@@ -56,7 +58,9 @@ export default function PersonalDataChoice({
   return (
     <Box>
       <Stack role="radiogroup" aria-label="Personal data" spacing={0.25}>
-        {PERSONAL_CHOICES.map((c) => {
+        {PERSONAL_CHOICES.filter(
+          (c) => c.id !== "custom" || choice === "custom",
+        ).map((c) => {
           const on = choice === c.id;
           return (
             <ButtonBase

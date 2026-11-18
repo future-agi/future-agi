@@ -31,6 +31,9 @@ export default function AddSourceMenu({
 }) {
   const fileRef = useRef(null);
   const [kbOpen, setKbOpen] = useState(false);
+  /* The latest handler, so staggered adds each see the previous one. */
+  const addOrgRef = useRef(onAddOrg);
+  addOrgRef.current = onAddOrg;
   return (
     <>
       <Menu
@@ -145,9 +148,12 @@ export default function AddSourceMenu({
         open={kbOpen}
         onClose={() => setKbOpen(false)}
         added={added}
-        onRequestAccess={(o) => {
+        onAddMany={(files) => {
           setKbOpen(false);
-          onAddOrg(o);
+          /* One at a time, each on the state the last one left. */
+          files.forEach((o, i) =>
+            setTimeout(() => addOrgRef.current(o), i * 120),
+          );
         }}
         onAddOrg={(o) => {
           setKbOpen(false);
