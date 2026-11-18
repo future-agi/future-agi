@@ -1,6 +1,12 @@
 """What a sub-goal's ``def check(world, calls[, reference])`` reads, by Python's
 ``ast``: whether it reads the world, and which tools it fails without a call to.
 Never estimated: a tool whose role cannot be read is reported as such.
+
+ALK owns these rules. Whether a check reads world state is agent-learning-kit
+``fi.alk.harness.checks.check_reads``; the tools a check names follow
+``fi.alk.harness.folder._tools_selected``. The platform reads the sealed check source
+for an environment version that never ran, so it keeps this one copy, pinned to ALK's
+cases by ``tests/test_harness_check_reading_contract.py``.
 """
 
 from __future__ import annotations
@@ -47,16 +53,38 @@ def read_check(source: str) -> CheckReading | None:
     )
     if check is None:
         return None
-    world = check.args.args[0].arg
     required, named, clear = _tool_roles(check)
     return CheckReading(
-        world=any(
-            isinstance(node, ast.Name) and node.id == world for node in ast.walk(check)
-        ),
+        world=reads_world_state(check),
         tools=required,
         named=named,
         clear=clear,
     )
+
+
+def reads_world_state(check: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether the check reads the world's state, as ALK's ``check_reads`` decides it:
+    reading only the world's action log (``world.events``) is not a state read, and a
+    world handed to a helper or another name may read anything, so it counts."""
+    world = check.args.args[0].arg if check.args.args else ""
+    if not world:
+        return False
+    names = [
+        node.id
+        for node in ast.walk(check)
+        if isinstance(node, ast.Name) and node.id == world
+    ]
+    receivers = [
+        node
+        for node in ast.walk(check)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == world
+    ]
+    log_reads = sum(1 for node in receivers if node.attr == "events")
+    if len(names) > len(receivers):
+        return True
+    return len(names) > log_reads
 
 
 def _tool_roles(
