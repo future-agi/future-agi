@@ -10,7 +10,16 @@ import {
 import { BUILDING_TABS, DERIVING_LABEL } from "../build.constants";
 
 describe("provenance constants", () => {
-  const ids = ["code", "config", "prompt", "doc", "callGraph", "policy", "fixture", "inferred"];
+  const ids = [
+    "code",
+    "config",
+    "prompt",
+    "doc",
+    "callGraph",
+    "policy",
+    "fixture",
+    "inferred",
+  ];
 
   it("declares the eight origin kinds", () => {
     expect(Object.keys(ORIGIN_KINDS)).toEqual(ids);
@@ -20,7 +29,9 @@ describe("provenance constants", () => {
     ids.forEach((id) => {
       const kind = ORIGIN_KINDS[id];
       expect(kind.id).toBe(id);
-      expect(ORIGIN_ID[Object.keys(ORIGIN_ID).find((k) => ORIGIN_ID[k] === id)]).toBe(id);
+      expect(
+        ORIGIN_ID[Object.keys(ORIGIN_ID).find((k) => ORIGIN_ID[k] === id)],
+      ).toBe(id);
       expect(typeof kind.short).toBe("string");
       expect(typeof kind.label).toBe("string");
       expect(typeof kind.note).toBe("string");
@@ -31,7 +42,11 @@ describe("provenance constants", () => {
 describe("build pipeline constants", () => {
   it("has twelve steps split into setup and run phases", () => {
     expect(BUILD_PIPELINE).toHaveLength(12);
-    expect(BUILD_PIPELINE.filter((s) => s.phase === PIPELINE_PHASE.SETUP).map((s) => s.id)).toEqual([
+    expect(
+      BUILD_PIPELINE.filter((s) => s.phase === PIPELINE_PHASE.SETUP).map(
+        (s) => s.id,
+      ),
+    ).toEqual([
       "understand",
       "generate-env",
       "build-env",
@@ -40,13 +55,11 @@ describe("build pipeline constants", () => {
       "generate-scenarios",
       "validate-scenarios",
     ]);
-    expect(BUILD_PIPELINE.filter((s) => s.phase === PIPELINE_PHASE.RUN).map((s) => s.id)).toEqual([
-      "connect-agent",
-      "run",
-      "grade",
-      "upload",
-      "completed",
-    ]);
+    expect(
+      BUILD_PIPELINE.filter((s) => s.phase === PIPELINE_PHASE.RUN).map(
+        (s) => s.id,
+      ),
+    ).toEqual(["connect-agent", "run", "grade", "upload", "completed"]);
   });
 
   it("derives step status from the done set and running flag", () => {
@@ -61,29 +74,50 @@ describe("build pipeline constants", () => {
     expect(oneDone.find((s) => s.id === "understand").status).toBe("done");
     expect(oneDone.find((s) => s.id === "generate-env").status).toBe("running");
 
-    const setupDone = pipelineStatus(["understand", "build", "scenarios"], false);
+    const setupDone = pipelineStatus(
+      ["understand", "build", "scenarios"],
+      false,
+    );
     expect(setupDone.filter((s) => s.status === "done")).toHaveLength(7);
-    expect(setupDone.filter((s) => s.phase === "run").every((s) => s.status === "pending")).toBe(true);
+    expect(
+      setupDone
+        .filter((s) => s.phase === "run")
+        .every((s) => s.status === "pending"),
+    ).toBe(true);
 
     // After 7/7, a chat message flips running:true but must NOT relight a run-phase
     // step — the pill stays "Ready to run", not "Connecting agent".
-    const setupDoneRunning = pipelineStatus(["understand", "build", "scenarios"], true, "setup");
+    const setupDoneRunning = pipelineStatus(
+      ["understand", "build", "scenarios"],
+      true,
+      "setup",
+    );
     expect(setupDoneRunning.some((s) => s.status === "running")).toBe(false);
     expect(pipelineSummary(setupDoneRunning).label).toBe("7 of 12 complete");
 
-    const failed = pipelineStatus(["understand"], true, "setup", { stepId: "build-env" });
+    const failed = pipelineStatus(["understand"], true, "setup", {
+      stepId: "build-env",
+    });
     expect(failed.find((s) => s.id === "build-env").status).toBe("failed");
     const buildEnvIdx = BUILD_PIPELINE.findIndex((s) => s.id === "build-env");
-    expect(failed.slice(buildEnvIdx + 1).every((s) => s.status === "pending")).toBe(true);
+    expect(
+      failed.slice(buildEnvIdx + 1).every((s) => s.status === "pending"),
+    ).toBe(true);
   });
 
   it("summarises the pipeline into a human label", () => {
-    expect(pipelineSummary(pipelineStatus(["understand"], true)).label).toBe("Running · 1 of 12");
-    expect(pipelineSummary(pipelineStatus(["understand", "build", "scenarios"], false)).label).toBe(
-      "7 of 12 complete",
+    expect(pipelineSummary(pipelineStatus(["understand"], true)).label).toBe(
+      "Running · 1 of 12",
     );
     expect(
-      pipelineSummary(pipelineStatus(["understand"], true, "setup", { stepId: "build-env" })).label,
+      pipelineSummary(
+        pipelineStatus(["understand", "build", "scenarios"], false),
+      ).label,
+    ).toBe("7 of 12 complete");
+    expect(
+      pipelineSummary(
+        pipelineStatus(["understand"], true, "setup", { stepId: "build-env" }),
+      ).label,
     ).toBe("Failed at building environment");
   });
 });
@@ -92,6 +126,7 @@ describe("build stage constants", () => {
   it("labels the building tabs in rail order, without Runs or Versions (a building env has neither)", () => {
     expect(BUILDING_TABS.map((t) => t.label)).toEqual([
       "Overview",
+      "World & tools",
       "Contract",
       "Scenarios",
       "Evaluations",
@@ -100,6 +135,8 @@ describe("build stage constants", () => {
   });
 
   it("uses the designer deriving copy", () => {
-    expect(DERIVING_LABEL.understand).toBe("Reading your agent: extracting tools and rules");
+    expect(DERIVING_LABEL.understand).toBe(
+      "Reading your agent: extracting tools and rules",
+    );
   });
 });
