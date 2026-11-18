@@ -22,12 +22,6 @@ export const cut = (text, chars) => {
   if (chars < 4) return "";
   return s.length <= chars ? s : `${s.slice(0, chars - 1).trimEnd()}…`;
 };
-export const KIND = {
-  message: "Message",
-  handoff: "Hand-off",
-  tool: "Tool call",
-};
-
 /** 0.4 s · 3.2 s · 42 s · 1 min 13 s */
 export const took = (sec) => {
   if (sec == null || Number.isNaN(sec)) return "—";
@@ -76,13 +70,6 @@ export const kindOf = (r, s) => {
   if (r.type === "took") return null;
   if (r.type === "go") return s.kind === "message" ? "SAID" : "TASK";
   return s.kind === "message" ? "SAID" : "RESULT";
-};
-
-export const KIND_WORDS = {
-  SAID: "Said",
-  TASK: "Task handed over",
-  RESULT: "Result sent back",
-  TOOL: "Tool call",
 };
 
 export const TAG_W = (k) => (k ? k.length * 8 + 6 : 0);

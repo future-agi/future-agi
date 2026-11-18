@@ -119,13 +119,6 @@ describe("SequenceDiagram", () => {
     expect(stepRow(4).style.opacity).toBe("0.22");
   });
 
-  it("lists declared workers with no events under the diagram", () => {
-    draw(seqOf(timeline()));
-    expect(
-      screen.getByText(/Declared, no events sent: Audit worker/),
-    ).toBeInTheDocument();
-  });
-
   it("selecting a step shows the exact message asked and answered", () => {
     draw(seqOf(timeline()), { selected: 2 });
     const detail = screen.getByTestId("step-detail");

@@ -194,7 +194,6 @@ export default function TrialRoutes({
               },
               "& th": {
                 typography: "s3",
-                fontSize: 11,
                 fontWeight: 600,
                 color: "text.disabled",
                 maxWidth: 150,

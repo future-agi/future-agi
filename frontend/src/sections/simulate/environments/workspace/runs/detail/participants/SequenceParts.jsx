@@ -118,23 +118,19 @@ export function Legend({ seq }) {
     >
       {/* What the small tag in front of each arrow's words means. */}
       {[
-        ["SAID", "words to or from the caller", true],
-        [
-          "TASK",
-          "handed to a participant",
-          seq.steps.some((x) => x.kind === "handoff"),
-        ],
-        ["RESULT", "a participant's answer", has("back") || has("none")],
-        ["TOOL", "a tool call", has("tool")],
+        ["SAID", true],
+        ["TASK", seq.steps.some((x) => x.kind === "handoff")],
+        ["RESULT", has("back") || has("none")],
+        ["TOOL", has("tool")],
       ]
-        .filter(([, , on]) => on)
-        .map(([k, text]) =>
+        .filter(([, on]) => on)
+        .map(([k]) =>
           item(
             k,
             <Typography
               component="span"
               sx={{
-                fontSize: 11,
+                typography: "s3",
                 fontWeight: 600,
                 letterSpacing: "0.06em",
                 color: "text.secondary",
@@ -142,15 +138,15 @@ export function Legend({ seq }) {
             >
               {k}
             </Typography>,
-            text,
+            C.legend[k],
           ),
         )}
-      {has("back") && item("back", seg(sub, "4 3"), "came back")}
-      {has("none") && item("none", seg(bad, "5 3"), "no answer")}
+      {has("back") && item("back", seg(sub, "4 3"), C.legend.back)}
+      {has("none") && item("none", seg(bad, "5 3"), C.legend.none)}
       {seq.steps.some((x) => x.refused) &&
-        item("refused", seg(warn), "refused by the world")}
+        item("refused", seg(warn), C.legend.refused)}
       {seq.steps.some((x) => x.kind === "tool" && x.bad) &&
-        item("failed", seg(bad), "failed")}
+        item("failed", seg(bad), C.legend.failed)}
     </Stack>
   );
 }
@@ -172,10 +168,7 @@ export function Quote({ children, code, bad }) {
         typography: "s2",
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
-        ...(code && {
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: 11.5,
-        }),
+        ...(code && { typography: "code_sm" }),
       }}
     >
       {children}

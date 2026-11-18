@@ -347,12 +347,6 @@ describe("sequenceOf over the worker record", () => {
     expect(tool.parent).toBeNull();
   });
 
-  it("names declared workers with no events as not observed, never as not run", () => {
-    const seq = seqOf(timeline());
-    expect(seq.notObserved).toEqual(["Audit worker"]);
-    expect(seq.notRun).toBeUndefined();
-  });
-
   it("puts a record time on the recording's clock from the record's own start", () => {
     const record = timeline({ started_at: null });
     const zero = recordStart(record);

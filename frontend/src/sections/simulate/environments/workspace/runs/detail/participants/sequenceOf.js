@@ -508,7 +508,7 @@ const turnGroupsOf = (steps) => {
 /**
  * Participants (from `participantsFromRecord`) → the drawing model:
  * { lanes, steps, rows, groups, loops, turnGroups, problems, refusals, chain,
- *   nameOf, end, notObserved }.
+ *   nameOf, end }.
  */
 export const sequenceOf = (p, { callerName = null } = {}) => {
   if (!p?.coordinator) return null;
@@ -563,6 +563,5 @@ export const sequenceOf = (p, { callerName = null } = {}) => {
     refusals,
     nameOf,
     end: last,
-    notObserved: p.notObserved || [],
   };
 };
