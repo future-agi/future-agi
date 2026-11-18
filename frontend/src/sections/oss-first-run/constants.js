@@ -109,7 +109,7 @@ export const nextSteps = ({ authenticated, accountExists, collectorUrl }) => [
   {
     id: "keys",
     icon: "solar:key-bold",
-    text: "Open Keys in the sidebar to copy your API key and secret key.",
+    text: "Open Keys in the sidebar, select Add API Key, and copy the new API key and secret key from the creation dialog before closing it.",
   },
   {
     id: "trace",
