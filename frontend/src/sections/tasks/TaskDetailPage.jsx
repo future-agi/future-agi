@@ -661,6 +661,7 @@ const TaskDetailPage = () => {
               <TaskLogsView
                 evalTaskId={taskId}
                 taskStatus={taskDetails?.status}
+                canRerun={!rerunBlockedReason && !isUpdating && !isError}
               />
             </Box>
           )}

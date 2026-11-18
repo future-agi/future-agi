@@ -165,6 +165,10 @@ def test_running_task_rejects_rerun_without_replacing_workflow(
 def test_unpause_replaces_a_still_closing_paused_workflow(
     auth_client, historical_task, monkeypatch
 ):
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
+        lambda *a, **kw: "progressing",
+    )
     historical_task.status = EvalTaskStatus.PAUSED
     historical_task.save(update_fields=["status"])
     starts = []

@@ -5,6 +5,8 @@ task's ``run_type`` and starts it under the per-task id ``eval-task-{id}`` so at
 most one workflow runs per task. Wired into the views at cutover (PR 9).
 """
 
+import asyncio
+
 import structlog
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
@@ -92,6 +94,7 @@ def start_eval_task_workflow_sync(
     *,
     replace_existing: bool = False,
     workflow_confirmed_stopped: bool | None = None,
+    start_once: bool = False,
 ) -> str:
     """Start the workflow for ``task`` from synchronous Django code.
 
@@ -110,7 +113,14 @@ def start_eval_task_workflow_sync(
     reaches a run that started with nothing draining. A replacing start
     terminates whatever it finds, and whether that was a live drain is exactly
     what the starter's own describe, taken just before, has to say.
+
+    ``start_once`` fences both create's initial dispatch and retries of an
+    unconfirmed start: coalesce with a live execution, but reject a closed one
+    rather than run the task again. The server enforces this even if the
+    execution closes after our describe.
     """
+    if start_once and replace_existing:
+        raise ValueError("an initial start retry cannot replace an execution")
     if workflow_confirmed_stopped is None:
         workflow_confirmed_stopped = _describe_says_nothing_is_draining(task.id)
     elif replace_existing:
@@ -123,6 +133,8 @@ def start_eval_task_workflow_sync(
         task_queue,
         workflow_confirmed_stopped=workflow_confirmed_stopped,
     )
+    if start_once:
+        workflow_input.start_once = True
     conflict_policy = (
         WorkflowIDConflictPolicy.TERMINATE_EXISTING
         if replace_existing
@@ -134,8 +146,12 @@ def start_eval_task_workflow_sync(
         workflow_id=_workflow_id(str(task.id)),
         task_queue=task_queue,
         cancel_existing=False,
-        # Closed executions may be followed by a new run under the per-task ID.
-        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        # Initial starts and their retries must not re-run a closed execution.
+        id_reuse_policy=(
+            WorkflowIDReusePolicy.REJECT_DUPLICATE
+            if start_once
+            else WorkflowIDReusePolicy.ALLOW_DUPLICATE
+        ),
         id_conflict_policy=conflict_policy,
     )
     return handle.id
@@ -145,9 +161,12 @@ def start_eval_task_workflow_sync(
 WF_PROGRESSING = "progressing"
 WF_ABSENT = "absent"
 WF_CLOSED = "closed"
+WF_COMPLETED = "completed"
 
 
-async def describe_eval_task_workflow_async(task_id) -> str:
+async def describe_eval_task_workflow_async(
+    task_id, *, distinguish_completion: bool = False
+) -> str:
     """Classify the task's workflow: progressing, closed, or never/no longer there.
 
     ``WF_PROGRESSING`` means a RUNNING execution owns the task and must be left
@@ -155,7 +174,9 @@ async def describe_eval_task_workflow_async(task_id) -> str:
     started) and ``WF_CLOSED`` (completed / failed / terminated / timed out)
     both mean nothing is draining the task. Any other RPC failure is the
     Temporal service being unreachable, not an answer, so it propagates: the
-    caller must skip that task rather than restart it blind.
+    caller must skip that task rather than restart it blind. The create
+    reconciler distinguishes successful completion from other closed histories
+    so it never labels a successful empty execution as a failed start.
     """
     from temporalio.client import WorkflowExecutionStatus
     from temporalio.service import RPCError, RPCStatusCode
@@ -170,16 +191,40 @@ async def describe_eval_task_workflow_async(task_id) -> str:
         if exc.status == RPCStatusCode.NOT_FOUND:
             return WF_ABSENT
         raise
-    if description.status == WorkflowExecutionStatus.RUNNING:
+    if description.status in (
+        WorkflowExecutionStatus.RUNNING,
+        WorkflowExecutionStatus.CONTINUED_AS_NEW,
+    ):
         return WF_PROGRESSING
-    return WF_CLOSED
+    if (
+        distinguish_completion
+        and description.status == WorkflowExecutionStatus.COMPLETED
+    ):
+        return WF_COMPLETED
+    if description.status in (
+        WorkflowExecutionStatus.COMPLETED,
+        WorkflowExecutionStatus.FAILED,
+        WorkflowExecutionStatus.CANCELED,
+        WorkflowExecutionStatus.TERMINATED,
+        WorkflowExecutionStatus.TIMED_OUT,
+    ):
+        return WF_CLOSED
+    # An absent/unknown status in a successful reply isn't a closed execution.
+    raise RuntimeError("unconfirmed eval task workflow status")
 
 
-def describe_eval_task_workflow_sync(task_id) -> str:
+def describe_eval_task_workflow_sync(
+    task_id, *, timeout: float | None = None, distinguish_completion: bool = False
+) -> str:
     from tfc.temporal.common.client import _run_async_in_sync_context
 
     return _run_async_in_sync_context(
-        lambda: describe_eval_task_workflow_async(task_id)
+        lambda: asyncio.wait_for(
+            describe_eval_task_workflow_async(
+                task_id, distinguish_completion=distinguish_completion
+            ),
+            timeout,
+        )
     )
 
 
@@ -274,6 +319,7 @@ async def start_eval_task_workflow_async(
 __all__ = [
     "WF_ABSENT",
     "WF_CLOSED",
+    "WF_COMPLETED",
     "WF_PROGRESSING",
     "describe_eval_task_workflow_async",
     "describe_eval_task_workflow_sync",

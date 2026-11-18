@@ -65,8 +65,15 @@ from tracer.services.eval_tasks.recovery import (
     recover_stranded_tasks,
     recover_task,
 )
+from tracer.services.eval_tasks.start_requests import reconcile_start_requests
 
 logger = structlog.get_logger(__name__)
+
+
+@temporal_activity(time_limit=300, queue="tasks_s", max_retries=0)
+def reconcile_eval_task_starts():
+    """Dispatch committed creates only. An interrupted claim expires on the primary."""
+    return reconcile_start_requests()
 
 
 @temporal_activity(time_limit=600, queue="tasks_s", max_retries=0)
@@ -178,6 +185,7 @@ def sweep_stale_recalculations():
 __all__ = [
     "RecoveryInterrupted",
     "find_stranded_tasks",
+    "reconcile_eval_task_starts",
     "recover_task",
     "sweep_stale_recalculations",
     "sweep_stranded_eval_tasks",

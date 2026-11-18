@@ -72,7 +72,7 @@ vi.mock("src/components/resizablePanels/ResizablePanels", () => ({
 }));
 
 vi.mock("src/sections/common/EvalsTasks/TaskLogsView", () => ({
-  default: () => <div>logs</div>,
+  default: ({ canRerun }) => <div data-can-rerun={canRerun}>logs</div>,
 }));
 
 vi.mock("../components/TaskHeader", () => ({
@@ -298,6 +298,26 @@ describe("TaskDetailPage", () => {
         {},
       );
     });
+  });
+
+  it.each([
+    ["Admin", "failed", true],
+    ["Viewer", "failed", false],
+    ["Admin", "pending", false],
+  ])("gates the Logs hint for %s on %s", (role, status, allowed) => {
+    useAuthContextMock.mockReturnValue({ role });
+    useGetTaskData.mockReturnValue({ data: loadedTask({ status }) });
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("tab", { name: /logs/i }));
+    expect(screen.getByText("logs")).toHaveAttribute(
+      "data-can-rerun",
+      String(allowed),
+    );
+    const rerun = screen.getByRole("button", { name: /re-run/i });
+    if (allowed) expect(rerun).toBeEnabled();
+    else expect(rerun).toBeDisabled();
+    if (status === "pending")
+      expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
   });
 
   it("offers no Resume for a completed task", () => {

@@ -13,7 +13,13 @@ from django.db import connections, transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
+from tracer.models.eval_task import (
+    EvalTask,
+    EvalTaskLogger,
+    EvalTaskStartRequest,
+    EvalTaskStatus,
+    RunType,
+)
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 from tracer.services.filter_principal_context import FilterPrincipalContextError
 from tracer.views.eval_task import (
@@ -57,9 +63,8 @@ def assert_safe_failure_log(caplog, event, failure_type, private_payload):
     # conftest configures the real application processors. Inspect the emitted
     # stdlib record too: a formatter can hide exc_info from rendered output while
     # another handler (including Sentry) still receives the original exception.
-    records = [
-        record for record in caplog.records if record.name == "tracer.views.eval_task"
-    ]
+    sources = {"tracer.views.eval_task", "tracer.services.eval_tasks.start_requests"}
+    records = [record for record in caplog.records if record.name in sources]
     assert len(records) == 1
     record = records[0]
     assert record.levelname == "WARNING"
@@ -88,7 +93,7 @@ def assert_saved(response, starter):
     starter.assert_called_once()
     assert str(starter.call_args.args[0].pk) == task_id
     # No replacement, additional start, or inferred "confirmed stopped" input.
-    assert starter.call_args.kwargs == {}
+    assert starter.call_args.kwargs == {"start_once": True}
     return task_id
 
 
@@ -118,7 +123,9 @@ def test_create_failure_normalization_keeps_only_bounded_type_metadata(failure_t
     assert private_payload not in "".join(format_exception(failure))
 
 
-@pytest.mark.parametrize("failure_stage", ["task_write", "relations_write"])
+@pytest.mark.parametrize(
+    "failure_stage", ["task_write", "relations_write", "intent_write"]
+)
 @pytest.mark.parametrize(
     "failure_type", [RuntimeError, ValidationError, FilterPrincipalContextError]
 )
@@ -149,6 +156,15 @@ def test_partial_task_or_relation_write_rolls_back_without_dispatch(
             raise failure_type(private_payload)
 
         monkeypatch.setattr(EvalTask, "save", fail_after_write)
+    elif failure_stage == "intent_write":
+        original = EvalTaskStartRequest.save
+
+        def fail_after_write(intent, *args, **kwargs):
+            original(intent, *args, **kwargs)
+            wrote.append(intent.task_id)
+            raise failure_type(private_payload)
+
+        monkeypatch.setattr(EvalTaskStartRequest, "save", fail_after_write)
     else:
         manager_class = EvalTask.evals.related_manager_cls
         original = manager_class.set
@@ -167,6 +183,8 @@ def test_partial_task_or_relation_write_rolls_back_without_dispatch(
 
     assert response.status_code == 400, response.content
     assert len(wrote) == 1
+    intents = EvalTaskStartRequest.objects.using("default")
+    assert not intents.filter(pk=wrote[0]).exists()
     assert (
         set(EvalTask.all_objects.using("default").values_list("pk", flat=True))
         == before_tasks
@@ -218,7 +236,7 @@ def test_initial_dispatch_sees_committed_task_and_relations_from_another_connect
 ):
     seen = {}
 
-    def observe(task):
+    def observe(task, **kwargs):
         seen["in_atomic_block"] = connections["default"].in_atomic_block
         observer = connections["default"].copy()
         try:
@@ -227,6 +245,12 @@ def test_initial_dispatch_sees_committed_task_and_relations_from_another_connect
                     "SELECT status FROM tracer_eval_task WHERE id = %s", [task.pk]
                 )
                 seen["task"] = cursor.fetchone()
+                cursor.execute(
+                    "SELECT state, attempts FROM "
+                    "tracer_eval_task_start_request WHERE task_id = %s",
+                    [task.pk],
+                )
+                seen["intent"] = cursor.fetchone()
                 # Table identity comes from model metadata, never a request.
                 table = observer.ops.quote_name(EvalTask.evals.through._meta.db_table)
                 cursor.execute(
@@ -255,7 +279,11 @@ def test_initial_dispatch_sees_committed_task_and_relations_from_another_connect
         )
 
     task_id = assert_saved(response, starter)
+    intent = EvalTaskStartRequest.objects.using("default").get(task_id=task_id)
+    assert intent.state == "accepted" and intent.attempts == 1
+    assert intent.claim_token is None and intent.lease_until is not None
     assert seen == {
+        "intent": ("claimed", 1),
         "in_atomic_block": False,
         "task": (EvalTaskStatus.PENDING,),
         "evals": [(custom_eval_config.pk,)],
@@ -283,7 +311,7 @@ def test_start_failure_before_acknowledgement_keeps_saved_pending_and_safe_logs(
     private_payload = "synthetic private provider payload must not be logged"
     before = {}
 
-    def unavailable(task):
+    def unavailable(task, **kwargs):
         before.update(task_snapshot(task.pk))
         raise failure_type(private_payload)
 
@@ -333,7 +361,7 @@ def test_uncertain_ack_after_simulated_worker_preserves_results_and_all_markers(
 ):
     worker = {}
 
-    def accepted_but_reply_lost(task):
+    def accepted_but_reply_lost(task, **kwargs):
         now = timezone.now()
         EvalTask.objects.using("default").filter(pk=task.pk).update(
             status=worker_status,
@@ -419,6 +447,7 @@ def test_outer_rollback_discards_task_relations_and_deferred_dispatch(
         starter.assert_not_called()
         transaction.set_rollback(True, using="default")
 
+    assert not EvalTaskStartRequest.objects.using("default").filter(pk=task_id).exists()
     assert not EvalTask.all_objects.using("default").filter(pk=task_id).exists()
     assert not (
         EvalTask.evals.through.objects.using("default")

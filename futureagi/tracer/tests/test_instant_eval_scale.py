@@ -491,6 +491,86 @@ def _summary(auth_client, project, task, tz="UTC"):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("history", ["absent", TimeoutError()])
+def test_pause_does_not_turn_a_saved_instant_task_into_a_first_start(
+    auth_client, observe_project, yes_no, started, monkeypatch, no_new_usage, history
+):
+    from unittest.mock import Mock
+
+    task = EvalTask.objects.create(
+        project=observe_project,
+        run_type=RunType.HISTORICAL,
+        status=EvalTaskStatus.PENDING,
+        name="Saved instant task",
+        start_time=datetime.now(UTC),  # Not evidence of a run.
+    )
+    task.evals.add(yes_no)
+    _summary(auth_client, observe_project, task)
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
+        Mock(side_effect=[history, history]),
+    )
+    assert _control(auth_client, observe_project, task, "pause").status_code == 200
+    refused = _control(auth_client, observe_project, task, "resume")
+    assert refused.status_code == 400, refused.content
+    plain = auth_client.post(
+        f"/tracer/eval-task/unpause_eval_task/?eval_task_id={task.pk}"
+    )
+    assert plain.status_code == 400, plain.content
+    assert not started
+    task.refresh_from_db()
+    assert task.status == EvalTaskStatus.PAUSED
+    assert not EvalLogger.all_objects.filter(eval_task_id=str(task.pk)).exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_summary_before_create_admission_does_not_take_over_its_start(
+    auth_client, observe_project, yes_no, monkeypatch
+):
+    from unittest.mock import Mock
+
+    from tfc.temporal.eval_tasks import client
+    from tracer.models.eval_task import EvalTaskStartRequest
+    from tracer.services.eval_tasks.start_requests import admit_start
+
+    start = Mock(return_value="workflow")
+    describe = Mock(return_value=client.WF_ABSENT)
+    monkeypatch.setattr("tracer.views.eval_task.start_eval_task_workflow_sync", start)
+    monkeypatch.setattr(client, "start_eval_task_workflow_sync", start)
+    monkeypatch.setattr(client, "describe_eval_task_workflow_sync", describe)
+    response = auth_client.post(
+        "/tracer/eval-task/",
+        {
+            "project": str(observe_project.pk),
+            "evals": [str(yes_no.pk)],
+            "name": "Plain create",
+            "run_type": "historical",
+            "spans_limit": 10,
+            "sampling_rate": 100,
+            "filters": {},
+        },
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    task = EvalTask.objects.get(pk=response.json()["result"]["id"])
+    assert not InstantEvalRun.objects.filter(eval_task=task).exists()
+    _summary(auth_client, observe_project, task)
+    assert InstantEvalRun.objects.filter(eval_task=task).exists()
+    # Pending plus a summary-created row must not unlock a replacing Resume.
+    denied = _control(auth_client, observe_project, task, "resume")
+    assert denied.status_code == 400, denied.content
+    assert admit_start(task.pk, str(uuid.uuid4()))
+    request = EvalTaskStartRequest.objects.get(pk=task.pk)
+    assert (request.attempts, request.last_outcome) == (1, "worker_admitted")
+    # The gate has admitted a run but it hasn't written work yet. A replacing
+    # Resume here would race it; the create reconciler still owns observation.
+    denied = _control(auth_client, observe_project, task, "resume")
+    assert denied.status_code == 400, denied.content
+    start.assert_called_once()
+    describe.assert_not_called()
+
+
+@pytest.mark.django_db
 def test_summary_counts_match_the_answers(
     auth_client, observe_project, yes_no, category, answered_run
 ):
@@ -1179,6 +1259,11 @@ def test_a_run_stopped_before_its_first_step_is_priced_for_every_row_it_asked_fo
     credits for all 6, not for the none it holds, and reading more resumes
     it first."""
     _credit_cap(monkeypatch)
+    # Temporal accepted the original start, even if the caller lost its reply.
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
+        lambda *args, **kwargs: "closed",
+    )
     with monkeypatch.context() as m:
         if stopped == "failed":
             m.setattr(
@@ -1238,6 +1323,10 @@ def test_a_user_question_stopped_before_its_first_step_is_priced_at_five_session
     reading the users' sessions to count them."""
     users = [str(uuid.uuid4()) for _ in range(3)]
     _credit_cap(monkeypatch)
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
+        lambda *args, **kwargs: "closed",
+    )
     with monkeypatch.context() as m:
         m.setattr(
             "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync",
@@ -1307,6 +1396,67 @@ def test_a_finished_run_that_found_fewer_rows_than_it_asked_for_stays_finished(
     assert calls == [("jev_evaluator", 0.3)]
     assert len(started) == before + 1
     assert InstantEvalRun.objects.get(eval_task_id=task.id).rows_requested == 11
+
+
+@pytest.mark.django_db
+def test_instant_resume_honors_cancellation_at_the_lock(
+    auth_client, observe_project, answered_run, started, monkeypatch, no_new_usage
+):
+    task, _ = answered_run
+    EvalTask.objects.filter(pk=task.pk).update(status=EvalTaskStatus.PAUSED)
+    _credit_cap(monkeypatch)
+    before = len(started)
+
+    def cancel(view, request, task):
+        InstantEvalRun.objects.filter(eval_task=task).update(
+            cancelled_at=datetime.now(UTC)
+        )
+
+    monkeypatch.setattr(
+        instant_eval_scale.InstantEvalControlView, "_busy_locked", cancel
+    )
+    response = _control(auth_client, observe_project, task, "resume")
+    assert response.status_code == 409
+    assert response.json()["code"] == "instant_eval_cancelled"
+    assert len(started) == before
+
+
+@pytest.mark.django_db(transaction=True)
+def test_two_instant_resumes_issue_one_replacement(
+    answered_run, started, monkeypatch, no_new_usage
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from django.db import connections
+
+    task, _ = answered_run
+    EvalTask.objects.filter(pk=task.pk).update(status=EvalTaskStatus.PAUSED)
+    request = SimpleNamespace(organization=task.project.organization)
+    _credit_cap(monkeypatch)
+    view = instant_eval_scale.InstantEvalControlView()
+    lock = view._busy_locked
+    ready = Barrier(2, timeout=10)
+
+    def race(request, candidate):
+        ready.wait()  # Both requests checked the same paused version.
+        return lock(request, candidate)
+
+    monkeypatch.setattr(view, "_busy_locked", race)
+
+    def resume():
+        try:
+            candidate = EvalTask.objects.get(pk=task.pk)
+            run = InstantEvalRun.objects.get(eval_task=candidate)
+            return view._resume(request, candidate, run, {}).status_code
+        finally:
+            connections.close_all()
+
+    before = len(started)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        attempts = [pool.submit(resume) for _ in range(2)]
+        assert sorted(f.result(timeout=20) for f in attempts) == [200, 400]
+    assert started[before:] == [(str(task.pk), {"replace_existing": True})]
 
 
 @pytest.mark.django_db
@@ -1536,7 +1686,7 @@ def test_a_run_whose_workflow_vanished_before_it_picked_its_rows_stalls(
     assert (s["status"], s["preparing"]) == ("pending", True)
 
     # Its workflow is gone: stalled, with every row still to read.
-    workflow["state"] = "absent"
+    workflow["state"] = "closed"  # Positive history, despite no picked rows yet.
     cache.clear()
     s = _summary(auth_client, observe_project, task)
     assert (s["status"], s["preparing"]) == ("stalled", True)

@@ -1,6 +1,7 @@
 import uuid
 
-from django.db import models
+from django.db import models, transaction
+from django.db.models.functions import Now
 from django.utils.translation import gettext_lazy as _
 
 from tfc.utils.base_model import BaseModel
@@ -100,12 +101,68 @@ class EvalTask(BaseModel):
         db_index=True,
     )
 
+    @transaction.atomic(using="default")
+    def delete(self, using=None, keep_parents=False):
+        super().delete(using=using, keep_parents=keep_parents)
+        EvalTaskStartRequest.void_for_tasks([self.pk])
+
     def __str__(self):
         return f"Eval Task {self.id}"
 
     class Meta:
         db_table = "tracer_eval_task"
         ordering = ["-created_at"]
+
+
+class EvalTaskStartRequest(models.Model):
+    """Create's dispatch intent. Pending tasks without one are not startable."""
+
+    class State(models.TextChoices):
+        PENDING = "pending", "Pending"
+        CLAIMED = "claimed", "Claimed"
+        ACCEPTED = "accepted", "Accepted"
+        EXHAUSTED = "exhausted", "Exhausted"
+        START_FAILED = "start_failed", "Start retry exhausted"
+        VOID = "void", "Void"
+
+    task = models.OneToOneField(
+        EvalTask, primary_key=True, on_delete=models.CASCADE, related_name="+"
+    )
+    # The task PK identifies its one create request; attempts only budgets sends.
+    attempts = models.PositiveSmallIntegerField(default=0)
+    first_reserved_at = models.DateTimeField(null=True)
+    admitted_run_id = models.UUIDField(null=True)
+    state = models.CharField(
+        max_length=12, choices=State.choices, default=State.PENDING
+    )
+    lease_until = models.DateTimeField(null=True)
+    claim_token = models.UUIDField(null=True)
+    last_outcome = models.CharField(max_length=64, default="requested")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def void_for_tasks(cls, task_ids):
+        """Revoke create in the transaction that locked or wrote the task."""
+        rows = cls.objects.using("default").filter(pk__in=task_ids)
+        rows.exclude(state=cls.State.VOID).update(
+            state=cls.State.VOID,
+            last_outcome="superseded",
+            claim_token=None,
+            lease_until=None,
+            updated_at=Now(),
+        )
+
+    class Meta:
+        db_table = "tracer_eval_task_start_request"
+        indexes = [
+            models.Index(fields=["state", "lease_until"], name="eval_start_state_lease")
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(attempts__lte=2), name="eval_start_max_two_attempts"
+            )
+        ]
 
 
 class EvalTaskLogger(BaseModel):

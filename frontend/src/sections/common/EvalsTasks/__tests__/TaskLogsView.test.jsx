@@ -34,13 +34,17 @@ const summary = (overrides = {}) => ({
   ...overrides,
 });
 
-function renderView(taskStatus = "completed") {
+function renderView(taskStatus = "completed", canRerun = false) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <TaskLogsView evalTaskId="task-1" taskStatus={taskStatus} />
+      <TaskLogsView
+        evalTaskId="task-1"
+        taskStatus={taskStatus}
+        canRerun={canRerun}
+      />
     </QueryClientProvider>,
   );
   return { ...view, queryClient };
@@ -53,6 +57,39 @@ const statCardText = async (label) =>
 describe("TaskLogsView totals", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it.each([true, false])("gates the Re-run hint (%s)", async (canRerun) => {
+    const reason =
+      "The run couldn't start after an automatic retry. Your task is saved.";
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "failed",
+        total_count: 0,
+        error_groups: [{ normalized: reason, sample: reason, count: 1 }],
+      }),
+    );
+    renderView("failed", canRerun);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      canRerun ? `${reason} Choose Re-run to try again.` : reason,
+    );
+    if (!canRerun)
+      expect(screen.queryByText(/choose re-run/i)).not.toBeInTheDocument();
+  });
+
+  it("does not suggest a replacement for an unconfirmed start", async () => {
+    const reason =
+      "We couldn't confirm this task started. We'll keep checking.";
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({
+        status: "pending",
+        total_count: 0,
+        error_groups: [{ normalized: reason, sample: reason, count: 1 }],
+      }),
+    );
+    renderView("pending", true);
+    expect(await screen.findByRole("alert")).toHaveTextContent(reason);
+    expect(screen.queryByText(/re-?run|resume/i)).not.toBeInTheDocument();
   });
 
   it.each(["failed", undefined])(

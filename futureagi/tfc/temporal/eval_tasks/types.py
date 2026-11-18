@@ -41,6 +41,9 @@ class EvalTaskWorkflowInput:
     # Legacy hops honour these IDs; the recovery activity also caps retries
     # durably by the entry's attempts, including IDs omitted from this cache.
     lost_entry_ids: list[str] = field(default_factory=list)
+    # Only recorded creates pass the admission gate, keyed by task_id. Legacy
+    # histories and replacing starts keep their original commands.
+    start_once: bool = False
 
 
 @dataclass
@@ -73,6 +76,7 @@ class ContinuousDrainState:
     # or the pause signal when the deferred loop rolls its history over.
     pending_requeue_ids: list[str] = field(default_factory=list)
     pause_requested: bool = False
+    start_once: bool = False
 
 
 @dataclass

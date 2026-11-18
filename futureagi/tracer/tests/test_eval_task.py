@@ -625,7 +625,7 @@ class TestEvalTaskUnpauseAPI:
 
     def test_unpause_eval_task_success(self, auth_client, eval_task):
         """Unpause a paused eval task."""
-        # First pause the task
+        EvalTaskLogger.objects.create(eval_task=eval_task)
         eval_task.status = EvalTaskStatus.PAUSED
         eval_task.save()
 

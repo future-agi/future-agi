@@ -748,6 +748,28 @@ async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
     return ReapOutput(requeued=result["requeued"], failed=result["failed"])
 
 
+def _admit_start_sync(input: TaskStateInput, run_id: str) -> bool:
+    from tracer.services.eval_tasks.start_requests import admit_start
+
+    close_old_connections()
+    try:
+        return admit_start(input.task_id, run_id)
+    finally:
+        close_old_connections()
+
+
+@activity.defn
+@database_control_activity()
+async def admit_eval_task_start_activity(input: TaskStateInput) -> bool:
+    async with Heartbeater():
+        admitted = await otel_sync_to_async(_admit_start_sync, thread_sensitive=False)(
+            input, activity.info().workflow_run_id
+        )
+    if not admitted:
+        logger.info("eval_task_start_fenced", task_id=input.task_id)
+    return admitted
+
+
 @activity.defn
 @database_control_activity()
 async def get_eval_task_state_activity(input: TaskStateInput) -> TaskStateOutput:
@@ -828,6 +850,7 @@ async def finalize_eval_task_activity(input: FinalizeInput) -> FinalizeOutput:
 
 
 __all__ = [
+    "admit_eval_task_start_activity",
     "reconcile_eval_task_activity",
     "claim_eval_batch_activity",
     "run_eval_entry_activity",

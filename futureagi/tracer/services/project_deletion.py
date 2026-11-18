@@ -18,7 +18,7 @@ from django.db.models import QuerySet
 from django.utils import timezone
 
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskStatus
+from tracer.models.eval_task import EvalTask, EvalTaskStartRequest, EvalTaskStatus
 from tracer.models.insights import InsightConfig, InsightRun, InsightUnit
 from tracer.models.instant_eval import InstantEvalAnswer, InstantEvalRow, InstantEvalRun
 from tracer.models.monitor import UserAlertMonitor
@@ -104,6 +104,9 @@ def soft_delete_projects(projects: QuerySet[Project], project_type: str) -> list
         pause_task_ids = _retire_instant_eval_and_insights(projects, now)
         EvalTask.objects.filter(project__in=projects).update(
             deleted=True, deleted_at=now
+        )
+        EvalTaskStartRequest.void_for_tasks(
+            EvalTask.all_objects.filter(project__in=projects).values("pk")
         )
         eval_configs = CustomEvalConfig.objects.filter(project__in=projects)
         soft_delete_eval_results(

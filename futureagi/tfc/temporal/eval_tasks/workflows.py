@@ -236,6 +236,16 @@ def _is_claim_outcome_unknown(exc: BaseException) -> bool:
     return exc.cause.type == "EvalTaskClaimOutcomeUnknown" and exc.cause.non_retryable
 
 
+async def _admit_start(task_id: str) -> bool:
+    return await workflow.execute_activity(
+        "admit_eval_task_start_activity",
+        TaskStateInput(task_id=task_id),
+        start_to_close_timeout=_CONTROL_TIMEOUT,
+        heartbeat_timeout=_CONTROL_HEARTBEAT,
+        retry_policy=CONTROL_RETRY_POLICY,
+    )
+
+
 async def _apply_labels(task_id: str) -> None:
     """Upsert the workflow's Search Attributes + memo from the task's DB row.
 
@@ -569,6 +579,11 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
 
     @workflow.run
     async def run(self, input: EvalTaskWorkflowInput) -> EvalTaskWorkflowOutput:
+        # A rejected (or unavailable) gate does not own this task. Never run
+        # its fail handler, labels, reconcile, or any billable activity.
+        if input.start_once and not await _admit_start(input.task_id):
+            self._phase = PHASE_DONE
+            return EvalTaskWorkflowOutput(input.task_id, "start_fenced", 0)
         try:
             return await self._run(input)
         except Exception:
@@ -724,6 +739,10 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
 
     @workflow.run
     async def run(self, state: ContinuousDrainState) -> None:
+        if state.start_once and not await _admit_start(state.task_id):
+            self._phase = PHASE_DONE
+            return
+        state.start_once = False  # continue-as-new is not a new create
         try:
             if workflow.patched(_CONTINUOUS_DATABASE_BACKOFF_PATCH):
                 await self._run_with_database_backoff(state)

@@ -537,7 +537,10 @@ const withCredentialRemedy = (group) => {
 
 // ── Main Component ──
 
-const TaskLogsView = ({ evalTaskId, taskStatus }) => {
+const START_FAILED =
+  "The run couldn't start after an automatic retry. Your task is saved.";
+
+const TaskLogsView = ({ evalTaskId, taskStatus, canRerun = false }) => {
   const theme = useTheme();
 
   const { data, isLoading, isFetching, isError, refetch } = useQuery({
@@ -665,6 +668,16 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   const errorRate =
     totalCount > 0 ? Math.round((errorsCount / totalCount) * 100) : 0;
   const hasErrors = errorGroups.length > 0;
+  // With no eval entries the server can return a start-request reason in
+  // this group. It isn't an evaluator error; don't attach generic retry tips.
+  const startReason =
+    data.total_count === 0 && errorGroups.length === 1 && errorGroups[0].raw;
+  const suggestRerun =
+    startReason === START_FAILED &&
+    effectiveStatus === "failed" &&
+    canRerun &&
+    !isError &&
+    !isFetching;
   const hasWarnings = warningGroups.length > 0;
   // Groups sort by count, and a group with no key breakdown cannot expand, so
   // auto-expand the largest one that actually has something behind it.
@@ -932,7 +945,13 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
       )}
 
       {/* Error Log — grouped by category with actionable fixes */}
-      {hasErrors && (
+      {startReason && (
+        <Alert severity={effectiveStatus === "failed" ? "error" : "info"}>
+          {startReason}
+          {suggestRerun && " Choose Re-run to try again."}
+        </Alert>
+      )}
+      {hasErrors && !startReason && (
         <Box>
           <Box
             sx={{
@@ -1068,6 +1087,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
 TaskLogsView.propTypes = {
   evalTaskId: PropTypes.string,
   taskStatus: PropTypes.string,
+  canRerun: PropTypes.bool,
 };
 
 export default TaskLogsView;

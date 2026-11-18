@@ -50,6 +50,7 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import (
     RESUMABLE_TASK_STATUSES,
     EvalTask,
+    EvalTaskStartRequest,
     EvalTaskStatus,
     RunType,
 )
@@ -60,6 +61,7 @@ from tracer.serializers.filters import SessionFilterListField
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_summary as summary_service
 from tracer.services import instant_eval_users as users_service
+from tracer.services.eval_tasks.start_requests import resume_block_reason
 from tracer.services.instant_eval_run import (
     ACTIVE,
     DEFAULT_SAMPLE,
@@ -1597,11 +1599,18 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             return self._gm.bad_request(
                 f"The run is {task.status}; only a running run can be paused."
             )
-        EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PAUSED)
-        if run is not None:
-            InstantEvalRun.objects.filter(id=run.id).update(
-                answers_version=F("answers_version") + 1
-            )
+        with transaction.atomic():
+            # Match cancel/resume's run -> task lock order.
+            if run is not None:
+                InstantEvalRun.objects.filter(id=run.id).update(
+                    answers_version=F("answers_version") + 1
+                )
+            if not EvalTask.objects.filter(pk=task.pk, status__in=ACTIVE).update(
+                status=EvalTaskStatus.PAUSED
+            ):
+                transaction.set_rollback(True)
+                return self._gm.bad_request("Only a running run can be paused.")
+            EvalTaskStartRequest.void_for_tasks([task.pk])
         try:
             signal_pause_eval_task_workflow(task.id)
         except Exception:
@@ -1612,12 +1621,15 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
     def _restart(self, task):
         EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PENDING)
         task.status = EvalTaskStatus.PENDING
+        EvalTaskStartRequest.void_for_tasks([task.pk])
         _start_workflow_on_commit(task, replace=True)
 
     def _resume(self, request, task, run, data):
         if run is not None and run.cancelled_at:
             return self._cancelled()
         resumable = task.status in RESUMABLE_TASK_STATUSES
+        if resumable and (reason := resume_block_reason(task)):
+            return self._gm.bad_request(reason)
         if not resumable and run is not None:
             # A run that stopped before finishing: its workflow is gone while
             # the task says running, or it finished with rows unanswered.
@@ -1646,6 +1658,21 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         with transaction.atomic():
             if busy := self._busy_locked(request, task):
                 return busy
+            current_run = (
+                InstantEvalRun.objects.select_for_update()
+                .filter(eval_task=task)
+                .first()
+            )
+            if current_run is not None and current_run.cancelled_at:
+                return self._cancelled()
+            unchanged = EvalTask.objects.select_for_update().filter(
+                pk=task.pk, status=task.status
+            )
+            if not unchanged.exists() or (
+                getattr(current_run, "answers_version", None)
+                != getattr(run, "answers_version", None)
+            ):
+                return self._gm.bad_request("The run changed. Refresh before resuming.")
             if run is not None:
                 InstantEvalRun.objects.filter(id=run.id).update(
                     answers_version=F("answers_version") + 1
@@ -1671,6 +1698,7 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
                 cancelled_at=timezone.now(), answers_version=F("answers_version") + 1
             )
             EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PAUSED)
+            EvalTaskStartRequest.void_for_tasks([task.pk])
         try:
             signal_pause_eval_task_workflow(task.id)
         except Exception:

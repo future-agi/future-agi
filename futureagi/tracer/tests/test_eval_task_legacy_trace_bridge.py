@@ -1,11 +1,18 @@
 """Cutover guard for orphaned legacy eval-task activity invocations."""
 
 import pytest
+from django.utils import timezone
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from tracer.models.eval_task import EvalTaskLogger, EvalTaskStatus, RowType
 from tracer.utils import eval as eval_module
 from tracer.utils.eval_tasks import process_eval_task, run_for_processed_spans
+
+
+@pytest.fixture(autouse=True)
+def in_flight_work(eval_task):
+    eval_task.continuous_cursor = timezone.now()
+    eval_task.save(update_fields=["continuous_cursor"])
 
 
 @pytest.fixture

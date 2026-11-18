@@ -249,12 +249,36 @@ def _workflow_gone(task) -> bool:
         describe_eval_task_workflow_sync,
     )
 
+    from tracer.services.eval_tasks.start_requests import has_recorded_work
+
+    if task.continuous_cursor is None and not (task.filters or {}).get(
+        rows_service.RUN_MARKER
+    ):
+        # A summary read doesn't turn a plain create into a stranded Ask run.
+        # Its own reconciler observes the first admission until there is work.
+        from tracer.models.eval_task import EvalTaskStartRequest
+        from tracer.models.observation_span import EvalLogger
+
+        requests = EvalTaskStartRequest.objects.using("default").filter(pk=task.pk)
+        entries = EvalLogger.all_objects.using("default").filter(
+            eval_task_id=str(task.pk)
+        )
+        watched = requests.filter(
+            admitted_run_id__isnull=False, lease_until__isnull=False
+        )
+        needs_progress = task.status == EvalTaskStatus.PENDING or watched.exists()
+        if needs_progress and not entries.exists():
+            return False
+
     key = f"ie-wf-gone:{task.id}"
     known = cache.get(key)
     if known is not None:
         return known
     try:
-        gone = describe_eval_task_workflow_sync(task.id) in (WF_ABSENT, WF_CLOSED)
+        history = describe_eval_task_workflow_sync(task.id)
+        gone = history == WF_CLOSED or (
+            history == WF_ABSENT and has_recorded_work(task)
+        )
     except Exception:
         logger.warning("instant_eval_describe_failed", task_id=str(task.id))
         gone = False

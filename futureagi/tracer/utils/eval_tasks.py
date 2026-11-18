@@ -18,12 +18,14 @@ from tfc.temporal import temporal_activity
 from tracer.models.eval_task import (
     EvalTask,
     EvalTaskLogger,
+    EvalTaskStartRequest,
     EvalTaskStatus,
     RowType,
     RunType,
 )
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
+from tracer.services.eval_tasks.start_requests import has_recorded_work
 from tracer.services.filter_principal_context import bound_my_annotations_principal
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.eval import (
@@ -336,6 +338,14 @@ def _bridge_retired_dispatcher(eval_task: EvalTask) -> bool:
     from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync
 
     try:
+        # An orphan can continue legacy work, never make the initial send.
+        # A still-watched create has its own fenced sender and reconciler.
+        requests = EvalTaskStartRequest.objects.using("default").filter(pk=eval_task.pk)
+        if not has_recorded_work(eval_task) or requests.exclude(
+            state=EvalTaskStartRequest.State.VOID
+        ).exclude(last_outcome="execution_progress").exists():
+            logger.info("legacy_eval_dispatch_skipped", eval_task_id=str(eval_task.pk))
+            return True
         start_eval_task_workflow_sync(eval_task)
     except WorkflowAlreadyStartedError:
         # Expected when an orphaned cron overlaps the workflow already started
@@ -367,20 +377,22 @@ def eval_task_cron():
     offset = cache.get("eval_task_offset", 0)
 
     eval_tasks = (
-        EvalTask.objects.filter(
-            status__in=[EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING]
-        )
+        EvalTask.objects.using("default")
+        .filter(status__in=[EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING])
         .order_by("created_at")
-        .values_list("id", flat=True)
+        .only("id", "continuous_cursor")
     )
-    cnt = len(eval_tasks)
+    cnt = eval_tasks.count()
 
     if offset >= cnt:
         offset = 0
 
     eval_tasks = eval_tasks[offset : offset + 5]
-    for eval_task_id in eval_tasks:
-        process_eval_task.delay(eval_task_id)
+    for task in eval_tasks:
+        if has_recorded_work(task):
+            process_eval_task.delay(task.pk)
+        else:
+            logger.info("legacy_eval_dispatch_skipped", eval_task_id=str(task.pk))
 
     # Update the offset in cache
     cache.set("eval_task_offset", offset + 5)

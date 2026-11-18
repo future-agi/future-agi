@@ -1138,6 +1138,20 @@ def workspace(db, user):
 
 
 @pytest.fixture
+def no_new_usage(db):
+    """A refused eval action must not create even a pending charge."""
+    if not EE_AVAILABLE:
+        yield
+        return
+    from ee.usage.models.usage import APICallLog
+
+    logs = APICallLog._base_manager.using("default")
+    before = logs.count()
+    yield
+    assert logs.count() == before
+
+
+@pytest.fixture
 def api_client():
     """Unauthenticated API client."""
     return WorkspaceAwareAPIClient()

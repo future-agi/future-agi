@@ -27,7 +27,7 @@ from accounts.models.workspace import Workspace
 from ai_tools.base import ToolContext
 from ai_tools.tests.conftest import run_tool
 from ai_tools.tests.fixtures import make_project
-from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
+from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ def other_workspace(tool_context):
 
 
 def _paused_task(project):
-    return EvalTask.objects.create(
+    task = EvalTask.objects.create(
         project=project,
         name="Paused Task",
         filters={},
@@ -67,6 +67,8 @@ def _paused_task(project):
         status=EvalTaskStatus.PAUSED,
         spans_limit=100,
     )
+    EvalTaskLogger.objects.create(eval_task=task)
+    return task
 
 
 def _resume(task, context):
