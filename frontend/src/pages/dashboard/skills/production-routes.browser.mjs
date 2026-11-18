@@ -69,7 +69,7 @@ axios.get = async (url) => {
  if (url.endsWith('/contexts/' + id + '/')) return envelope({ context, release_state: { latest_version: 4, release_revision: 1, security_revision: 0, protected_label_names: [], labels: [], permissions: {} }, latest: { id: version, number: 4, digest }, own_draft: null });
  if (url.endsWith('/versions/')) return envelope(page([{ id: version, number: 4, digest }]));
  if (url.endsWith('/consumers/')) return envelope({ ...page([]), as_of: '2026-11-09', coverage: 'declared_bindings' });
- if (url.endsWith('/inspection/')) return envelope({ descriptor: { kind: 'agent_context', name: context.name, description: context.description, links: [] }, manifest: { kind: 'agent_context', name: context.name, version: 4, version_id: version, digest, files: [{ path: 'AGENTS.md', sha256: 'hash', size_bytes: 48, origin: { kind: 'owned' } }], next_file_offset: null }, distribution_blocked: false });
+ if (url.endsWith('/inspection/')) { const before = url.includes('/versions/3/'); return envelope({ descriptor: { kind: 'agent_context', name: context.name, description: context.description, links: [] }, manifest: { kind: 'agent_context', name: context.name, version: before ? 3 : 4, version_id: before ? 'version-3' : version, digest, files: [{ path: 'AGENTS.md', sha256: reviewKind ? (before ? 'before' : 'after') : 'hash', size_bytes: 48, origin: { kind: 'owned' } }], next_file_offset: null }, distribution_blocked: false }); }
  if (url.endsWith('/inspection/files/')) return envelope({ path: 'AGENTS.md', version_id: version, digest, sha256: 'hash', total_chars: 48, offset: 0, next_offset: null, eof: true, text: '# Support policy\\nEscalate privileged changes.' });
  throw new Error('Unexpected fixture read ' + url);
 };
@@ -108,7 +108,7 @@ try {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       page.on('pageerror', (error) => errors.push(String(error)));
       await page.goto(`${origin}/dashboard/skills/contexts?theme=${theme}`);
-      await page.getByRole('button', { name: 'support-policy' }).click();
+      await page.getByRole('button', { name: 'support-policy', exact: true }).click();
       await page.getByRole('tab', { name: 'Source', exact: true }).click();
       await page.getByLabel('AGENTS.md read-only source').waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

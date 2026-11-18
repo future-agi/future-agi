@@ -272,11 +272,8 @@ export async function createDriver({ jobId, runId, registration }) {
           const carriedCandidate = author.getByRole('group', { name: 'Carried release candidate', exact: true });
           await expect(carriedCandidate).toContainText(input.contextName);
           await expect(carriedCandidate).toContainText(new RegExp(` → v${published.number}(?!\\d)`));
-          await expect(carriedCandidate).toContainText(/ · configuration r\d+$/);
-          // One explicit decision shares and attaches every listed
-          // exact-candidate result; the confirmation names each record. The
-          // same decision continues to the exact packet (server-prepared, not
-          // sent); the author still inspects and attests it below.
+          await expect(carriedCandidate).toContainText(`Application test on ${input.cohort === 'cold' ? 'refund_agent' : input.targetName}`);
+          // Opening a review from publishing carries the version, not private evidence.
           // Preselected only when exactly one authorized reviewer exists.
           if ((await author.getByLabel('Assigned reviewer', { exact: true }).textContent())?.trim() !== input.reviewer.name) await choose(author, 'Assigned reviewer', input.reviewer.name, 'reviewer');
           const attach = author.getByRole('checkbox', { name: /^Attach Answer check/ });
@@ -286,12 +283,24 @@ export async function createDriver({ jobId, runId, registration }) {
           // Capture without scrolling or adding an operator action. Private
           // results must occupy the same evidence table, never an empty state.
           await author.screenshot({ path: resolve(output, 'composer-private-evidence.png'), fullPage: true });
-          await op.click(author.getByRole('button', { name: `Share and attach ${input.evidenceIds.length} selected`, exact: true }), 'share-all-evidence');
-          const confirmShare = author.getByRole('dialog');
-          for (const id of input.evidenceIds) await expect(confirmShare.getByTitle(id, { exact: true })).toBeVisible();
-          await expect(confirmShare.getByText('Private', { exact: true })).toHaveCount(input.evidenceIds.length);
+          // Each private row opens its own consent; verify the exact disclosed ID
+          // and visibility before confirming. No result is attached implicitly.
+          const confirmed = new Set();
+          for (let index = 0; index < input.evidenceIds.length; index++) {
+            await op.click(attach.nth(index), `select-private-result-${index + 1}`);
+            const consent = author.getByRole('dialog');
+            const record = consent.locator('[data-evidence-id]');
+            await expect(record).toHaveCount(1);
+            const id = await record.getAttribute('data-evidence-id');
+            requireValue(input.evidenceIds.includes(id) && !confirmed.has(id), 'The consent does not name the next expected private result');
+            await expect(record.getByTitle(id, { exact: true })).toBeVisible();
+            await expect(record.getByText('Private', { exact: true })).toBeVisible();
+            await op.click(consent.getByRole('button', { name: 'Share and attach', exact: true }), `confirm-sharing-result-${index + 1}`);
+            await expect(consent).toHaveCount(0);
+            confirmed.add(id);
+          }
           const prepared = responseFor(author, '/release-requests/preview/');
-          await op.click(confirmShare.getByRole('button', { name: 'Share and attach', exact: true }), 'confirm-sharing-and-attach');
+          await op.click(author.getByRole('button', { name: 'Continue', exact: true }), 'prepare-shared-packet');
           const preview = (await (await prepared).json()).result;
           await expect(author.getByRole('dialog')).toHaveCount(0);
           requireValue(preview.packet.evidence.length === input.evidenceIds.length
