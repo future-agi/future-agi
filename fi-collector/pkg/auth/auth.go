@@ -348,10 +348,9 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 		return fmt.Errorf("%w: %w", ErrProjectResolutionUnavailable, err)
 	}
 
-	if !a.cache.addProjectsScoped(cacheKey, result, resolved) {
+	if !a.cache.addProjectsScoped(cacheKey, result, resolved, types) {
 		return &ProjectAuthChangedError{}
 	}
-	a.recordProjectTypes(cacheKey, result, types)
 
 	// Auto-create any still-missing projects via write pool
 	for _, name := range missing {
@@ -391,12 +390,9 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 		}
 		id := val.(string)
 		created := map[string]string{name: id}
-		if !a.cache.addProjectsScoped(cacheKey, result, created) {
+		if !a.cache.addProjectsScoped(cacheKey, result, created, map[string]string{id: ProjectTypeObserve}) {
 			return &ProjectAuthChangedError{}
 		}
-		// GetOrCreateProject returns the Observe project of that name, new
-		// or existing.
-		a.recordProjectTypes(cacheKey, result, map[string]string{id: ProjectTypeObserve})
 	}
 
 	return nil
@@ -424,17 +420,6 @@ func resolveProjectsTyped(
 		types[p.ID] = p.TraceType
 	}
 	return ids, types, nil
-}
-
-// recordProjectTypes keeps the trace_types of resolved projects on the
-// request's result and its cache entry. A type is a hint for the resource
-// stamp (StampResourceAttrs), so failing to keep one only leaves that
-// project's type unknown; it never fails the request.
-func (a *Authenticator) recordProjectTypes(cacheKey string, result *ResolveResult, types map[string]string) {
-	if len(types) == 0 {
-		return
-	}
-	a.cache.addProjectTypesScoped(cacheKey, result, types)
 }
 
 // refreshKey re-validates a key in the background (warm stale refresh).

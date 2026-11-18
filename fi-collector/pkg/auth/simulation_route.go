@@ -221,11 +221,9 @@ func (a *Authenticator) RouteSimulation(
 		}
 		name, projectID = project.Name, project.ID
 		resolved := map[string]string{name: projectID}
-		result.SetProjectsInWorkspace(result.WorkspaceID, resolved)
-		// A false answer means the cache entry expired or was replaced
-		// meanwhile; the stamp then refuses the request as retryable, and the
-		// retry authenticates again.
-		a.cache.addProjectsScoped(cacheKey, result, resolved)
+		// The key cache holds this exact result. Stamping still checks that the
+		// entry is live before using it; never merge into a replacement result.
+		result.setResolvedProjects(result.WorkspaceID, resolved, map[string]string{projectID: project.TraceType})
 	}
 
 	for i := 0; i < rss.Len(); i++ {

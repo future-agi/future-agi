@@ -49,6 +49,7 @@ type SimulationProject struct {
 	OrganizationID string
 	WorkspaceID    string
 	Name           string
+	TraceType      string
 	// Created is true when this call inserted the row.
 	Created bool
 }
@@ -95,11 +96,11 @@ const ensureSimulationProjectQuery = `
 		ON CONFLICT (simulation_agent_id)
 		DO UPDATE SET updated_at = EXCLUDED.updated_at
 		WHERE tracer_project.deleted = false
-		RETURNING id, name, workspace_id, organization_id, (xmax = 0) AS inserted
+		RETURNING id, name, workspace_id, organization_id, trace_type, (xmax = 0) AS inserted
 	)
 	SELECT ag.deleted, ag.ws,
-	       p.id, p.name, p.workspace_id, p.organization_id, p.deleted,
-	       ins.id, ins.name, ins.workspace_id, ins.organization_id, ins.inserted
+	       p.id, p.name, p.workspace_id, p.organization_id, p.trace_type, p.deleted,
+	       ins.id, ins.name, ins.workspace_id, ins.organization_id, ins.trace_type, ins.inserted
 	FROM ag
 	LEFT JOIN tracer_project p ON p.simulation_agent_id = ag.id
 	LEFT JOIN ins ON true`
@@ -123,14 +124,14 @@ func (r *PGResolver) EnsureSimulationProject(ctx context.Context, orgID, agentID
 func (r *PGResolver) ensureSimulationProjectOnce(ctx context.Context, orgID, agentID string) (SimulationProject, error) {
 	var agentDeleted bool
 	var agentWorkspace *string
-	var existingID, existingName, existingWorkspace, existingOrg *string
+	var existingID, existingName, existingWorkspace, existingOrg, existingType *string
 	var existingDeleted *bool
-	var id, name, workspaceID, organizationID *string
+	var id, name, workspaceID, organizationID, traceType *string
 	var inserted *bool
 	err := r.write.QueryRow(ctx, ensureSimulationProjectQuery, agentID, orgID, uuid.NewString()).Scan(
 		&agentDeleted, &agentWorkspace,
-		&existingID, &existingName, &existingWorkspace, &existingOrg, &existingDeleted,
-		&id, &name, &workspaceID, &organizationID, &inserted)
+		&existingID, &existingName, &existingWorkspace, &existingOrg, &existingType, &existingDeleted,
+		&id, &name, &workspaceID, &organizationID, &traceType, &inserted)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// No agent row of this organization at all.
@@ -152,7 +153,7 @@ func (r *PGResolver) ensureSimulationProjectOnce(ctx context.Context, orgID, age
 		}
 		return SimulationProject{
 			ID: *existingID, Name: deref(existingName),
-			WorkspaceID: deref(existingWorkspace), OrganizationID: deref(existingOrg),
+			WorkspaceID: deref(existingWorkspace), OrganizationID: deref(existingOrg), TraceType: deref(existingType),
 		}, nil
 	case agentWorkspace == nil:
 		return SimulationProject{}, ErrSimulationNoWorkspace
@@ -163,7 +164,7 @@ func (r *PGResolver) ensureSimulationProjectOnce(ctx context.Context, orgID, age
 	}
 	return SimulationProject{
 		ID: *id, Name: deref(name),
-		WorkspaceID: deref(workspaceID), OrganizationID: deref(organizationID),
+		WorkspaceID: deref(workspaceID), OrganizationID: deref(organizationID), TraceType: deref(traceType),
 		Created: inserted != nil && *inserted,
 	}, nil
 }

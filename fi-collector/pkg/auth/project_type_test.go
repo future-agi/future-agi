@@ -182,13 +182,13 @@ func TestProjectTypePublicationRejectsReplacedResult(t *testing.T) {
 	current := &ResolveResult{OrgID: "org-t", WorkspaceID: "ws-t"}
 	a.cache.putPositive("key", old)
 	a.cache.putPositive("key", current)
-	if a.cache.addProjectTypesScoped("key", old, map[string]string{"id-obs": "observe"}) {
+	if a.cache.addProjectsScoped("key", old, map[string]string{"obs": "id-obs"}, map[string]string{"id-obs": "observe"}) {
 		t.Fatal("stale result published project type")
 	}
 	if got := current.ProjectTypeInWorkspace("ws-t", "id-obs"); got != "" {
 		t.Fatalf("replacement inherited stale project type %q", got)
 	}
-	if !a.cache.addProjectTypesScoped("key", current, map[string]string{"id-obs": "observe"}) {
+	if !a.cache.addProjectsScoped("key", current, map[string]string{"obs": "id-obs"}, map[string]string{"id-obs": "observe"}) {
 		t.Fatal("current result could not publish project type")
 	}
 }

@@ -1,6 +1,7 @@
 import concurrent.futures
 import hashlib
 import json
+import math
 import uuid
 from collections import defaultdict
 from dataclasses import replace
@@ -1649,6 +1650,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     observation_span["project"].trace_type == "observe"
                     and observation_span.get("cost") is not None
                 ):
+                    try:
+                        reported_cost = float(observation_span["cost"])
+                    except (TypeError, ValueError, OverflowError):
+                        return self._gm.bad_request("cost must be a finite number")
+                    if not math.isfinite(reported_cost):
+                        return self._gm.bad_request("cost must be a finite number")
+                    observation_span["cost"] = reported_cost
                     continue
 
                 prompt_tokens = observation_span.get("prompt_tokens") or 0
