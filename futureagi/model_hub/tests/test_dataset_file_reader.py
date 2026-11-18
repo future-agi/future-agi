@@ -309,3 +309,25 @@ class TestReadCsvDelimiterSelection:
         df, err = FileProcessor.process_file(self._make_file(csv))
         assert df is None
         assert "inconsistent column counts" in err
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "header, expected_columns",
+    [
+        ("id,name,id", ["id", "name", "id_1"]),
+        ("a,a,a_1", ["a", "a_2", "a_1"]),
+        ("a,a_1,a", ["a", "a_1", "a_2"]),
+        ("a, a", ["a", " a_1"]),
+    ],
+)
+def test_duplicate_csv_headers_get_unique_names(header, expected_columns):
+    """A generated name must not collide with another header, even after the
+    upload path strips whitespace. A repeated name made ``data[col]`` return a
+    DataFrame and failed the whole dataset upload."""
+    values = ",".join(f"v{i}" for i in range(len(expected_columns)))
+    df, err = FileProcessor.process_file(_make_csv_file(f"{header}\n{values}\n"))
+    assert err is None
+    assert list(df.columns) == expected_columns
+    assert df.columns.str.strip().is_unique
+    assert list(df.iloc[0]) == values.split(",")
