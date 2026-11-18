@@ -4,8 +4,30 @@ from typing import Any
 
 from agentic_eval.core_evals.fi_utils.json import JsonHelper
 
-# Skip prose placeholders: a supported object begins with a quoted key or is empty.
-_OBJECT_START = re.compile(r"""\{(?=(?:\s|\\[tr])*["'}])""")
+# A quoted fragment in prose isn't a key unless a colon follows it.
+_OBJECT_START = re.compile(
+    r"""\{(?:\s|\\[tr])*(?:\}|(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')(?:\s|\\[tr])*:)"""
+)
+
+
+def _skip_placeholder(text: str, start: int, decoder: json.JSONDecoder) -> int:
+    """Skip a prose/template block, including any JSON examples nested in it."""
+    depth = 1
+    i = start + 1
+    while i < len(text):
+        if text[i] == "{":
+            # Skip a whole example: braces in its string values are not delimiters.
+            try:
+                _, i = decoder.raw_decode(text, i)
+                continue
+            except json.JSONDecodeError:
+                depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return i
 
 
 def _recover_object(text: str, start: int) -> tuple[str, int]:
@@ -59,8 +81,10 @@ def extract_dict_from_string(input_str: str) -> dict[str, Any]:
 
     decoder = json.JSONDecoder()
     end = 0
-    while match := _OBJECT_START.search(json_str, end):
-        start = match.start()
+    while (start := json_str.find("{", end)) != -1:
+        if not _OBJECT_START.match(json_str, start):
+            end = _skip_placeholder(json_str, start, decoder)
+            continue
         try:
             # Trailing commentary (even another object) cannot invalidate a good reply.
             value, _ = decoder.raw_decode(json_str, start)

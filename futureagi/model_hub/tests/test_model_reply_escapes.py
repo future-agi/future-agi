@@ -21,6 +21,9 @@ from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
         ("Using {rubric}, here's the verdict: ", r"\t", ""),
         ("Using {reviewer's notes}: ", r"\r", " Evidence: {}"),
         ("", "", " Evidence: {}"),
+        ('Template: {{"result":"Fail","explanation":"example"}}. Answer: ', "", ""),
+        ('Using {rubric: {"scale":"binary"}}, here is the answer: ', "", ""),
+        ("Using {'reviewer's notes'} to grade: ", r"\t", ""),
     ],
     ids=[
         "plain",
@@ -28,6 +31,9 @@ from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
         "apostrophe-before-object",
         "quoted-prose",
         "another-object-after",
+        "wrapped-example",
+        "nested-rubric",
+        "quoted-placeholder",
     ],
 )
 def test_custom_judge_preserves_explanation(monkeypatch, prefix, indent, suffix):
@@ -42,14 +48,24 @@ def test_custom_judge_preserves_explanation(monkeypatch, prefix, indent, suffix)
 
     result = judge.run(required_keys=["output"], output="sample").eval_results[0]
 
+    assert result["data"]["result"] == "Pass"
     assert result["reason"] == reason
     assert json.loads(result["metadata"])["explanation"] == reason
 
 
-@pytest.mark.parametrize("suffix", ["", ' Evidence: {"notes": []}'])
-def test_legacy_prompt_object_preserves_nested_strings(suffix):
+@pytest.mark.parametrize(
+    ("prefix", "suffix"),
+    [
+        ("Result: ", ""),
+        ("Result: ", ' Evidence: {"notes": []}'),
+        ('Template: {{"notes":["example"]}}. Answer: ', ""),
+        ('Using {rubric: {"scale":"binary"}}, here is the answer: ', ""),
+    ],
+    ids=["plain", "evidence", "wrapped-example", "nested-rubric"],
+)
+def test_legacy_prompt_object_preserves_nested_strings(prefix, suffix):
     expected = {"notes": ["left\tright", r"\text{answer}", 'say "}"']}
-    message = SimpleNamespace(content=f"Result: {json.dumps(expected)}{suffix}")
+    message = SimpleNamespace(content=f"{prefix}{json.dumps(expected)}{suffix}")
     response = SimpleNamespace(choices=[SimpleNamespace(message=message)])
     prompt = RunPrompt(
         model="gpt-4o",
