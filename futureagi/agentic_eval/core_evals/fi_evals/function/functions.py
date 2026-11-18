@@ -2203,7 +2203,8 @@ def calculate_jaro_winkler_similarity(output, expected, case_insensitive=True, p
             transpositions += 1
         k += 1
 
-    jaro = (matches / len1 + matches / len2 + (matches - transpositions / 2) / matches) / 3
+    transpositions //= 2
+    jaro = (matches / len1 + matches / len2 + (matches - transpositions) / matches) / 3
 
     # Winkler modification: boost for common prefix
     prefix = 0
@@ -2812,6 +2813,35 @@ def _levenshtein_distance_list(ref, hyp):
     return dp[n][m]
 
 
+def _align_counts(ref: list[str], hyp: list[str]) -> tuple[int, int, int, int]:
+    """Return hits, substitutions, deletions, and insertions for an alignment.
+
+    ``Levenshtein.opcodes`` is the repository's standard token-alignment
+    implementation.  Using its compact opcode stream avoids materializing a
+    Python ``len(ref) x len(hyp)`` matrix, which matters for long transcripts.
+    Word-information metrics depend on the hit count, so they must not derive
+    it by subtracting the full edit distance (which also includes insertions).
+    """
+    hits = substitutions = deletions = insertions = 0
+    for operation, ref_start, ref_end, hyp_start, hyp_end in Levenshtein.opcodes(
+        ref, hyp
+    ):
+        ref_count = ref_end - ref_start
+        hyp_count = hyp_end - hyp_start
+        if operation == "equal":
+            hits += ref_count
+        elif operation == "replace":
+            substitutions += min(ref_count, hyp_count)
+            deletions += max(ref_count - hyp_count, 0)
+            insertions += max(hyp_count - ref_count, 0)
+        elif operation == "delete":
+            deletions += ref_count
+        elif operation == "insert":
+            insertions += hyp_count
+
+    return hits, substitutions, deletions, insertions
+
+
 def calculate_word_error_rate(reference, hypothesis, **kwargs):
     """
     Compute Word Error Rate (WER) for ASR/STT evaluation.
@@ -3242,10 +3272,23 @@ def calculate_matthews_correlation(output, expected, **kwargs):
         else:
             mcc = (tp * tn - fp * fn) / denom
     else:
-        # Multiclass MCC (using confusion matrix)
-        n = len(labels)
-        correct = sum(1 for p, l in zip(preds, labels) if p == l)
-        mcc = (correct / n - 1 / len(categories)) / (1 - 1 / len(categories)) if len(categories) > 1 else 0.0
+        # Multiclass MCC using Gorodkin's R_K formula, derived from the full
+        # confusion matrix rather than accuracy with a uniform class prior.
+        #
+        # R_K = (c·s − Σ_k p_k·t_k) / sqrt((s²−Σ_k p_k²)·(s²−Σ_k t_k²))
+        # where s = number of samples, c = correctly predicted, and
+        # t_k / p_k = the true / predicted count of class k.
+        s = len(labels)
+        c = sum(pred == label for pred, label in zip(preds, labels, strict=True))
+        pk = {cat: sum(1 for pred in preds if pred == cat) for cat in categories}
+        tk = {cat: sum(1 for label in labels if label == cat) for cat in categories}
+        sum_pk2 = sum(v**2 for v in pk.values())
+        sum_tk2 = sum(v**2 for v in tk.values())
+        sum_pktk = sum(pk[cat] * tk[cat] for cat in categories)
+        denom = ((s**2 - sum_pk2) * (s**2 - sum_tk2)) ** 0.5
+        # Either constant predictions or constant truth makes this zero.
+        # Raw MCC zero remains a normalized score of 0.5 below.
+        mcc = (c * s - sum_pktk) / denom if denom != 0 else 0.0
 
     # Normalize from [-1, 1] to [0, 1]
     score = (mcc + 1) / 2
@@ -3625,8 +3668,15 @@ def calculate_spearman_correlation(output, expected, **kwargs):
         return ranks
 
     rx, ry = _rank(x), _rank(y)
-    d_sq = sum((rxi - ryi) ** 2 for rxi, ryi in zip(rx, ry))
-    rho = 1 - (6 * d_sq) / (n * (n ** 2 - 1))
+    # Pearson's r over the midranks: the 1 - 6*sum(d^2)/(n*(n^2-1)) shortcut
+    # is only exact when neither input has ties.
+    mx, my = sum(rx) / n, sum(ry) / n
+    ss_x = sum((rxi - mx) ** 2 for rxi in rx)
+    ss_y = sum((ryi - my) ** 2 for ryi in ry)
+    if ss_x == 0 or ss_y == 0:
+        # A constant input has no rank correlation; score it as none, not perfect.
+        return {"result": 0.5, "reason": "Zero variance in one or both inputs"}
+    rho = sum((rxi - mx) * (ryi - my) for rxi, ryi in zip(rx, ry, strict=True)) / (ss_x * ss_y) ** 0.5
     score = (rho + 1) / 2
     return {"result": score, "reason": f"Spearman rho={rho:.4f}, normalized={score:.4f}"}
 
@@ -3830,14 +3880,13 @@ def calculate_match_error_rate(reference, hypothesis, **kwargs):
 
 def calculate_word_info_lost(reference, hypothesis, **kwargs):
     """Compute Word Information Lost (WIL). WIL = 1 - (hits/ref_len * hits/hyp_len)."""
-    ref_words = str(reference).strip().lower().split()
-    hyp_words = str(hypothesis).strip().lower().split()
+    ref_words = str(reference if reference is not None else "").strip().lower().split()
+    hyp_words = str(hypothesis if hypothesis is not None else "").strip().lower().split()
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WIL: 0.0 (both empty)"}
     if not ref_words or not hyp_words:
         return {"result": 0.0, "reason": "WIL: 1.0 (one side empty)"}
-    distance = _levenshtein_distance_list(ref_words, hyp_words)
-    hits = max(0, len(ref_words) - distance)
+    hits, _, _, _ = _align_counts(ref_words, hyp_words)
     wil = 1.0 - (hits / len(ref_words)) * (hits / len(hyp_words)) if len(ref_words) > 0 and len(hyp_words) > 0 else 1.0
     score = max(0.0, 1.0 - wil)
     return {"result": score, "reason": f"WIL: {wil:.4f}, score={score:.4f}"}
@@ -3845,14 +3894,13 @@ def calculate_word_info_lost(reference, hypothesis, **kwargs):
 
 def calculate_word_info_preserved(reference, hypothesis, **kwargs):
     """Compute Word Information Preserved (WIP). WIP = hits/ref_len * hits/hyp_len."""
-    ref_words = str(reference).strip().lower().split()
-    hyp_words = str(hypothesis).strip().lower().split()
+    ref_words = str(reference if reference is not None else "").strip().lower().split()
+    hyp_words = str(hypothesis if hypothesis is not None else "").strip().lower().split()
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WIP: 1.0 (both empty)"}
     if not ref_words or not hyp_words:
         return {"result": 0.0, "reason": "WIP: 0.0 (one side empty)"}
-    distance = _levenshtein_distance_list(ref_words, hyp_words)
-    hits = max(0, len(ref_words) - distance)
+    hits, _, _, _ = _align_counts(ref_words, hyp_words)
     wip = (hits / len(ref_words)) * (hits / len(hyp_words))
     return {"result": wip, "reason": f"WIP: {wip:.4f}"}
 

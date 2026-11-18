@@ -1,5 +1,5 @@
-import { getRandomId } from "src/utils/utils";
-import { create } from "zustand";
+import { getRandomId } from "src/utils/getRandomId";
+import { create } from "src/utils/zustand";
 import { useShallow } from "zustand/react/shallow";
 
 function readShowSummary() {

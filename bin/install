@@ -26,6 +26,12 @@
 #                                      # Reads FAGI_ADMIN_EMAIL,
 #                                      # FAGI_ADMIN_NAME, FAGI_ADMIN_PASSWORD
 #                                      # from env if you want a user created.
+#   ./bin/install --host-status-help  # optional read-only status overlay instructions
+#   ./bin/install --prepare-host-status # prepare a NEW public slot only; no install
+#   ./bin/install --auto-update apply # explicit one-time opt-in AFTER readiness
+#                                      # notify/download also supported; default off
+#                                      # apply: 6-hour checks, 02:00-06:00 UTC,
+#                                      # cold-backup downtime; host tools required
 #   ./bin/install --no-telemetry       # turn deployment telemetry off
 #                                      # (FUTURE_AGI_TELEMETRY_DISABLED=true
 #                                      # in .env;
@@ -42,6 +48,147 @@
 # ============================================================================
 
 set -eEuo pipefail
+
+# These standalone host-only actions precede logging, Docker probes and .env
+# handling. They never install/recreate a stack or modify an existing directory.
+if [[ "${1:-}" == --host-status-help || "${1:-}" == --prepare-host-status ]]; then
+  if [[ $# -ne 1 ]]; then
+    printf '%s\n' 'Host status actions must be used alone; no install will run.' >&2
+    exit 2
+  fi
+  if [[ "$1" == --prepare-host-status ]]; then
+    command -v python3 >/dev/null 2>&1 || { printf '%s\n' 'Host status preparation requires Python 3.9+.' >&2; exit 1; }
+    python3 - "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)" <<'PY'
+import os
+import re
+import stat
+import sys
+
+
+def refuse(message):
+    print("Host status preparation refused: " + message, file=sys.stderr)
+    sys.exit(1)
+
+
+if sys.version_info < (3, 9) or os.name != "posix":
+    refuse("Python 3.9+ on a POSIX host is required.")
+if os.environ.get("SUDO_UID"):
+    refuse("run as the original host operator, not through sudo.")
+source = os.environ.get("FI_HOST_UPDATE_STATUS_DIR", "")
+slot = os.environ.get("FI_HOST_UPDATE_STATUS_SLOT", "")
+if not re.fullmatch(r"[0-9a-f]{32}", slot):
+    refuse("set FI_HOST_UPDATE_STATUS_SLOT to the host reporting registration's slot.")
+parts = source.split("/")
+if (not source.startswith("/") or any(p in ("", ".", "..") for p in parts[1:])
+        or parts[-1] != slot or ".futureagi-updates" in parts):
+    refuse("use an absolute dedicated public directory ending in the slot, outside private updater state.")
+checkout = os.path.realpath(sys.argv[1])
+if os.path.commonpath((checkout, source)) == checkout:
+    refuse("keep public runtime data outside the checkout and its build contexts.")
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+fd = None
+try:
+    fd = os.open("/", flags)
+    for part in parts[1:-1]:
+        child = os.open(part, flags, dir_fd=fd)
+        os.close(fd)
+        fd = child
+        info = os.fstat(fd)
+        if info.st_uid not in (0, os.getuid()) or info.st_mode & 0o022:
+            refuse("an ancestor is not trusted; select a non-writable, non-symlink public parent.")
+    if os.fstat(fd).st_uid != os.getuid():
+        refuse("the public parent must be owned by this host operator; it was left unchanged.")
+    # mkdir is exclusive. Set this child's umask, never chmod/chown a pathname
+    # that another process might replace between creation and validation.
+    previous_umask = os.umask(0o022)
+    try:
+        os.mkdir(slot, 0o755, dir_fd=fd)
+    except FileExistsError:
+        refuse("the source already exists (possibly Docker/root-owned); it was left unchanged. Have the host reporting owner validate it.")
+    finally:
+        os.umask(previous_umask)
+    child = os.open(slot, flags, dir_fd=fd)
+    try:
+        info = os.fstat(child)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o755):
+            refuse("source ownership/mode changed; inspect it before enabling reporting.")
+    finally:
+        os.close(child)
+except OSError:
+    refuse("cannot safely create the source; create a trusted operator-owned public parent first. Nothing was repaired.")
+finally:
+    if fd is not None:
+        os.close(fd)
+print("Created an empty operator-owned status directory (0755). No registration, status, env changes or container recreation performed.")
+PY
+    exit $?
+  fi
+  cat <<'HELP'
+Optional read-only host update status (POSIX Compose hosts only)
+
+Default installs have no status mount. Missing integration is unavailable, not
+healthy. This does not enable unattended updates or change the manual default.
+
+Use the source and random 32-hex slot from the host reporting registration.
+The host reporting owner must initialize/validate that registration first; if
+that command is unavailable, STOP. Directory preparation alone is NOT enrollment
+and does not fabricate a status report or authorize host actions.
+
+For a NEW source only, create an operator-owned public parent OUTSIDE the
+checkout/build contexts and .futureagi-updates. Export FI_HOST_UPDATE_STATUS_DIR
+as its absolute slot directory and FI_HOST_UPDATE_STATUS_SLOT as that slot.
+Run ./bin/install --prepare-host-status as the original operator (not sudo).
+It creates only the final directory with mode 0755; the parent must exist, have
+trusted non-writable ancestry and belong to the operator. Existing sources are
+refused unchanged, including Docker/root-owned sources. Never chmod777, chown to
+the container UID, or mount a parent containing other slots. The host publisher
+must atomically replace status.json (0644); never write secrets or private state
+here. Empty directories intentionally remain reporting-unavailable.
+
+After host registration agrees with the source/slot, explicitly choose an overlay.
+The following commands only validate configuration; they do NOT recreate anything.
+Use the same ordered -f arguments for any separately approved recreation:
+
+Standalone:
+  docker compose -f docker-compose.yml -f deploy/docker-compose.host-status.standalone.yml config --quiet
+Distributed:
+  docker compose -f docker-compose.distributed.yml -f deploy/docker-compose.host-status.distributed.yml config --quiet
+Production (exactly these three ordered files, never ambient COMPOSE_FILE):
+  docker compose --env-file deploy/.env.production -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml -f deploy/docker-compose.host-status.distributed.yml config --quiet
+  ./bin/update --production schedule init --docker-context NAME --status-overlay
+  ./bin/update --production reporting init --directory /absolute/dedicated/public-parent
+
+Production enrollment requires containers already running with exactly that order.
+--status-overlay takes NO path and is valid only for --production schedule init.
+Later update commands derive it only from registration; labels never enroll it.
+Use the same absolute --env-file selection on every command if non-default.
+For first opt-in, prepare the mount using the existing two-file reporting slot.
+Adding/removing the overlay requires stopping scheduling, resolving active/staged
+work, archiving only the selected private automation namespace, separately
+recreating with the intended files, then fresh enrollment with/without the flag.
+A fresh registration gets a new slot: initialize a new empty public parent, update
+the production env source/slot and recreate with the same ordered files. Preserve
+core receipts/journals/env-commit evidence and reconcile old failure history before
+re-enabling. See deploy/update/README.md for the full re-enrollment procedure.
+Unknown/extra/reordered files, ownership mismatch and unsigned overlay bytes are
+refused; no migration, implicit adoption, scheduler installation or restart occurs.
+
+For non-production preserve selected overlays and the installation's explicit Docker
+context/project. Set the source/slot in the selected environment deliberately;
+exported shell values override env files. Verify them against host registration.
+For production retain stage, separately approved initialization, then apply.
+Status preparation never initializes production. deploy/setup.sh does not select
+this overlay or recreate existing containers for you. Do not rerun an installer
+to retrofit reporting. Nothing changes until an operator explicitly recreates
+with the overlay. Keep the same ordered files in future host registration/actions.
+Never mount updater state, env files, journals or a Docker socket, even read-only.
+Remote daemons, SELinux and rootless configurations require separate qualification.
+Other root processes in Standalone can read this intentionally sanitized file;
+this is not a process-isolation boundary and must not be served by nginx.
+HELP
+  exit 0
+fi
 
 # ---------------- output helpers ----------------
 if [[ -t 1 ]]; then
@@ -95,6 +242,7 @@ NON_INTERACTIVE=0
 WIPE_VOLUMES_FLAG=0
 NEW_INSTANCE_FLAG=0
 NO_TELEMETRY=0
+AUTO_UPDATE_MODE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --distributed|--full) DISTRIBUTED=1 ;;
@@ -105,14 +253,22 @@ while [[ $# -gt 0 ]]; do
     --wipe-volumes) WIPE_VOLUMES_FLAG=1 ;;
     --new-instance) NEW_INSTANCE_FLAG=1 ;;
     --no-telemetry) NO_TELEMETRY=1 ;;
+    --auto-update)
+      [[ $# -ge 2 ]] || die "--auto-update requires notify, download or apply"
+      case "$2" in notify|download|apply) AUTO_UPDATE_MODE="$2" ;; *) die "--auto-update requires notify, download or apply" ;; esac
+      shift ;;
     -y|--non-interactive) NON_INTERACTIVE=1 ;;
     -h|--help)
-      sed -n '2,/^# =\{20,\}$/p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '4,/^# =\{20,\}$/p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) die "unknown flag: $1 (try --help)" ;;
   esac
   shift
 done
+
+if [[ -n "$AUTO_UPDATE_MODE" ]] && (( NO_UP == 1 || FROM_SOURCE == 1 || DISTRIBUTED == 1 )); then
+  die "--auto-update requires a running published Standalone install; not --no-up, --from-source or --distributed"
+fi
 
 if (( WIPE_VOLUMES_FLAG == 1 && NEW_INSTANCE_FLAG == 1 )); then
   die "--wipe-volumes and --new-instance are mutually exclusive"
@@ -796,17 +952,57 @@ compose_service_images() {
 SERVICE_IMAGES=$(compose_service_images || true)
 app_image=$(awk -F'\t' -v s="$APP_SVC" '$1 == s {print $2; exit}' <<<"$SERVICE_IMAGES")
 
+# Services with a `build:` section in the resolved compose file, in its order,
+# except those whose image is IMAGE.
+compose_build_services() { # IMAGE
+  $DC config 2>/dev/null | awk -v skip="$1" '
+    /^services:/ { in_services = 1; next }
+    /^[^ ]/ { in_services = 0 }
+    in_services && /^  [^ ]/ { service = $1; sub(/:$/, "", service); order[++n] = service }
+    in_services && /^    build:/ { build[service] = 1 }
+    in_services && /^    image: / { image = $2; gsub(/"/, "", image); images[service] = image }
+    END { for (i = 1; i <= n; i++) if (build[order[i]] && images[order[i]] != skip) print order[i] }
+  '
+}
+
 # Images tagged `local` are built from this checkout (--from-source, or the
 # distributed stack's fi-collector) and are never pulled. The distributed stack also skips
 # anything it builds itself; the standalone install pulls every other image, so
 # a failed pull can never turn into a surprise source build.
+# bin/update pins the distributed stack's fi-collector to a published release
+# (FI_COLLECTOR_VERSION in .env). A pinned fi-collector is pulled like every
+# other published image and never built: a build from this checkout would
+# replace the verified release image under the release's tag. Whether it is
+# pinned comes from the image Compose resolved for it above, which reads the
+# shell (even an empty value) over .env, and .env with its quotes, comments and
+# `export ` lines; --from-source always builds.
+collector_image=$(awk -F'\t' '$1 == "fi-collector" {print $2; exit}' <<<"$SERVICE_IMAGES")
+collector_pinned=0
+if (( DISTRIBUTED == 1 && FROM_SOURCE == 0 )) && \
+   [[ "$collector_image" == futureagi/fi-collector:?* && "$collector_image" != futureagi/fi-collector:local ]]; then
+  collector_pinned=1
+fi
+# Every other service with `build:` (one a docker-compose.override.yml adds,
+# say) is still built from this checkout, by name, before the stack starts.
+# Services sharing the pinned image (fi-property-catalog-consumer) are not.
+declare -a build_services=()
+if (( collector_pinned == 1 )); then
+  while IFS= read -r service; do
+    if [[ -n "$service" ]]; then build_services+=("$service"); fi
+  done < <(compose_build_services "$collector_image")
+fi
 declare -a pull_command=(pull)
-if (( DISTRIBUTED == 1 )) && $DC pull --help 2>&1 | grep -q -- '--ignore-buildable'; then
+if (( DISTRIBUTED == 1 && collector_pinned == 0 )) && \
+   $DC pull --help 2>&1 | grep -q -- '--ignore-buildable'; then
   pull_command+=(--ignore-buildable)
 fi
 declare -a pull_services=()
 while IFS=$'\t' read -r service image; do
   [[ -z "$service" ]] && continue
+  # Built by name before the stack starts.
+  if (( ${#build_services[@]} > 0 )) && [[ " ${build_services[*]} " == *" $service "* ]]; then
+    continue
+  fi
   if [[ "$image" != *:local ]]; then
     pull_services+=("$service")
   elif [[ "$image" != futureagi/fi-collector:local ]] && ! docker image inspect "$image" >/dev/null 2>&1; then
@@ -858,11 +1054,23 @@ if (( DISTRIBUTED == 1 )); then
   # --build forces a rebuild of any service with `build:` set, so a stale
   # image tag from a previous worktree (or an outdated layer) doesn't carry
   # old source into a new install. Docker's layer cache makes this fast
-  # when nothing has actually changed.
+  # when nothing has actually changed. A pinned fi-collector was pulled above,
+  # so every other service with `build:` is built by name first and the stack
+  # starts with --no-build, which never rebuilds the pinned image.
+  build_flag=--build
+  if (( collector_pinned == 1 )); then
+    build_flag=--no-build
+    if (( ${#build_services[@]} > 0 )); then
+      log_only "running: $DC build ${build_services[*]}"
+      if ! $DC build "${build_services[@]}"; then
+        die "docker compose build ${build_services[*]} failed; the output above names the error. Fix it, then re-run ./bin/install."
+      fi
+    fi
+  fi
   # One attempt, as in bin/e2e: replaying compose up can rerun an exited schema
   # or mirror job after an uncertain write. Inspect retained state before resuming.
   # Preserve services omitted by an upgrade; legacy retirement is an explicit step.
-  if ! $DC up -d --build --wait --wait-timeout 1200; then
+  if ! $DC up -d "$build_flag" --wait --wait-timeout 1200; then
     die "docker compose startup failed or timed out; partial state retained, no automatic retry. Inspect 'docker compose ps -a' and 'docker compose logs' before explicitly resuming."
   fi
 else
@@ -1126,8 +1334,32 @@ if [[ -n "$USER_EMAIL" ]]; then
   fi
 fi
 
+# ---------------- one-time automatic-update opt-in ----------------
+# Only after the actual readiness loop. -y does NOT imply update consent.
+# An existing registration is never automatically enabled on installer reruns.
+AUTO_UPDATE_RC=0
+if [[ -z "$AUTO_UPDATE_MODE" ]] && (( NON_INTERACTIVE == 0 && DISTRIBUTED == 0 && FROM_SOURCE == 0 )) \
+   && [[ ! -d "$ROOT/.futureagi-updates/automation" ]]; then
+  say "Optional automatic updates: 6-hour checks, stable/minor, 02:00-06:00 UTC."
+  say "Apply includes cold-backup downtime and container replacement. Private backups under HOME are retained."
+  say "Uses the current Docker context and your host user; requires Python 3.9+, Compose v2, cosign v3+ and running cron."
+  say "No packages/global permissions/migrations are installed. Disable later with ./bin/update disable."
+  read -r -p "Opt in once to supported automatic updates? [y/N] " auto_update_answer || auto_update_answer=""
+  case "$auto_update_answer" in y|Y|yes|YES) AUTO_UPDATE_MODE=apply ;; esac
+fi
+if [[ -n "$AUTO_UPDATE_MODE" ]]; then
+  # The flag or preceding prompt is the real consent. Setup must not ask twice.
+  # It uses this checkout's .env/profiles and the original Docker context/user.
+  if "$ROOT/bin/update" setup --mode "$AUTO_UPDATE_MODE" --yes; then
+    ok "Automatic-update setup completed; see the verified scheduler/policy state above"
+  else
+    AUTO_UPDATE_RC=3
+    warn "Installation is ready, but automatic-update setup is INCOMPLETE. No active-update claim; inspect the prerequisite above."
+  fi
+fi
+
 # ---------------- done ----------------
 print_summary "$frontend_port" "$backend_port"
 
 [[ "$ACCOUNT_STATE" == "$ACCOUNT_FAILED" ]] && exit 1
-exit 0
+exit "$AUTO_UPDATE_RC"

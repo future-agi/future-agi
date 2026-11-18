@@ -106,3 +106,16 @@ def test_denials_log_their_own_reason(api_client, idp_a):
 
     assert "identity_missing" in captured.rendered
     assert "attempt_unavailable" in captured.rendered
+
+
+def test_capture_leaves_the_test_logging_setup_as_it_found_it():
+    """The production config it applies makes temporalio stop propagating;
+    left in place, caplog in later tests never sees temporal activity logs."""
+
+    temporalio = logging.getLogger("temporalio")
+    before = (temporalio.propagate, list(temporalio.handlers), temporalio.level)
+
+    with capture_security_logging():
+        pass
+
+    assert (temporalio.propagate, list(temporalio.handlers), temporalio.level) == before

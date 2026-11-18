@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 105
+expected_tool_count: 111
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -46,7 +46,7 @@ tools:
     access: write
   - name: add_dataset_rows
     group: datasets
-    description: Add rows to an existing dataset using cells with column_name and value. Column names must already exist in the dataset.
+    description: 'Add rows to an existing dataset using rows: [{cells: [{column_name: "input", value: "hello"}]}]. Flat column-to-value row dictionaries are invalid. Column names must already exist and be writable; unknown or duplicate columns reject the batch. Read back the dataset to verify values and counts after writing.'
     operation: {method: POST, path: "/model-hub/develops/{dataset_id}/add_rows/"}
     access: write
   - name: run_dataset_evals
@@ -325,9 +325,25 @@ tools:
       limit: {maximum: 100}
   - name: get_error_cluster
     group: error_feed
-    description: Return an error issue and its grouped trace information.
+    description: Return an error issue, its grouped trace information and its stored root-cause analysis. `rca` holds the synthesis, the recommended fix, a confidence and the evidence trace ids; it stays empty (analyzed_at null) until someone runs Analyze Cluster on the issue in the Error Feed. The step-by-step investigation trail is left out because it exceeds the MCP response size limit; read the evidence traces with get_trace instead.
     operation: {method: GET, path: "/tracer/feed/issues/{cluster_id}/"}
     access: read
+    response:
+      omit: [rca.trace]
+  - name: get_error_cluster_overview
+    group: error_feed
+    description: Return a cluster's pattern summary - the statistical insights that separate its failing traces from the passing baseline - plus its daily error counts and representative traces with their evidence and agent flow. Representative traces carry inputs, outputs and conversation reels, and long conversations can push the response past the MCP size limit, so start with rep_limit=3. If even rep_limit=1 is too large, read list_error_cluster_traces instead - the pattern summary is not available in a smaller form.
+    operation: {method: GET, path: "/tracer/feed/issues/{cluster_id}/overview/"}
+    access: read
+    pagination:
+      rep_limit: {maximum: 20}
+  - name: list_error_cluster_traces
+    group: error_feed
+    description: List the traces grouped into a cluster with each one's score, latency, tokens and cost, alongside cluster-wide aggregates. Use the returned trace ids with get_trace.
+    operation: {method: GET, path: "/tracer/feed/issues/{cluster_id}/traces/"}
+    access: read
+    pagination:
+      limit: {maximum: 100}
   # annotations
   - name: list_annotation_queues
     group: annotations
@@ -462,7 +478,7 @@ tools:
     access: write
   - name: update_agent
     group: simulation
-    description: Edit an agent definition. To use changed configuration in a versioned simulation, subsequently call create_agent_version, or supply the changes directly to create_agent_version.
+    description: Edit an agent definition. Leave observability_enabled out to keep observability as it is; send true or false to turn it on or off. To use changed configuration in a versioned simulation, subsequently call create_agent_version, or supply the changes directly to create_agent_version.
     operation: {method: PUT, path: "/simulate/agent-definitions/{agent_id}/edit/"}
     access: write
   - name: create_agent_version
@@ -631,3 +647,30 @@ tools:
     description: Return the current organization's usage and cost overview.
     operation: {method: GET, path: "/usage/v2/usage-overview/"}
     access: read
+
+  # SQL uses the same bounded, authenticated project execution path as the UI.
+  - name: run_sql
+    group: observability
+    description: Start one read-only project-scoped ClickHouse SELECT or JOIN in a required time window (at most 31 days). Returns a personal job id; poll get_sql_result. No raw tables, settings, writes, external functions, or public result links.
+    operation: {method: POST, path: "/tracer/sql-query/run/"}
+    access: read
+    response: {unwrap: null}
+  - name: get_sql_result
+    group: observability
+    description: Poll a SQL job owned by the caller. Defaults to 100 rows within a bounded byte page; pass result.next_offset as offset until has_more is false. Wide rows are marked previewed; use the authenticated REST download for full cells. Results expire after 24 hours; current project membership is required on every page.
+    operation: {method: GET, path: "/tracer/sql-query/{id}/"}
+    access: read
+    pagination: {limit: {maximum: 100}}
+    response: {unwrap: null}
+  - name: cancel_sql
+    group: observability
+    description: Cancel a SQL job owned by the caller without changing project data.
+    operation: {method: POST, path: "/tracer/sql-query/{id}/cancel/"}
+    access: read
+    response: {unwrap: null}
+  - name: get_sql_catalog
+    group: observability
+    description: List the stable scoped SQL datasets and columns available in a project.
+    operation: {method: GET, path: "/tracer/sql-query/catalog/"}
+    access: read
+    response: {unwrap: null}

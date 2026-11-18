@@ -13,8 +13,8 @@ criteria: "You are evaluating whether the model's output successfully fulfills t
   \ if the output fulfills all explicit and reasonable implicit requirements with correct content. Return 'Failed' if it misses\
   \ instructions, omits components, or provides incorrect content.\n\n## Inputs\n\n<input>{{input}}</input>\n\n<output>{{output}}</output>"
 eval_tags:
-- NLP Metrics
-- Chatbot behaviors
+- Task Completion
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

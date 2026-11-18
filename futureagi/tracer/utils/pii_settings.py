@@ -42,7 +42,6 @@ def get_pii_settings_for_projects(
 
     # 2. Bulk DB lookup for cache misses
     try:
-
         rows = Project.objects.filter(
             name__in=uncached,
             organization_id=org_id,

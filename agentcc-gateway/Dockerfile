@@ -35,7 +35,7 @@ ARG TARGETARCH
 WORKDIR /src/healthcheck
 RUN printf '%s\n' \
         '// healthcheck: HEALTHCHECK probe for images with no shell (docs.futureagi.com/docs/self-hosting/images#health-checks).' \
-        '// usage: healthcheck [-pid1 NAME] http://HOST:PORT/PATH' \
+        '// usage: healthcheck [-pid1 NAME] http[s]://HOST:PORT/PATH' \
         '// Exits 0 when the URL answers HTTP 2xx, else 1. HEALTHCHECK_URL replaces' \
         '// the URL. -pid1 NAME: exit 0 without probing unless PID 1 runs NAME, so a' \
         '// container started with another command of the image is not unhealthy.' \
@@ -43,6 +43,7 @@ RUN printf '%s\n' \
         '' \
         'import (' \
         '    "bufio"' \
+        '    "crypto/tls"' \
         '    "net"' \
         '    "os"' \
         '    "strings"' \
@@ -62,13 +63,17 @@ RUN printf '%s\n' \
         '    if target == "" && len(args) == 1 {' \
         '        target = args[0]' \
         '    }' \
-        '    rest, ok := strings.CutPrefix(target, "http://")' \
-        '    if !ok || rest == "" {' \
-        '        fail("usage: healthcheck [-pid1 NAME] http://HOST:PORT/PATH")' \
+        '    scheme, rest, ok := strings.Cut(target, "://")' \
+        '    if !ok || rest == "" || (scheme != "http" && scheme != "https") {' \
+        '        fail("usage: healthcheck [-pid1 NAME] http[s]://HOST:PORT/PATH")' \
         '    }' \
         '    host, path, _ := strings.Cut(rest, "/")' \
         '    if _, _, err := net.SplitHostPort(host); err != nil {' \
-        '        host = net.JoinHostPort(host, "80")' \
+        '        port := "80"' \
+        '        if scheme == "https" {' \
+        '            port = "443"' \
+        '        }' \
+        '        host = net.JoinHostPort(host, port)' \
         '    }' \
         '    conn, err := net.DialTimeout("tcp", host, 3*time.Second)' \
         '    if err != nil {' \
@@ -76,6 +81,15 @@ RUN printf '%s\n' \
         '    }' \
         '    defer conn.Close()' \
         '    _ = conn.SetDeadline(time.Now().Add(5 * time.Second))' \
+        '    if scheme == "https" {' \
+        '        // A loopback liveness probe of this container, not an identity check:' \
+        '        // the certificate names the service, not 127.0.0.1.' \
+        '        secure := tls.Client(conn, &tls.Config{InsecureSkipVerify: true})' \
+        '        if err := secure.Handshake(); err != nil {' \
+        '            fail(err.Error())' \
+        '        }' \
+        '        conn = secure' \
+        '    }' \
         '    request := "GET /" + path + " HTTP/1.0\r\nHost: " + host + "\r\nUser-Agent: healthcheck\r\n\r\n"' \
         '    if _, err := conn.Write([]byte(request)); err != nil {' \
         '        fail(err.Error())' \
@@ -114,6 +128,8 @@ COPY --from=builder /build/agentcc-gateway /app/agentcc-gateway
 COPY --from=healthcheck /out/healthcheck /usr/local/bin/healthcheck
 
 EXPOSE 8080
+# HTTPS, when server.tls is on (AGENTCC_TLS_ENABLED, AGENTCC_TLS_PORT).
+EXPOSE 8443
 
 # Unprivileged, numeric so Kubernetes runAsNonRoot can verify it: the same
 # uid as distroless `nonroot` (fi-collector). The gateway only reads its
@@ -124,7 +140,8 @@ EXPOSE 8080
 USER 65532:65532
 STOPSIGNAL SIGTERM
 # /healthz on the listener (config.yaml server.port, 8080 by default). Set
-# HEALTHCHECK_URL when the gateway listens elsewhere.
+# HEALTHCHECK_URL when the gateway listens elsewhere, e.g.
+# https://127.0.0.1:8443/healthz with plain HTTP off (AGENTCC_HTTP_ENABLED=false).
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD ["/usr/local/bin/healthcheck", "http://127.0.0.1:8080/healthz"]
 ENTRYPOINT ["/app/agentcc-gateway"]

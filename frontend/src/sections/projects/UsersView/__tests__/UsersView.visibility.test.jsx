@@ -115,7 +115,7 @@ vi.mock(
   () => ({ default: () => null }),
 );
 
-import UsersView from "../UsersView";
+import UsersView, { getDateLabel } from "../UsersView";
 import useUsersStore from "../Store/usersStore";
 import * as listCursorPagination from "../../LLMTracing/listCursorPagination";
 import { OBSERVE_LIST_REFRESH_EVENT } from "../../observeEvents";
@@ -350,4 +350,13 @@ describe("Users view content visibility", () => {
       expect(pausedParams.api.retryServerSideLoads).toHaveBeenCalledOnce();
     },
   );
+});
+
+describe("the Users toolbar's date", () => {
+  it("reads like the other views", () => {
+    expect(getDateLabel({ dateOption: "7D" })).toBe("Past 7D");
+    expect(getDateLabel({ dateOption: "Today" })).toBe("Today");
+    expect(getDateLabel({ dateOption: "Custom" })).toBe("Custom range");
+    expect(getDateLabel(null)).toBe("Past 7D");
+  });
 });

@@ -1,3 +1,6 @@
+import { uploadHarnessSource } from "src/api/harness/harness";
+import { CODE_UPLOAD_COPY } from "src/sections/simulate/environments/codeUpload.constants";
+
 const ignoredDirectories = new Set([
   ".git",
   ".next",
@@ -61,3 +64,25 @@ export function prepareSourceFolder(selectedFiles) {
     totalBytes,
   };
 }
+
+// Sends a prepared folder as one upload, each file with its `paths` field, and
+// reports progress in percent.
+export function uploadSourceFolder(prepared, onPercent) {
+  const formData = new FormData();
+  prepared.files.forEach((file, i) => {
+    formData.append("files", file, file.name);
+    formData.append("paths", prepared.paths[i]);
+  });
+  formData.append("name", prepared.name);
+  return uploadHarnessSource(formData, (evt) => {
+    if (evt?.total) onPercent(Math.round((evt.loaded / evt.total) * 100));
+  });
+}
+
+// A 400 here is almost always the runner's per-request field-count limit (each
+// file sends two fields), so name that cause instead of `otherwise`'s words.
+// The axios interceptor exposes the status as `statusCode` (not response.status).
+export const uploadErrorText = (error, otherwise) =>
+  (error?.statusCode ?? error?.response?.status) === 400
+    ? CODE_UPLOAD_COPY.tooManyFiles
+    : otherwise(error);

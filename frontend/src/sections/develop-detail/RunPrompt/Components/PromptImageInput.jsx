@@ -74,7 +74,7 @@ export default function PromptImageInput({
               fontWeight={"fontWeightMedium"}
             >
               Image Prompt
-              <Typography component={"span"} color={"red.500"}>
+              <Typography component={"span"} color={"status.danger.fg"}>
                 *
               </Typography>
             </Typography>
@@ -138,7 +138,11 @@ export default function PromptImageInput({
           <Typography
             id={"invalid-variables-message"}
             typography="s2"
-            color={allInvalidVariables?.length > 0 ? "red.500" : "text.primary"}
+            color={
+              allInvalidVariables?.length > 0
+                ? "status.danger.fg"
+                : "text.primary"
+            }
             fontWeight={"fontWeightRegular"}
           >
             Use variables from your dataset columns to dynamically generate

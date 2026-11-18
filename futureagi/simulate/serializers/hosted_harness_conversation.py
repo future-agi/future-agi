@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+# Set on a command by the server; a client never sends them.
+_SERVER_PAYLOAD_KEYS = frozenset({"command_kind", "nudge_id", "origin"})
+
 
 class HarnessConversationMessageCreateSerializer(serializers.Serializer):
     content = serializers.CharField(max_length=20_000, trim_whitespace=False)
@@ -31,6 +34,17 @@ class HarnessConversationMessageCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"reply_to": "A new message cannot answer a blocking question."}
             )
+        payload = attrs.get("payload")
+        if isinstance(payload, dict) and any(
+            key in _SERVER_PAYLOAD_KEYS or str(key).startswith("_") for key in payload
+        ):
+            raise serializers.ValidationError(
+                {"payload": "These keys are set by the server only."}
+            )
+        if attrs["client_request_id"].startswith("nudge-"):
+            raise serializers.ValidationError(
+                {"client_request_id": "This prefix is reserved."}
+            )
         return attrs
 
 
@@ -47,6 +61,8 @@ class HarnessConversationAdjustmentSerializer(serializers.Serializer):
         choices=("understand", "environment", "scenarios"), required=False
     )
     scenario_delta = serializers.IntegerField(min_value=1, required=False)
+
+
 class HarnessConversationAdjustmentResponseSerializer(serializers.Serializer):
     adjustment_id = serializers.UUIDField()
     client_request_id = serializers.CharField(
@@ -57,7 +73,6 @@ class HarnessConversationAdjustmentResponseSerializer(serializers.Serializer):
     scenario_delta = serializers.IntegerField()
     status = serializers.CharField()
     created_at = serializers.DateTimeField()
-
 
 
 class HarnessConversationMessageSerializer(serializers.Serializer):
@@ -98,13 +113,28 @@ class HarnessConversationRuntimeSerializer(serializers.Serializer):
     available = serializers.BooleanField()
 
 
+class HarnessConversationBlockingInputSerializer(serializers.Serializer):
+    """The question or confirmation the builder waits on, as the runtime asked it."""
+
+    message_id = serializers.CharField()
+    kind = serializers.CharField(
+        help_text="question_requested or confirmation_requested."
+    )
+    prompt = serializers.CharField(required=False, allow_blank=True)
+    options = serializers.ListField(child=serializers.JSONField(), required=False)
+    options_only = serializers.BooleanField(
+        required=False,
+        help_text="True when only one of its options answers it: free text is not an answer.",
+    )
+
+
 class HarnessConversationReadSerializer(serializers.Serializer):
     conversation_id = serializers.UUIDField()
     job_id = serializers.UUIDField()
     state = serializers.CharField()
     stage = serializers.CharField()
     active_invocation_id = serializers.CharField(allow_null=True)
-    blocking_input = serializers.JSONField(allow_null=True)
+    blocking_input = HarnessConversationBlockingInputSerializer(allow_null=True)
     messages = HarnessConversationMessageSerializer(many=True)
     events = HarnessConversationEventReadSerializer(many=True)
     event_watermark = serializers.IntegerField(min_value=0)
@@ -270,7 +300,9 @@ class HarnessConversationRunStartSerializer(serializers.Serializer):
         max_length=100,
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
-    operation_id = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    operation_id = serializers.CharField(
+        required=False, allow_blank=True, max_length=64
+    )
 
 
 class HarnessConversationOverviewQuerySerializer(serializers.Serializer):
@@ -285,3 +317,7 @@ class HarnessConversationOverviewSerializer(serializers.Serializer):
     recent_runs = serializers.ListField(child=serializers.DictField())
     build_changes = serializers.ListField(child=serializers.DictField())
     earlier_messages = serializers.ListField(child=serializers.DictField())
+    drafts = serializers.DictField(
+        required=False,
+        help_text="The unsaved changes by piece, where the environment has drafts.",
+    )

@@ -28,6 +28,17 @@ describe("listHarnessEnvironments", () => {
     axios.get.mockClear();
   });
 
+  it("filters to one agent's environments when asked", async () => {
+    await listHarnessEnvironments({
+      page: 1,
+      limit: 100,
+      agentDefinitionId: "a1",
+    });
+    expect(axios.get).toHaveBeenCalledWith(BASE, {
+      params: { page: 1, limit: 100, agent_definition_id: "a1" },
+    });
+  });
+
   it("GETs the environments list with the paging params", async () => {
     await listHarnessEnvironments({ page: 2, limit: 50 });
     expect(axios.get).toHaveBeenCalledWith(BASE, {
@@ -81,6 +92,24 @@ describe("runHarnessEnvironment", () => {
       `${BASE}env-6/run/`,
       { scenario_ids: ["scenario-a", "scenario-b"], trials: 3 },
       { headers: { "Idempotency-Key": "request-1" } },
+    );
+  });
+
+  it("adds only the version picks that are set", async () => {
+    await runHarnessEnvironment("env-6", ["scenario-a"], 1, "request-2", {
+      environment: "e1",
+      suite: "s2",
+      agent: undefined,
+    });
+    expect(axios.post).toHaveBeenCalledWith(
+      `${BASE}env-6/run/`,
+      {
+        scenario_ids: ["scenario-a"],
+        trials: 1,
+        environment_version_id: "e1",
+        suite_version_id: "s2",
+      },
+      { headers: { "Idempotency-Key": "request-2" } },
     );
   });
 });

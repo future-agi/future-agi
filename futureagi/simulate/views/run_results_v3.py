@@ -7,9 +7,11 @@ import functools
 import json
 import uuid
 from collections.abc import Iterator
+from dataclasses import asdict
 from itertools import islice
 from typing import Any
 
+import structlog
 from django.db.models import QuerySet
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
@@ -21,10 +23,32 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.models import CallExecution, TestExecution
+from simulate.selectors.call_detail import (
+    call_actors,
+    comparability,
+    has_customer,
+    participants,
+    tagged_function_calls,
+    transcript_turns,
+    trial_state,
+)
+from simulate.selectors.run_resume import resume_state
+from simulate.selectors.runs import user_executions
+from simulate.serializers.call_detail_v3 import (
+    CallCallActorSerializer,
+    CallParticipantSerializer,
+    FunctionCallSerializer,
+    TrialStateSerializer,
+)
+from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
+from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.serializers.trial_pass import TrialPassFieldsSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
+from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -42,12 +66,14 @@ from simulate.services.run_results_v3_queries import (
     GROUP_FIELDS,
     apply_run_call_query,
     build_run_analytics,
+    build_run_reliability,
     run_call_facets,
     run_call_rows_queryset,
     run_calls_queryset,
 )
 from simulate.services.run_results_v3_scan import scan_call_values
 from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
+from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
 from simulate.services.scoring_status import (
     CSAT_STATUSES,
     EVAL_STATUSES,
@@ -57,10 +83,18 @@ from simulate.services.scoring_status import (
 from simulate.services.test_executor import build_eval_configs_map
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.serializer_fields import JsonValueField
+from tracer.services.clickhouse.client import CHError
+
+logger = structlog.get_logger(__name__)
 
 
 class JsonObjectField(serializers.JSONField):
     """Accept a JSON object both in query strings and request bodies."""
+
+    swagger_empty_input_default = "{}"
 
     def to_internal_value(self, data):
         if data in (None, ""):
@@ -109,6 +143,8 @@ class RunCallFiltersSerializer(serializers.Serializer):
             "goal_not",
             "sub_goal",
             "sub_goal_not",
+            "actor",
+            "actor_not",
             "status",
             "status_not",
             "goal_outcome",
@@ -126,6 +162,10 @@ class RunCallFiltersSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Filter '{field}' must be a list of strings."
                 )
+            # Refuses null and surrogate characters, which the database cannot hold.
+            serializers.ListField(
+                child=serializers.CharField(allow_blank=True)
+            ).run_validation(selected)
         invalid_statuses = {
             *value.get("status", []),
             *value.get("status_not", []),
@@ -156,7 +196,7 @@ class RunCallsV3QuerySerializer(RunCallFiltersSerializer):
         default=50, min_value=1, max_value=500, required=False
     )
     group_by = serializers.ChoiceField(
-        choices=list(GROUP_FIELDS), allow_blank=True, required=False, default=""
+        choices=["", *GROUP_FIELDS], allow_blank=True, required=False, default=""
     )
     group_key = serializers.CharField(allow_blank=True, required=False, allow_null=True)
 
@@ -187,6 +227,7 @@ class OutcomeCountsSerializer(serializers.Serializer):
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
     inconclusive = serializers.IntegerField()
+    no_score = serializers.IntegerField()
 
 
 class RunSummarySerializer(serializers.Serializer):
@@ -218,6 +259,29 @@ class RunCallsSummarySerializer(RunSummarySerializer):
         ref_name = "SimulateRunV3CallsSummary"
 
 
+class RunFixRunSerializer(serializers.Serializer):
+    """The fix that started a check run."""
+
+    id = serializers.UUIDField()
+    # The engine's name for the run ("baseline", "c2-target").
+    label = serializers.CharField(allow_blank=True)
+
+
+class RunResumeEntrySerializer(serializers.Serializer):
+    at = serializers.DateTimeField()
+    by = serializers.UUIDField(allow_null=True)
+    calls = serializers.IntegerField()
+
+
+class RunResumeSerializer(serializers.Serializer):
+    # True when the run's job stopped or failed with a call left unfinished.
+    resumable = serializers.BooleanField()
+    # Calls that finished and calls that did not; null unless the run can resume.
+    finished = serializers.IntegerField(allow_null=True)
+    unfinished = serializers.IntegerField(allow_null=True)
+    history = RunResumeEntrySerializer(many=True)
+
+
 class RunExecutionSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     run_test_id = serializers.UUIDField()
@@ -227,12 +291,28 @@ class RunExecutionSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
     ordinal = serializers.IntegerField()
     agent_version = serializers.CharField(allow_null=True)
+    environment_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    suite_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    # ``agent_version`` is the version's name; this is the run's agent pin.
+    pinned_agent_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    agent_differs = serializers.BooleanField(required=False, default=False)
+    build_notice = serializers.CharField(
+        allow_null=True,
+        required=False,
+        help_text="Said when the run replayed a build without its environment's actors.",
+    )
     selected_scenario_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
     trials = serializers.IntegerField(required=False, min_value=1, default=1)
+    # The seed the run drew its personas and variations from: the same seed draws them again. Decimal text: a drawn
+    # seed is up to 2^63 - 1, past what a JSON number keeps exactly.
+    seed = serializers.CharField(allow_null=True, required=False)
     agent_type = serializers.CharField(allow_null=True)
+    resume = RunResumeSerializer()
     summary = RunSummarySerializer()
+    # Set on a fix's check run, which is not one of the user's runs; null otherwise.
+    fix_run = RunFixRunSerializer(allow_null=True, required=False)
 
 
 class PersonaDetailsSerializer(serializers.Serializer):
@@ -247,7 +327,8 @@ class EvaluationResultSerializer(serializers.Serializer):
     name = serializers.CharField()
     # Blank on an entry with no stored output type: pending, timed out, skipped.
     type = serializers.CharField(allow_blank=True)
-    value = serializers.JSONField(allow_null=True)
+    # An eval's output: a string, a number, a boolean or an object.
+    value = JsonValueField(allow_null=True)
     score = serializers.FloatField(allow_null=True)
     passed = serializers.BooleanField(allow_null=True)
     reason = serializers.CharField(allow_blank=True)
@@ -268,6 +349,15 @@ class CostBreakdownSerializer(serializers.Serializer):
 class SubGoalResultSerializer(serializers.Serializer):
     name = serializers.CharField()
     passed = serializers.BooleanField(allow_null=True)
+    result = serializers.ChoiceField(
+        choices=["not_applicable", "inconclusive", "unmeasured"], required=False
+    )
+    reason = serializers.CharField(required=False, allow_blank=True)
+    evidence = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="What the check was decided from: world_state, tool_calls, transcript, recording.",
+    )
 
 
 class RunCallSerializer(serializers.Serializer):
@@ -285,6 +375,7 @@ class RunCallSerializer(serializers.Serializer):
     source_scenario_key = serializers.CharField(allow_null=True)
     trial_index = serializers.IntegerField(allow_null=True)
     outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
+    outcome_reason = serializers.CharField(required=False, allow_null=True)
     execution_status = serializers.CharField()
     modality = serializers.CharField()
     provider = serializers.CharField(allow_null=True)
@@ -302,12 +393,17 @@ class RunCallSerializer(serializers.Serializer):
     cost_cents = serializers.FloatField(allow_null=True)
     cost_breakdown_cents = CostBreakdownSerializer()
     csat = serializers.FloatField(allow_null=True)
-    ended_reason = serializers.CharField(allow_null=True)
-    error_message = serializers.CharField(allow_null=True)
+    # Blank on a call that ended without a reason or an error.
+    ended_reason = serializers.CharField(allow_null=True, allow_blank=True)
+    error_message = serializers.CharField(allow_null=True, allow_blank=True)
     evaluations = EvaluationResultSerializer(many=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
+    failure_domain = serializers.ChoiceField(
+        choices=HARNESS_FAILURE_DOMAINS, allow_null=True
+    )
+    failure_code = serializers.CharField(allow_null=True)
 
 
 class FacetValueSerializer(serializers.Serializer):
@@ -315,9 +411,29 @@ class FacetValueSerializer(serializers.Serializer):
     count = serializers.IntegerField()
 
 
+class LabelledFacetValueSerializer(FacetValueSerializer):
+    label = serializers.CharField()  # type: ignore[assignment]  # the API field is named label
+
+
+class CallActorFacetValueSerializer(LabelledFacetValueSerializer):
+    delivered = serializers.IntegerField(
+        help_text="Calls where at least one of the actor's lines reached the agent."
+    )
+    acted = serializers.IntegerField(
+        help_text="Calls where the actor said no line but took part through the world, by its actions."
+    )
+    dropped = serializers.IntegerField(
+        help_text="Calls where the actor was due but neither spoke a line nor acted in the world."
+    )
+    not_triggered = serializers.IntegerField(
+        help_text="Calls the actor was planned for but never triggered in."
+    )
+
+
 class RunFacetsSerializer(serializers.Serializer):
     goal = FacetValueSerializer(many=True)
     sub_goal = FacetValueSerializer(many=True)
+    actor = CallActorFacetValueSerializer(many=True, required=False)
     status = FacetValueSerializer(many=True)
 
 
@@ -365,6 +481,24 @@ class RunCallsV3ResponseSerializer(serializers.Serializer):
     evaluation_columns = EvaluationColumnSerializer(many=True)
 
 
+class RunTraceSerializer(serializers.Serializer):
+    trace_id = serializers.CharField()
+    name = serializers.CharField(allow_null=True, allow_blank=True)
+    start_time = serializers.DateTimeField(allow_null=True)
+    status = serializers.CharField(allow_null=True, allow_blank=True)
+    latency_ms = serializers.IntegerField(allow_null=True)
+    call_execution_id = serializers.UUIDField(allow_null=True)
+
+
+class RunTracesV3QuerySerializer(serializers.Serializer):
+    call_execution_id = serializers.UUIDField()
+
+
+class RunTracesV3ResponseSerializer(serializers.Serializer):
+    project_id = serializers.UUIDField(allow_null=True)
+    traces = RunTraceSerializer(many=True)
+
+
 class AnalyticsExecutionSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     name = serializers.CharField()
@@ -372,8 +506,12 @@ class AnalyticsExecutionSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
 
 
-class AnalyticsSummarySerializer(RunSummarySerializer):
+class AnalyticsSummarySerializer(RunSummarySerializer, TrialPassFieldsSerializer):
     evaluators = serializers.IntegerField()
+    outcome_status = serializers.ChoiceField(
+        choices=OUTCOME_STATUSES,
+        help_text="The run's verdict from its calls: no_score when it completed with only unscored calls.",
+    )
 
 
 class RiskSerializer(RunSummarySerializer):
@@ -385,8 +523,8 @@ class ReliabilityIntervalSerializer(serializers.Serializer):
     low = serializers.FloatField()
     high = serializers.FloatField()
     effective_n = serializers.FloatField()
+    scenarios = serializers.IntegerField()
     evaluated = serializers.IntegerField()
-    clusters = serializers.IntegerField()
 
 
 class ReliabilityRowSerializer(OutcomeCountsSerializer):
@@ -398,6 +536,7 @@ class ReliabilityRowSerializer(OutcomeCountsSerializer):
     verdict = serializers.ChoiceField(
         choices=["passed", "failed", "flaky", "not_evaluated"]
     )
+    call_ids = serializers.ListField(child=serializers.CharField())
 
 
 class ReliabilitySerializer(serializers.Serializer):
@@ -408,6 +547,18 @@ class ReliabilitySerializer(serializers.Serializer):
     repeated = serializers.IntegerField()
     flaky = serializers.IntegerField()
     flip_rate = serializers.FloatField(allow_null=True)
+    k = serializers.IntegerField(allow_null=True)
+    inconclusive = serializers.IntegerField()
+    pass_hat_1 = serializers.FloatField(allow_null=True)
+    pass_hat_k = serializers.FloatField(allow_null=True)
+    pass_hat_k_scenarios = serializers.IntegerField()
+    pass_hat_k_passed = serializers.IntegerField()
+    pass_hat_k_excluded = serializers.IntegerField()
+    excluded_not_comparable = serializers.IntegerField(
+        help_text="Trials left out because they did not start from the seeded records."
+    )
+    trials_passed = serializers.IntegerField()
+    trials_evaluated = serializers.IntegerField()
     pass_rate_interval = ReliabilityIntervalSerializer(allow_null=True)
     rows = ReliabilityRowSerializer(many=True)
 
@@ -466,6 +617,7 @@ class ModalityBreakdownSerializer(RunSummarySerializer):
 class TrendSerializer(RunSummarySerializer):
     execution_id = serializers.UUIDField()
     started_at = serializers.DateTimeField(allow_null=True)
+    excluded_not_comparable = serializers.IntegerField()
 
 
 class RunAnalyticsV3ResponseSerializer(serializers.Serializer):
@@ -484,19 +636,6 @@ class RunAnalyticsV3ResponseSerializer(serializers.Serializer):
     trends = TrendSerializer(many=True)
 
 
-class FunctionCallSerializer(serializers.Serializer):
-    id = serializers.CharField(required=False)
-    name = serializers.CharField(required=False)
-    arguments = serializers.JSONField(required=False)
-    result = serializers.JSONField(required=False)
-    output = serializers.JSONField(required=False)
-    duration_ms = serializers.FloatField(required=False)
-    start_time_ms = serializers.IntegerField(required=False)
-
-    class Meta:
-        ref_name = "SimulateRunV3FunctionCall"
-
-
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     goal = serializers.CharField()
     scenario_details = serializers.CharField(allow_null=True)
@@ -510,6 +649,22 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
+    call_actors = CallCallActorSerializer(many=True)
+    participants = CallParticipantSerializer(
+        many=True,
+        help_text="Who else took part: each actor who spoke, in the order they first spoke, then each world actor "
+        "who acted. Never an actor planned for the call who did not join.",
+    )
+    has_customer = serializers.BooleanField(
+        help_text="The simulated person spoke in the call; false when an actor's message or the scenario's task "
+        "started it and the person never spoke."
+    )
+    trial_state = TrialStateSerializer(allow_null=True)
+    comparable = serializers.BooleanField(
+        help_text="False when the trial did not start from the seeded records; it is then left out of "
+        "repeatability, pass^k and run comparisons."
+    )
+    not_comparable_reason = serializers.CharField(allow_null=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
@@ -529,6 +684,12 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
+            "call_actors",
+            "participants",
+            "has_customer",
+            "trial_state",
+            "comparable",
+            "not_comparable_reason",
             "scoring_status",
             "csat_status",
             "csat_reason",
@@ -541,7 +702,11 @@ def _execution_for_request(request, execution_id) -> TestExecution:
     )
     return get_object_or_404(
         TestExecution.objects.select_related(
-            "run_test", "agent_definition", "agent_version", "run_test__agent_version"
+            "run_test",
+            "agent_definition",
+            "agent_version",
+            "run_test__agent_version",
+            "hosted_harness_job",
         ),
         run_test_workspace_filter(request, "run_test"),
         id=execution_id,
@@ -554,9 +719,19 @@ def _execution_payload(
     execution: TestExecution, summary: dict[str, Any]
 ) -> dict[str, Any]:
     version = execution.agent_version or execution.run_test.agent_version
-    ordinal = TestExecution.objects.filter(
-        run_test=execution.run_test, created_at__lte=execution.created_at
-    ).count()
+    pinned = run_version_labels([execution.id]).get(str(execution.id)) or {}
+    ordinal = (
+        user_executions()
+        .filter(run_test=execution.run_test, created_at__lte=execution.created_at)
+        .count()
+    )
+    # A check run is not counted among the user's runs, so it names its fix instead.
+    job = getattr(execution, "hosted_harness_job", None)
+    fix_run = (
+        {"id": str(job.fix_run_id), "label": job.fix_label}
+        if job is not None and job.fix_run_id
+        else None
+    )
     return {
         "id": str(execution.id),
         "run_test_id": str(execution.run_test_id),
@@ -566,6 +741,10 @@ def _execution_payload(
         "completed_at": execution.completed_at,
         "ordinal": ordinal,
         "agent_version": getattr(version, "version_name", None),
+        "environment_version": pinned.get("environment_version"),
+        "suite_version": pinned.get("suite_version"),
+        "pinned_agent_version": pinned.get("agent_version"),
+        "agent_differs": bool(pinned.get("agent_differs")),
         "agent_type": (
             execution.agent_definition.agent_type
             if execution.agent_definition
@@ -575,8 +754,53 @@ def _execution_payload(
             (execution.execution_metadata or {}).get("selected_scenario_keys") or []
         ),
         "trials": execution.trials or 1,
+        "seed": str(job.seed) if job is not None else None,
+        "resume": asdict(resume_state(execution)),
         "summary": summary,
+        "fix_run": fix_run,
+        # Said when the run replayed a build without its environment's actors.
+        "build_notice": (
+            ((job.payload or {}).get("metadata") or {}).get("assembly") or {}
+        ).get("notice")
+        if job is not None
+        else None,
     }
+
+
+class RunTracesV3View(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        query_serializer=RunTracesV3QuerySerializer,
+        responses={
+            200: RunTracesV3ResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        },
+        operation_id="simulate_v3_test_execution_traces",
+    )
+    def get(self, request, test_execution_id, *args, **kwargs):
+        execution = _execution_for_request(request, test_execution_id)
+        try:
+            result = list_run_traces(
+                execution,
+                call_execution_id=request.validated_query_data["call_execution_id"],
+            )
+        except CallNotInRun:
+            return GeneralMethods(request=request).bad_request(
+                "call_execution_id is not a call of this run."
+            )
+        except (CHError, TimeoutError) as exc:
+            logger.warning(
+                "run_traces_read_failed",
+                test_execution_id=str(execution.id),
+                error=type(exc).__name__,
+            )
+            return GeneralMethods(request=request).custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Traces are unavailable right now",
+                code="run_traces_unavailable",
+            )
+        return Response(RunTracesV3ResponseSerializer(asdict(result)).data)
 
 
 def _facet_rows(
@@ -663,7 +887,7 @@ class RunCallsV3View(APIView):
             version = execution.completed_at or execution.updated_at
             # A deleted call moves the run's total and nothing else in this key.
             facets_cache_key = (
-                f"simulate:v3:facets:outcomes-v2:{execution.id}:{version.timestamp()}"
+                f"simulate:v3:facets:outcomes-v4:{execution.id}:{version.timestamp()}"
                 f":{calls_page['execution_summary']['total']}"
             )
         response = {
@@ -722,6 +946,12 @@ def build_call_execution_detail(
         ).data
     )
     normalized = row[0]
+    actors = call_actors(call.call_metadata)
+    data["transcript"] = transcript_turns(
+        data.get("transcript") or [],
+        actors,
+        chat=call.simulation_call_type == CallExecution.SimulationCallType.TEXT,
+    )
     # A sub-goal check is a harness verdict too, but it belongs to the
     # scenario, not the eval list. Tag each metric so the UI can tell.
     sub_goal_names = receipt_sub_goal_names(call.call_metadata)
@@ -730,6 +960,7 @@ def build_call_execution_detail(
             metric["kind"] = (
                 "sub_goal" if metric.get("name") in sub_goal_names else "evaluation"
             )
+    calls = tagged_function_calls(function_calls(call))
     data.update(
         {
             "goal": normalized["goal"],
@@ -745,7 +976,13 @@ def build_call_execution_detail(
             "csat_score": normalized["csat"],
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
-            "function_calls": function_calls(call),
+            "function_calls": calls,
+            "call_actors": actors,
+            "participants": participants(call.call_metadata, data["transcript"], calls),
+            "has_customer": has_customer(data["transcript"]),
+            # Attempted, refused and committed per participant, and what each actor chose: kept apart.
+            "trial_state": trial_state(call, calls=calls),
+            **comparability(call),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],
@@ -790,6 +1027,20 @@ class RunAnalyticsV3View(APIView):
     def get(self, request, test_execution_id, *args, **kwargs):
         execution = _execution_for_request(request, test_execution_id)
         return Response(build_run_analytics(execution))
+
+
+class RunReliabilityV3View(APIView):
+    """The reliability block alone, for the run header."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={200: ReliabilitySerializer},
+        operation_id="simulate_v3_test_execution_reliability",
+    )
+    def get(self, request, test_execution_id, *args, **kwargs):
+        execution = _execution_for_request(request, test_execution_id)
+        return Response(build_run_reliability(execution))
 
 
 class _CsvEcho:

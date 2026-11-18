@@ -1,5 +1,4 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import ComingSoonChip from "../components/ComingSoonChip";
@@ -20,35 +19,31 @@ export default function OptionCard({ option, selected, onClick }) {
       sx={{
         position: "relative",
         p: 2,
-        borderRadius: 1.5,
+        borderRadius: "8px",
         cursor: comingSoon ? "default" : "pointer",
         opacity: comingSoon ? 0.72 : 1,
         border: "1px solid",
         minHeight: 180,
-        borderColor: (th) => selected
-          ? (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.5) : th.palette.text.primary)
-          : th.palette.divider,
-        bgcolor: (th) => selected
-          ? alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.06 : 0.03)
-          : "background.paper",
+        borderColor: selected ? "text.primary" : "divider",
+        bgcolor: selected ? "action.selected" : "background.paper",
         transition: "border-color .12s ease, background-color .12s ease",
         "&:hover": {
-          borderColor: (th) => (comingSoon || selected) ? undefined : (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.32) : th.palette.text.disabled),
+          borderColor: (comingSoon || selected) ? undefined : "text.disabled",
         },
       }}
     >
       <Stack direction="row" alignItems="center" spacing={1.25}>
         <Box
           sx={{
-            width: 32, height: 32, borderRadius: 1,
+            width: 32, height: 32, borderRadius: "6px",
             display: "grid", placeItems: "center", flexShrink: 0,
-            bgcolor: (th) => alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.1 : 0.06),
+            bgcolor: "background.neutral",
             color: "text.primary",
           }}
         >
           <Iconify icon={option?.icon} width={16} />
         </Box>
-        <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold", lineHeight: 1.2 }}>
+        <Typography sx={{ typography: "s1_2", fontWeight: 500, lineHeight: 1.2 }}>
           {option?.title}
         </Typography>
       </Stack>
@@ -69,12 +64,14 @@ export default function OptionCard({ option, selected, onClick }) {
                 key={item}
                 sx={{
                   typography: "s3",
-                  fontWeight: "fontWeightSemiBold",
-                  color: "text.subtitle",
+                  fontWeight: 500,
+                  color: "text.secondary",
                   px: 0.75,
-                  py: 0.25,
-                  borderRadius: 0.5,
-                  bgcolor: (th) => alpha(th.palette.text.primary, th.palette.mode === "dark" ? 0.06 : 0.04),
+                  height: 18,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  borderRadius: "4px",
+                  bgcolor: "action.selected",
                 }}
               >
                 {item}

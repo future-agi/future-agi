@@ -4,12 +4,10 @@ from datetime import datetime, timedelta
 import structlog
 from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
-from django.db import DatabaseError, InterfaceError
 from django.db.models import Q
 from django.utils import timezone
-from django_redis.exceptions import ConnectionInterrupted
+from django.utils.crypto import constant_time_compare
 from drf_yasg.utils import swagger_auto_schema
-from redis.exceptions import RedisError
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -18,6 +16,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from accounts.authentication import (
+    INFRASTRUCTURE_ERRORS,
     decrypt_message,
     generate_encrypted_message,
     get_client_ip,
@@ -46,6 +45,7 @@ from accounts.serializers.contracts import (
     UserOnboardingSaveResponseSerializer,
 )
 from accounts.serializers.user import UserOnboardingSerializer
+from accounts.services.simulate_access import restrict_simulate_to_environments
 
 # from accounts.user_onboard import upload_demo_dataset
 from accounts.utils import record_hubspot_login
@@ -68,15 +68,6 @@ from tfc.utils.general_methods import GeneralMethods
 from tracer.models.project import Project
 
 logger = structlog.get_logger(__name__)
-
-# Postgres or Redis being slow or down says nothing about the password, so a
-# login that fails with one of these must not count towards the lockout.
-LOGIN_INFRASTRUCTURE_ERRORS = (
-    DatabaseError,
-    InterfaceError,
-    ConnectionInterrupted,
-    RedisError,
-)
 
 
 @swagger_auto_schema(
@@ -106,7 +97,7 @@ def manage_redis_key(request):
         # Verify access token
         data = request.validated_data
         access_token_id = data.get("access_token_id")
-        if access_token_id != settings.SECRET_KEY:
+        if not constant_time_compare(access_token_id or "", settings.SECRET_KEY):
             return gm.bad_request("Invalid or expired token")
 
         key = data.get("key")
@@ -449,7 +440,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
             return response
 
-        except LOGIN_INFRASTRUCTURE_ERRORS as exc:
+        except INFRASTRUCTURE_ERRORS as exc:
             # The cache may be what is down, so don't touch the attempt counter.
             logger.exception(
                 "login_infrastructure_unavailable",
@@ -699,6 +690,7 @@ def get_user_info(request):
         data["org_level"] = None
         data["ws_level"] = None
         data["effective_level"] = None
+        data["restrict_simulate_to_environments"] = False
         return Response(data)
 
     # Override the serialized organization with the resolved current org
@@ -710,6 +702,9 @@ def get_user_info(request):
         "display_name": current_org.display_name,
         "ws_enabled": current_org.ws_enabled,
     }
+    data["restrict_simulate_to_environments"] = restrict_simulate_to_environments(
+        current_org
+    )
 
     # Get the user's role in the current org (not necessarily the FK org)
     from accounts.models.organization_membership import (

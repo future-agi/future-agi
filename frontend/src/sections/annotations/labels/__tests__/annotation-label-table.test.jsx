@@ -195,7 +195,8 @@ describe("AnnotationLabelTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
 
@@ -212,7 +213,8 @@ describe("AnnotationLabelTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
       await user.click(screen.getByText("Edit"));
@@ -230,7 +232,8 @@ describe("AnnotationLabelTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
       await user.click(screen.getByText("Duplicate"));
@@ -246,7 +249,8 @@ describe("AnnotationLabelTable", () => {
       const moreButtons = screen
         .getAllByTestId("iconify")
         .filter(
-          (el) => el.getAttribute("data-icon") === "eva:more-vertical-fill",
+          (el) =>
+            el.getAttribute("data-icon") === "solar:menu-dots-vertical-linear",
         );
       await user.click(moreButtons[0].closest("button"));
       await user.click(screen.getByText("Archive"));

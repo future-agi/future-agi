@@ -33,7 +33,7 @@ const ActionForm = ({
       fullWidth
       PaperProps={{
         sx: {
-          width: "520px",
+          width: "560px",
           borderRadius: 2,
           p: 2,
           display: "flex",
@@ -57,7 +57,7 @@ const ActionForm = ({
         <IconButton onClick={onClose}>
           <Iconify
             // @ts-ignore
-            icon="mdi:close"
+            icon="solar:close-linear"
           />
         </IconButton>
       </DialogTitle>
@@ -77,7 +77,7 @@ const ActionForm = ({
           <Box
             sx={{
               p: 2,
-              backgroundColor: "orange.o5",
+              backgroundColor: "status.warning.bg",
               borderRadius: 1,
             }}
           >

@@ -198,6 +198,66 @@ describe("ScenariosStep — select all matching", () => {
   });
 });
 
+describe("ScenariosStep — keyboard and drawer", () => {
+  it("clears the selection on Escape", async () => {
+    renderStep();
+    await screen.findByText(/Showing 1–25 of 60/);
+    const box = screen.getAllByRole("checkbox")[1];
+    fireEvent.click(box);
+    box.focus();
+    expect(screen.getByText("scenario selected")).toBeInTheDocument();
+    // The just-ticked checkbox still has focus; Escape clears anyway.
+    fireEvent.keyDown(box, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByText("scenario selected")).toBeNull());
+  });
+
+  it("keeps Escape for the search box while typing", async () => {
+    renderStep();
+    await screen.findByText(/Showing 1–25 of 60/);
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    const search = screen.getByPlaceholderText(/Search scenarios/);
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(screen.getByText("scenario selected")).toBeInTheDocument();
+  });
+
+  it("keeps the selection when Escape is meant for an open drawer", async () => {
+    renderStep();
+    await screen.findByText(/Showing 1–25 of 60/);
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    const first = PAGING_ROWS.find((r) => screen.queryAllByText(r.name).length);
+    fireEvent.click(screen.getAllByText(first.name)[0]);
+    await screen.findByRole("button", { name: "Edit" });
+    // Sent to the page, not into the drawer, so only this screen's own guard
+    // stands between the key and the selection.
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.getByText("scenario selected")).toBeInTheDocument();
+  });
+
+  it("lets Escape close a popover without clearing the selection", async () => {
+    renderStep();
+    await screen.findByText(/Showing 1–25 of 60/);
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    expect(screen.getByText("scenario selected")).toBeInTheDocument();
+    // The selection bar's Repeats control (its tooltip names the button).
+    fireEvent.click(screen.getByText(/^Repeats: \d/).closest("button"));
+    const popoverHeading = await screen.findByText("Repeats per scenario");
+    fireEvent.keyDown(popoverHeading, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByText("Repeats per scenario")).toBeNull());
+    expect(screen.getByText("scenario selected")).toBeInTheDocument();
+  });
+
+  it("opens a row in a drawer with its detail", async () => {
+    renderStep();
+    await screen.findByText(/Showing 1–25 of 60/);
+    const first = PAGING_ROWS.find((r) => screen.queryAllByText(r.name).length);
+    fireEvent.click(screen.getAllByText(first.name)[0]);
+    // The drawer's header carries the name and Edit; the table's own edit
+    // buttons are labelled "Edit scenario".
+    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.getAllByText(first.name).length).toBeGreaterThan(1);
+  });
+});
+
 describe("ScenariosStep — run a selection", () => {
   const runButton = () => screen.getByRole("button", { name: /scenarios? × \d+ repeat/ });
 

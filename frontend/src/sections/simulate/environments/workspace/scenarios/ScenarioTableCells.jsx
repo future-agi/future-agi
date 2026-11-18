@@ -1,8 +1,49 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Tooltip, Typography } from "@mui/material";
 
+import StatusBadge from "src/components/status-badge/StatusBadge";
+
+import { DRAFTS_COPY } from "../workspace.constants";
 import { SUB_TASK_SHAPE } from "./scenarios.shapes";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
+import {
+  hasUnsavedChange,
+  isUnsavedAddition,
+  unsavedReasonId,
+} from "./scenarios.constants";
+
+// "Unsaved" on a row the unsaved changes add or change; an added row also says
+// why it can't be selected.
+export function UnsavedMark({ row }) {
+  if (!hasUnsavedChange(row)) return null;
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.75}
+      sx={{ flexShrink: 0 }}
+    >
+      <StatusBadge
+        status="unsaved"
+        role="warning"
+        label={DRAFTS_COPY.unsaved}
+        size="sm"
+        dot={false}
+      />
+      {isUnsavedAddition(row) && (
+        <Typography
+          id={unsavedReasonId(row)}
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >
+          {DRAFTS_COPY.saveToRun}
+        </Typography>
+      )}
+    </Stack>
+  );
+}
+UnsavedMark.propTypes = {
+  row: PropTypes.shape({ id: PropTypes.string, draftChange: PropTypes.string }),
+};
 
 // Attach a tooltip to a truncated line so hovering reveals the full value. Kept
 // thin — the tooltip lives at the row level, not per-Typography, so the same
@@ -34,9 +75,8 @@ export function ClampCell({ text, lines = 3 }) {
     <TruncTooltip title={text}>
       <Typography
         sx={{
-          typography: "s2",
+          typography: "s1",
           color: "text.secondary",
-          lineHeight: 1.45,
           wordBreak: "break-word",
           ...(lines > 0 && {
             display: "-webkit-box",
@@ -58,7 +98,7 @@ ClampCell.propTypes = { text: PropTypes.string, lines: PropTypes.number };
 export function SubTasksCell({ subTasks, limit = 3 }) {
   const list = normaliseSubTasks(subTasks);
   if (!list.length) {
-    return <Typography sx={{ typography: "s3", color: "text.subtitle" }}>-</Typography>;
+    return <Typography sx={{ typography: "s1", color: "text.subtitle" }}>-</Typography>;
   }
   const fullList = list.map((st, i) => `${i + 1}. ${st.label}`).join("\n");
   return (
@@ -68,16 +108,15 @@ export function SubTasksCell({ subTasks, limit = 3 }) {
           <Stack key={st.id} direction="row" spacing={0.75} alignItems="flex-start">
             <Typography
               sx={{
-                typography: "s3",
+                typography: "s1",
                 color: "text.subtitle",
                 fontVariantNumeric: "tabular-nums",
                 flexShrink: 0,
-                mt: "1px",
               }}
             >
               {i + 1}.
             </Typography>
-            <Typography noWrap sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}>
+            <Typography noWrap sx={{ typography: "s1", color: "text.secondary", minWidth: 0 }}>
               {st.label}
             </Typography>
           </Stack>

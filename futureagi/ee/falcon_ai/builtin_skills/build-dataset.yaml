@@ -1,7 +1,7 @@
 slug: build-dataset
 name: Build a Dataset
 icon: mdi:database-plus
-description: Create synthetic datasets step by step with guided column and row generation.
+description: Create datasets from existing records or generate synthetic data with guided columns and rows.
 trigger_phrases:
 - build dataset
 - create dataset
@@ -13,16 +13,29 @@ tool_names:
 - add_dataset_rows
 - get_dataset
 - list_datasets
+- list_error_cluster_traces
+- get_trace
 instructions: |-
-  Help the user create a synthetic dataset step by step.
+  Help the user create a dataset from existing records or synthetic data, as requested.
 
   Approach:
   1. Ask for dataset name and purpose
   2. Ask for columns (name, type) and row count
   3. Create the dataset with create_dataset
   4. Add columns one at a time with create_dataset_column
-  5. Generate synthetic rows with add_dataset_rows
-  6. Confirm creation and offer to add evaluations
+  5. Add rows with add_dataset_rows using {cells: [{column_name: "query", value: "..."}]}.
+     Never send flat dictionaries of column names to values. Use exact existing column names.
+  6. Read the dataset back with get_dataset, verify the row count and saved values,
+     then confirm creation and offer to add evaluations. A successful write alone is not verification.
+
+  When exporting an error cluster, use list_error_cluster_traces and paginate with
+  limit/offset until every requested member is fetched. Overview/representative traces
+  are samples, not the full membership. Tool results may be shortened with a "showing
+  N of M" notice; reduce the page size and re-fetch that page before advancing offset.
+  Fetch get_trace for the actual inputs/outputs when needed. Do not invent missing data.
+  Deduplicate by trace ID, track the expected total, and verify all exported rows after
+  writing. If any records are unavailable or the counts differ, report the incomplete
+  export explicitly instead of claiming completion.
 
   Be conversational. Ask one thing at a time. Suggest reasonable defaults.
   Available types: text, boolean, integer, float, json, array, datetime.
@@ -31,23 +44,33 @@ example_trajectories:
   steps:
   - tool: create_dataset
     params:
-      name: customer-support-qa
-      description: QA dataset for support classification
+      new_dataset_name: customer-support-qa
   - tool: create_dataset_column
     params:
+      dataset_id: "<dataset_id returned by create_dataset>"
       new_column_name: query
       column_type: text
   - tool: create_dataset_column
     params:
+      dataset_id: "<dataset_id returned by create_dataset>"
       new_column_name: response
       column_type: text
   - tool: create_dataset_column
     params:
+      dataset_id: "<dataset_id returned by create_dataset>"
       new_column_name: category
       column_type: text
   - tool: add_dataset_rows
     params:
+      dataset_id: "<dataset_id returned by create_dataset>"
       rows:
-      - query: How do I reset my password?
-        response: Go to Settings > Security > Reset Password
-        category: account
+      - cells:
+        - column_name: query
+          value: How do I reset my password?
+        - column_name: response
+          value: Go to Settings > Security > Reset Password
+        - column_name: category
+          value: account
+  - tool: get_dataset
+    params:
+      dataset_id: "<dataset_id returned by create_dataset>"

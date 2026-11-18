@@ -12,10 +12,6 @@ export const emptyEnvState = () => ({
   scenarioSource: null,
   evals: [],
   runs: [],
-  agentVersions: [],
-  envVersions: [],
-  activeEnvVersion: null,
-  activeAgentVersion: null,
   seededFromTemplate: false,
   gapsResolved: {},
   baselineRunId: null,
@@ -35,7 +31,6 @@ export function useEnvState(envId, bootstrap) {
   const slice = useEnvironmentsStore((s) => s.byEnv[envId]);
   const patchEnvState = useEnvironmentsStore((s) => s.patchEnvState);
   const recordRunAction = useEnvironmentsStore((s) => s.recordRun);
-  const addAgentVersionAction = useEnvironmentsStore((s) => s.addAgentVersion);
 
   // Keyed by env id, not a boolean: the workspace keeps one component instance
   // across a fork navigation (env → env-fork), so a boolean guard would refuse
@@ -61,12 +56,8 @@ export function useEnvState(envId, bootstrap) {
     (run) => recordRunAction(envId, run),
     [recordRunAction, envId],
   );
-  const addAgentVersion = useCallback(
-    (version) => addAgentVersionAction(envId, version),
-    [addAgentVersionAction, envId],
-  );
 
   const canRun = !!envState.agent && (envState.scenarios?.length || 0) > 0;
 
-  return { envState, patch, recordRun, addAgentVersion, canRun };
+  return { envState, patch, recordRun, canRun };
 }

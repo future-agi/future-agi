@@ -30,6 +30,7 @@ from .settings import INSTALLED_APPS  # noqa: E402
 # Test mode indicator
 TESTING = True
 DEBUG = False
+MCP_RATE_LIMIT_ALLOW_LOCAL_FALLBACK = True
 
 # EE usage endpoint contract fixtures create APICallLog rows directly in the
 # test database. ClickHouse selector behavior has dedicated tests; endpoint

@@ -12,11 +12,11 @@ import {
 const SectionLabel = ({ children }) => (
   <Typography
     sx={{
-      fontSize: 10,
+      fontSize: 12,
       fontWeight: 600,
       color: "text.secondary",
-      textTransform: "uppercase",
-      letterSpacing: "0.06em",
+      textTransform: "none",
+      letterSpacing: 0,
     }}
   >
     {children}
@@ -28,36 +28,18 @@ const DeltaChip = ({ change, changePercent, changeText }) => {
   const isPositive = changePercent > 0;
   const isNegative = changePercent < 0;
 
-  // Theme-aware colors so the chip is readable on the translucent
-  // overlay background in both modes. See
-  // memory/feedback_use_theme_palette_mode.md.
-  const fg = (theme) => {
-    if (isPositive) {
-      return theme.palette.mode === "dark"
-        ? theme.palette.success.main
-        : theme.palette.success.darker;
-    }
-    if (isNegative) {
-      return theme.palette.mode === "dark"
-        ? theme.palette.error.main
-        : theme.palette.error.darker;
-    }
-    return theme.palette.text.disabled;
-  };
+  // Status tokens resolve per theme, so no mode check is needed.
+  const fg = isPositive
+    ? "status.success.fg"
+    : isNegative
+      ? "status.danger.fg"
+      : "text.tertiary";
 
-  const bg = (theme) => {
-    if (isPositive) {
-      return theme.palette.mode === "dark"
-        ? theme.palette.success.darker
-        : theme.palette.success.lighter;
-    }
-    if (isNegative) {
-      return theme.palette.mode === "dark"
-        ? theme.palette.error.darker
-        : theme.palette.error.lighter;
-    }
-    return theme.palette.action.hover;
-  };
+  const bg = isPositive
+    ? "status.success.bg"
+    : isNegative
+      ? "status.danger.bg"
+      : "action.hover";
 
   const sign = (n) => (n > 0 ? "+" : "");
 
@@ -70,13 +52,13 @@ const DeltaChip = ({ change, changePercent, changeText }) => {
     >
       <Box
         sx={{
-          fontSize: 10,
+          fontSize: 12,
           fontWeight: 600,
           color: fg,
           bgcolor: bg,
           px: 0.75,
           py: 0.25,
-          borderRadius: "10px",
+          borderRadius: "8px",
           lineHeight: 1.4,
           whiteSpace: "nowrap",
         }}
@@ -87,7 +69,7 @@ const DeltaChip = ({ change, changePercent, changeText }) => {
       {changeText && (
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: "text.disabled",
             whiteSpace: "nowrap",
           }}
@@ -122,11 +104,11 @@ const KpiCell = ({ label, value, change, changePercent, changeText }) => {
       <Tooltip title={label} placement="top" arrow disableInteractive>
         <Typography
           sx={{
-            fontSize: 10.5,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.secondary",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
+            textTransform: "none",
+            letterSpacing: 0,
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -138,7 +120,7 @@ const KpiCell = ({ label, value, change, changePercent, changeText }) => {
       <Typography
         sx={{
           fontSize: 16,
-          fontWeight: 700,
+          fontWeight: 600,
           color: "text.primary",
           lineHeight: 1.2,
           fontFamily: "monospace",

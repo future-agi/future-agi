@@ -115,6 +115,42 @@ def test_only_a_cloud_region_turns_on_cloud_defaults(
     assert loaded.stdout.splitlines()[-1] == f"{recaptcha} {channel_layer}"
 
 
+# RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: orgs created at or after it see only
+# Environments in Simulate. Unset means no org is restricted, and a value that
+# is not a date-time refuses to start rather than silently restricting nobody.
+
+
+@pytest.mark.parametrize("value", ["", " "])
+def test_unset_simulate_cutoff_restricts_nobody(value):
+    loaded = _load_settings(
+        ["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"],
+        RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=value,
+    )
+    assert loaded.returncode == 0, loaded.stderr
+    assert loaded.stdout.splitlines()[-1] == "None"
+
+
+def test_a_simulate_cutoff_is_read_as_an_aware_date_time():
+    loaded = _load_settings(
+        ["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"],
+        RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF="2026-10-14T18:00:00+05:30",
+    )
+    assert loaded.returncode == 0, loaded.stderr
+    assert loaded.stdout.splitlines()[-1] == "2026-10-14 18:00:00+05:30"
+
+
+def test_a_simulate_cutoff_that_is_not_a_date_time_refuses_to_load():
+    loaded = _load_settings(
+        ["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"],
+        RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF="tomorrow",
+    )
+    assert loaded.returncode != 0
+    assert (
+        "ImproperlyConfigured: RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF must be"
+        in loaded.stderr
+    )
+
+
 # SAML_LOGIN_ENABLED is the SAML kill switch. Production settings (not the test
 # settings, which force it on) must keep tenant-scoped SAML on when the
 # variable is unset or blank, honour an explicit off, and refuse a value that

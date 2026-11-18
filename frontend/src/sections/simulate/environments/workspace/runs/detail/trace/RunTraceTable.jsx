@@ -24,7 +24,7 @@ import CustomTooltip from "src/components/tooltip";
 import { FilterPanel } from "src/components/filter-panel";
 import { useRunCalls } from "src/api/simulate-environments/runDetail";
 import {
-  listMatchingScenarioKeys,
+  listMatchingCalls,
   uniqueScenarioKeys,
 } from "src/api/simulate-environments/rerunScenarios";
 import { AGENT_TYPES } from "src/sections/agents/constants";
@@ -48,15 +48,7 @@ import {
 } from "./traceTable.constants";
 
 const PAGE_SIZE = 50;
-const bannerButtonSx = {
-  typography: "s3",
-  fontWeight: 600,
-  minWidth: 0,
-  // Room around the label so the hover box doesn't sit tight on the text.
-  px: 1,
-  py: 0.25,
-  color: "primary.main",
-};
+const bannerButtonSx = { minWidth: 0 };
 // Room left under the table box for the pager row and the page's bottom gutter.
 const BELOW_TABLE_PX = 88;
 const PAGER_ROW_PX = 57;
@@ -68,6 +60,16 @@ const tickableIds = (rows) =>
 
 // The per-call table owns server-backed grouping, filtering, columns and paging
 // for read-only execution results.
+// "Rowan (5; 1 dropped, 1 not triggered)"
+const callActorChoiceLabel = (item) => {
+  if (item.count == null) return item.label;
+  const missed = [
+    item.dropped && `${item.dropped} dropped`,
+    item.not_triggered && `${item.not_triggered} not triggered`,
+  ].filter(Boolean);
+  return `${item.label} (${[item.count, missed.join(", ")].filter(Boolean).join("; ")})`;
+};
+
 export default function RunTraceTable({
   executionId,
   onOpenCall,
@@ -77,6 +79,7 @@ export default function RunTraceTable({
   activePage = null,
   evalActions = null,
   onRerunScenarios = null,
+  onRerunInRun = null,
   runTrials = 1,
   rerunDisabledReason = null,
   onTickableChange,
@@ -143,6 +146,8 @@ export default function RunTraceTable({
     if (filters.goal_not?.length) next.goal_not = filters.goal_not;
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
     if (filters.subGoal_not?.length) next.sub_goal_not = filters.subGoal_not;
+    if (filters.callActor?.length) next.actor = filters.callActor;
+    if (filters.callActor_not?.length) next.actor_not = filters.callActor_not;
     if (filters.status?.length) next.status = filters.status;
     if (filters.status_not?.length) next.status_not = filters.status_not;
     if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
@@ -207,7 +212,7 @@ export default function RunTraceTable({
     runActive = false,
     isLoading,
     error,
-  } = useRunCalls(executionId, listQuery);
+  } = useRunCalls(executionId, { ...listQuery, keepPrevious: true });
 
   // Calls ticked for a re-run. The selection survives paging: "all matching"
   // is a mode with the unticked calls as exceptions, never a list of ids.
@@ -292,10 +297,19 @@ export default function RunTraceTable({
           pageSelectable: pageIds.length > 0,
         }
       : null;
-  const resolveScenarioKeys = () =>
-    allMatching
-      ? listMatchingScenarioKeys(executionId, serverFilters, selection.idList)
-      : Promise.resolve(tickedKeys);
+  // The calls behind the selection, with their scenarios: a re-run in this run
+  // makes those calls again, a new simulation makes their scenarios again.
+  const resolveSelection = async () => {
+    const calls = allMatching
+      ? await listMatchingCalls(executionId, serverFilters, selection.idList)
+      : selection.idList
+          .map((id) => ({ id, sourceScenarioKey: keyByIdRef.current.get(id) }))
+          .filter((call) => call.sourceScenarioKey);
+    return {
+      keys: uniqueScenarioKeys(calls),
+      callIds: calls.map((call) => call.id),
+    };
+  };
   const banner = !hasSelection ? null : allMatching ? (
     <>
       <span>
@@ -381,6 +395,27 @@ export default function RunTraceTable({
     () => (facets.sub_goal ?? []).map((item) => item.value),
     [facets.sub_goal],
   );
+  const callActorFacet = facets.actor;
+  const callActorField = useMemo(
+    () =>
+      callActorFacet?.length
+        ? [
+            {
+              value: "callActor",
+              label: "Actor",
+              type: "enum",
+              choices: callActorFacet.map((item) => item.value),
+              choiceLabels: Object.fromEntries(
+                callActorFacet.map((item) => [
+                  item.value,
+                  callActorChoiceLabel(item),
+                ]),
+              ),
+            },
+          ]
+        : [],
+    [callActorFacet],
+  );
   const filterFields = useMemo(
     () => [
       {
@@ -395,6 +430,7 @@ export default function RunTraceTable({
         type: "enum",
         choices: subGoalOptions,
       },
+      ...callActorField,
       {
         value: "status",
         label: "Status",
@@ -403,7 +439,7 @@ export default function RunTraceTable({
         choiceLabels: OUTCOME_LABELS,
       },
     ],
-    [goalOptions, subGoalOptions],
+    [goalOptions, subGoalOptions, callActorField],
   );
   // Calls handed over from a diagnosis issue; shown as their own chip rather than
   // a Filter-panel field, since the panel cannot express an id list.
@@ -536,7 +572,7 @@ export default function RunTraceTable({
             <Iconify
               icon="mage:filter"
               width={15}
-              sx={{ color: filterCount ? "primary.main" : "text.subtitle" }}
+              sx={{ color: filterCount ? "text.primary" : "text.subtitle" }}
             />
           }
           endIcon={
@@ -564,7 +600,7 @@ export default function RunTraceTable({
               >
                 ·
               </Box>
-              <Box component="span" sx={{ color: "primary.main" }}>
+              <Box component="span" sx={{ color: "text.primary" }}>
                 {filterCount - affectedCalls}
               </Box>
             </>
@@ -584,7 +620,6 @@ export default function RunTraceTable({
             setHandoffExpanded(false);
             setPage(1);
           }}
-          sx={{ typography: "s2", fontWeight: 600 }}
         />
       )}
     </Stack>
@@ -629,11 +664,17 @@ export default function RunTraceTable({
           allMatching={allMatching}
           runTrials={runTrials}
           disabledReason={rerunDisabledReason}
-          resolveScenarioKeys={resolveScenarioKeys}
-          // The selection stays until the new run opens (the run page starts
-          // fresh there), so a refused start leaves the ticks in place to try
-          // again.
+          resolveSelection={resolveSelection}
+          // A new simulation keeps the selection until the new run opens (the
+          // run page starts fresh there), so a refused start leaves the ticks
+          // in place to try again. A re-run in this run clears it once queued.
           onRerun={onRerunScenarios}
+          onRerunInRun={
+            onRerunInRun
+              ? (callIds) =>
+                  onRerunInRun(callIds, { onSuccess: selection.clear })
+              : null
+          }
           onClear={selection.clear}
         />
       )}
@@ -734,7 +775,7 @@ export default function RunTraceTable({
                         }
                       >
                         <Iconify
-                          icon="mdi:dots-vertical"
+                          icon="solar:menu-dots-vertical-linear"
                           width={16}
                           sx={{ color: "text.subtitle" }}
                         />
@@ -832,6 +873,9 @@ RunTraceTable.propTypes = {
   // Given, calls can be ticked and re-run as a new simulation: called with the
   // scenario keys and the trials picked.
   onRerunScenarios: PropTypes.func,
+  // Given, ticked calls can also be re-run inside this run: called with the
+  // call ids and `{ onSuccess }`.
+  onRerunInRun: PropTypes.func,
   runTrials: PropTypes.number,
   rerunDisabledReason: PropTypes.string,
   // Told whether the run has any call that can be ticked for a re-run.

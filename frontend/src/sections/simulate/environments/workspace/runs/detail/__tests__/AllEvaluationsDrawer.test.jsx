@@ -28,6 +28,7 @@ vi.mock("src/api/simulate-environments/runEvals", () => ({
   runResultsKey: (id) => ["simulation-run-results-v3", id],
   runAnalyticsKey: (id) => ["simulation-run-analytics-v3", id],
   callDetailKeyPrefix: ["simulation-call-detail-v3"],
+  compareRunsKeyPrefix: ["harness-run-compare"],
 }));
 
 const CONFIGS = [
@@ -323,6 +324,9 @@ describe("AllEvaluationsDrawer", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["simulation-run-analytics-v3", "ex1"],
     });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["harness-run-compare"],
+    });
     // A call drawer reopened within its stale window must not list it.
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["simulation-call-detail-v3"],
@@ -385,7 +389,7 @@ describe("AllEvaluationsDrawer", () => {
   it("opens the add flow", () => {
     const { onAddEvaluations } = setup();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add Evaluations" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add evaluations" }));
     expect(onAddEvaluations).toHaveBeenCalledTimes(1);
   });
 });

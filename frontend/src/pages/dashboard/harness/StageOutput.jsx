@@ -22,7 +22,7 @@ function RawDetails({ data }) {
       sx={{
         border: 1,
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         mt: 0.5,
         "&[open]": { pb: 1 },
       }}
@@ -32,9 +32,9 @@ function RawDetails({ data }) {
         sx={{
           color: "text.secondary",
           cursor: "pointer",
-          fontSize: 12,
-          fontWeight: 600,
-          px: 1.25,
+          typography: "s1",
+          fontWeight: 500,
+          px: 1.5,
           py: 1,
           userSelect: "none",
         }}
@@ -45,11 +45,11 @@ function RawDetails({ data }) {
         component="pre"
         sx={{
           color: "text.secondary",
-          fontSize: 12,
+          typography: "s1",
           m: 0,
           maxHeight: 420,
           overflow: "auto",
-          px: 1.25,
+          px: 1.5,
           whiteSpace: "pre-wrap",
         }}
       >
@@ -81,7 +81,7 @@ export default function StageOutput({ output, jobId, scenarioEditing, onChanged 
         }}
       >
         <AccordionSummary
-          expandIcon={<Iconify icon="eva:arrow-ios-downward-fill" width={18} />}
+          expandIcon={<Iconify icon="solar:alt-arrow-down-linear" width={18} />}
         >
           <Box sx={{ minWidth: 0 }}>
             <Typography variant="subtitle2">Authoring activity</Typography>
@@ -131,7 +131,7 @@ export default function StageOutput({ output, jobId, scenarioEditing, onChanged 
       }}
     >
       <AccordionSummary
-        expandIcon={<Iconify icon="eva:arrow-ios-downward-fill" width={18} />}
+        expandIcon={<Iconify icon="solar:alt-arrow-down-linear" width={18} />}
       >
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="subtitle2">{output.title}</Typography>
@@ -145,7 +145,7 @@ export default function StageOutput({ output, jobId, scenarioEditing, onChanged 
 
       <AccordionDetails sx={{ minWidth: 0, overflowX: "hidden" }}>
         {output.kind === "simulation" && (
-          <Stack spacing={1.25} alignItems="flex-start">
+          <Stack spacing={1.5} alignItems="flex-start">
             <Typography variant="body2" color="text.secondary">
               Open the simulation to inspect calls, transcripts, recordings,
               tool activity and evaluations.

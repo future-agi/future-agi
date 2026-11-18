@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { apiPath } from "src/api/contracts/api-surface";
+import { validateContractedRequestConfig } from "src/api/contracts/openapi-contract";
 import {
   PREFLIGHT_CONNECTOR,
   PROVIDER_TO_CONNECTOR,
@@ -391,5 +393,76 @@ describe("draftToPreflightPayload — parallelism ceiling", () => {
 
   it("omits runtime entirely for a single world", () => {
     expect(runtimeFor(1)).toBeUndefined();
+  });
+});
+
+describe("draftToPreflightPayload — observability choice", () => {
+  const uploadDraft = (over = {}) => ({
+    kind: "upload",
+    archive_artifact_id: "5b0c7a7e-2f7e-4c55-9a1f-1f3c2b8d9e10",
+    folderName: "agent",
+    files: [{ name: "agent.py" }],
+    ...over,
+  });
+  const platformDraft = (over = {}) => ({
+    kind: "platform",
+    provider: "vapi",
+    agentId: "asst_1",
+    ...over,
+  });
+
+  it("sends metadata.observability_enabled true for a repo draft that asked for it", () => {
+    const { payload } = draftToPreflightPayload(repoDraft({ observabilityEnabled: true }));
+    expect(payload.metadata.observability_enabled).toBe(true);
+  });
+
+  it("sends metadata.observability_enabled true for an upload draft that asked for it", () => {
+    const { payload } = draftToPreflightPayload(uploadDraft({ observabilityEnabled: true }));
+    expect(payload.metadata.observability_enabled).toBe(true);
+  });
+
+  it("sends no key when the repo or upload draft did not ask, or left it unset", () => {
+    [repoDraft, uploadDraft].forEach((make) => {
+      [{ observabilityEnabled: false }, {}].forEach((over) => {
+        const { payload } = draftToPreflightPayload(make(over));
+        expect("observability_enabled" in payload.metadata).toBe(false);
+      });
+    });
+  });
+
+  it("sends no key for any value other than boolean true", () => {
+    const { payload } = draftToPreflightPayload(repoDraft({ observabilityEnabled: "true" }));
+    expect("observability_enabled" in payload.metadata).toBe(false);
+  });
+
+  it("a platform draft with observabilityEnabled true sends no key", () => {
+    const { payload } = draftToPreflightPayload(platformDraft({ observabilityEnabled: true }));
+    expect("observability_enabled" in payload.metadata).toBe(false);
+  });
+
+  // The client checks every request body against the generated contract before
+  // sending it outside production; a body it refuses never leaves the browser.
+  describe.each([
+    ["create", "/simulate/api/harness-jobs/"],
+    ["preflight", "/simulate/api/harness-jobs/preflight/"],
+  ])("the %s request contract", (_name, template) => {
+    it.each([
+      ["a repo draft", repoDraft],
+      ["an upload draft", uploadDraft],
+    ])("accepts the body of %s that asked for observability", (_label, make) => {
+      const { payload } = draftToPreflightPayload(make({ observabilityEnabled: true }));
+      expect(payload.metadata).toHaveProperty("observability_enabled", true);
+
+      const result = validateContractedRequestConfig({
+        url: apiPath(template),
+        method: "post",
+        data: payload,
+      });
+
+      expect(result.skipped).toBeUndefined();
+      expect(result.endpoint).toBeDefined();
+      expect(result.error).toBeUndefined();
+      expect(result.ok).toBe(true);
+    });
   });
 });

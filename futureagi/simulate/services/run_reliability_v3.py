@@ -4,76 +4,185 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Any, TypedDict
 
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet, TextField, Value
+from django.db.models.fields.json import KT
+from django.db.models.functions import Coalesce
+from django.db.models.lookups import In
 
+from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
 from simulate.services.run_results_v3 import OUTCOME_LABELS
 
+# Fewer scenarios than this give a range too wide to act on; show counts only.
+MIN_INTERVAL_SCENARIOS = 10
 _Z = 1.96
+# A trial that did not start from the seeded records, or whose start could not be read, says nothing about whether
+# its scenario repeats. Coalesced so a trial with no recorded start reads as clean: excluding a bare key lookup would
+# drop it as NULL.
+NOT_COMPARABLE = Q(
+    In(
+        Coalesce(
+            KT(f"call_metadata__{TRIAL_STATE_KEY}__start__state"),
+            Value(""),
+            output_field=TextField(),
+        ),
+        ["differs", "unknown"],
+    )
+)
 
 
-def _wilson(passed: float, n: float) -> tuple[float, float] | None:
+def wilson(passed: float, n: float, z: float = _Z) -> tuple[float, float] | None:
+    """The Wilson score interval of one proportion, in percent."""
     if n <= 0:
         return None
     p = passed / n
-    denominator = 1 + _Z * _Z / n
-    centre = (p + _Z * _Z / (2 * n)) / denominator
-    half = _Z * math.sqrt(p * (1 - p) / n + _Z * _Z / (4 * n * n)) / denominator
+    denominator = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denominator
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denominator
     return max(0.0, centre - half) * 100, min(1.0, centre + half) * 100
 
 
-def scenario_clustered_interval(
-    clusters: list[tuple[int, int]],
-) -> dict[str, Any] | None:
-    """95% range for passed/evaluated when verdicts come in correlated clusters.
+def scenario_interval(clusters: list[tuple[int, int]]) -> dict[str, Any] | None:
+    """95% range for pass^1 with scenarios, not trials, as the sampling unit.
 
     Trials of one scenario share its script, persona and world, so they are not
-    independent draws. The cluster-robust variance of the ratio estimate gives the
-    effective number of independent verdicts, which then feeds a Wilson interval.
-    ``clusters`` holds (passed, evaluated) per scenario.
+    independent draws. The spread of per-scenario rates (the variance a resample
+    of whole scenarios would show) sets the effective sample size, and a Wilson
+    interval on that keeps its width at 0% and 100%, where a percentile bootstrap
+    collapses to a point. ``clusters`` holds (passed, evaluated) per scenario;
+    scenarios with no conclusive trial are left out.
     """
     clusters = [(passed, evaluated) for passed, evaluated in clusters if evaluated]
-    evaluated = sum(n for _, n in clusters)
-    if not evaluated:
+    scenarios = len(clusters)
+    if scenarios < MIN_INTERVAL_SCENARIOS:
         return None
-    passed = sum(k for k, _ in clusters)
-    p = passed / evaluated
-    effective_n = float(min(evaluated, len(clusters)))
-    if len(clusters) > 1 and 0 < p < 1:
-        m = len(clusters)
-        variance = (
-            m
-            / (m - 1)
-            * sum((k - p * n) ** 2 for k, n in clusters)
-            / (evaluated * evaluated)
-        )
-        if variance > 0:
-            effective_n = min(float(evaluated), max(1.0, p * (1 - p) / variance))
-    low, high = _wilson(p * effective_n, effective_n)
+    evaluated = sum(n for _, n in clusters)
+    rates = [passed / n for passed, n in clusters]
+    p = sum(rates) / scenarios
+    variance = sum((rate - p) ** 2 for rate in rates) / (scenarios - 1) / scenarios
+    # Identical scenario rates carry no spread to measure, so fall back to one
+    # independent verdict per scenario. The tolerance absorbs float residue
+    # (e.g. ten 2/3 rates), which would otherwise read as near-infinite n.
+    effective_n = float(scenarios)
+    if variance > 1e-12 and 0 < p < 1:
+        effective_n = min(float(evaluated), max(1.0, p * (1 - p) / variance))
+    low, high = wilson(p * effective_n, effective_n)
     return {
         "low": round(low, 2),
         "high": round(high, 2),
         "effective_n": round(effective_n, 2),
+        "scenarios": scenarios,
         "evaluated": evaluated,
-        "clusters": len(clusters),
     }
 
 
-def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
-    """Group trial verdicts by the scenario they repeated."""
+def comparable_trials(queryset: QuerySet) -> tuple[QuerySet, int]:
+    """The trials that started from the seeded records, and how many others were left out."""
+    return queryset.exclude(NOT_COMPARABLE), queryset.filter(NOT_COMPARABLE).count()
+
+
+class TrialPass(TypedDict):
+    """A run's trials as its header reads them: passed over passed and failed. Errored and inconclusive trials say
+    nothing about the agent and are counted apart; trials that did not start from the seed are left out."""
+
+    trials_passed: int
+    trials_evaluated: int
+    trials_inconclusive: int
+    trials_excluded_not_comparable: int
+    # Percent, two places; None when no trial was evaluated.
+    trial_pass_rate: float | None
+
+
+def trial_pass_from(
+    outcomes: Mapping[str, int], excluded_not_comparable: int
+) -> TrialPass:
+    """The run's trial pass from its comparable trials' outcomes, by the one rule every surface reads."""
+    passed, failed = outcomes.get("passed", 0), outcomes.get("failed", 0)
+    evaluated = passed + failed
+    return {
+        "trials_passed": passed,
+        "trials_evaluated": evaluated,
+        "trials_inconclusive": outcomes.get("error", 0)
+        + outcomes.get("inconclusive", 0),
+        "trials_excluded_not_comparable": excluded_not_comparable,
+        "trial_pass_rate": round(passed * 100 / evaluated, 2) if evaluated else None,
+    }
+
+
+def trial_outcomes(queryset: QuerySet) -> tuple[dict[str, int], int]:
+    """The comparable trials of a run's calls by outcome, and how many trials were left out as not comparable."""
+    from django.db.models import Count
+
+    comparable, excluded = comparable_trials(queryset)
+    counts = dict(
+        comparable.order_by()
+        .values_list("result_outcome")
+        .annotate(count=Count("id"))
+        .values_list("result_outcome", "count")
+    )
+    return counts, excluded
+
+
+def trial_passes(executions: Sequence[Any]) -> dict[Any, TrialPass]:
+    """Each listed run's trial pass, read from its calls as the run's own page reads them: one grouped count per
+    run test the runs belong to, however many runs are listed."""
+    from django.db.models import Count
+
+    from simulate.services.run_results_v3_queries import run_calls_queryset
+
+    by_run_test: dict[Any, list[Any]] = defaultdict(list)
+    for execution in executions:
+        by_run_test[execution.run_test_id].append(execution)
+    outcomes: dict[Any, dict[str, int]] = defaultdict(dict)
+    excluded: dict[Any, int] = defaultdict(int)
+    for runs in by_run_test.values():
+        # Read by its annotations (result_outcome), as every reader in this module reads a run's calls.
+        calls: QuerySet = run_calls_queryset(runs[0], [run.id for run in runs])
+        rows = (
+            calls.order_by()
+            .values_list("test_execution_id", "result_outcome")
+            .annotate(
+                comparable=Count("id", filter=~NOT_COMPARABLE),
+                left_out=Count("id", filter=NOT_COMPARABLE),
+            )
+            .values_list(
+                "test_execution_id", "result_outcome", "comparable", "left_out"
+            )
+        )
+        for run_id, outcome, comparable, left_out in rows:
+            outcomes[run_id][outcome] = outcomes[run_id].get(outcome, 0) + comparable
+            excluded[run_id] += left_out
+    return {
+        execution.id: trial_pass_from(outcomes[execution.id], excluded[execution.id])
+        for execution in executions
+    }
+
+
+def trial_pass(execution: Any) -> TrialPass:
+    """One run's trial pass, read from its calls as the run's own page reads them."""
+    return trial_passes([execution])[execution.id]
+
+
+def build_reliability(
+    queryset: QuerySet, trials: int, excluded_not_comparable: int = 0
+) -> dict[str, Any]:
+    """Group trial verdicts by the scenario they repeated; ``queryset`` holds comparable trials only."""
     counts: dict[str, dict[str, int]] = defaultdict(
         lambda: dict.fromkeys(OUTCOME_LABELS, 0)
     )
     labels: dict[str, str] = {}
-    for scenario_key, scenario_label, outcome in (
+    call_ids: dict[str, list[str]] = defaultdict(list)
+    for call_id, scenario_key, scenario_label, outcome in (
         queryset.order_by()
-        .values_list("result_scenario_key", "result_scenario", "result_outcome")
+        .values_list("id", "result_scenario_key", "result_scenario", "result_outcome")
         .iterator(chunk_size=2000)
     ):
         key = str(scenario_key)
         labels[key] = str(scenario_label or key)
         counts[key][outcome] += 1
+        call_ids[key].append(str(call_id))
 
     rows = []
     for scenario_key, outcome_counts in counts.items():
@@ -95,12 +204,28 @@ def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
                 "evaluated": evaluated,
                 "pass_rate": round(passed * 100 / evaluated, 2) if evaluated else None,
                 "verdict": verdict,
+                "call_ids": call_ids[scenario_key],
             }
         )
     order = {"flaky": 0, "failed": 1, "not_evaluated": 2, "passed": 3}
     rows.sort(key=lambda row: (order[row["verdict"]], row["scenario"]))
     repeated = [row for row in rows if row["evaluated"] >= 2]
     flaky = sum(1 for row in repeated if row["verdict"] == "flaky")
+    conclusive = [row for row in rows if row["evaluated"]]
+    # pass^k needs one k shared by every scenario; at k = 1 it is pass^1 again.
+    run_counts = {row["runs"] for row in rows}
+    k = run_counts.pop() if len(run_counts) == 1 else None
+    pass_hat_k_shown = bool(k and k > 1)
+    # A scenario with an inconclusive trial cannot show k of k passing.
+    complete = [row for row in rows if pass_hat_k_shown and row["evaluated"] == k]
+    all_passed = sum(row["passed"] == k for row in complete)
+    pooled = trial_pass_from(
+        {
+            outcome: sum(scenario[outcome] for scenario in counts.values())
+            for outcome in OUTCOME_LABELS
+        },
+        excluded_not_comparable,
+    )
     return {
         "trials": trials,
         "scenarios": len(rows),
@@ -112,7 +237,32 @@ def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
         "repeated": len(repeated),
         "flaky": flaky,
         "flip_rate": round(flaky * 100 / len(repeated), 2) if repeated else None,
-        "pass_rate_interval": scenario_clustered_interval(
+        "k": k,
+        # Infra, simulator and evidence failures say nothing about the agent, so
+        # they sit outside every denominator below.
+        "inconclusive": pooled["trials_inconclusive"],
+        "pass_hat_1": (
+            round(
+                sum(row["passed"] / row["evaluated"] for row in conclusive)
+                * 100
+                / len(conclusive),
+                2,
+            )
+            if conclusive
+            else None
+        ),
+        "pass_hat_k": (
+            round(all_passed * 100 / len(complete), 2) if complete else None
+        ),
+        "pass_hat_k_scenarios": len(complete),
+        "pass_hat_k_passed": all_passed,
+        # Scenarios pass^k could not judge, so the header can say what it covers.
+        "pass_hat_k_excluded": len(rows) - len(complete) if pass_hat_k_shown else 0,
+        # Pooled counts for runs too small for rates, so the header need not sum rows: the run's one trial pass.
+        "trials_passed": pooled["trials_passed"],
+        "trials_evaluated": pooled["trials_evaluated"],
+        "excluded_not_comparable": excluded_not_comparable,
+        "pass_rate_interval": scenario_interval(
             [(row["passed"], row["evaluated"]) for row in rows]
         ),
         "rows": rows,

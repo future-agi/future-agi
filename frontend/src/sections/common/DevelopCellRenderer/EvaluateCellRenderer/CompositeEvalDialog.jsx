@@ -1,9 +1,4 @@
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  IconButton,
-} from "@mui/material";
+import { Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
 import React, { useRef } from "react";
 import Iconify from "src/components/iconify";
 import CompositeResultView from "src/sections/evals/components/CompositeResultView";
@@ -28,7 +23,13 @@ const CompositeEvalDialog = () => {
   const children = rendered?.children || [];
 
   return (
-    <Dialog open={open} onClose={close} maxWidth="md" fullWidth>
+    <Dialog
+      open={open}
+      onClose={close}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 960 } }}
+      fullWidth
+    >
       <DialogTitle
         sx={{
           display: "flex",
@@ -39,7 +40,7 @@ const CompositeEvalDialog = () => {
       >
         Composite evaluation breakdown
         <IconButton size="small" onClick={close} aria-label="Close">
-          <Iconify icon="mdi:close" width={18} />
+          <Iconify icon="solar:close-linear" width={20} />
         </IconButton>
       </DialogTitle>
       <DialogContent dividers sx={{ p: 0 }}>

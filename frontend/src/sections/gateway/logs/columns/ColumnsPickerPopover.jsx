@@ -75,25 +75,17 @@ const ColumnEntryRow = ({
                 ? `${entry.label} (always visible)`
                 : entry.label,
             }}
-            checkedIcon={<Iconify icon="mdi:checkbox-marked" width={20} />}
-            icon={
-              <Iconify
-                icon="mdi:checkbox-blank-outline"
-                width={20}
-                sx={{ color: "text.disabled" }}
-              />
-            }
             sx={{ p: 0.5 }}
           />
         }
         label={
           <ClippedColumnLabel
             label={entry.label}
-            sx={{ fontSize: "13px", ml: 0.5 }}
+            sx={{ typography: "m3", ml: 0.5 }}
           >
             {entry.locked && (
               <Iconify
-                icon="mdi:lock-outline"
+                icon="solar:lock-linear"
                 width={12}
                 sx={{
                   ml: 0.5,
@@ -115,7 +107,7 @@ const ColumnEntryRow = ({
             disabled={searching || !entry.canMoveUp}
             onClick={() => handleMove(-1)}
           >
-            <Iconify icon="mdi:chevron-up" width={18} />
+            <Iconify icon="solar:alt-arrow-up-linear" width={18} />
           </IconButton>
           <IconButton
             ref={downRef}
@@ -125,7 +117,7 @@ const ColumnEntryRow = ({
             disabled={searching || !entry.canMoveDown}
             onClick={() => handleMove(1)}
           >
-            <Iconify icon="mdi:chevron-down" width={18} />
+            <Iconify icon="solar:alt-arrow-down-linear" width={18} />
           </IconButton>
         </Stack>
       )}
@@ -154,7 +146,7 @@ const GroupHeading = forwardRef(({ children, ...other }, ref) => (
     ref={ref}
     variant="caption"
     color="text.secondary"
-    sx={{ px: 1, pt: 1, pb: 0.5, display: "block", fontSize: "11px" }}
+    sx={{ px: 1, pt: 1, pb: 0.5, display: "block" }}
     {...other}
   >
     {children}
@@ -290,7 +282,7 @@ const ColumnsPickerPopover = ({
           >
             <Typography variant="subtitle2">Choose columns</Typography>
             <IconButton size="small" aria-label="Close" onClick={onClose}>
-              <Iconify icon="mdi:close" width={18} />
+              <Iconify icon="solar:close-linear" width={18} />
             </IconButton>
           </Stack>
           <Box sx={{ px: 1.5, pt: 1 }}>
@@ -308,7 +300,7 @@ const ColumnsPickerPopover = ({
                 id={MOVE_HINT_ID}
                 variant="caption"
                 color="text.secondary"
-                sx={{ display: "block", px: 0.5, pt: 0.5, fontSize: "11px" }}
+                sx={{ display: "block", px: 0.5, pt: 0.5 }}
               >
                 Clear the search to reorder columns.
               </Typography>
@@ -318,7 +310,7 @@ const ColumnsPickerPopover = ({
             variant="caption"
             color="text.secondary"
             aria-live="polite"
-            sx={{ display: "block", px: 2, py: 0.75, fontSize: "11px" }}
+            sx={{ display: "block", px: 2, py: 0.75 }}
           >
             {visibleCount} of {totalCount} visible
           </Typography>
@@ -455,7 +447,7 @@ const ColumnsPickerPopover = ({
                   >
                     <ClippedColumnLabel
                       label={name}
-                      sx={{ fontSize: "13px", color: "text.disabled" }}
+                      sx={{ typography: "m3", color: "text.disabled" }}
                     />
                     <IconButton
                       ref={(el) => {
@@ -466,7 +458,7 @@ const ColumnsPickerPopover = ({
                       aria-label={`Remove ${name}`}
                       onClick={() => handleRemove(id, index)}
                     >
-                      <Iconify icon="mdi:close-circle-outline" width={18} />
+                      <Iconify icon="solar:close-circle-linear" width={18} />
                     </IconButton>
                   </Stack>
                 );

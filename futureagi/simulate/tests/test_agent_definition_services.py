@@ -77,6 +77,22 @@ class TestIsMasked:
 # ============================================================================
 
 
+def test_provider_keys_are_left_out_of_the_input_repr():
+    text = repr(
+        ProviderCredentialsInput(
+            provider="livekit",
+            api_key="val-api-key",
+            livekit_url="wss://lk.example.test",
+            livekit_api_key="val-lk-key",
+            livekit_api_secret="val-lk-secret",
+        )
+    )
+
+    assert "livekit" in text
+    for value in ("val-api-key", "val-lk-key", "val-lk-secret"):
+        assert value not in text
+
+
 class TestSyncProviderCredentials:
     def test_creates_vapi_credentials(self, agent_version):
         sync_provider_credentials(

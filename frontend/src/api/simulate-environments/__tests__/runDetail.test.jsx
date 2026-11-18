@@ -26,6 +26,8 @@ const {
   callTranscript,
   useCallDetail,
   useCallExecutionV3Detail,
+  useCallTraces,
+  withScoringStatus,
   useRunCalls,
 } = await import("../runDetail");
 const { runSummaryKey } = await import("../runCalls");
@@ -44,6 +46,9 @@ const executionsPayload = () => ({
       agent_version: "v2",
       total_chats: 12,
       success_rate: 100,
+      outcome_status: "passed",
+      pass_rate: 74,
+      trial_pass_rate: 74,
     },
     {
       id: "ex-old",
@@ -52,6 +57,9 @@ const executionsPayload = () => ({
       agent_version: "v1",
       total_chats: 10,
       success_rate: 60,
+      outcome_status: "failed",
+      pass_rate: 55,
+      trial_pass_rate: 55,
     },
   ],
   count: 2,
@@ -69,15 +77,6 @@ const kpisPayload = () => ({
   avg_turn_count: 7,
   calls_connected_percentage: 90,
   task_completion: 75,
-});
-
-const perfPayload = () => ({
-  test_run_performance_metrics: {
-    pass_rate: 74,
-    total_test_runs: 12,
-    latest_fail_rate: 26,
-  },
-  top_performing_scenarios: [],
 });
 
 describe("buildRunIdentity", () => {
@@ -103,15 +102,15 @@ describe("buildRunIdentity", () => {
 });
 
 describe("buildRunStats", () => {
-  it("derives counts from kpis and the pass rate from the performance summary", () => {
+  it("derives counts from kpis and reads the pass rate from the run's row", () => {
     const rows = mapExecutions(executionsPayload());
     const row = rows.find((r) => r.executionId === "ex-new");
 
-    const stats = buildRunStats(kpisPayload(), perfPayload(), row);
+    const stats = buildRunStats(kpisPayload(), row);
     expect(stats.total).toBe(12);
     expect(stats.failed).toBe(3);
     expect(stats.passed).toBe(9);
-    // Pass rate comes from the performance summary, not the derived 75%.
+    // The server's rate, not the derived 75%.
     expect(stats.passRate).toBe(74);
     expect(stats.durationS).toBe(600);
     expect(stats.avgDurationMs).toBe(50000);
@@ -137,14 +136,14 @@ describe("buildRunStats", () => {
           outcome_passed: 2,
           outcome_failed: 1,
           outcome_skipped: 0,
+          outcome_status: "running",
+          pass_rate: 67,
+          trial_pass_rate: 67,
+          scored: 3,
         },
       ],
     })[0];
-    const stats = buildRunStats(
-      { total_calls: 6, failed_calls: 0 },
-      { test_run_performance_metrics: { pass_rate: 100 } },
-      row,
-    );
+    const stats = buildRunStats({ total_calls: 6, failed_calls: 0 }, row);
 
     expect(stats).toMatchObject({
       total: 6,
@@ -152,20 +151,21 @@ describe("buildRunStats", () => {
       failed: 1,
       measured: 3,
       unmeasured: 3,
-      passRate: 33,
+      passRate: 67,
     });
   });
 
-  it("falls back to the executions row counts and derives the pass rate when kpis/perf are absent", () => {
+  it("falls back to the executions row counts and still reads the server's pass rate, never passed over total", () => {
     const rows = mapExecutions(executionsPayload());
     const row = rows.find((r) => r.executionId === "ex-old");
 
-    const stats = buildRunStats(null, null, row);
+    const stats = buildRunStats(null, row);
     // Row: total 10, success_rate 60 → passed 6, failed 4.
     expect(stats.total).toBe(10);
     expect(stats.passed).toBe(6);
     expect(stats.failed).toBe(4);
-    expect(stats.passRate).toBe(60);
+    expect(stats.passRate).toBe(55);
+    expect(buildRunStats(null, null).passRate).toBeNull();
     expect(stats.durationS).toBeNull();
     expect(stats.avgDurationMs).toBeNull();
   });
@@ -183,7 +183,6 @@ describe("buildRunStats", () => {
         connected_calls: 12,
         total_calls: 16,
       },
-      null,
       null,
     );
     expect(stats.completed).toBe(12);
@@ -203,7 +202,6 @@ describe("buildRunStats", () => {
         total_calls: 16,
       },
       null,
-      null,
     );
     expect(stats.completed).toBe(12);
     expect(stats.total).toBe(16);
@@ -212,7 +210,7 @@ describe("buildRunStats", () => {
   it("leaves `completed` null (never 0, never `total`) while kpis hasn't loaded yet", () => {
     const rows = mapExecutions(executionsPayload());
     const row = rows.find((r) => r.executionId === "ex-old");
-    const stats = buildRunStats(null, null, row);
+    const stats = buildRunStats(null, row);
     expect(stats.completed).toBeNull();
     expect(stats.completed).not.toBe(stats.total);
   });
@@ -222,7 +220,6 @@ describe("buildRunStats", () => {
   it("leaves `completed` null when a loaded kpis payload carries no completed_calls", () => {
     const stats = buildRunStats(
       { agent_type: "voice", connected_calls: 9, total_calls: 16 },
-      null,
       null,
     );
     expect(stats.completed).toBeNull();
@@ -241,7 +238,6 @@ describe("buildRunStats", () => {
         task_success: 49,
       },
       null,
-      null,
     );
     expect(stats.completed).toBe(12);
     expect(stats.scores).toEqual({ task_success: 49 });
@@ -256,7 +252,6 @@ describe("buildRunStats", () => {
         total_calls: 16,
         task_success: 49,
       },
-      null,
       null,
     );
     expect(stats.completed).toBe(12);
@@ -366,6 +361,35 @@ describe("mapCallDetail", () => {
     expect(d.stats.words).toBe(11);
   });
 
+  it("reads a chat row whose message is the scenario's own task as the task, not the customer", () => {
+    const d = mapCallDetail({
+      id: "chat-task",
+      simulation_call_type: "text",
+      persona: null,
+      transcript: [
+        {
+          role: "user",
+          speaker_role: "task",
+          content: [
+            { role: "task", content: "Nightly reconciliation: post deal 9." },
+          ],
+        },
+        {
+          role: "assistant",
+          speaker_role: "assistant",
+          content: [{ role: "assistant", content: "Posted." }],
+        },
+        {
+          role: "user",
+          speaker_role: "user",
+          content: [{ role: "user", content: "Thanks" }],
+        },
+      ],
+    });
+    expect(d.turns.map((t) => t.role)).toEqual(["task", "agent", "customer"]);
+    expect(d.persona).toBeNull();
+  });
+
   it("maps a real voice call-detail payload to the CallDetail view-model", () => {
     const d = mapCallDetail(callDetailPayload());
     expect(d.id).toBe("call-1");
@@ -418,10 +442,11 @@ describe("mapCallDetail", () => {
       transcript: [
         {
           role: "assistant",
+          speaker_role: "assistant",
           content: "Refund issued.",
           tool_calls: [{ function: { name: "issue_refund" } }],
         },
-        { role: "user", content: "thanks" },
+        { role: "user", speaker_role: "user", content: "thanks" },
       ],
       recordings: {},
       eval_metrics: {},
@@ -533,6 +558,50 @@ describe("mapCallDetail", () => {
       },
     );
   });
+
+  it("shows an actor's turn as theirs, with the role and channel the turn carries", () => {
+    const d = mapCallDetail({
+      id: "call-actor-chat",
+      simulation_call_type: "text",
+      transcript: [
+        {
+          role: "user",
+          speaker_role: "user",
+          content: "Please apply 25% to deal 8.",
+        },
+        {
+          role: "user",
+          speaker_role: "actor",
+          speaker_name: "Alex Vance",
+          actor_id: "alex_vance",
+          actor_role: "Sales Manager",
+          channel: "chat_message",
+          content: "I approved it in the CRM.",
+        },
+      ],
+      recordings: {},
+    });
+    expect(
+      d.turns.map((t) => [
+        t.role,
+        t.speakerName,
+        t.actorId,
+        t.actorRole,
+        t.channel,
+        t.text,
+      ]),
+    ).toEqual([
+      ["customer", "", "", "", "", "Please apply 25% to deal 8."],
+      [
+        "actor",
+        "Alex Vance",
+        "alex_vance",
+        "Sales Manager",
+        "chat_message",
+        "I approved it in the CRM.",
+      ],
+    ]);
+  });
 });
 
 describe("callTranscript", () => {
@@ -636,6 +705,84 @@ describe("callTranscript", () => {
     ).toBe(true);
     expect(callTranscript({ function_calls: null })).toEqual([]);
   });
+
+  it("shows a world actor's action as theirs, not as the agent's tool call", () => {
+    const detail = mapCallDetail({
+      function_calls: [
+        {
+          id: "agent",
+          name: "update_deal",
+          actor_id: "agent",
+          kind: "agent_call",
+          start_time_ms: 1000,
+        },
+        {
+          id: "manager",
+          name: "approve",
+          actor_id: "manager",
+          actor_name: "Pat Lee",
+          kind: "world_actor_action",
+          outcome: "refused",
+          start_time_ms: 2000,
+        },
+      ],
+    });
+    expect(detail.turns.map((turn) => [turn.role, turn.speakerName])).toEqual([
+      ["tool", ""],
+      ["world_actor", "Pat Lee"],
+    ]);
+    expect(detail.turns[1].text).toMatch(/^Refused · approve/);
+    expect(detail.turns[1].toolCalls).toBeNull();
+  });
+
+  it("heads a world actor's action by how the world took it, with its error", () => {
+    const { turns } = mapCallDetail({
+      function_calls: [
+        {
+          name: "approve",
+          actor_id: "manager",
+          kind: "world_actor_action",
+          outcome: "faulted",
+          error: "crm returned 503",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          kind: "world_actor_action",
+          outcome: "refused",
+          error: "not permitted",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          kind: "world_actor_action",
+          outcome: "committed",
+          actor_role: "store manager",
+          result: {},
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          kind: "world_actor_action",
+          outcome: "duplicate",
+        },
+      ],
+    });
+    expect(turns.map((turn) => turn.text.split("\n")[0])).toEqual([
+      "Failed · approve",
+      "Refused · approve",
+      "Committed · approve",
+      "Duplicate · approve",
+    ]);
+    expect(turns.map((turn) => turn.actorRole)).toEqual([
+      "",
+      "",
+      "store manager",
+      "",
+    ]);
+    expect(turns[0].text).toContain("× error: crm returned 503");
+    expect(turns[1].text).toContain("× error: not permitted");
+  });
 });
 
 const makeWrapper = () => {
@@ -718,6 +865,36 @@ describe("useCallDetail", () => {
     expect(query.options.refetchInterval(query)).toBe(false);
     unmount();
   });
+
+  it("polls while an eval is still being scored and stops once none is", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const withEval = (status) => ({
+      ...callDetailPayload(),
+      evaluations: [{ id: "cfg-1", name: "Tone", value: null, status }],
+    });
+    axios.get.mockResolvedValue({ data: withEval("pending") });
+
+    const { unmount } = renderHook(
+      () => useCallExecutionV3Detail("call-scoring"),
+      { wrapper: Wrapper },
+    );
+    const queryKey = ["simulation-call-detail-v3", "call-scoring"];
+    await waitFor(() =>
+      expect(queryClient.getQueryData(queryKey)?.evaluations).toHaveLength(1),
+    );
+    const query = queryClient.getQueryCache().find({ queryKey });
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(queryKey, withEval("timed_out"));
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
+  });
 });
 
 describe("useRunDetail", () => {
@@ -735,6 +912,16 @@ describe("useRunDetail", () => {
           completed_at: "2026-01-14T09:22:00.000Z",
           selected_scenario_keys: ["scenario-a", "scenario-b"],
           trials: 3,
+          pinned_agent_version: { id: "a4", label: "v4" },
+          environment_version: { id: "e2", label: "v2" },
+          suite_version: { id: "s3", label: "v3" },
+          agent_differs: true,
+          resume: {
+            resumable: true,
+            finished: 18,
+            unfinished: 12,
+            history: [{ at: "2026-11-04T09:00:00Z", by: "u1", calls: 12 }],
+          },
           summary: {
             total: 12,
             measured: 12,
@@ -765,6 +952,25 @@ describe("useRunDetail", () => {
       "scenario-b",
     ]);
     expect(result.current.identity.trials).toBe(3);
+    expect(result.current.identity.pinnedAgentVersion).toEqual({
+      id: "a4",
+      label: "v4",
+    });
+    expect(result.current.identity.environmentVersion).toEqual({
+      id: "e2",
+      label: "v2",
+    });
+    expect(result.current.identity.suiteVersion).toEqual({
+      id: "s3",
+      label: "v3",
+    });
+    expect(result.current.identity.agentDiffers).toBe(true);
+    expect(result.current.identity.resume).toEqual({
+      resumable: true,
+      finished: 18,
+      unfinished: 12,
+      history: [{ at: "2026-11-04T09:00:00Z", by: "u1", calls: 12 }],
+    });
     expect(result.current.stats.total).toBe(12);
     expect(result.current.stats.passRate).toBe(74);
     expect(axios.get).toHaveBeenCalledWith(
@@ -776,7 +982,7 @@ describe("useRunDetail", () => {
   it.each([
     ["Pending", "queued"],
     ["Running", "running"],
-    ["Evaluating", "running"],
+    ["Evaluating", "grading"],
     ["Completed", "finished"],
     ["Failed", "failed"],
     ["Cancelling", "cancelling"],
@@ -789,7 +995,10 @@ describe("useRunDetail", () => {
       wrapper: makeWrapper(),
     });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
-    const [listRow] = mapExecutions({ results: [{ id: "ex-state", status }], count: 1 });
+    const [listRow] = mapExecutions({
+      results: [{ id: "ex-state", status }],
+      count: 1,
+    });
     expect(listRow.runState).toBe(expected);
     expect(result.current.identity.runState).toBe(listRow.runState);
   });
@@ -816,6 +1025,29 @@ describe("useRunDetail", () => {
     expect(result.current.identity.status).toBe("failed");
     expect(result.current.stats.passed).toBe(8);
     expect(result.current.stats.failed).toBe(4);
+  });
+
+  it("names the fix a check run belongs to, and none for a user's run", async () => {
+    const identityOf = async (execution) => {
+      axios.get.mockResolvedValueOnce({
+        data: { execution: { status: "completed", summary: {}, ...execution } },
+      });
+      const { result } = renderHook(() => useRunDetail("rt1", execution.id), {
+        wrapper: makeWrapper(),
+      });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      return result.current.identity;
+    };
+
+    expect(
+      (
+        await identityOf({
+          id: "ex-check",
+          fix_run: { id: "fix-1", label: "baseline" },
+        })
+      ).fixRun,
+    ).toEqual({ id: "fix-1", label: "baseline" });
+    expect((await identityOf({ id: "ex-user" })).fixRun).toBeNull();
   });
 
   it("marks a running Run stoppable and a cancelling or grading one not", async () => {
@@ -928,6 +1160,163 @@ describe("useRunDetail", () => {
     });
     expect(query.options.refetchInterval(query)).toBe(false);
     unmount();
+  });
+});
+
+describe("call detail evals carry their scoring status", () => {
+  const detail = (eval_metrics, evaluations) =>
+    mapCallDetail({
+      id: "call-s",
+      simulation_call_type: "text",
+      transcript: [],
+      recordings: {},
+      eval_metrics,
+      evaluations,
+    });
+
+  it("lists a timed-out eval the stored metrics hold as an empty row", () => {
+    const d = detail({ "cfg-a": {} }, [
+      {
+        id: "cfg-a",
+        name: "Resolution",
+        type: "",
+        value: null,
+        score: null,
+        passed: null,
+        reason: "Scoring timed out: no progress for 10 minutes.",
+        status: "timed_out",
+      },
+    ]);
+    expect(d.evalResults).toHaveLength(1);
+    expect(d.evalResults[0]).toMatchObject({
+      id: "cfg-a",
+      name: "Resolution",
+      score: null,
+      passed: null,
+      status: "timed_out",
+      reason: "Scoring timed out: no progress for 10 minutes.",
+    });
+  });
+
+  it("lists a pending eval that has no stored row yet", () => {
+    const d = detail({}, [
+      {
+        id: "cfg-b",
+        name: "Tone",
+        type: "",
+        value: null,
+        reason: "",
+        status: "pending",
+      },
+    ]);
+    expect(d.evalResults).toEqual([
+      expect.objectContaining({ id: "cfg-b", name: "Tone", status: "pending" }),
+    ]);
+  });
+
+  it("marks a failed eval as an error, with its reason", () => {
+    const d = detail({ "cfg-c": {} }, [
+      {
+        id: "cfg-c",
+        name: "Policy",
+        value: null,
+        reason: "Model quota hit",
+        status: "failed",
+      },
+    ]);
+    expect(d.evalResults[0]).toMatchObject({
+      status: "failed",
+      error: true,
+      reason: "Model quota hit",
+    });
+  });
+
+  it("leaves a scored eval's stored verdict as it is", () => {
+    const stored = {
+      name: "Policy",
+      value: "Passed",
+      type: "Pass/Fail",
+      reason: "ok",
+    };
+    const d = detail({ "cfg-d": stored }, [
+      {
+        id: "cfg-d",
+        name: "Policy",
+        value: "Passed",
+        reason: "ok",
+        status: "succeeded",
+      },
+    ]);
+    expect(d.evalResults[0]).toMatchObject({ passed: true, reason: "ok" });
+  });
+
+  it("keeps a removed, never-scored eval out when the evaluations list doesn't name it", () => {
+    const d = detail({ "cfg-gone": { removed: true } }, []);
+    expect(d.evalResults).toHaveLength(0);
+  });
+
+  it("drops an old verdict once its re-grade timed out", () => {
+    const d = detail(
+      {
+        "cfg-r": {
+          name: "Policy",
+          value: "Failed",
+          type: "Pass/Fail",
+          reason: "oversold",
+          error: false,
+          status: "completed",
+        },
+      },
+      [
+        {
+          id: "cfg-r",
+          name: "Policy",
+          value: null,
+          reason: "Scoring timed out: no progress for 10 minutes.",
+          status: "timed_out",
+        },
+      ],
+    );
+    expect(d.evalResults[0]).toMatchObject({
+      status: "timed_out",
+      score: null,
+      passed: null,
+      error: false,
+      reason: "Scoring timed out: no progress for 10 minutes.",
+    });
+  });
+
+  it("clears an old error flag and reason while the eval is re-grading", () => {
+    const d = detail(
+      {
+        "cfg-q": {
+          name: "Tone",
+          value: null,
+          reason: "Model quota hit",
+          error: true,
+          status: "failed",
+        },
+      },
+      [
+        {
+          id: "cfg-q",
+          name: "Tone",
+          value: null,
+          reason: "",
+          status: "pending",
+        },
+      ],
+    );
+    expect(d.evalResults[0]).toMatchObject({
+      status: "pending",
+      error: false,
+      reason: "",
+    });
+  });
+
+  it("returns the stored metrics untouched when there is no evaluations list", () => {
+    const metrics = { "cfg-e": { name: "x", value: 1 } };
+    expect(withScoringStatus(metrics, undefined)).toBe(metrics);
   });
 });
 
@@ -1267,5 +1656,134 @@ describe("useRunDetail fed by the calls table", () => {
     expect(result.current.header.identity).toEqual(before.identity);
     expect(result.current.header.stats).toEqual(before.stats);
     expect(callsRequests()).toHaveLength(1);
+  });
+});
+
+describe("useCallTraces", () => {
+  beforeEach(() => {
+    axios.get.mockReset();
+  });
+
+  it("reads one call's traces of the run and maps the rows", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        project_id: "hidden-project",
+        traces: [
+          {
+            trace_id: "trace-1",
+            name: "book_ride",
+            start_time: "2026-10-14T11:08:13Z",
+            status: "OK",
+            latency_ms: 1830,
+            call_execution_id: "call-1",
+          },
+        ],
+      },
+    });
+
+    const { result } = renderHook(() => useCallTraces("exec-1", "call-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() =>
+      expect(result.current.projectId).toBe("hidden-project"),
+    );
+    expect(axios.get).toHaveBeenCalledWith(
+      endpoints.runResultsV3.traces("exec-1"),
+      { params: { call_execution_id: "call-1" } },
+    );
+    expect(result.current.traces).toEqual([
+      {
+        traceId: "trace-1",
+        name: "book_ride",
+        startTime: "2026-10-14T11:08:13Z",
+        status: "OK",
+        latencyMs: 1830,
+      },
+    ]);
+    expect(result.current.isError).toBe(false);
+  });
+
+  it("answers no project and no rows when the run has nothing to read", async () => {
+    axios.get.mockResolvedValue({ data: { project_id: null, traces: [] } });
+
+    const { result } = renderHook(() => useCallTraces("exec-1", "call-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+    expect(result.current.projectId).toBeNull();
+    expect(result.current.traces).toEqual([]);
+  });
+
+  it("reads again for the next call of the run rather than showing the last call's traces", async () => {
+    axios.get.mockImplementation((_url, { params }) =>
+      Promise.resolve({
+        data: {
+          project_id: "hidden-project",
+          traces: [
+            {
+              trace_id: `trace-of-${params.call_execution_id}`,
+              name: "turn",
+            },
+          ],
+        },
+      }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ callId }) => useCallTraces("exec-1", callId),
+      { wrapper: makeWrapper(), initialProps: { callId: "call-a" } },
+    );
+    await waitFor(() =>
+      expect(result.current.traces.map((t) => t.traceId)).toEqual([
+        "trace-of-call-a",
+      ]),
+    );
+
+    rerender({ callId: "call-b" });
+
+    await waitFor(() =>
+      expect(result.current.traces.map((t) => t.traceId)).toEqual([
+        "trace-of-call-b",
+      ]),
+    );
+    expect(axios.get).toHaveBeenCalledTimes(2);
+    expect(axios.get).toHaveBeenLastCalledWith(
+      endpoints.runResultsV3.traces("exec-1"),
+      { params: { call_execution_id: "call-b" } },
+    );
+  });
+
+  it("stays idle without a run or a call", () => {
+    renderHook(() => useCallTraces(null, "call-1"), { wrapper: makeWrapper() });
+    renderHook(() => useCallTraces("exec-1", null), { wrapper: makeWrapper() });
+
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+});
+
+describe("actor turns in a call", () => {
+  it("names who spoke on a voice turn, with the role and channel the turn carries", () => {
+    const voice = mapCallDetail({
+      id: "v",
+      transcript: [
+        {
+          speaker_role: "actor",
+          speaker_name: "Rowan",
+          actor_id: "friend",
+          actor_role: "roommate",
+          channel: "audio_mix",
+          content: "Two",
+        },
+        { speaker_role: "user", content: "One" },
+      ],
+    });
+    expect(
+      voice.turns.map((t) => [t.role, t.speakerName, t.actorRole, t.channel]),
+    ).toEqual([
+      ["actor", "Rowan", "roommate", "audio_mix"],
+      ["customer", "", "", ""],
+    ]);
   });
 });

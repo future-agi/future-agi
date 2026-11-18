@@ -8,9 +8,14 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
-func (s *Server) emitUsage(ctx context.Context, traces ptrace.Traces, payloadBytes int64) {
+// emitUsage accounts only for accepted traces, after project stamping/drops.
+// Storage-mode usage is their canonical OTLP protobuf size (including stamped
+// resource attributes), not HTTP wire/JSON bytes or compressed ClickHouse size.
+// This keeps gRPC's existing basis; HTTP intentionally changes even on full
+// success from decompressed-body length to accepted semantic protobuf bytes.
+func (s *Server) emitUsage(ctx context.Context, traces ptrace.Traces) {
 	result := auth.FromContext(ctx)
-	if result == nil {
+	if result == nil || traces.SpanCount() == 0 {
 		return
 	}
 	// Single-trace export = a provider-pull call (deterministic trace id, re-polled):
@@ -20,6 +25,7 @@ func (s *Server) emitUsage(ctx context.Context, traces ptrace.Traces, payloadByt
 	if len(ids) == 1 {
 		dedupKey = hex.EncodeToString(ids[0][:])
 	}
+	payloadBytes := int64((&ptrace.ProtoMarshaler{}).TracesSize(traces))
 	s.usage.EmitIngestion(result.OrgID, len(ids), traces.SpanCount(), payloadBytes, dedupKey)
 }
 

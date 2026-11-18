@@ -193,6 +193,11 @@ def gold_metrics(rows):
                 "avg_cost_per_user": total_cost / len(user_groups),
                 "avg_traces_per_user": mean([len(user) for user in user_groups]),
                 "total_tokens_sum": total_tokens,
+                # This fixture has only positive, known costs and no summary
+                # wrappers. Coverage is derived from independent FINAL rows.
+                "cost_known_subtotal": total_cost,
+                "known_cost_fact_count": len(spans),
+                "unknown_cost_fact_count": 0,
             }
         )
     return expected

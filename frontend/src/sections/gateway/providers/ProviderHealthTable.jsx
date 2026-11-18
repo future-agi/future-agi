@@ -1,7 +1,7 @@
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import React from "react";
 import PropTypes from "prop-types";
 import {
-  Card,
   Table,
   TableBody,
   TableCell,
@@ -9,11 +9,17 @@ import {
   TableHead,
   TableRow,
   Typography,
-  Chip,
   Box,
-  Stack,
 } from "@mui/material";
+import Section from "src/components/section";
 import { useNavigate } from "react-router-dom";
+
+const CHIP_ROLE = {
+  success: "success",
+  warning: "warning",
+  error: "danger",
+  default: "neutral",
+};
 
 const STATUS_MAP = {
   healthy: { label: "Healthy", color: "success" },
@@ -59,7 +65,7 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
 
   if (providerList.length === 0) {
     return (
-      <Card sx={{ p: 4 }}>
+      <Section variant="panel" sx={{ p: 4 }}>
         <Box
           display="flex"
           justifyContent="center"
@@ -70,12 +76,12 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
             No provider data available.
           </Typography>
         </Box>
-      </Card>
+      </Section>
     );
   }
 
   return (
-    <Card>
+    <Section variant="panel" sx={{ p: 0, overflow: "hidden" }}>
       <TableContainer>
         <Table>
           <TableHead>
@@ -147,25 +153,17 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    <Chip
+                    <StatusBadge
+                      status={status.label}
                       label={status.label}
-                      color={status.color}
-                      size="small"
-                      variant="outlined"
+                      role={CHIP_ROLE[status.color] || "neutral"}
                     />
                   </TableCell>
                   <TableCell>
                     {Array.isArray(models) && models.length > 0 ? (
-                      <Stack direction="row" flexWrap="wrap" gap={0.5}>
-                        {models.map((m) => (
-                          <Chip
-                            key={m}
-                            label={m}
-                            size="small"
-                            variant="outlined"
-                          />
-                        ))}
-                      </Stack>
+                      <Typography variant="body2" color="text.secondary">
+                        {models.join(" · ")}
+                      </Typography>
                     ) : modelCount != null ? (
                       <Typography variant="body2">{modelCount}</Typography>
                     ) : (
@@ -174,12 +172,12 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
                       </Typography>
                     )}
                   </TableCell>
-                  <TableCell>
+                  <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
                     <Typography variant="body2">
                       {formatLatency(latency)}
                     </Typography>
                   </TableCell>
-                  <TableCell>
+                  <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
                     <Typography variant="body2">
                       {errorRate != null
                         ? `${Number(errorRate).toFixed(1)}%`
@@ -197,7 +195,7 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
           </TableBody>
         </Table>
       </TableContainer>
-    </Card>
+    </Section>
   );
 };
 

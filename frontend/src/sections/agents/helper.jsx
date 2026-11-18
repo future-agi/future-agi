@@ -92,6 +92,7 @@ export const emptyAgentSteps = [
 export const createAgentDefinitionSchema = (options) => {
   const keysRequired = options?.keysRequired || false;
   const agentDefinitionId = options?.agentDefinitionId;
+  const isSourceAgent = options?.agentKind === "source";
   return z
     .object({
       // Basic Information
@@ -122,7 +123,10 @@ export const createAgentDefinitionSchema = (options) => {
         .optional(),
 
       // Behaviour
-      description: z.string().min(1, "Description is required"),
+      // A code agent keeps its instructions in its stored Agent, so its description can be empty.
+      description: isSourceAgent
+        ? z.string()
+        : z.string().min(1, "Description is required"),
       knowledgeBase: z.string().optional(),
       countryCode: z.string().optional(),
       contactNumber: z.string().optional(),
@@ -223,33 +227,36 @@ export const createAgentDefinitionSchema = (options) => {
       }
 
       if (isLiveKitProvider(data.provider)) {
-        if (!data.livekitUrl || data.livekitUrl.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitUrl"],
-            message: "LiveKit Server URL is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (!data.livekitApiKey || data.livekitApiKey.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitApiKey"],
-            message: "LiveKit API Key is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (!data.livekitApiSecret || data.livekitApiSecret.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitApiSecret"],
-            message: "LiveKit API Secret is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (!data.livekitAgentName || data.livekitAgentName.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitAgentName"],
-            message: "Agent Name is required",
-            code: z.ZodIssueCode.custom,
-          });
+        // A code agent only carries the word livekit; its credentials are not on this form.
+        if (!isSourceAgent) {
+          if (!data.livekitUrl || data.livekitUrl.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitUrl"],
+              message: "LiveKit Server URL is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!data.livekitApiKey || data.livekitApiKey.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitApiKey"],
+              message: "LiveKit API Key is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!data.livekitApiSecret || data.livekitApiSecret.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitApiSecret"],
+              message: "LiveKit API Secret is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!data.livekitAgentName || data.livekitAgentName.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitAgentName"],
+              message: "Agent Name is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
         }
       } else if (data.provider === "others") {
         // if (data.authenticationMethod === "api_key") {
@@ -279,7 +286,9 @@ export const createAgentDefinitionSchema = (options) => {
       } else {
         if (
           data.agentType === AGENT_TYPES.VOICE &&
-          (data.observabilityEnabled || keysRequired || !data.inbound)
+          ((!isSourceAgent && data.observabilityEnabled) ||
+            keysRequired ||
+            !data.inbound)
         ) {
           if (!data?.authenticationMethod) {
             ctx.addIssue({
@@ -395,7 +404,7 @@ export const defaultAgentDefinitionValues = {
 export const icon = (name) => (
   <SvgColor
     src={`/assets/icons/agent/${name}.svg`}
-    sx={{ width: 20, height: 20 }}
+    sx={{ width: 16, height: 16 }}
   />
 );
 
@@ -542,7 +551,7 @@ const LoadingSkeleton = () => {
       width="80%"
       sx={{
         mx: 1,
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
       height={15}
     />
@@ -822,7 +831,8 @@ export const getCallLogsColumnDefs = (
       headerName: voiceColumnLabel("gen_ai.usage.total_tokens"),
       field: "gen_ai.usage.total_tokens",
       flex: 0,
-      minWidth: 220,
+      // Fit input, output, total, and icons without clipping leading digits.
+      minWidth: 300,
       cellRenderer: VoiceTokenCell,
     },
     {
@@ -1083,8 +1093,7 @@ export const useCallLogs = ({
         }
       : {
           retry: (failureCount, queryError) =>
-            !isListCursorContinuationLimitError(queryError) &&
-            failureCount < 1,
+            !isListCursorContinuationLimitError(queryError) && failureCount < 1,
         }),
   });
   return { queryKey, data, isLoading, error };
@@ -1203,17 +1212,20 @@ export const useCallExecutionDetail = (callExecutionId, enabled = false) => {
 // trace id can exist in several projects.
 export const useVoiceCallDetail = (
   traceId,
-  { enabled = false, projectId } = {},
+  { enabled = false, projectId, expectedSpanId } = {},
 ) => {
   return useQuery({
-    queryKey: projectId
-      ? ["voiceCallDetail", traceId, projectId]
-      : ["voiceCallDetail", traceId],
+    queryKey: expectedSpanId
+      ? ["voiceCallDetail", traceId, projectId, expectedSpanId]
+      : projectId
+        ? ["voiceCallDetail", traceId, projectId]
+        : ["voiceCallDetail", traceId],
     queryFn: () =>
       axios.get(endpoints.project.getVoiceCallDetail, {
         params: {
           trace_id: traceId,
           ...(projectId ? { project_id: projectId } : {}),
+          ...(expectedSpanId ? { expected_span_id: expectedSpanId } : {}),
         },
       }),
     enabled: !!traceId && enabled,

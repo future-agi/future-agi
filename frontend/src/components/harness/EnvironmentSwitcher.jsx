@@ -72,7 +72,7 @@ export default function EnvironmentSwitcher({
         color="inherit"
         onClick={(event) => setAnchorEl(event.currentTarget)}
         aria-label="Switch environment"
-        endIcon={<Iconify icon="eva:chevron-down-fill" width={18} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={18} />}
         sx={{
           borderColor: "divider",
           maxWidth: 340,
@@ -153,7 +153,7 @@ export default function EnvironmentSwitcher({
             }}
             sx={{ gap: `${ICON_GUTTER}px`, py: 1, color: "primary.main" }}
           >
-            <Iconify icon="mingcute:add-line" width={ICON_SIZE} />
+            <Iconify icon="solar:add-linear" width={ICON_SIZE} />
             <Typography variant="body2" fontWeight={600}>
               Create environment
             </Typography>

@@ -20,13 +20,19 @@ const UploadedImageViewer = ({
   replaceImageBlot,
 }) => {
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 960 } }}
+      fullWidth
+    >
       <DialogTitle sx={{ display: "flex", justifyContent: "space-between" }}>
         <Box>
           <Box>Uploaded Images</Box>
         </Box>
         <IconButton onClick={onClose} size="small">
-          <Iconify icon="material-symbols:close" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </DialogTitle>
       <DialogContent>

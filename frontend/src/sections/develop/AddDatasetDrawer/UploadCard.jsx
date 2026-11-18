@@ -51,7 +51,7 @@ const UploadCard = ({ fileData, onDelete }) => {
               {fileData?.name}
             </Typography>
             <IconButton onClick={onDelete} size="small">
-              <Iconify icon="mdi:close" color="text.primary" />
+              <Iconify icon="solar:close-linear" color="text.primary" />
             </IconButton>
           </Box>
           <Typography variant="caption" color="text.secondary">

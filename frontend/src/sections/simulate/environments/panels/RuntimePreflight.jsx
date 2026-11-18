@@ -1,9 +1,7 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Button, CircularProgress, Divider, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
-import { BUILD_TONES } from "../buildEnvironment/buildTones";
 
 export default function RuntimePreflight({ status = "idle", canRun = false, blockedReason = null, onRun, result, error }) {
   if (status === "idle" || status === "running") {
@@ -17,7 +15,7 @@ export default function RuntimePreflight({ status = "idle", canRun = false, bloc
           disabled={!canRun || running}
           onClick={onRun}
           startIcon={running ? <CircularProgress size={13} thickness={5} color="inherit" /> : <Iconify icon="solar:shield-check-linear" width={15} />}
-          sx={{ typography: "s2", fontWeight: "fontWeightBold", alignSelf: "flex-start" }}
+          sx={{ alignSelf: "flex-start" }}
         >
           {running ? "Checking source and credentials…" : "Run preflight"}
         </Button>
@@ -32,10 +30,10 @@ export default function RuntimePreflight({ status = "idle", canRun = false, bloc
 
   if (status === "error") {
     return (
-      <Box sx={{ px: 1.5, py: 1.25, borderRadius: 1, border: "1px solid", borderColor: (t) => alpha(BUILD_TONES.red, t.palette.mode === "dark" ? 0.35 : 0.3) }}>
+      <Box sx={{ px: 1.5, py: 1.25, borderRadius: "8px", bgcolor: "status.danger.bg" }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1.5}>
           <Box>
-            <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>Preflight couldn&apos;t run</Typography>
+            <Typography sx={{ typography: "s1", fontWeight: 500 }}>Preflight couldn&apos;t run</Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{errorMessage(error)}</Typography>
           </Box>
           <Button size="small" variant="outlined" onClick={onRun} startIcon={<Iconify icon="solar:refresh-linear" width={13} />}>
@@ -53,16 +51,16 @@ export default function RuntimePreflight({ status = "idle", canRun = false, bloc
   const choices = (credentials?.credential_choices || []).filter((choice) => !choice.satisfied);
 
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, overflow: "hidden" }}>
-      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1.5} sx={{ px: 1.75, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}>
-        <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}>Preflight</Typography>
+    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: "8px", overflow: "hidden" }}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1.5} sx={{ px: 1.5, minHeight: 36, borderBottom: "1px solid", borderColor: "divider" }}>
+        <Typography sx={{ typography: "s1_2", fontWeight: 500 }}>Preflight</Typography>
         <Button size="small" onClick={onRun} startIcon={<Iconify icon="solar:refresh-linear" width={13} />}>
           Re-run
         </Button>
       </Stack>
-      <Stack spacing={1.25} sx={{ px: 1.75, py: 1.5 }} divider={<Divider />}>
+      <Stack spacing={1.25} sx={{ p: 1.5 }} divider={<Divider />}>
         <Box>
-          <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold", color: ready ? BUILD_TONES.green : BUILD_TONES.red }}>
+          <Typography sx={{ typography: "s1_2", fontWeight: 500, color: ready ? "status.success.fg" : "status.danger.fg" }}>
             {ready ? "Ready to build" : "Credentials need attention"}
           </Typography>
           {credentials && (
@@ -75,33 +73,33 @@ export default function RuntimePreflight({ status = "idle", canRun = false, bloc
         {requirements.map((item) => (
           <Stack key={`${item.environment_name}:${item.purpose}`} direction="row" justifyContent="space-between" spacing={1}>
             <Box minWidth={0}>
-              <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", overflowWrap: "anywhere" }}>
+              <Typography sx={{ typography: "s1", fontWeight: 500, fontFamily: "ui-monospace, Menlo, monospace", overflowWrap: "anywhere" }}>
                 {item.environment_name}
               </Typography>
               <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
                 {item.purpose}{item.kind === "file" ? " · Credential file" : ""}
               </Typography>
             </Box>
-            <Typography sx={{ typography: "s3", color: item.status === "missing" ? BUILD_TONES.red : BUILD_TONES.green }}>
+            <Typography sx={{ typography: "s3", color: item.status === "missing" ? "status.danger.fg" : "status.success.fg" }}>
               {item.status}
             </Typography>
           </Stack>
         ))}
         {choices.map((choice) => (
-          <Typography key={choice.id} sx={{ typography: "s3", color: BUILD_TONES.red }}>
+          <Typography key={choice.id} sx={{ typography: "s3", color: "status.danger.fg" }}>
             Provide one credential set: {choice.options.map((option) => option.join(" + ")).join(" or ")}
           </Typography>
         ))}
         {probes.map((probe) => (
           <Box key={`${probe.provider}:${probe.aliases.join(",")}`}>
-            <Typography sx={{ typography: "s2", color: probe.ok ? BUILD_TONES.green : BUILD_TONES.red }}>
+            <Typography sx={{ typography: "s1", color: probe.ok ? "status.success.fg" : "status.danger.fg" }}>
               {probe.label}: {probe.ok ? "verified" : "failed"}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{probe.message}</Typography>
           </Box>
         ))}
         {!credentials && (
-          <Typography sx={{ typography: "s3", color: BUILD_TONES.red }}>
+          <Typography sx={{ typography: "s3", color: "status.danger.fg" }}>
             Preflight did not return a credential report. Re-run before building.
           </Typography>
         )}

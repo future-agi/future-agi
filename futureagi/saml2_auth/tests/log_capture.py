@@ -13,6 +13,35 @@ from django.conf import settings
 from django.test.utils import override_settings
 
 
+def _logger_states() -> dict[str, tuple]:
+    return {
+        name: (logger.level, logger.propagate, list(logger.handlers), logger.disabled)
+        for name, logger in logging.root.manager.loggerDict.items()
+        if isinstance(logger, logging.Logger)
+    }
+
+
+def _restore_logger_states(states: dict[str, tuple], configured: list[str]) -> None:
+    """Put back every named logger the production config may have changed.
+    Re-applying the test LOGGING alone is not enough: it names only the django
+    loggers, so the production config's propagate=False on temporalio and
+    others would outlive the test and hide their records from caplog in later
+    tests. A logger that the config named but that did not exist before gets
+    the defaults; loggers created meanwhile by other code (torch sets its own
+    levels) are left alone, and so is the root logger, which pytest manages."""
+    for name in set(states) | set(configured):
+        if not name:
+            continue
+        logger = logging.getLogger(name)
+        level, propagate, handlers, disabled = states.get(
+            name, (logging.NOTSET, True, [], False)
+        )
+        logger.setLevel(level)
+        logger.propagate = propagate
+        logger.handlers[:] = handlers
+        logger.disabled = disabled
+
+
 @dataclass
 class SecurityLogCapture:
     """Captures rendered records without bypassing configured processors."""
@@ -43,6 +72,7 @@ def capture_security_logging() -> Iterator[SecurityLogCapture]:
         from tfc.logging.config import get_logging_config
 
         logging_config = get_logging_config(str(settings.BASE_DIR))
+        original_states = _logger_states()
         logging.config.dictConfig(logging_config)
         configure_structlog()
         root_stream = io.StringIO()
@@ -81,5 +111,8 @@ def capture_security_logging() -> Iterator[SecurityLogCapture]:
             root_handler.setStream(root_original_stream)
             saml_handler.setStream(saml_original_stream)
             logging.config.dictConfig(settings.LOGGING)
+            _restore_logger_states(
+                original_states, list(logging_config.get("loggers", {}))
+            )
 
     return _capture()

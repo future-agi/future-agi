@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import "src/styles/clean-data-table.css";
 import PropTypes from "prop-types";
 import React, {
@@ -10,6 +11,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import useFitHeight from "src/hooks/use-fit-height";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { readQuery, endpoints } from "src/utils/axios";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
@@ -72,6 +74,7 @@ import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 import CursorGridPagination from "./CursorGridPagination";
 import useCursorGridPagination from "./useCursorGridPagination";
 import { getTraceGridRowId } from "./traceGridRowId";
+import { supportsUsageSort, USAGE_SORT_COLUMNS } from "./usageSort";
 import useImmediateGridQueryTransition from "./useImmediateGridQueryTransition";
 import {
   dispatchObservePageChanged,
@@ -112,6 +115,8 @@ const TraceGrid = React.forwardRef(
       enabled = true,
       showErrors = false,
       compareType,
+      // Only the visible grid of a primary/compare pair renders the drawer.
+      hideDetailDrawer = false,
     },
     gridRef,
   ) => {
@@ -122,12 +127,12 @@ const TraceGrid = React.forwardRef(
         headerColumnBorder: false,
         wrapperBorder: { width: 0 },
         wrapperBorderRadius: 0,
-        rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+        rowBorder: { width: 1, color: theme.palette.border.subtle },
         headerFontSize: "13px",
         headerFontWeight: 500,
         headerBackgroundColor: "transparent",
         headerTextColor: theme.palette.text.primary,
-        rowHoverColor: "rgba(120,87,252,0.04)",
+        rowHoverColor: theme.palette.action.hover,
       }),
       [theme.palette.text.primary],
     );
@@ -154,6 +159,25 @@ const TraceGrid = React.forwardRef(
     const activeTraceProjectId = traceDetailDrawerOpen?.projectId || null;
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [selectedAll, setSelectedAll] = useState(false);
+    const [usageSort, setUsageSort] = useState([]);
+    const canUsageSort = supportsUsageSort(
+      projectId,
+      toBackendFilters([
+        ...filters,
+        ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+        ...(extraFilters || EMPTY_EXTRA_FILTERS),
+        ...(metricFilters || []),
+      ]),
+    );
+    const usageSortKey = JSON.stringify(canUsageSort ? usageSort : []);
+    useEffect(() => {
+      if (!canUsageSort && usageSort.length) {
+        setUsageSort([]);
+        withLiveGridApi(gridRef?.current?.api, (api) =>
+          api.applyColumnState({ defaultState: { sort: null } }),
+        );
+      }
+    }, [canUsageSort, usageSort, gridRef]);
     const [readMessage, setReadMessage] = useState(null);
     const readMessageRef = useRef(null);
     const [continuationNotice, setContinuationNotice] = useState(null);
@@ -162,6 +186,8 @@ const TraceGrid = React.forwardRef(
     const loadingRequestRef = useRef(0);
     const preserveRowsDuringNextRefreshRef = useRef(false);
     const gridElementRef = useRef(null);
+    /* Fill to the bottom of the window from wherever the grid starts. */
+    const fitHeight = useFitHeight(gridElementRef);
     const {
       beginPageLoad,
       endUnknown,
@@ -208,6 +234,7 @@ const TraceGrid = React.forwardRef(
       (purge = true) => {
         inFlightPageLoads.current.clear();
         cursorPagination.current.reset();
+        if (usageSortKey !== "[]") cursorPagination.current.disableCursor();
         resetPagination();
         preserveRowsDuringNextRefreshRef.current = !purge;
         if (purge) setGridLoading(enabled);
@@ -215,7 +242,7 @@ const TraceGrid = React.forwardRef(
           api.refreshServerSide({ purge }),
         );
       },
-      [enabled, gridRef, resetPagination],
+      [enabled, gridRef, resetPagination, usageSortKey],
     );
     const continueCursorSearch = useCallback(() => {
       if (!continuationNotice) return;
@@ -235,6 +262,7 @@ const TraceGrid = React.forwardRef(
           enabled,
           showErrors,
           compareType,
+          usageSortKey,
         }),
       [
         filters,
@@ -246,11 +274,13 @@ const TraceGrid = React.forwardRef(
         enabled,
         showErrors,
         compareType,
+        usageSortKey,
       ],
     );
     const filterRequestKey = useMemo(
       () =>
         JSON.stringify({
+          responseVersion: "capture-coverage-v1",
           selectionQueryKey,
           requestedAttributeKeys: requestedAttributeKeysKey,
           pageSize,
@@ -365,6 +395,7 @@ const TraceGrid = React.forwardRef(
       () => {
         inFlightPageLoads.current.clear();
         cursorPagination.current.reset();
+        if (usageSortKey !== "[]") cursorPagination.current.disableCursor();
         return {
           getRows: async (params) => {
             if (!enabled) {
@@ -418,6 +449,9 @@ const TraceGrid = React.forwardRef(
                   // detail page).
                   ...(projectId ? { project_id: projectId } : {}),
                   page_size: requestPageSize,
+                  ...(usageSortKey !== "[]"
+                    ? { sort_params: usageSortKey }
+                    : {}),
                   // JSON preserves attribute paths containing commas. The API
                   // rejects oversized requests; neither side truncates.
                   ...(requestedAttributeKeysKey === "[]"
@@ -684,10 +718,14 @@ const TraceGrid = React.forwardRef(
     );
 
     const { columnDefs } = useMemo(() => {
+      const withUsageSort = (definition) => ({
+        ...definition,
+        sortable: canUsageSort && USAGE_SORT_COLUMNS.includes(definition.field),
+      });
       // If columns are empty → return initial/default columnDefs
       if (!columns || columns.length === 0) {
         return {
-          columnDefs: TRACE_DEFAULT_COLUMNS,
+          columnDefs: TRACE_DEFAULT_COLUMNS.map(withUsageSort),
           bottomRow: [],
         };
       }
@@ -726,14 +764,14 @@ const TraceGrid = React.forwardRef(
         }
       }
       return {
-        columnDefs: columnDefsResult,
+        columnDefs: columnDefsResult.map(withUsageSort),
         bottomRow: [
           {
             ...bottomRowObj,
           },
         ],
       };
-    }, [columns, showMetricsIds]);
+    }, [columns, showMetricsIds, canUsageSort]);
 
     useEffect(() => {
       return () => resetMetricIds();
@@ -838,8 +876,7 @@ const TraceGrid = React.forwardRef(
         // cross-project user page) an unpinned read serves the newest copy
         // of this trace id in any project.
         const rowProjectId = event.data.project_id;
-        const sourceColumn =
-          event.column?.getColDef?.()?.context?.sourceColumn;
+        const sourceColumn = event.column?.getColDef?.()?.context?.sourceColumn;
         if (sourceColumn?.groupBy === "Evaluation Metrics") {
           setEvalFocus(true);
         }
@@ -867,7 +904,7 @@ const TraceGrid = React.forwardRef(
       <Box
         ref={gridElementRef}
         sx={{
-          height: "calc(100vh - 270px)",
+          height: fitHeight ? `${fitHeight}px` : "calc(100vh - 270px)",
           display: "flex",
           flexDirection: "column",
         }}
@@ -899,7 +936,7 @@ const TraceGrid = React.forwardRef(
           className={`clean-data-table ${continuationNotice ? "ag-grid-cursor-paused" : ""} ${shouldDisable ? "ag-grid-disabled" : ""}`}
           theme={agTheme}
           animateRows={false}
-          headerHeight={40}
+          headerHeight={32}
           ref={gridRef}
           rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
           columnDefs={columnDefs}
@@ -928,18 +965,25 @@ const TraceGrid = React.forwardRef(
             isGridReadPending || continuationNotice
               ? null
               : NoRowsOverlay(
-                  <Typography
-                    sx={{
-                      fontSize: 14,
-                      fontWeight: 400,
-                      color: "text.secondary",
-                    }}
-                  >
-                    {readMessageRef.current ||
-                      (showErrors ? "No error found" : "No traces found")}
-                  </Typography>,
+                  readMessageRef.current ||
+                    (showErrors ? "No error found" : "No traces found"),
                 )
           }
+          onSortChanged={({ api }) => {
+            const next = api
+              .getColumnState()
+              .filter((column) => column.sort)
+              .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
+              .map((column) => ({
+                column_id: column.colId,
+                direction: column.sort,
+              }));
+            setUsageSort((previous) =>
+              JSON.stringify(previous) === JSON.stringify(next)
+                ? previous
+                : next,
+            );
+          }}
           onCellClicked={handleCellClick}
           onSelectionChanged={onSelectionChanged}
           onColumnMoved={onColumnMoved}
@@ -971,7 +1015,7 @@ const TraceGrid = React.forwardRef(
               (!activeTraceProjectId ||
                 params.data.project_id === activeTraceProjectId)
             ) {
-              return { backgroundColor: "rgba(120, 87, 252, 0.08)" };
+              return { backgroundColor: theme.palette.action.selected };
             }
             return null;
           }}
@@ -993,7 +1037,9 @@ const TraceGrid = React.forwardRef(
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
-        <LLMTracingTraceDetailDrawer refreshGrid={refreshGrid} />
+        {!hideDetailDrawer && (
+          <LLMTracingTraceDetailDrawer refreshGrid={refreshGrid} />
+        )}
         <NumberQuickFilterPopover
           open={Boolean(openQuickFilter)}
           filterData={openQuickFilter}
@@ -1015,6 +1061,7 @@ TraceGrid.propTypes = {
   setFilterOpen: PropTypes.func,
   setLoading: PropTypes.func,
   compareType: PropTypes.string,
+  hideDetailDrawer: PropTypes.bool,
   projectId: PropTypes.string,
   cellHeight: PropTypes.string,
   hasEvalFilter: PropTypes.bool,
