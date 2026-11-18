@@ -1603,7 +1603,7 @@ def test_promotion_while_unavailable_marks_uncertified(
         "saved_without_check",
     )
     assert start["reason"] == (
-        "Saved while the check was unavailable. Re-check before relying on this pairing"
+        "Saved while the check was unavailable. Re-check before relying on these versions"
     )
     assert start["fix"]["type"] == "recheck"
 

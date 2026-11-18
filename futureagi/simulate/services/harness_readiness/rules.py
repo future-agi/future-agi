@@ -376,7 +376,7 @@ def failed_actions(bundle: HarnessAssembledBundle | None) -> list[Mapping[str, A
 _UNKNOWN = {
     "built_with_unknown": "The agent this environment was built with is not known",
     "saved_without_check": "Saved while the check was unavailable. Re-check before"
-    " relying on this pairing",
+    " relying on these versions",
 }
 
 StaleBecause = Literal[
