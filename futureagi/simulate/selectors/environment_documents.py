@@ -106,23 +106,19 @@ def _resolve(job: HostedHarnessJob, version: Any, key: str | None) -> dict[str, 
         documents = node.documents or {}
         # An older version on the walk, which no run names, reads any pair's bundle: reach is the environment's.
         seal = run_seal(job.id, node_key) if node_key else latest_seal(node)
-        # A bundle sealed before seals were stamped says nothing: on a version no full build made, it is a reseal.
-        resealed = seal is not None and (
-            seal.resealed
-            or (not seal.stamped and getattr(node, "origin", "") not in PROVED_ORIGINS)
-        )
-        if seal is not None and not resealed:
+        if seal is not None and not _resealed(node, seal):
             # A build's seal: how it reaches each tool.
             base, stop = seal.contract, node
             break
-        if seal is not None:
-            own = seal.contract
-        elif (
+        if (
             isinstance(documents.get("run_contract"), dict)
             and documents["run_contract"]
         ):
+            # Recorded as this version runs, its reseal included: nothing further back is read.
             base, stop = documents["run_contract"], node
             break
+        if seal is not None:
+            own = seal.contract
         else:
             authored = documents.get("contract")
             own = authored if isinstance(authored, dict) else {}
@@ -156,6 +152,20 @@ def _resolve(job: HostedHarnessJob, version: Any, key: str | None) -> dict[str, 
             resolved,
         )
     return resolved or {}
+
+
+def _resealed(node: Any, seal: Any) -> bool:
+    """Whether a chat's save resealed ``node``'s bundle rather than a build sealing it. A stamp says which. A bundle
+    sealed before builds stamped theirs is a build's when a full build made the version or cached the bundle, and a
+    reseal only when a run cached it for a version whose save recorded resealing one."""
+    from simulate.services.harness_versioning.versions import PROVED_ORIGINS
+
+    if seal.stamped:
+        return bool(seal.resealed)
+    if seal.seeded or getattr(node, "origin", "") in PROVED_ORIGINS:
+        return False
+    recorded = (node.documents or {}).get("workspace_sealed")
+    return isinstance(recorded, dict) and bool(recorded.get("resealed"))
 
 
 def _overlay(
