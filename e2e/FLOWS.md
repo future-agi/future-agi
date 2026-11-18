@@ -3260,7 +3260,7 @@
 
 **Goal:** Keep native test runs out of production attribution
 
-**Spec:** `flows/skills/skill-traces.spec.ts:406`
+**Spec:** `flows/skills/skill-traces.spec.ts:409`
 
 **Tags:** —
 
@@ -3295,7 +3295,7 @@
 
 **Goal:** Read the score and coverage on the skill version cohort
 
-**Spec:** `flows/skills/skill-traces.spec.ts:334`
+**Spec:** `flows/skills/skill-traces.spec.ts:336`
 
 **Tags:** —
 
@@ -3382,7 +3382,7 @@
 
 **Goal:** Verify the skill that changed across two reviewed context releases
 
-**Spec:** `flows/skills/skill-traces.spec.ts:364`
+**Spec:** `flows/skills/skill-traces.spec.ts:366`
 
 **Tags:** —
 
