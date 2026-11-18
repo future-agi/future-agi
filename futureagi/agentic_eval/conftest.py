@@ -17,7 +17,18 @@ def pytest_configure(config):
     if backend_root not in sys.path:
         sys.path.insert(0, backend_root)
 
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings")
+    # "tfc.settings" resolves to the package's near-empty __init__.py, not
+    # the real settings module: INSTALLED_APPS silently falls back to
+    # Django's global default ([]), so every custom app (including
+    # "accounts") is unregistered and any model class defined during import
+    # (e.g. accounts.models.audit_log.AuditLog) raises "doesn't declare an
+    # explicit app_label and isn't in an application in INSTALLED_APPS."
+    # The root suite already uses the real module for this; match it.
+    #
+    # Configure here, before collection, rather than during plugin loading:
+    # the test settings' logging handler must not retain pytest's temporary
+    # startup capture stream after that stream has closed.
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.test")
 
     try:
         import django
