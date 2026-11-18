@@ -1,5 +1,7 @@
 """Journey: the cases ALK holds on worker limits are held back by name, through the API the run dialog uses."""
 
+from unittest.mock import patch
+
 import pytest
 
 from simulate.models import CallExecution, HostedHarnessJob
@@ -117,12 +119,13 @@ def _environment_with_workers(user, workspace, storage, monkeypatch, key, sealed
 
 
 def _run(auth_client, environment, keys, key):
-    return auth_client.post(
-        f"{BASE}/{environment.id}/run/",
-        {"scenario_ids": keys, "trials": 1},
-        format="json",
-        HTTP_IDEMPOTENCY_KEY=key,
-    )
+    with patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"):
+        return auth_client.post(
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": keys, "trials": 1},
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=key,
+        )
 
 
 def test_the_cases_alk_holds_are_held_back_and_every_refusal_names_the_worker(
