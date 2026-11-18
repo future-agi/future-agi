@@ -4750,6 +4750,14 @@ def test_each_worker_says_how_the_world_held_it_in_the_trial_and_in_the_contract
         "refund": "held_at_world",
         "audit": "not_enforced",
     }
+    # The harness could not read which workers it stopped (ALK `world_actors.stopped_workers_unreadable`): every
+    # separate worker's limits are not confirmed, even one seen at the door, never "enforced" or "none stopped".
+    unreadable = {**proxied, "stopped_workers_unreadable": True}
+    assert served(unreadable) == {
+        "order_lookup": "unknown",
+        "refund": "unknown",
+        "audit": "not_enforced",
+    }
     # A door that stood but held no worker on its own channel (the door inside the agent, or a proxy sealed before
     # per-worker limits) is no evidence of a hold.
     assert served({"door": True, "state_changes": []}) == {
