@@ -14,7 +14,7 @@ import structlog
 from django.db import transaction
 from django.utils import timezone
 
-from simulate.models import AgentVersion, HostedHarnessJob
+from simulate.models import AgentVersion, HarnessSuiteVersion, HostedHarnessJob
 from simulate.models.harness_versioning import HashKind, VersionStatus
 from simulate.services.harness_versioning import archives, review, validation
 from simulate.services.harness_versioning.candidate_sets import (
@@ -31,6 +31,7 @@ from simulate.services.harness_versioning.candidate_sets import (
 )
 from simulate.services.harness_versioning.draft_pieces import (
     DRAFT_PIECES,
+    active_twin,
     draft_content,
     piece_files,
     piece_model,
@@ -84,16 +85,7 @@ def _candidate(
     content_hash = (
         prepared.environment_hash if piece == "environment" else prepared.suite_hash
     )
-    twin = (
-        model.no_workspace_objects.filter(
-            job=locked,
-            hash=content_hash,
-            hash_kind=HashKind.TREE_V1,
-            status=VersionStatus.ACTIVE,
-        )
-        .order_by("-version_number")
-        .first()
-    )
+    twin = active_twin(model, locked, content_hash, HashKind.TREE_V1)
     if twin is not None:
         return twin
     live = model.no_workspace_objects.filter(
@@ -101,7 +93,10 @@ def _candidate(
         status=VersionStatus.CANDIDATE,
         hash=content_hash,
         documents__base_defaults=documents["base_defaults"],
-    ).first()
+    )
+    if model is HarnessSuiteVersion:
+        live = live.filter(fix_run__isnull=True)
+    live = live.first()
     if live is not None:
         live.documents = {**(live.documents or {}), **documents}
         live.save(update_fields=["documents", "updated_at"])

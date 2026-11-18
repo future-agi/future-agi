@@ -208,17 +208,17 @@ def discard_version(
     draft.save(update_fields=fields)
 
 
-def active_twin(model: Any, locked: HostedHarnessJob, draft: Any) -> Any | None:
-    return (
-        model.no_workspace_objects.filter(
-            job=locked,
-            hash=draft.hash,
-            hash_kind=draft.hash_kind,
-            status=VersionStatus.ACTIVE,
-        )
-        .order_by("-version_number")
-        .first()
+def active_twin(
+    model: Any, locked: HostedHarnessJob, content_hash: Any, hash_kind: Any
+) -> Any | None:
+    """The newest active version of the piece with this content, to reuse rather than make another. A suite
+    version private to a fix's check runs is never reused for the environment."""
+    versions = model.no_workspace_objects.filter(
+        job=locked, hash=content_hash, hash_kind=hash_kind, status=VersionStatus.ACTIVE
     )
+    if model is HarnessSuiteVersion:
+        versions = versions.filter(fix_run__isnull=True)
+    return versions.order_by("-version_number").first()
 
 
 def draft_changed(**details: Any) -> HostedHarnessError:
