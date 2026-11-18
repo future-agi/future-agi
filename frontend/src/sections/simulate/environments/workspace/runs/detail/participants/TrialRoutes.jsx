@@ -1,6 +1,6 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Collapse, Stack, Typography } from "@mui/material";
+import { Box, Collapse, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { useTrialRoutes } from "src/api/simulate-environments/runDetail";
 import { TRIAL_ROUTES_COPY as C } from "../callTraces.constants";
@@ -198,12 +198,23 @@ export default function TrialRoutes({
                   <Box
                     component="th"
                     key={column.key}
-                    title={labelOf(column)}
                     sx={
                       column.key === split?.key ? { bgcolor: tint } : undefined
                     }
                   >
-                    {labelOf(column)}
+                    {/* Headers cut at 150px: the full who-asked-whom on hover. */}
+                    <Tooltip title={labelOf(column)} arrow>
+                      <Box
+                        component="span"
+                        sx={{
+                          display: "block",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {labelOf(column)}
+                      </Box>
+                    </Tooltip>
                   </Box>
                 ))}
               </tr>

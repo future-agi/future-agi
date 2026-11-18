@@ -111,6 +111,18 @@ describe("TrialRoutes", () => {
     expect(onOpen).toHaveBeenCalledWith("c2", 5);
   });
 
+  it("names a cut-short column in full on hover", async () => {
+    draw();
+    fireEvent.click(screen.getByRole("button", { name: "Show trials" }));
+    const header = screen
+      .getAllByText("Returns coordinator → refund worker")
+      .find((one) => one.closest("th"));
+    fireEvent.mouseOver(header);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Returns coordinator → refund worker",
+    );
+  });
+
   it("lists a trial it did not compare, with the reason", () => {
     routes = {
       ...SPLIT,
