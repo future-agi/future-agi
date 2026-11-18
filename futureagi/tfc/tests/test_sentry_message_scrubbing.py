@@ -454,6 +454,7 @@ ADVERSARIAL = {
     "token repeated": "token" * (_LONG // 5),
     "token inside a long word": "a" * (_LONG // 2) + "token" + "b" * (_LONG // 2),
     "long unquoted value": "password=" + "A" * _LONG,
+    "long word without a name": "A" * _LONG,
     "base64-like": base64.b64encode(bytes(range(256)) * (_LONG // 340)).decode(),
     "name without separator": "x-api-key" + "\\" * _LONG,
     "spaces after separator": "password:" + " " * _LONG,
