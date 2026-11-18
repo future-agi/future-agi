@@ -49,6 +49,7 @@ def carry_untouched_proofs(
     if earlier is None or not isinstance(earlier.proofs, dict):
         return
     from simulate.services.harness_starting_records import scenario_token
+    from simulate.services.harness_versioning.versions import proof_passes
 
     # A change names a scenario by its folder; a proof by the suite's key (`duplicate_refund` vs `duplicate-refund`).
     touched = {scenario_token(key) for one in accepted for key in one["affects"] or []}
@@ -59,11 +60,7 @@ def carry_untouched_proofs(
     }
     if not kept:
         return
-    holding = [
-        key
-        for key, proof in kept.items()
-        if isinstance(proof, dict) and proof.get("holds") is True
-    ]
+    holding = [key for key, proof in kept.items() if proof_passes(proof)]
     status = (
         HarnessSuiteValidation.Status.PASSED
         if len(kept) == len(earlier.proofs) and len(holding) == len(kept)

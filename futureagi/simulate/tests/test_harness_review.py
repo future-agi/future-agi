@@ -13,6 +13,9 @@ from simulate.services.harness_versioning.review_items import (
     index_mismatch,
     item_index,
 )
+from simulate.tests.test_harness_readiness import (  # noqa: F401 - fixture
+    storage as storage,
+)
 
 
 def _tree(contract=None, **files):
@@ -994,3 +997,67 @@ def test_stored_review_records_are_read_into_their_shapes_and_bad_entries_left_o
     assert _decisions(draft) == {
         "tool:a": {"decision": "rejected", "draft_digest": "d"}
     }
+
+
+def test_a_permission_line_follows_the_tool_change_it_names():
+    permission = "billing may use issue_refund, as asked: the owner said so"
+    default = _tree({"tools": TOOLS, "amendments": []})
+    draft = _tree(
+        {
+            "tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}],
+            "hard_constraints": [RULE],
+            "amendments": [AMENDMENT, permission],
+        }
+    )
+    changes = compute_changes(default, draft)
+    rule = next(one["id"] for one in changes if one["kind"] == "rule")
+
+    composed = json.loads(
+        compose_accepted(
+            default, draft, changes, {rule: "accepted", "tool:issue_refund": "rejected"}
+        )["contract.json"]
+    )
+
+    assert composed["amendments"] == [AMENDMENT]
+    # And it stays with the tool: accepted with it even while the rule is rejected.
+    kept = json.loads(
+        compose_accepted(
+            default, draft, changes, {rule: "rejected", "tool:issue_refund": "accepted"}
+        )["contract.json"]
+    )
+    assert kept["amendments"] == [permission]
+
+
+@pytest.mark.django_db
+def test_carried_proofs_read_proved_only_from_a_format_two_proof(
+    user, workspace, storage
+):
+    """A case kept as written holds but is not proved: the carried validation is partial, never passed."""
+    from django.utils import timezone
+
+    from simulate.models import HarnessSuiteValidation
+    from simulate.services.harness_versioning.review_saved import carry_untouched_proofs
+    from simulate.tests.test_harness_readiness import _copy_version, _environment
+
+    environment = _environment(user, workspace, storage, "rv-carry-kept")
+    parent = environment.environment_version
+    version = _copy_version(parent)
+    suite = environment.suite_version
+    HarnessSuiteValidation.no_workspace_objects.filter(suite_version=suite).delete()
+    HarnessSuiteValidation.no_workspace_objects.create(
+        suite_version=suite,
+        environment_version=parent,
+        status="passed",
+        proved_at=timezone.now(),
+        proofs={
+            "a": {"format": 2, "holds": True, "proved": True},
+            "b": {"format": 2, "holds": True, "proved": False, "kept_as_written": True},
+        },
+    )
+
+    carry_untouched_proofs(parent, version, suite, [])
+
+    carried = HarnessSuiteValidation.no_workspace_objects.get(
+        suite_version=suite, environment_version=version
+    )
+    assert carried.status == HarnessSuiteValidation.Status.PARTIAL

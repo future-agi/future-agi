@@ -24,7 +24,10 @@ from simulate.services.harness_versioning.read import (
     version_refs,
 )
 from simulate.services.harness_versioning.review_items import saved_changes
-from simulate.services.harness_versioning.versions import versioning_enabled
+from simulate.services.harness_versioning.versions import (
+    proof_passes,
+    versioning_enabled,
+)
 from simulate.services.hosted_harness import (
     ResolvedPins,
     VersionPicks,
@@ -111,9 +114,7 @@ def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[st
         for key in members
         if scenario_token(key) in tokens
         and not any(
-            isinstance(proof, dict)
-            and proof.get("holds") is True
-            and scenario_token(name) == scenario_token(key)
+            proof_passes(proof) and scenario_token(name) == scenario_token(key)
             for name, proof in proofs.items()
         )
     )

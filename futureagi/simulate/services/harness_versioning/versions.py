@@ -603,6 +603,16 @@ def suite_change(
     return diff, diffs.summarize_suite(diff)
 
 
+def proof_passes(entry: object) -> bool:
+    """Whether a saved proof counts as proved: only a format-2 proof that ran says so. An older entry's `holds` was
+    never a proof of the checks (its case reads Kept as written)."""
+    return (
+        isinstance(entry, Mapping)
+        and entry.get("format") == 2
+        and entry.get("proved") is True
+    )
+
+
 def _carried_proofs(
     environment_version: HarnessEnvironmentVersion,
     paired: list[tuple[HostedHarnessScenario, dict[str, Any]]],
