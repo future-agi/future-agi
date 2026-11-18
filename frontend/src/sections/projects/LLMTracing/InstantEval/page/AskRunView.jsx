@@ -188,7 +188,9 @@ function StatusLine({ run, unit, creating }) {
   return (
     <Stack spacing={0.75} sx={{ width: "100%" }}>
       {/* The run's state through the one status map; the line beside it
-          says where it stands. */}
+          says where it stands. A finished run is Completed, neutral even
+          with rows it couldn't answer; only one that answered nothing is
+          failed. */}
       <StatusBadge
         variant="dot"
         status={
@@ -199,7 +201,7 @@ function StatusLine({ run, unit, creating }) {
               : live || creating
                 ? "running"
                 : run.status === "done"
-                  ? "success"
+                  ? "completed"
                   : run.status
         }
         role={run.status === "stalled" ? "warning" : undefined}
@@ -338,7 +340,7 @@ function RunControls({ run, onControl, onCancel, busy, retryElsewhere }) {
           <Button
             size="small"
             variant="outlined"
-            color="error"
+            color="inherit"
             disabled={busy}
             startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
             onClick={() => onControl("retry_failed")}
@@ -447,7 +449,7 @@ function SampleBanner({ run, unit, question, focusAnswer, onControl, busy }) {
               <Button
                 size="small"
                 variant="outlined"
-                color="error"
+                color="inherit"
                 disabled={busy || live}
                 startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
                 onClick={() => onControl("retry_failed")}
@@ -1535,13 +1537,18 @@ export default function AskRunView({
               runTotal={run.total}
               loading={!selectedRecords && rows.isLoading}
               // Rows land while Jev reads: until the run ends, no rows means
-              // none read yet, not none matching.
+              // none read yet, not none matching. A paused or stalled run
+              // reads nothing more until it is resumed, so it says so.
               waiting={
                 !filterLabel &&
                 (Boolean(creating) ||
                   LIVE_STATES.has(run.status) ||
                   PAUSED_STATES.has(run.status) ||
                   run.status === "stalled")
+              }
+              paused={
+                !creating &&
+                (run.status === "paused" || run.status === "stalled")
               }
               error={!selectedRecords && rows.isError}
               onRetry={rows.refetch}
