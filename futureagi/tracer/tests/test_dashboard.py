@@ -2815,6 +2815,98 @@ class TestMetricsEndpoint:
         project_filter.assert_not_called()
         mock_analytics_cls.return_value.get_span_attribute_keys_ch_for_projects.assert_not_called()
 
+    @staticmethod
+    def _fill_workspace_to_project_count(organization, workspace, total):
+        existing = Project.no_workspace_objects.filter(
+            workspace=workspace, organization_id=organization.id
+        ).count()
+        for index in range(total - existing):
+            Project.objects.create(
+                name=f"Attribute Cap Project {index}",
+                organization=organization,
+                workspace=workspace,
+                model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+                trace_type="observe",
+            )
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize("query", [{}, {"page": 1, "page_size": 50}])
+    @patch("tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService")
+    def test_metrics_skips_custom_attributes_above_attribute_project_cap(
+        self,
+        mock_analytics_cls,
+        query,
+        auth_client,
+        organization,
+        workspace,
+        observe_project,
+    ):
+        from tracer.services.clickhouse.attribute_reads import (
+            ATTRIBUTE_READ_MAX_PROJECTS,
+        )
+
+        self._fill_workspace_to_project_count(
+            organization, workspace, ATTRIBUTE_READ_MAX_PROJECTS + 1
+        )
+        with (
+            patch(
+                "tracer.services.dashboard_metrics_catalog.cache.get",
+                return_value=None,
+            ),
+            patch("tracer.services.dashboard_metrics_catalog.cache.set"),
+        ):
+            response = auth_client.get("/tracer/dashboard/metrics/", query)
+
+        assert response.status_code == 200
+        metrics = response.json()["result"]["metrics"]
+        assert "latency" in {metric["name"] for metric in metrics}
+        assert all(metric["category"] != "custom_attribute" for metric in metrics)
+        analytics = mock_analytics_cls.return_value
+        analytics.get_span_attribute_keys_ch_for_projects.assert_not_called()
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize("query", [{}, {"page": 1, "page_size": 50}])
+    @patch("tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService")
+    def test_metrics_reads_custom_attributes_at_attribute_project_cap(
+        self,
+        mock_analytics_cls,
+        query,
+        auth_client,
+        organization,
+        workspace,
+        observe_project,
+    ):
+        from tracer.services.clickhouse.attribute_reads import (
+            ATTRIBUTE_READ_MAX_PROJECTS,
+        )
+
+        self._fill_workspace_to_project_count(
+            organization, workspace, ATTRIBUTE_READ_MAX_PROJECTS
+        )
+        analytics = mock_analytics_cls.return_value
+        analytics.get_span_attribute_keys_ch_for_projects.return_value = [
+            {"key": "freeform.attr", "type": "string"},
+        ]
+        with (
+            patch(
+                "tracer.services.dashboard_metrics_catalog.cache.get",
+                return_value=None,
+            ),
+            patch("tracer.services.dashboard_metrics_catalog.cache.set"),
+        ):
+            response = auth_client.get("/tracer/dashboard/metrics/", query)
+
+        assert response.status_code == 200
+        metric_names = {
+            metric["name"] for metric in response.json()["result"]["metrics"]
+        }
+        assert "freeform.attr" in metric_names
+        analytics.get_span_attribute_keys_ch_for_projects.assert_called_once()
+        scoped_projects = (
+            analytics.get_span_attribute_keys_ch_for_projects.call_args.args[0]
+        )
+        assert len(set(scoped_projects)) == ATTRIBUTE_READ_MAX_PROJECTS
+
     @pytest.mark.django_db
     def test_metrics_keeps_configured_evals_when_direct_usage_read_times_out(
         self,
