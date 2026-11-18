@@ -121,6 +121,7 @@ export function Proposals({
   onAddFiles,
   onAddKb,
   onReviewChanges,
+  nextLabel,
 }) {
   const drawer = layout === "drawer";
   const inset = drawer ? 2.5 : 1.5;
@@ -278,7 +279,7 @@ export function Proposals({
     onDone({ accepted, failed });
   };
 
-  let footer = COPY.footer.saved;
+  let footer = nextLabel ? COPY.footer.savedAs(nextLabel) : COPY.footer.saved;
   if (undecided) footer = COPY.footer.choose;
   else if (failed.length) footer = COPY.footer.blocked;
   // Nothing to decide while every file is still being read.
@@ -453,4 +454,6 @@ Proposals.propTypes = {
   onAddKb: PropTypes.func,
   // The snackbar's Review changes action; left out when not given.
   onReviewChanges: PropTypes.func,
+  // The environment version Save makes, like "v4", for the footer.
+  nextLabel: PropTypes.string,
 };

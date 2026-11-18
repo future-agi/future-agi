@@ -2,14 +2,26 @@
 // so their turns are kept in the page and spliced into the chat's own.
 
 /**
- * `inserts` are `{at, turns}` in the order they were sent, `at` being the chat's
- * turn count when they were. Each lands after the turns that were there then.
+ * `inserts` are `{at, turns, text?}` in the order they were sent, `at` being
+ * the chat's turn count when they were. Each lands after the turns that were
+ * there then. With `text`, the chat's own bubble for it (the first user turn
+ * with that text from there on) is dropped: the insert's bubble carries it.
  */
 export const spliceTurns = (turns, inserts) => {
   const out = [...turns];
   let shift = 0;
-  inserts.forEach(({ at, turns: added }) => {
-    out.splice(Math.min(at + shift, out.length), 0, ...added);
+  inserts.forEach(({ at, turns: added, text }) => {
+    const from = Math.min(at + shift, out.length);
+    if (text) {
+      const own = out.findIndex(
+        (turn, i) => i >= from && turn.role === "user" && turn.text === text,
+      );
+      if (own !== -1) {
+        out.splice(own, 1);
+        shift -= 1;
+      }
+    }
+    out.splice(from, 0, ...added);
     shift += added.length;
   });
   return out;
@@ -18,7 +30,8 @@ export const spliceTurns = (turns, inserts) => {
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export const CHAT_FILES_COPY = {
-  attached: (names) => `Attached: ${names.join(", ")}`,
+  attached: (names, text) =>
+    `${text ? `${text} · ` : ""}Attached: ${names.join(", ")}`,
   reading: (n) =>
     `Reading ${n === 1 ? "the file" : `${n} files`}. Each is read on its own, so one that fails keeps the others and your message.`,
   propose: (text) =>
@@ -38,9 +51,9 @@ export const CHAT_FILES_COPY = {
   rows: (parsed) =>
     `${parsed.accepted.toLocaleString()} of ${parsed.rows.toLocaleString()} rows`,
   passages: (n) => plural(n, "passage"),
-  added: (n) => `Added ${plural(n, "change")} to your unsaved changes.`,
+  added: "Added to your unsaved changes. Review and save them from the header.",
   couldntApply: (n) => `${plural(n, "blocked item")} went to Couldn't apply.`,
-  savedAs: (label) => `Saved as ${label} from Review changes`,
+  openSources: "Open Sources",
   rejected:
-    "Dismissed the proposed changes. The files stay in Sources as Not saved yet.",
+    "Left the environment as it is. The files stay under World & tools, Sources, as Not saved yet.",
 };
