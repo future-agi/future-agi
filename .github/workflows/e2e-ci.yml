@@ -30,7 +30,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  # Pushes to dev share one group and never cancel: the running run finishes
+  # (its e2e-cache writes feed PR, Standalone CI and release builds), the newest
+  # push waits, and GitHub cancels any older one still waiting. Pushes to main
+  # keep one group per commit. A newer push to a pull request cancels its
+  # running run; schedule, merge_group and dispatch group by ref as before.
+  group: e2e-ci-${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' && 'dev-push' || github.sha) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:

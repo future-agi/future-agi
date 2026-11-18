@@ -224,6 +224,11 @@ export class ScopeActors {
     return { a: this.member, b: this.memberInB, foreign: this.foreign };
   }
 
+  /** Additional non-admin members in owner A's default workspace. */
+  async inviteMember(label: string): Promise<ScopeActor> {
+    return this.invite(label, 3, [this.ownerA.workspaceId]);
+  }
+
   async openContext(browser: Browser, actor: ScopeActor,
     options: ScopeContextOptions = {}): Promise<BrowserContext> {
     const baseURL = ownedScopeOrigin(options.appUrl ?? this.options.appUrl ?? E2E.appUrl);

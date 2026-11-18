@@ -212,6 +212,34 @@ def call_execution_te2(db, test_execution_2, scenario):
     )
 
 
+def _actor_turn(call_execution):
+    """One actor turn on the call: who spoke it is kept beside the transcript row."""
+    from simulate.models import CallTranscriptActor
+    from simulate.models.test_execution import CallTranscript
+
+    row = CallTranscript.objects.create(
+        call_execution=call_execution,
+        speaker_role=CallTranscript.SpeakerRole.ACTOR,
+        content="Add a stop.",
+    )
+    CallTranscriptActor.objects.create(
+        transcript=row, speaker_name="Rowan", actor_id="friend"
+    )
+
+
+def _snapshot_actor_turns(call_execution):
+    from simulate.models import CallTranscriptActor
+
+    snapshot = CallExecutionSnapshot.objects.get(call_execution=call_execution)
+    return [
+        (one["speaker_role"], one.get("speaker_name"), one.get("actor_id"))
+        for one in snapshot.transcripts
+        if one["speaker_role"] == "actor"
+    ], CallTranscriptActor.objects.filter(
+        transcript__call_execution=call_execution
+    ).exists()
+
+
 # ============================================================================
 # CallExecutionRerunView Tests (existing endpoint)
 # ============================================================================
@@ -349,6 +377,23 @@ class TestCallExecutionRerunView:
         # Verify test execution status updated - RUNNING because Temporal workflow started
         test_execution.refresh_from_db()
         assert test_execution.status == TestExecution.ExecutionStatus.RUNNING
+
+    @pytest.mark.requires_ee
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_rerun_call_and_eval_keeps_who_spoke_each_actor_turn(
+        self, mock_rerun, auth_client, test_execution, call_execution
+    ):
+        mock_rerun.return_value = {"workflow_id": "test-workflow-id", "merged": False}
+        _actor_turn(call_execution)
+        response = auth_client.post(
+            self.URL_TEMPLATE.format(test_execution.id),
+            {"rerun_type": "call_and_eval", "select_all": True},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        turns, left_behind = _snapshot_actor_turns(call_execution)
+        assert turns == [("actor", "Rowan", "friend")]
+        assert not left_behind
 
     @pytest.mark.requires_ee
     @override_settings(HARNESS_PROVIDER="sandbox")
@@ -918,6 +963,26 @@ class TestTestExecutionRerunView:
         test_execution_2.refresh_from_db()
         assert test_execution.status == TestExecution.ExecutionStatus.RUNNING
         assert test_execution_2.status == TestExecution.ExecutionStatus.RUNNING
+
+    @pytest.mark.requires_ee
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_bulk_rerun_call_and_eval_keeps_who_spoke_each_actor_turn(
+        self, mock_rerun, auth_client, run_test, test_execution, call_execution
+    ):
+        mock_rerun.return_value = {"workflow_id": "test-workflow-id", "merged": False}
+        _actor_turn(call_execution)
+        response = auth_client.post(
+            self.URL_TEMPLATE.format(run_test.id),
+            {
+                "rerun_type": "call_and_eval",
+                "test_execution_ids": [str(test_execution.id)],
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        turns, left_behind = _snapshot_actor_turns(call_execution)
+        assert turns == [("actor", "Rowan", "friend")]
+        assert not left_behind
 
     def test_rerun_missing_params(self, auth_client, run_test):
         """Test rerun with neither select_all nor test_execution_ids."""

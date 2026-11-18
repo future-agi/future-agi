@@ -197,6 +197,22 @@ def agent_summary(
     )
 
 
+def launched_agent_summary(
+    agent_definition_id: UUID, *, agent_version_id: UUID | None
+) -> AgentSummary:
+    """The setup a run launches with: its pinned version's, so a newer version cannot change
+    what an older run records. A run that pins nothing, or pins a version that stores no
+    setup (one made by a push, or from before setups were stored), reads the agent's own."""
+    summary = agent_summary(agent_definition_id, agent_version_id=agent_version_id)
+    if (
+        agent_version_id is not None
+        and not summary.agent_stored
+        and not summary.setup_stale
+    ):
+        return agent_summary(agent_definition_id)
+    return summary
+
+
 def _setup_is_stale(setup: AgentVersionSetup, agent: AgentDefinition) -> bool:
     return setup.agent_kind == "hosted" and (
         (agent.provider or "").strip() != setup.provider
@@ -582,7 +598,7 @@ def _word(value: Any, words: tuple[str, ...]) -> None:
 def _directions(inbound: bool, outbound: bool) -> list[str]:
     return [
         direction
-        for direction, present in zip(_DIRECTIONS, (inbound, outbound))
+        for direction, present in zip(_DIRECTIONS, (inbound, outbound), strict=True)
         if present
     ]
 

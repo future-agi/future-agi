@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from simulate.pydantic_schemas.evidence_import import ImportKind
+
 # What one fix may ask for; the launch form shows the same limits.
 SCENARIOS_MAX = 200
 BUDGET_CREDITS_MAX = 50_000
@@ -13,6 +15,15 @@ MAX_MINUTES_MAX = 24 * 60
 # Held-back cases a fix needs to count as verified. On a failure that fails every baseline
 # run, 4 pass a large real fix 87% of the time and 2 only 56%.
 HELD_BACK_VERIFIED_MIN = 4
+# A third of the failing cases are held back, once there are enough for a third to tell.
+HELD_BACK_SHARE = 3
+# A run with too few failing cases gets this many variations of each written first.
+VARIATIONS_PER_CASE = 3
+# How much slower a candidate's replies, and how much more its own model calls per
+# conversation, may be than the base version's, in percent, unless the user says.
+MARGIN_PCT_DEFAULT = 25
+MARGIN_PCT_MAX = 1000
+ALLOWED_MODELS_MAX = 50
 
 
 class Surface(StrEnum):
@@ -31,8 +42,10 @@ class Ending(StrEnum):
 
 
 class FixStep(StrEnum):
-    """Where a fix is, in the four steps the user follows."""
+    """Where a fix is, in the steps the user follows. Variations comes first, and only
+    for a run with too few failing cases."""
 
+    VARIATIONS = "variations"
     REPRODUCE = "reproduce"
     SEARCH = "search"
     VERIFY = "verify"
@@ -44,6 +57,18 @@ class CandidateOutcome(StrEnum):
     REJECTED = "rejected"
     FINALIST = "finalist"
     WINNER = "winner"
+
+
+class FixEvidence(BaseModel):
+    """An evidence import that added some of a fix's targets to the suite: the evidence the
+    fix came from. Ids only, never a source's name or content."""
+
+    import_id: str
+    source_kind: ImportKind
+    # The added cases among the targets, in import order: each one's source and the scenario
+    # it became.
+    source_ids: list[str]
+    scenario_keys: list[str]
 
 
 class FixRequest(BaseModel):
@@ -64,6 +89,33 @@ class FixRequest(BaseModel):
     locked_paths: list[str] = Field(default_factory=list)
     budget_usd: float = Field(gt=0, le=BUDGET_CREDITS_MAX / 100)
     max_minutes: int = Field(gt=0, le=MAX_MINUTES_MAX)
+    # Set at launch on a run with too few failing cases: the fix's first step writes
+    # variations of them, and clears it once the variations that failed are targets.
+    variations_pending: bool = False
+    # Each variation that became a target, with the failing case it varies: it is held
+    # back with that case, and counts as that case toward verified.
+    variation_parents: dict[str, str] = Field(default_factory=dict)
+    # The models the agent may call. Every model call a check run's spans show must name
+    # one of them; with no spans, only the candidate's diff is checked.
+    allowed_models: list[str] = Field(
+        default_factory=list, max_length=ALLOWED_MODELS_MAX
+    )
+    # How much slower a candidate's median reply, and how much more its agent's median
+    # spend per conversation, may be than the base version's, in percent; and a limit on
+    # that spend in US dollars.
+    reply_latency_margin_pct: int = Field(
+        default=MARGIN_PCT_DEFAULT, ge=0, le=MARGIN_PCT_MAX
+    )
+    cost_margin_pct: int = Field(default=MARGIN_PCT_DEFAULT, ge=0, le=MARGIN_PCT_MAX)
+    cost_limit_usd: float | None = Field(default=None, gt=0)
+    # Set at launch from the source run's spans: whether they named the agent's models,
+    # and whether the agent exported its model calls at all. Without them a check run's
+    # models and agent cost cannot be read, and those checks read as not verified.
+    observes_models: bool = False
+    meters_agent_cost: bool = False
+    # Derived at launch, never asked: the evidence imports that added any target to the suite.
+    # Empty when the fix did not start from evidence.
+    evidence: list[FixEvidence] = Field(default_factory=list)
 
 
 class InventoryScenario(BaseModel):
@@ -91,6 +143,11 @@ class EngineBrief(BaseModel):
     # an earlier launch sent, and its budget starts from what the fix has committed.
     last_attempt: int
     committed_usd: float
+    # What a check run reserves of the fix's budget for each execution: a screen or the
+    # variations, which are never graded, and a run a winner's grading reads (the baseline
+    # repeats and a final check), its billed evals included.
+    worst_case_usd_per_execution: float
+    worst_case_usd_per_graded_execution: float
     deadline_at: str
     # The source run's trials that failed a sub-goal on the targets the engine searches:
     # Diagnose reads them while Reproduce runs. Never a held-back target.
@@ -142,6 +199,20 @@ class CheckRecord(BaseModel):
     transcript: str
     # How long the conversation took; none for a trial that never had one.
     duration_s: float | None = None
+    # The agent's own model calls, from the spans it exported: the models they named, how
+    # many LLM spans arrived, and what they cost. The cost is none when no span arrived,
+    # or when one counted tokens but no cost: an unpriced model is not free.
+    models: list[str] = Field(default_factory=list)
+    spans_seen: int = 0
+    agent_cost_usd: float | None = None
+    # The models of its spans that carried no cost: an unpriced model leaves the cost none.
+    unpriced_models: list[str] = Field(default_factory=list)
+    # The sandbox could not measure one of its model calls: its spans arrived, so none is
+    # lost, and its cost is none.
+    instrumentation_partial: bool = False
+    # The median time from a user turn to the agent's first reply to it; for a voice call,
+    # the agent's average latency. None when the conversation does not say.
+    reply_latency_ms: float | None = None
 
 
 class CheckRunStatus(BaseModel):
@@ -154,6 +225,32 @@ class CheckRunStatus(BaseModel):
     records: list[CheckRecord]
     # The parallelism the run really had, once it has finished.
     parallelism: int | None = None
+    # What the fix's limit is held against now, check runs included, so the engine's own
+    # budget follows what the platform counts.
+    committed_usd: float | None = None
+    # The run's spans could not be read: its calls carry no model, cost or span count, and
+    # the engine reads the run again before it fails the fix as ours.
+    usage_unreadable: bool = False
+
+
+class VerdictTierPart(BaseModel):
+    """One check of a tier that holds several, with its own status."""
+
+    name: str
+    # passed | failed | skipped
+    status: str
+    detail: str = ""
+
+
+class CeilingNumbers(BaseModel):
+    """A ceiling's medians on the finalist's repeats, in seconds or US dollars per
+    conversation: the candidate's, the base version's, the most the margin allows, and
+    the limit set at launch. A number nothing measured is None."""
+
+    baseline: float | None = None
+    candidate: float | None = None
+    allowed: float | None = None
+    limit: float | None = None
 
 
 class VerdictTier(BaseModel):
@@ -163,6 +260,12 @@ class VerdictTier(BaseModel):
     # passed | failed | pending | skipped
     status: str
     detail: str = ""
+    # The checks inside the tier: the ceilings tier holds reply latency and agent cost,
+    # so one measured and one not show apart.
+    parts: list[VerdictTierPart] = Field(default_factory=list)
+    # The ceilings tier's numbers, so a verdict shows what it was decided on.
+    latency: CeilingNumbers | None = None
+    cost: CeilingNumbers | None = None
 
 
 class CandidateVerdict(BaseModel):
@@ -184,6 +287,25 @@ class EvalWarning(BaseModel):
     base_pass_rate: float
     trials: int
     base_trials: int
+
+
+class EvalGrading(StrEnum):
+    """How far the platform's evals of a fix's winner are. A fix grades only once it has a
+    winner, and its winner ships only once grading is no longer pending."""
+
+    NONE = "none"  # No winner, so nothing is graded.
+    PENDING = "pending"
+    DONE = "done"
+    # A grading job ended without a verdict: the winner can ship, but the evals did not
+    # check all of it.
+    INCOMPLETE = "incomplete"
+
+
+class EvalReview(BaseModel):
+    grading: EvalGrading
+    warnings: list[EvalWarning] = Field(default_factory=list)
+    # The platform evals compared, so "none did worse" is said only when some ran.
+    compared: int = 0
 
 
 class CandidateUpdate(BaseModel):
@@ -209,6 +331,17 @@ class FixDiagnosis(BaseModel):
     causes: list[str] = Field(default_factory=list)
 
 
+class FlakyProtectedCase(BaseModel):
+    """A protected case the current version does not pass on every baseline run, so the fix
+    could not be held to it: one sub-goal of it, with its baseline passes."""
+
+    key: str
+    name: str | None = None
+    sub_goal: str
+    passed: int = Field(ge=0)
+    runs: int = Field(ge=1)
+
+
 class EngineReport(BaseModel):
     """Progress, and at the end the run's ending. A report with an ending is the last."""
 
@@ -222,6 +355,9 @@ class EngineReport(BaseModel):
     # With the failed ending: what failed and who can fix it.
     failure: CheckFailure | None = None
     winner_candidate_id: UUID | None = None
+    # With the ending: the protected cases the fix could not be held to. An engine from
+    # before this field sends none.
+    flaky_protected: list[FlakyProtectedCase] = Field(default_factory=list)
     # The models this launch stopped using because their calls were lost, and the last
     # error it could not recover from. The fix keeps both across launches.
     lost_models: list[str] = Field(default_factory=list)
@@ -279,6 +415,8 @@ class LaunchScenario(BaseModel):
     # True when every judged sub-goal held in every trial; None when nothing was judged.
     passed: bool | None
     failing_sub_goals: list[str]
+    # The evidence import that added this scenario to the suite; None for any other scenario.
+    evidence_import_id: str | None = None
 
 
 class LaunchSuggested(BaseModel):
@@ -297,12 +435,29 @@ class LaunchDefaults(BaseModel):
     surfaces: list[Surface]
     budget_credits: int
     max_minutes: int
+    # The models the run's spans show the agent called; empty when they named none.
+    allowed_models: list[str]
+    # Whether the run's spans exported the agent's model calls, so a fix can measure
+    # their cost even when they name no model.
+    agent_cost_metered: bool
+    # Whether the sandbox could measure none of those calls (another SDK or a direct
+    # HTTP request), so their cost is unknown however a fix runs.
+    agent_calls_unmeasured: bool = False
+    reply_latency_margin_pct: int
+    cost_margin_pct: int
 
 
 class LaunchLimits(BaseModel):
     budget_credits_max: int
     max_minutes_max: int
+    # The fewest failing cases a launch takes: fewer could not reach cases_min even if
+    # every variation failed.
     scenarios_min: int
+    # The failing cases a fix needs; with fewer, it writes variations of each first.
+    cases_min: int
+    variations_per_case: int
+    # The fewest failing cases a fix that writes variations can still end verified from.
+    verified_cases_min: int
     scenarios_max: int
 
 
@@ -324,3 +479,5 @@ class LaunchOptions(BaseModel):
     limits: LaunchLimits
     # Set when Start must be disabled, with the reason launch would give.
     blocked: LaunchBlocked | None = None
+    # Set when a launch that writes variations would be refused, with the reason.
+    variations_blocked: LaunchBlocked | None = None
