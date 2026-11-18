@@ -229,24 +229,34 @@ _AMENDMENT_SUBJECTS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^(?P<key>[^\s.:]+)\.[^\s:]+ widened by "), "tool"),
     (re.compile(r"^(?P<key>[^\s:]+) added from [^:]+: "), "tool"),
     (re.compile(r"^(?P<key>modality) \S+ -> \S+: "), "contract_field"),
+    # A participant allowed tools follows those tools: rejecting a tool's change drops the permission with it.
+    (re.compile(r"^\S+ may use (?P<key>[^:]+?), as asked: "), "tool"),
 )
 
 
-def amendment_subject(line: str) -> tuple[str, str] | None:
-    """The item an amendment line records, as ``(kind, key)``; a rule is named by its text. ``None`` for a line
-    whose subject is not an item a review lists (a participant's tools), or that no known format reads."""
+def amendment_subject(line: str) -> tuple[str, list[str]] | None:
+    """The items an amendment line records, as ``(kind, keys)``; a rule is named by its text. ``None`` for a line
+    no known format reads."""
     for pattern, kind in _AMENDMENT_SUBJECTS:
         found = pattern.match(line)
         if found:
-            return kind, found.group("key")
+            key = found.group("key")
+            keys = (
+                [one.strip() for one in key.split(",")]
+                if " may use " in line
+                else [key]
+            )
+            return kind, keys
     return None
 
 
-def _amendment_owner(line: str, changes: list[ReviewChange]) -> str | None:
+def _amendment_owners(line: str, changes: list[ReviewChange]) -> list[str]:
+    """The reviewed changes an amendment line records; empty when it names none of them."""
     subject = amendment_subject(line)
     if subject is None:
-        return None
-    kind, key = subject
+        return []
+    kind, keys = subject
+    owners = []
     for change in changes:
         if change["kind"] != kind:
             continue
@@ -258,9 +268,9 @@ def _amendment_owner(line: str, changes: list[ReviewChange]) -> str | None:
         # A rule's text may hold ": " itself, so it is matched whole against the line.
         if (
             kind == "rule" and line.split(" \u2014 ", 1)[-1].startswith(f"{named}: ")
-        ) or (kind != "rule" and named == key):
-            return change["id"]
-    return None
+        ) or (kind != "rule" and named in keys):
+            owners.append(change["id"])
+    return owners
 
 
 def _carry_amendments(
@@ -290,9 +300,9 @@ def _carry_amendments(
     for entry in edited.get("amendments") or []:
         if entry in kept:
             continue
-        owner = _amendment_owner(str(entry), changes)
-        if (owner is None and all_accepted) or (
-            owner is not None and decisions.get(owner) == "accepted"
+        owners = _amendment_owners(str(entry), changes)
+        if (not owners and all_accepted) or (
+            owners and all(decisions.get(one) == "accepted" for one in owners)
         ):
             kept.append(entry)
     if kept == list(contract.get("amendments") or []):

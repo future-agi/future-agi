@@ -80,9 +80,16 @@ def current_defaults(environment: HostedHarnessJob) -> Defaults:
     }
 
 
+_CANDIDATE_SET_KEYS = CandidateSet.__required_keys__
+
+
 def live_set(environment: HostedHarnessJob) -> CandidateSet | None:
+    """The live candidate set the environment keeps, read into its shape; one missing a field reads as none, so a
+    Save asks for Validate again rather than act on part of a set."""
     entry = ((environment.payload or {}).get("metadata") or {}).get(VALIDATION_KEY)
-    return cast(CandidateSet, entry) if isinstance(entry, dict) else None
+    if not isinstance(entry, dict) or not _CANDIDATE_SET_KEYS <= set(entry):
+        return None
+    return cast(CandidateSet, entry)
 
 
 def store_set(locked: HostedHarnessJob, entry: CandidateSet | None) -> None:

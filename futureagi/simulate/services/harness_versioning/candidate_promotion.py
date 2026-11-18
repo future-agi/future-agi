@@ -297,7 +297,8 @@ def discard_expired_candidates(*, now: datetime | None = None) -> int:
             keep: set[str] = set()
             if entry is not None and datetime.fromisoformat(entry["at"]) >= cutoff:
                 keep = {entry["environment_version_id"], entry["suite_version_id"]}
-            elif entry is not None:
+            elif ((locked.payload or {}).get("metadata") or {}).get(VALIDATION_KEY):
+                # Expired, or not a whole set: either way nothing can be saved from it.
                 store_set(locked, None)
             for piece in DRAFT_PIECES:
                 expired += (

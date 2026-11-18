@@ -14,6 +14,7 @@ from simulate.services.harness_versioning.review_items import (
     SourceUsed,
     UsedFile,
     item_index,
+    saved_changes,
     whole_documents,
 )
 
@@ -49,6 +50,7 @@ def carry_untouched_proofs(
     if earlier is None or not isinstance(earlier.proofs, dict):
         return
     from simulate.services.harness_starting_records import scenario_token
+    from simulate.services.harness_versioning.versions import proof_passes
 
     # A change names a scenario by its folder; a proof by the suite's key (`duplicate_refund` vs `duplicate-refund`).
     touched = {scenario_token(key) for one in accepted for key in one["affects"] or []}
@@ -59,11 +61,7 @@ def carry_untouched_proofs(
     }
     if not kept:
         return
-    holding = [
-        key
-        for key, proof in kept.items()
-        if isinstance(proof, dict) and proof.get("holds") is True
-    ]
+    holding = [key for key, proof in kept.items() if proof_passes(proof)]
     status = (
         HarnessSuiteValidation.Status.PASSED
         if len(kept) == len(earlier.proofs) and len(holding) == len(kept)
@@ -90,9 +88,7 @@ def name_saved(activated: Mapping[str, tuple[Any, bool]], *, name: str) -> None:
         fields: list[str] = []
         if name:
             version.name, fields = name[:80], [*fields, "name"]
-        reviewed: list[SavedChange] = (version.documents or {}).get(
-            "review_changes"
-        ) or []
+        reviewed = saved_changes(version.documents)
         if reviewed:
             version.summary, fields = (
                 review_summary(reviewed)[:1024],

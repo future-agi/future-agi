@@ -27,7 +27,11 @@ from simulate.services.harness_versioning.read import (
     _message_label,
     version_refs,
 )
-from simulate.services.harness_versioning.versions import versioning_enabled
+from simulate.services.harness_versioning.review_items import saved_changes
+from simulate.services.harness_versioning.versions import (
+    proof_passes,
+    versioning_enabled,
+)
 from simulate.services.hosted_harness import (
     ResolvedPins,
     VersionPicks,
@@ -83,14 +87,13 @@ def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[st
     reviewed = [
         one
         for version in (environment_version, suite_version)
-        for one in (getattr(version, "documents", None) or {}).get("review_changes")
-        or []
+        for one in saved_changes(getattr(version, "documents", None))
     ]
     touched = {
         key
         for one in reviewed
-        if one.get("decision") == "accepted" and one.get("graded")
-        for key in one.get("revalidate") or []
+        if one["decision"] == "accepted" and one["graded"]
+        for key in one["revalidate"]
     }
     if not touched:
         return []
@@ -115,9 +118,7 @@ def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[st
         for key in members
         if scenario_token(key) in tokens
         and not any(
-            isinstance(proof, dict)
-            and proof.get("holds") is True
-            and scenario_token(name) == scenario_token(key)
+            proof_passes(proof) and scenario_token(name) == scenario_token(key)
             for name, proof in proofs.items()
         )
     )

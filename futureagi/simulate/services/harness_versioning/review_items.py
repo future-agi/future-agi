@@ -128,6 +128,40 @@ class SavedChange(TypedDict):
     revalidate: list[str]
 
 
+def saved_changes(documents: Any) -> list[SavedChange]:
+    """The reviewed changes a saved version keeps (`documents["review_changes"]`), each read into its shape; an
+    entry that is not one is left out."""
+    found = (
+        (documents or {}).get("review_changes")
+        if isinstance(documents, Mapping)
+        else None
+    )
+    changes: list[SavedChange] = []
+    for one in found if isinstance(found, list) else []:
+        if not isinstance(one, Mapping) or one.get("decision") not in (
+            "accepted",
+            "rejected",
+        ):
+            continue
+        affects = one.get("affects")
+        changes.append(
+            SavedChange(
+                id=str(one.get("id") or ""),
+                kind=str(one.get("kind") or ""),
+                key=str(one.get("key") or ""),
+                action=str(one.get("action") or ""),
+                summary=str(one.get("summary") or ""),
+                decision=one["decision"],
+                affects=affects
+                if isinstance(affects, str)
+                else [str(key) for key in affects or []],
+                graded=one.get("graded") is True,
+                revalidate=[str(key) for key in one.get("revalidate") or []],
+            )
+        )
+    return changes
+
+
 @dataclass(frozen=True)
 class Item:
     kind: str
