@@ -11,6 +11,7 @@ import {
   useSourceCapabilities,
 } from "src/api/simulate-environments/sources";
 import SideDrawer from "../../components/SideDrawer";
+import MappingTab from "./MappingTab";
 import SourceUsage from "./SourceUsage";
 import { PersonalDataTab } from "./PersonalDataChoice";
 import WhatWasRead from "./WhatWasRead";
@@ -180,19 +181,11 @@ function Versions({ source }) {
 
 Versions.propTypes = { source: PropTypes.object.isRequired };
 
-function MappingSlot() {
-  return (
-    <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-      This tab shows the file&apos;s mapping.
-    </Typography>
-  );
-}
-
 // Each tab's body, by the `sourceTab` id. Every body gets
 // `{ envId, source, at, readOnly, onEdit, onRemove }`.
 const TAB_BODIES = {
   preview: WhatWasRead,
-  mapping: MappingSlot,
+  mapping: MappingTab,
   privacy: PersonalDataTab,
   usage: UsedBy,
   versions: Versions,
