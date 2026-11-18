@@ -130,13 +130,11 @@ def subscription(db, organization):
 
 
 @pytest.fixture
-def ledger(monkeypatch, settings, subscription):
-    """The real usage stream and consumer, with charging forced on."""
+def usage_stream():
+    """The real usage stream, emptied before and after: other tests in the same run
+    leave events on it for organizations their rolled-back transactions removed."""
     from ee.usage.services.emitter import get_redis
 
-    settings.USAGE_EVENTS_ENABLED = True
-    settings.HARNESS_AGENT_READING_CHARGE_ENABLED = True
-    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
     redis = get_redis()
     # ee.cloud is absent in the open-source tree, so it is imported on its own.
     from ee.cloud.billing.consumer import _ensure_consumer_group
@@ -150,6 +148,14 @@ def ledger(monkeypatch, settings, subscription):
     _ensure_consumer_group()
     yield
     purge()
+
+
+@pytest.fixture
+def ledger(monkeypatch, settings, subscription, usage_stream):
+    """The real usage stream and consumer, with charging forced on."""
+    settings.USAGE_EVENTS_ENABLED = True
+    settings.HARNESS_AGENT_READING_CHARGE_ENABLED = True
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
 
 
 def _record(organization, run_id, spend, subject_id=None, purpose="agent"):
@@ -385,7 +391,7 @@ def test_a_cost_file_naming_an_unpriced_alias_charges_nothing(ledger, organizati
 @pytest.mark.requires_ee
 @requires_cloud_billing
 def test_without_a_licence_a_reading_is_not_charged(
-    monkeypatch, settings, organization, subscription
+    monkeypatch, settings, organization, subscription, usage_stream
 ):
     """On a self-hosted install with no enterprise licence (is_oss), nothing is
     recorded at all."""
@@ -393,9 +399,6 @@ def test_without_a_licence_a_reading_is_not_charged(
 
     settings.USAGE_EVENTS_ENABLED = True
     monkeypatch.setattr(harness_usage, "is_oss", lambda: True)
-    from ee.cloud.billing.consumer import _ensure_consumer_group
-
-    _ensure_consumer_group()
 
     assert _record(organization, uuid4(), _cost_file()) is None
     _drain()

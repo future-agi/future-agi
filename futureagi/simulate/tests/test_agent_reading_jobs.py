@@ -40,6 +40,9 @@ from simulate.tests.test_reading_charge_ledger import ledger as ledger  # noqa: 
 from simulate.tests.test_reading_charge_ledger import (  # noqa: F401
     subscription as subscription,
 )
+from simulate.tests.test_reading_charge_ledger import (  # noqa: F401
+    usage_stream as usage_stream,
+)
 
 pytestmark = pytest.mark.django_db
 
