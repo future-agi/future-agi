@@ -647,7 +647,7 @@ probing what its readiness probe probes:
 | Service | Load balancer health check |
 | --- | --- |
 | backend | `GET /health/` with Host `localhost`, on the serving port |
-| fi-collector | `GET /healthz` on the admin port, 9464 |
+| fi-collector | `GET /healthz` on the Pod's admin port (default 9464) |
 | agentcc-gateway (with `gatewayApi.llmGateway`) | `GET /readyz` on the serving port |
 | frontend | `GET /` on the serving port |
 
@@ -1160,7 +1160,7 @@ prove application-consistent recovery.
 - **Logs.** `config.envType: production` (the default) writes JSON logs;
   `config.logLevel` sets the level. Every component logs to stdout.
 - **Health.** The API answers `/health/`, fi-collector `/healthz` on its
-  admin port 9464 (with its insert counters), the gateway `/healthz`.
+  Service port 9464 (with its insert counters), the gateway `/healthz`.
   `helm test` checks them all. The app's first-run setup screen
   (`/api/setup-checks/`) checks every datastore.
 - **Metrics.** The chart has no ServiceMonitor yet. The LLM gateway serves
@@ -1668,7 +1668,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `fiCollector.autoscaling.behavior` | `{}` | HorizontalPodAutoscaler `behavior` (autoscaling/v2), e.g. `{scaleDown: {stabilizationWindowSeconds: 300}}`. Empty: the Kubernetes defaults. |
 | `fiCollector.pdb.enabled` | `true` | PodDisruptionBudget for the collector. |
 | `fiCollector.pdb.maxUnavailable` | `1` | At most this many collector pods down during voluntary disruptions. |
-| `fiCollector.extraEnv` | `{}` | Extra environment variables (FI_* overrides, see fi-collector/README.md), as `NAME: value`. |
+| `fiCollector.extraEnv` | `{}` | Extra environment variables as `NAME: value`. `FI_ADMIN_ADDR: ":9500"` moves the Pod listener, readiness and GKE check; the Service still accepts 9464. See UPGRADING.md for supported binds. |
 | `fiCollector.podAnnotations` | `{}` | Pod annotations. |
 | `fiCollector.podLabels` | `{}` | Extra pod labels. |
 | `fiCollector.podSecurityContext` | `{}` | Merged over the chart's pod security context (non-root uid 65532, distroless). |
@@ -1806,7 +1806,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `gatewayApi.llmGateway.timeout` | `"310s"` | Route timeout (Gateway API duration) of LLM calls; keep it above the gateway's `config.server.write_timeout`. Empty: the Gateway's default. |
 | `gatewayApi.timeouts.request` | `"300s"` | Route timeout of API requests (Gateway API duration, e.g. `300s`). Empty: the Gateway's default, often 15 s, which cuts long requests. |
 | `gatewayApi.timeouts.websocket` | `"24h"` | Route timeout of the WebSocket paths (`/ws/`). `0s` disables it where the Gateway supports that; some also need a backend or client traffic policy for idle connections (README). |
-| `gatewayApi.gke.healthChecks.enabled` | `false` | GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its admin port 9464, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs). |
+| `gatewayApi.gke.healthChecks.enabled` | `false` | GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its configured Pod admin port, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs). |
 | `networkPolicy.enabled` | `false` | NetworkPolicies: the datastores, the gateway, serving and the code sandbox accept traffic only from this release's pods; the UI, API and collector also from `ingressFrom`. A component whose Service is a LoadBalancer or NodePort accepts any source on its Service ports. Egress is open, except for the code sandbox. |
 | `networkPolicy.ingressFrom` | `[]` | Peers (NetworkPolicy `from` entries) that may reach the UI, API and collector, e.g. your ingress controller's namespace: `[{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}]`. Empty: any source. |
 | `serviceAccount.create` | `true` | Create a ServiceAccount for the application pods. |

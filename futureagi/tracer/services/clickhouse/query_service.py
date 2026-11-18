@@ -906,6 +906,7 @@ class AnalyticsQueryService:
         live_projection = _eval_live_projection(eval_table)
         query = f"""
             SELECT
+                toString(id) AS id,
                 output_float,
                 output_bool,
                 output_str_list,
