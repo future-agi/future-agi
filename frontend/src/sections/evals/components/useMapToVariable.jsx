@@ -29,7 +29,13 @@ export const mapRowHoverSx = {
   },
 };
 
-export function useMapToVariable({ variables, mapping, setMapping, onAssign }) {
+export function useMapToVariable({
+  variables,
+  mapping,
+  setMapping,
+  onAssign,
+  isAssigned,
+}) {
   const vars = useMemo(
     () => (Array.isArray(variables) ? variables : []),
     [variables],
@@ -151,7 +157,11 @@ export function useMapToVariable({ variables, mapping, setMapping, onAssign }) {
       </Typography>
       {vars.map((variable) => {
         const current = map[variable];
-        const isThis = current === mapMenu?.path;
+        const isThis =
+          mapMenu &&
+          (isAssigned
+            ? isAssigned(variable, mapMenu.path)
+            : current === mapMenu.path);
         return (
           <MenuItem
             key={variable}

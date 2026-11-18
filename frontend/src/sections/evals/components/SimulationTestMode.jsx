@@ -102,6 +102,11 @@ const PRIORITY_PREFIXES = [
   "tool_outputs",
 ];
 
+const matchesFieldSelection = (option, selection) =>
+  !!selection &&
+  option.field === selection.field &&
+  (selection.saveKey === undefined || option.saveKey === selection.saveKey);
+
 // Walk a nested object to its leaves, emitting [dotPath, value] pairs.
 // Used for both the display table and fieldNames so the mapping
 // dropdown and the Columns/Value table share the same leaf set.
@@ -324,19 +329,26 @@ const SimulationTestMode = React.forwardRef(
         ),
       [selections],
     );
-    const resolveSaveKey = useCallback(
-      (field) =>
-        preview?.scenarioIdsByPath.get(field) ??
-        (preview && translateDeepScenarioColumn(field)) ??
-        field,
+    const resolveSelection = useCallback(
+      (field) => {
+        const columnId = preview?.scenarioIdsByPath.get(field);
+        return {
+          field,
+          columnId,
+          saveKey:
+            columnId ??
+            (preview && translateDeepScenarioColumn(field)) ??
+            field,
+        };
+      },
       [preview],
     );
     const assignField = useCallback(
       (variable, field) => {
-        const saveKey = resolveSaveKey(field);
-        setSelections((prev) => ({ ...prev, [variable]: { field, saveKey } }));
+        const selection = resolveSelection(field);
+        setSelections((prev) => ({ ...prev, [variable]: selection }));
       },
-      [resolveSaveKey],
+      [resolveSelection],
     );
 
     // Shared click-to-map behaviour for the Columns/Value table rows.
@@ -344,6 +356,8 @@ const SimulationTestMode = React.forwardRef(
       variables,
       mapping,
       onAssign: assignField,
+      isAssigned: (variable, field) =>
+        matchesFieldSelection(resolveSelection(field), selections[variable]),
     });
     // Eval result
     const [, setIsRunning] = useState(false);
@@ -1165,8 +1179,8 @@ const SimulationTestMode = React.forwardRef(
     }, [fieldNames.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const fieldOptions = useMemo(
-      () => fieldNames.map((field) => ({ field })),
-      [fieldNames],
+      () => fieldNames.map(resolveSelection),
+      [fieldNames, resolveSelection],
     );
 
     // Resolve seeded paths once a preview is available, and auto-map variables
@@ -1177,8 +1191,8 @@ const SimulationTestMode = React.forwardRef(
         let changed = false;
         if (preview) {
           for (const [variable, { field, saveKey }] of Object.entries(prev)) {
-            if (saveKey !== undefined || !field) continue;
-            next[variable] = { field, saveKey: resolveSaveKey(field) };
+            if (saveKey !== undefined || !fieldNames.includes(field)) continue;
+            next[variable] = resolveSelection(field);
             changed = true;
           }
         }
@@ -1190,13 +1204,13 @@ const SimulationTestMode = React.forwardRef(
             fieldNames.find((f) => f.toLowerCase() === v.toLowerCase());
           const field = exact || ci;
           if (field) {
-            next[v] = { field, saveKey: resolveSaveKey(field) };
+            next[v] = resolveSelection(field);
             changed = true;
           }
         });
         return changed ? next : prev;
       });
-    }, [variables, fieldNames, preview, resolveSaveKey]);
+    }, [variables, fieldNames, preview, resolveSelection]);
 
     // Notify parent EvalPickerConfigFull when the mapping is complete so the
     // "Add Evaluation" button can enable. Without this bridge, sourceReady
@@ -1249,13 +1263,20 @@ const SimulationTestMode = React.forwardRef(
       try {
         const evalMapping = {};
         for (const variable of variables) {
-          const mappedField = mapping[variable];
+          const selection = selections[variable];
+          const mappedField = selection?.field;
           if (mappedField && callDetail) {
-            // Resolve dot-notation paths (e.g. "scenario_outcome", "eval_data_privacy.score")
-            const val = preview.scenarioValuesById.has(mappedField)
-              ? preview.scenarioValuesById.get(mappedField)
+            // Test literal columns by their saved UUID, not an identically
+            // named field from the current preview.
+            const columnId = selection.columnId ?? mappedField;
+            const isScenarioColumn =
+              selection.columnId ||
+              declaredFields.has(mappedField) ||
+              preview.scenarioValuesById.has(mappedField);
+            const val = isScenarioColumn
+              ? preview.scenarioValuesById.get(columnId)
               : mappedField.split(".").reduce((obj, k) => obj?.[k], callDetail);
-            if (val === undefined && declaredFields.has(mappedField)) {
+            if (val === undefined && isScenarioColumn) {
               const message = `The mapped field for ${variable} is not available on this call.`;
               setError(message);
               onTestResult?.(false, message);
@@ -1353,7 +1374,7 @@ const SimulationTestMode = React.forwardRef(
     }, [
       templateId,
       variables,
-      mapping,
+      selections,
       declaredFields,
       preview,
       callDetail,
@@ -2178,9 +2199,14 @@ const SimulationTestMode = React.forwardRef(
                 const isTextCallSafe = callDetail
                   ? isTextCallDetail(callDetail)
                   : true;
+                const liveOption = fieldOptions.find(
+                  ({ field }) => field === currentValue,
+                );
+                const identityChanged =
+                  liveOption && !matchesFieldSelection(liveOption, selection);
                 const showCurrent =
                   currentValue &&
-                  !fieldNames.includes(currentValue) &&
+                  (!liveOption || identityChanged) &&
                   !isHiddenPickerPath(currentValue, isTextCallSafe);
                 const fieldLabel = (key) =>
                   !callDetail || (showCurrent && key === currentValue)
@@ -2194,7 +2220,14 @@ const SimulationTestMode = React.forwardRef(
                       showCurrent ? [selection, ...fieldOptions] : fieldOptions
                     }
                     getOptionLabel={({ field }) => fieldLabel(field)}
-                    getOptionKey={({ field }) => field}
+                    getOptionKey={(option) =>
+                      option === selection
+                        ? `saved:${option.field}`
+                        : option.field
+                    }
+                    getOptionDisabled={(option) =>
+                      !!identityChanged && option === selection
+                    }
                     // Distinct option objects let MUI emit onChange when the
                     // user picks a live field with the same displayed path.
                     value={currentValue ? selection : null}
@@ -2205,7 +2238,7 @@ const SimulationTestMode = React.forwardRef(
                     autoHighlight
                     selectOnFocus
                     handleHomeEndKeys
-                    isOptionEqualToValue={(opt, val) => opt.field === val.field}
+                    isOptionEqualToValue={matchesFieldSelection}
                     sx={{ flex: 1 }}
                     ListboxProps={{ style: { maxHeight: 260 } }}
                     renderInput={(params) => (
@@ -2235,7 +2268,8 @@ const SimulationTestMode = React.forwardRef(
                         }}
                       />
                     )}
-                    renderOption={(props, { field: col }) => {
+                    renderOption={(props, option) => {
+                      const { field: col } = option;
                       const { key, ...rest } = props;
                       return (
                         <Box
@@ -2259,6 +2293,9 @@ const SimulationTestMode = React.forwardRef(
                           }}
                         >
                           {fieldLabel(col)}
+                          {identityChanged && option === selection
+                            ? " (saved selection)"
+                            : null}
                         </Box>
                       );
                     }}

@@ -310,22 +310,25 @@ describe("SimulationTestMode exact snapshot pagination", () => {
 
   const dottedPath = "scenario.columns.profile.name";
 
-  function mockDottedScenarioColumns() {
+  function mockDottedScenarioColumns({ firstMissing = false } = {}) {
+    const literal = {
+      "profile.name": {
+        column_name: "profile.name",
+        dataset_column_id: selectedId,
+        value: "Literal name",
+      },
+    };
     const columnsByCall = {
-      "call-1": {
-        "profile.name": {
-          column_name: "profile.name",
-          dataset_column_id: selectedId,
-          value: "Literal name",
-        },
-      },
-      "call-2": {
-        profile: {
-          column_name: "profile",
-          dataset_column_id: otherId,
-          value: { name: "Nested name" },
-        },
-      },
+      "call-1": firstMissing ? {} : literal,
+      "call-2": firstMissing
+        ? literal
+        : {
+            profile: {
+              column_name: "profile",
+              dataset_column_id: otherId,
+              value: { name: "Nested name" },
+            },
+          },
     };
     const original = mocks.get.getMockImplementation();
     mocks.get.mockImplementation((url, config) => {
@@ -430,6 +433,54 @@ describe("SimulationTestMode exact snapshot pagination", () => {
     fireEvent.click(previousCall);
     await screen.findByText('"Literal name"');
     expect(ready).toHaveBeenLastCalledWith(true, nestedMapping);
+  });
+
+  it("resolves a seeded field when it first appears on a later call", async () => {
+    mockDottedScenarioColumns({ firstMissing: true });
+    const ready = vi.fn();
+    render(
+      <SimulationTestMode
+        initialRunTestId="run-1"
+        initialMapping={{ first: dottedPath }}
+        variables={["first"]}
+        onReadyChange={ready}
+      />,
+    );
+
+    await screen.findByPlaceholderText("Search field...");
+    await goToSecondCall();
+    await screen.findByText('"Literal name"');
+    expect(ready).toHaveBeenLastCalledWith(true, { first: selectedId });
+  });
+
+  it("does not test a nested value in place of a saved literal UUID", async () => {
+    mockDottedScenarioColumns();
+    mocks.post.mockResolvedValue({ data: { status: true, result: {} } });
+    const ref = React.createRef();
+    const onTestResult = vi.fn();
+    render(
+      <SimulationTestMode
+        ref={ref}
+        templateId="test-template"
+        initialRunTestId="run-1"
+        variables={["first"]}
+        onTestResult={onTestResult}
+      />,
+    );
+
+    await screen.findByText('"Literal name"');
+    fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
+    fireEvent.click(await screen.findByRole("option", { name: dottedPath }));
+    await goToSecondCall();
+    await screen.findByText('"Nested name"');
+    act(() => ref.current.runTest());
+    await waitFor(() =>
+      expect(onTestResult).toHaveBeenCalledWith(
+        false,
+        "The mapped field for first is not available on this call.",
+      ),
+    );
+    expect(mocks.post).not.toHaveBeenCalled();
   });
 
   function mockEmptyFirstExecution(scenarioColumns = {}) {
