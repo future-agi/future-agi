@@ -7,6 +7,7 @@ import {
   Typography,
   ButtonBase,
   Button,
+  IconButton,
   TextField,
   Tooltip,
   DialogTitle,
@@ -157,9 +158,8 @@ export default function RlContractPanel({
           title={`Rules (${shownRules.length})`}
           subtitle={
             env?.builtFrom?.kind === "scratch"
-              ? "From your description and answers. Edit here or ask the builder; a change makes the next environment version."
-              : "From the agent's prompt. When a new agent version changes one, it's either a fix — the suite stays — " +
-                "or a spec change — the rule, its sub-goals and their scenarios change. Someone confirms which."
+              ? "From your description and answers"
+              : "From the agent's prompt"
           }
           action={
             canEdit && (
@@ -227,7 +227,7 @@ export default function RlContractPanel({
       {limits.length > 0 && (
         <SectionCard
           title={`Argument limits (${limits.length})`}
-          subtitle="Values a tool call must stay inside; a call outside them is the agent's mistake. Arguments are on World → Tools."
+          subtitle="Values a tool call must stay inside"
           action={
             onGo &&
             !inBuild && (
@@ -272,7 +272,7 @@ export default function RlContractPanel({
           {(useCases.length > 0 || canEdit) && (
             <SectionCard
               title={`Use cases (${useCases.length})`}
-              subtitle="Results group by the id, so rewording a use case doesn't split its history."
+              subtitle="Results group by the id, so rewording keeps history"
               action={
                 canEdit && (
                   <AddButton
@@ -571,18 +571,10 @@ function RuleRow({
           ) : rule.source === "added" ? (
             <>Added in environment {changedIn}</>
           ) : rule.source === "description" ? (
-            <>
-              From your description
-              {changedIn && <> · changed in environment {changedIn}</>}
-            </>
-          ) : (
-            <>
-              From the agent&apos;s prompt
-              {changedIn && (
-                <> · changed in environment {changedIn} · spec change</>
-              )}
-            </>
-          )}
+            changedIn && <>Changed in environment {changedIn}</>
+          ) : changedIn ? (
+            <>Changed in environment {changedIn} · spec change</>
+          ) : null}
         </Typography>
       </Box>
       {goals > 0 ? (
@@ -605,8 +597,8 @@ function RuleRow({
               whiteSpace: "nowrap",
             }}
           >
-            Tested by {goals} sub-goal{goals === 1 ? "" : "s"} · {scenarios}{" "}
-            scenario{scenarios === 1 ? "" : "s"}
+            {goals} sub-goal{goals === 1 ? "" : "s"} · {scenarios} scenario
+            {scenarios === 1 ? "" : "s"}
           </Typography>
         </ButtonBase>
       ) : (
@@ -627,7 +619,7 @@ function RuleRow({
               whiteSpace: "nowrap",
             }}
           >
-            Not tested — add scenarios
+            Not tested
           </Typography>
         </ButtonBase>
       )}
@@ -654,23 +646,17 @@ function RowActions({ onEdit, onRemove }) {
       className="row-edit"
       sx={{ opacity: 0.6, transition: "opacity 120ms", alignSelf: "center" }}
     >
-      <Button
-        variant="outlined"
-        size="small"
-        onClick={onEdit}
-        sx={{ minWidth: 0 }}
-      >
-        Edit
-      </Button>
+      <Tooltip arrow title="Edit">
+        <IconButton size="small" onClick={onEdit} aria-label="Edit">
+          <Iconify icon="solar:pen-linear" width={16} />
+        </IconButton>
+      </Tooltip>
       {onRemove && (
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={onRemove}
-          sx={{ minWidth: 0 }}
-        >
-          Remove
-        </Button>
+        <Tooltip arrow title="Remove">
+          <IconButton size="small" onClick={onRemove} aria-label="Remove">
+            <Iconify icon="solar:trash-bin-minimalistic-linear" width={16} />
+          </IconButton>
+        </Tooltip>
       )}
     </Stack>
   );

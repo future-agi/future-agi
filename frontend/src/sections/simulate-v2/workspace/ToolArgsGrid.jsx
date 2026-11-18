@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import Iconify from "src/components/iconify";
 import { allowedLine, unitOf } from "../_mock/rlContract";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -131,14 +132,11 @@ function ArgCells({ arg, changedIn, onEdit }) {
         )}
       </Stack>
       {onEdit ? (
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={onEdit}
-          sx={{ minWidth: 0 }}
-        >
-          Edit
-        </Button>
+        <Tooltip arrow title="Edit">
+          <IconButton size="small" onClick={onEdit} aria-label="Edit">
+            <Iconify icon="solar:pen-linear" width={16} />
+          </IconButton>
+        </Tooltip>
       ) : (
         <span />
       )}
