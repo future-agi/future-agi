@@ -25,3 +25,22 @@ export function trend(obj) {
     return obj.trend;
   return null;
 }
+
+/**
+ * Bucket size to ask the analytics API for over a time range.
+ *
+ * Returns a value the API accepts ("minute", "hour" or "day"); it serves
+ * anything else as "hour", whatever the range.
+ *
+ *   up to 6 hours  => "minute"
+ *   up to 7 days   => "hour"
+ *   longer         => "day"
+ */
+export function computeGranularity(start, end) {
+  if (!start || !end) return "hour";
+  const diffMs = new Date(end).getTime() - new Date(start).getTime();
+  const diffHours = diffMs / (1000 * 60 * 60);
+  if (diffHours <= 6) return "minute";
+  if (diffHours <= 168) return "hour"; // 7 days
+  return "day";
+}

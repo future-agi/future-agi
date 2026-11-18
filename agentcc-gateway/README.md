@@ -470,6 +470,52 @@ Corrections welcome — open an issue or send a PR.
 
 **Surface area at a glance:** 🔌 **112 routes** across 24 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **8 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
 
+### Selected-key guardrail policy limits
+
+Dashboard **Guardrails → Policies** binds policies to selected API keys. Org
+checks still run first; key policies cannot weaken them. Monitor policies do not
+block or rewrite client output. Dormant legacy key policies remain dormant until
+an explicit policy save activates their gateway configuration.
+
+The enforcement repair has two deliberate compatibility trade-offs, still
+subject to owner feature, image-budget and rollout approval:
+
+- **Selected-key response caching is bypassed.** Every applicable selected-key
+  policy bypasses exact, semantic and conditional edge-cache reads and writes,
+  including Monitor policies and policies with empty or disabled checks.
+  `x-agentcc-cache: skip_key_policy` identifies this path. Admitted requests reach
+  the provider instead of reusing cached output, which can increase latency and
+  provider cost. This conservative choice is broader than bypassing only known
+  request-dependent checks; it is not cache feature parity. Keys with no
+  applicable scoped policy retain their existing cache behavior. Effective
+  failure policy, timeout and pipeline settings remain part of the policy
+  fingerprint; an old request cannot populate a newly changed policy partition.
+- **Blocking output checks require nonstreaming requests.** An applicable
+  selected-key Enforce Block post-stage check, such as Hallucination Detection,
+  causes an HTTP text stream to return `403 stream_guardrail_unsupported` before
+  the provider is invoked. This also applies to clean output and `fail_open`
+  configurations. Use a nonstreaming request for these policies; nonstreaming
+  support does not imply streaming support. Speech has the separate
+  supported-direction rules documented below.
+
+Pass-through routes inspect projections but forward the original body. A
+projection-only redaction is reported as unsupported wire remediation and cannot
+hide the original content from a later Block check. Supported chat remediation
+still changes the actual forwarded request. Enabled checks with no resolvable
+implementation produce an unavailable result: Enforce Block returns
+`503 guardrail_unavailable` when fail-closed; fail-open logs the failure, and
+Monitor stays nonblocking. Arbitrary names can legitimately resolve to deployed
+static/custom implementations, so a successful policy save is not proof that an
+implementation exists on every gateway.
+
+**Monitor stream observation is incomplete.** With request/trace body capture
+disabled, post-stage checks receive no reconstructed output text and may record
+no `would_block` result. An empty guardrail-results list is not proof that the
+stream was inspected or passed. Even enabled capture is bounded and omits
+tool-call deltas. This repair does not enable persistent body logging or promise
+complete streamed-output observability; Monitor's unchanged-output guarantee is
+separate from that observation gap.
+
 ### 🌈 Modalities
 
 Every modality below has dedicated routes in the gateway. The **specific models** reachable depend on what your configured provider(s) support — we pass through whatever the provider exposes at the endpoint, except video, which is limited to the support matrix below.
@@ -524,6 +570,18 @@ sessions, and Cartesia `/stt/turns/websocket` with a blocking post-stage check, 
 HTTP 403 with code `realtime_guardrail_unsupported` before any vendor connection.
 `/v1/realtime` remains unsupported and returns 501 `realtime_not_supported`; use a
 documented vendor speech route.
+
+Dashboard key policies (Guardrails → Policies) apply to speech sessions opened with
+one of their keys, with two differences from chat. Only an Enforce policy's Block
+checks run on speech relays: Monitor (log only) policies and Warn or Log checks would
+only write a log line there, so they never hold, buffer or refuse speech traffic. An
+Enforce policy's Block checks run only in the direction the session reads as text: its
+pre-stage checks on synthesis input, its post-stage checks on transcripts. A check
+for the other direction is skipped instead of refusing the session, so enforcing a
+pre-stage check (secret detection, PII, injection, blocklist and the like) on a key
+leaves that key's transcription sessions connected. Cartesia
+`/stt/turns/websocket` reads neither direction, so no key-policy check runs there.
+Org-wide checks keep the refusal described above.
 
 Supported text units are checked synchronously before any held frame is released.
 Pre-stage checks see the text as a request message; post-stage checks see it once,
@@ -1027,7 +1085,7 @@ Every request goes through a pluggable router stack. Mix and match — per virtu
 |---|---|---|
 | **Weighted round-robin** | `roundrobin` | Distribute traffic across providers by configurable weights |
 | **Latency-aware** | `latency` | Route to the provider with the lowest current P95 for the same model |
-| **Cost-optimized** | `costopt` | Route to the cheapest provider that meets your SLO |
+| **Cost-optimized** | `costopt` | Round-robin among targets with the lowest configured priority value. No price or latency lookup. |
 | **Adaptive** | `adaptive` | Online learning — continuously adjust weights based on success/latency |
 | **Complexity-based** | `complexity` | Route simple queries to small/fast models, complex queries to large models |
 | **Conditional** | `conditional` | Rule-based routing (by user, region, header, model family, prompt length…) |
