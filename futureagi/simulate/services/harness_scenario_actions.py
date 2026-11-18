@@ -173,8 +173,9 @@ class LifecycleAnswer(TypedDict):
 class ScenarioRevision(TypedDict):
     revision: int
     digest: str
-    suite_versions: list[int]
-    first_suite_version: int
+    # A version number is null only for a version saved before versions were numbered.
+    suite_versions: list[int | None]
+    first_suite_version: int | None
     changed_fields: list[str]
     lifecycle_on_default_environment: NotRequired[LifecycleView | None]
 
@@ -203,7 +204,7 @@ class SourceChange(TypedDict):
 
 class SourceChanges(TypedDict):
     from_version: int | None
-    to_version: int
+    to_version: int | None
     changes: list[SourceChange]
     truncated: bool
 

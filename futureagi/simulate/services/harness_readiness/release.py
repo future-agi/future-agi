@@ -241,10 +241,11 @@ def record_proof_release_checks(environment_version: HarnessEnvironmentVersion) 
         ).values_list("scenario_key", "content")
     }
     reference, wrong = _proof_release_results(latest.proofs, use_cases)
-    for name, result in (
-        ("reference_passes", reference),
-        ("wrong_answer_fails", wrong),
-    ):
+    results: dict[Literal["reference_passes", "wrong_answer_fails"], Result] = {
+        "reference_passes": reference,
+        "wrong_answer_fails": wrong,
+    }
+    for name, result in results.items():
         record_release_check(
             environment_version.id,
             name,

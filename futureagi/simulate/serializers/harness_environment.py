@@ -294,7 +294,7 @@ class HarnessEnvironmentEvalInputSerializer(serializers.Serializer):
 
     key = serializers.CharField()
     source = serializers.CharField()
-    label = serializers.CharField()
+    label = serializers.CharField()  # type: ignore[assignment]
 
 
 class HarnessEnvironmentOfferedEvalSerializer(serializers.Serializer):
@@ -1047,7 +1047,7 @@ class HarnessSourceViewSerializer(serializers.Serializer):
     quote = serializers.CharField(allow_blank=True)
     supports = serializers.CharField(allow_blank=True)
     resolved = serializers.BooleanField()
-    label = serializers.CharField(allow_blank=True)
+    label = serializers.CharField(allow_blank=True)  # type: ignore[assignment]
     link = serializers.CharField(allow_null=True)
     problem = serializers.CharField(allow_blank=True)
 
@@ -1310,7 +1310,7 @@ class HarnessVersionSerializer(serializers.Serializer):
     """One agent, environment or suite version, as the version lists show it."""
 
     id = serializers.UUIDField()
-    label = serializers.CharField(allow_null=True)
+    label = serializers.CharField(allow_null=True)  # type: ignore[assignment]
     name = serializers.CharField(
         allow_null=True, help_text="The name a person gave the version, if any."
     )

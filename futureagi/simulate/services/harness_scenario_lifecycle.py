@@ -514,7 +514,7 @@ def scenario_lifecycle(
     good: LifecycleState = "active" if saved else "validated"
     views: dict[str, LifecycleView] = {}
     for key in contents:
-        row = rows.get(key) or {}
+        row: Mapping[str, Any] = rows.get(key) or {}
         entry = proofs.get(key) if isinstance(proofs, Mapping) else None
         entry = entry if isinstance(entry, Mapping) else None
         if row.get("archived_at") is not None:
@@ -590,17 +590,15 @@ def scenario_lifecycle(
             view["state"] in ("validated", "active", "kept_as_written")
             or view.get("reason") == "source_unresolved"
         ):
-            view.update(
-                state="draft",
-                reason="source_unresolved",
-                reason_text=reason_text(
+            _demote(
+                view,
+                "source_unresolved",
+                reason_text(
                     "source_unresolved",
                     entry,
                     kind=bad["kind"],
                     ref=bad["ref"] or bad["label"],
                 ),
-                warning=None,
-                warning_text=None,
             )
         broken = next(
             (
@@ -612,22 +610,16 @@ def scenario_lifecycle(
         )
         if broken and view["state"] != "archived":
             # The rows it starts from do not join up: only the cases citing that file are held.
-            view.update(
-                state="draft",
-                reason="broken_join",
-                reason_text=reason_text(
-                    "broken_join", entry, joins=broken_join_text(broken)
-                ),
-                warning=None,
-                warning_text=None,
+            _demote(
+                view,
+                "broken_join",
+                reason_text("broken_join", entry, joins=broken_join_text(broken)),
             )
         if default and key in failed and view["state"] != "archived":
-            view.update(
-                state="draft",
-                reason="apply_failed",
-                reason_text=reason_text("apply_failed", {"why": failed[key]}),
-                warning=None,
-                warning_text=None,
+            _demote(
+                view,
+                "apply_failed",
+                reason_text("apply_failed", {"why": failed[key]}),
             )
         if (
             view["state"] in ("validated", "active", "kept_as_written")
@@ -647,13 +639,21 @@ def scenario_lifecycle(
                 )
         if view["proof"] is not None and entry is not None:
             made_with = entry.get("agent_version_id") or proved_with
-            view["proof"].update(
-                agent_version_id=str(made_with) if made_with else None,
-                environment_version_id=str(environment_version.id),
-                suite_version_id=str(suite_version.id),
-            )
+            proof = view["proof"]
+            proof["agent_version_id"] = str(made_with) if made_with else None
+            proof["environment_version_id"] = str(environment_version.id)
+            proof["suite_version_id"] = str(suite_version.id)
         views[key] = view
     return views
+
+
+def _demote(view: LifecycleView, reason: str, text: str | None) -> None:
+    """A case its proof would run, held back as Draft for a reason found after the proof."""
+    view["state"] = "draft"
+    view["reason"] = reason
+    view["reason_text"] = text
+    view["warning"] = None
+    view["warning_text"] = None
 
 
 def _last_check_ending(
@@ -773,7 +773,7 @@ def workflow_proof(
             view = views.get(key)
             if view is None or view["state"] == "archived":
                 continue
-            proof = view["proof"] or {}
+            proof: Mapping[str, Any] = view["proof"] or {}
             if view["state"] in ("validated", "active"):
                 if proof.get("outcome") == "no_change":
                     counts["refusal"] += 1
@@ -844,13 +844,15 @@ def in_draft_view() -> LifecycleView:
     return _view("draft", reason="in_draft")
 
 
-def archived_view(archived_at: datetime, archive_reason: str) -> LifecycleView:
+def archived_view(archived_at: datetime | None, archive_reason: str) -> LifecycleView:
     """An archived case's lifecycle: when, and the person's reason."""
     view = _view("archived", reason="archived")
     view["reason_text"] = reason_text(
         "archived",
         None,
-        date=f"{archived_at:%d %b %Y}",
+        date=f"{archived_at:%d %b %Y}"
+        if archived_at is not None
+        else "an unknown date",
         archive_reason=archive_reason or "no reason given",
     )
     return view
@@ -1038,7 +1040,8 @@ def dropped_cases(
         {
             "key": key,
             "name": name,
-            "proved": (views.get(key) or {}).get("state") in ("active", "validated"),
+            "proved": (seen := views.get(key)) is not None
+            and seen["state"] in ("active", "validated"),
         }
         for key, name in sorted(members.items())
         if key not in held

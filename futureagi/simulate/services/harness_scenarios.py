@@ -1012,6 +1012,9 @@ def _default_member_rows(
 class ScenarioRows(list):
     """Draft scenario rows, read the way the list, coverage and catalogue read rows."""
 
+    # The draft they come from: its id and revision.
+    draft: dict[str, Any] | None = None
+
     def values(self, *paths: str) -> list[dict[str, Any]]:
         return [{path: _row_value(row, path) for path in paths} for row in self]
 

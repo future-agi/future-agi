@@ -73,8 +73,8 @@ class AmendReceipt(TypedDict):
     scenario: str
     outcome: str
     why: str
-    code: str
-    field: str | None
+    code: NotRequired[str]
+    field: NotRequired[str | None]
     problems: NotRequired[list[FaultProblem]]
 
 
@@ -2612,13 +2612,13 @@ class HostedHarnessProvider:
                                 edit_fault_side(job),
                                 True,
                             )
-                        problems = faults_problems(
+                        fault_problems = faults_problems(
                             change.get("value"),
                             fault_targets,
                             approvers=scenario_approvers(target, cast),
                         )
-                        if problems:
-                            said = "; ".join(one["message"] for one in problems)
+                        if fault_problems:
+                            said = "; ".join(one["message"] for one in fault_problems)
                             receipts.append(
                                 {
                                     "scenario": name,
@@ -2627,7 +2627,7 @@ class HostedHarnessProvider:
                                     "code": "fault_invalid",
                                     "field": "faults",
                                     # Each under its own fault: its place in the list, its field and why.
-                                    "problems": problems,
+                                    "problems": fault_problems,
                                 }
                             )
                             continue

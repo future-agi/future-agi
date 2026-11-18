@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from django.conf import settings
 from django.contrib.postgres.indexes import GinIndex
@@ -275,6 +276,10 @@ class HostedHarnessAttempt(BaseModel):
 
 
 class HostedHarnessScenario(BaseModel):
+    # Set only on the unsaved rows a draft lists, never stored: the change the draft makes and what the case cites.
+    draft_change: str | None
+    draft_sources: list[Any]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     job = models.ForeignKey(
         HostedHarnessJob,

@@ -5070,8 +5070,8 @@ class HostedHarnessGateway:
             proofs = bundle_cache.scenario_proofs(sandbox)
             if (
                 proofs is not None
-                and job.suite_version_id
-                and job.environment_version_id
+                and job.suite_version is not None
+                and job.environment_version is not None
             ):
                 record_proofs(job.suite_version, job.environment_version, proofs, job)
                 recorded = True

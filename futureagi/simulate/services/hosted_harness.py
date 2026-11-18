@@ -1108,7 +1108,7 @@ def _held_back_checked(
     resolved: ResolvedPins | None,
     scenario_keys: list[str],
     *,
-    released: set[str] = frozenset(),
+    released: frozenset[str] | set[str] = frozenset(),
 ) -> list[str]:
     """The requested keys the run sends: all but the ones readiness holds back.
 

@@ -191,6 +191,10 @@ class SelectionView(Scope):
     requirements_recorded: bool
     # What a run does when every selected case is held back only for not being validated on the pairing.
     next: validation.UnprovedNext | None
+    # What a run of the selection sends, and what it holds back and why.
+    running: int
+    held_back: HeldBack
+    reasons: dict[str, str]
 
 
 class Affected(TypedDict):

@@ -180,20 +180,22 @@ def seed_records(environment: Any, table: str) -> SeedRecords:
     )
     found = tables.get(table) if isinstance(tables, Mapping) else None
     if isinstance(found, Mapping):
-        rows = [
+        rows: list[dict[str, Any]] = [
             {"id": str(key), **value}
             if isinstance(value, Mapping)
             else {"id": str(key), "value": value}
             for key, value in found.items()
         ]
     elif isinstance(found, list):
-        rows = [one if isinstance(one, Mapping) else {"value": one} for one in found]
+        rows = [
+            dict(one) if isinstance(one, Mapping) else {"value": one} for one in found
+        ]
     else:
         rows = []
     return SeedRecords(table=table, rows=rows[:SEED_ROWS_MAX], available=True)
 
 
-def _sub_goal_names(sub_goals: object) -> set[str]:
+def _sub_goal_names(sub_goals: Any) -> set[str]:
     return {
         str(one.get("name") if isinstance(one, Mapping) else one)
         for one in sub_goals or []
@@ -439,9 +441,9 @@ def resolve(
     messages: dict[str, datetime] = {}
     if chat_ids:
         valid = []
-        for one in chat_ids:
+        for message in chat_ids:
             try:
-                valid.append(str(uuid.UUID(one)))
+                valid.append(str(uuid.UUID(message)))
             except ValueError:
                 continue
         messages = {
