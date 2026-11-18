@@ -19,6 +19,16 @@ _HAND_OFFS = frozenset({"delegated", "transferred"})
 _CUT_SHORT = frozenset(
     {"no_return", "deadline_passed", "cancel_requested", "cancelled", "infrastructure"}
 )
+# Each checklist item as the reason names it when it was not seen.
+CHECK_LABELS = {
+    "stable_ids": "the same worker ids in two runs",
+    "delegation_and_return": "a hand-off that returned",
+    "tool_attribution": "every tool call naming its worker",
+    "permissions_exercised": "a worker's permissions used in the world",
+    "timeout_or_cancel": "a worker timed out or cancelled",
+    "worker_verdicts": "a check graded for one worker",
+    "unmeasured_without_evidence": "a worker check left unmeasured without its evidence",
+}
 
 
 def _hand_offs_whole(record: Mapping[str, Any]) -> bool:
@@ -87,6 +97,13 @@ def children(declared: Any, runs: list[Any]) -> Reading:
         and str(one.get("subject") or "").startswith("worker:")
     ]
 
+    tool_calls = [
+        one
+        for record in records
+        for one in record.get("events") or []
+        if isinstance(one, Mapping) and one.get("type") == "tool_call"
+    ]
+
     def result(found: bool, applicable: bool = True) -> str:
         return "not_applicable" if not applicable else "seen" if found else "not_seen"
 
@@ -104,13 +121,10 @@ def children(declared: Any, runs: list[Any]) -> Reading:
         },
         {
             "check": "tool_attribution",
+            # Seen only when tool calls were made and every one named its worker; no call proves nothing.
             "result": result(
-                all(
-                    one.get("attribution") != "unattributed"
-                    for record in records
-                    for one in record.get("events") or []
-                    if isinstance(one, Mapping) and one.get("type") == "tool_call"
-                )
+                bool(tool_calls)
+                and all(one.get("attribution") != "unattributed" for one in tool_calls)
             ),
         },
         {
@@ -143,10 +157,12 @@ def children(declared: Any, runs: list[Any]) -> Reading:
         },
     ]
     at = calls[0].created_at.isoformat()
-    if any(
+    unseen = [one["check"] for one in checks if one["result"] == "not_seen"]
+    if not unseen and any(
         declared_ids <= _observed_ids(record) and _hand_offs_whole(record)
         for record in records
     ):
+        # The row reads its worst item: Supported only when every applicable item was seen.
         return Reading("passed", evidence=checks, checked_at=at)
     if not any(
         isinstance(one, Mapping) and one.get("type") in _HAND_OFFS
@@ -161,6 +177,24 @@ def children(declared: Any, runs: list[Any]) -> Reading:
             checked_at=at,
         )
     seen = declared_ids & set().union(*(_observed_ids(record) for record in records))
+    if seen == declared_ids and unseen:
+        return Reading(
+            "limited",
+            "items_not_seen",
+            "Not yet seen in this agent's runs: "
+            + "; ".join(CHECK_LABELS[one] for one in unseen)
+            + ".",
+            evidence=checks,
+            checked_at=at,
+        )
+    if seen == declared_ids:
+        return Reading(
+            "limited",
+            "workers_not_together",
+            "Every declared worker was seen, but no one run had them all with every hand-off returned.",
+            evidence=checks,
+            checked_at=at,
+        )
     return Reading(
         "limited",
         "workers_partly_observed",
