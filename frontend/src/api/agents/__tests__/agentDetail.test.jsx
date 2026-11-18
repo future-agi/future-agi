@@ -141,6 +141,7 @@ describe("toVersion", () => {
       origin: null,
       check: null,
       checkStep: null,
+      checkStartedAt: null,
       checkFailure: null,
       environmentsCount: 0,
       source: null,

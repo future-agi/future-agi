@@ -38,6 +38,20 @@ export function clearConnectDraft(source) {
 
 export const hasConnectDraft = (source) => readConnectDraft(source) !== null;
 
+export const selectionKey = (...parts) => JSON.stringify(parts);
+
+export const credentialsOf = (held, key) =>
+  held?.key === key ? held : { key, values: {}, extra: [] };
+
+export const shownEnvValues = (credentials, envNames) => {
+  const shown = new Set([...envNames, ...credentials.extra]);
+  return Object.fromEntries(
+    Object.entries(credentials.values).filter(
+      ([envName, value]) => value && shown.has(envName),
+    ),
+  );
+};
+
 export const draftHasProgress = (draft) =>
   draft.stage !== "source" ||
   !!draft.scanId ||

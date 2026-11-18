@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { FAILURE_TEXT, failureText } from "../versionLabels";
+import {
+  CHECK_WAIT_LIMIT_MS,
+  FAILURE_TEXT,
+  canRetry,
+  failureText,
+  missingCredentials,
+} from "../versionLabels";
 
 describe("failureText", () => {
   it.each([
@@ -37,5 +43,59 @@ describe("failureText", () => {
     );
     expect(failureText({ code: "something_new" })).toBe("something_new");
     expect(failureText(null)).toBe("");
+  });
+});
+
+describe("canRetry", () => {
+  const now = Date.parse("2026-11-18T12:00:00Z");
+  const at = (ms) => new Date(now - ms).toISOString();
+
+  it("offers Retry on a check pending past the server's wait limit", () => {
+    expect(
+      canRetry(
+        { check: "pending", createdAt: at(CHECK_WAIT_LIMIT_MS + 1000) },
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it("waits on a pending check restarted within the limit", () => {
+    expect(
+      canRetry(
+        {
+          check: "pending",
+          createdAt: at(3 * CHECK_WAIT_LIMIT_MS),
+          checkStartedAt: at(60 * 1000),
+        },
+        now,
+      ),
+    ).toBe(false);
+    expect(canRetry({ check: "pending" }, now)).toBe(false);
+  });
+
+  it("offers Retry on a failed check unless the failure says it can't help", () => {
+    expect(canRetry({ check: "failed", checkFailure: null }, now)).toBe(true);
+    expect(
+      canRetry({ check: "failed", checkFailure: { retryable: false } }, now),
+    ).toBe(false);
+  });
+});
+
+describe("missingCredentials", () => {
+  it("names each credential a check found missing", () => {
+    expect(
+      missingCredentials({
+        code: "credentials_missing",
+        message: "Missing credentials: API_KEY, OTHER_TOKEN",
+        missing: ["API_KEY", "OTHER_TOKEN"],
+      }),
+    ).toEqual(["API_KEY", "OTHER_TOKEN"]);
+  });
+
+  it("names none for any other failure", () => {
+    expect(
+      missingCredentials({ code: "agent_reading_crashed", message: "x, y" }),
+    ).toEqual([]);
+    expect(missingCredentials(null)).toEqual([]);
   });
 });

@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { listHarnessEnvironments } from "src/api/simulate-environments/harnessEnvironments";
 import { envStatusFor } from "src/sections/simulate/environments/helpers/harnessJobToRow";
@@ -55,11 +60,13 @@ export const toVersion = (v) => ({
   // Where a pending check stands (snapshot, reading, check) and why a failed
   // one failed.
   checkStep: v.check_step ?? null,
+  checkStartedAt: v.check_started_at ?? null,
   checkFailure: v.check_failure
     ? {
         code: v.check_failure.code,
         message: v.check_failure.message ?? "",
         retryable: !!v.check_failure.retryable,
+        missing: v.check_failure.missing ?? [],
       }
     : null,
   environmentsCount: v.environments_count ?? 0,
@@ -113,6 +120,8 @@ export const mapAgentDetail = (raw) => ({
     required: !!raw.found_check?.required,
     doneAt: raw.found_check?.done_at ?? null,
   },
+  sourceCheckedAt: raw.source_checked_at ?? null,
+  sourceCheckIntervalSeconds: raw.source_check_interval_seconds ?? null,
 });
 
 const toStoredAgent = (d) => ({
@@ -446,5 +455,46 @@ export function useCodeChanges(
         }),
       ),
     enabled: !!agentId && !!versionId && enabled,
+  });
+}
+
+export function useCodeCompare(agentId, versionId, against) {
+  return useQuery({
+    queryKey: ["agents", "code", "compare", agentId, versionId, against],
+    queryFn: () =>
+      nullOn404(() =>
+        axios.get(endpoints.agentDefinitions.codeCompare(agentId, versionId), {
+          params: { against },
+        }),
+      ),
+    enabled: !!agentId && !!versionId && !!against,
+    staleTime: Infinity,
+  });
+}
+
+export function useCodePatches(agentId, versionId, against, batches) {
+  return useQueries({
+    queries: batches.map((paths) => ({
+      queryKey: [
+        "agents",
+        "code",
+        "patches",
+        agentId,
+        versionId,
+        against,
+        paths,
+      ],
+      queryFn: async () =>
+        (
+          await axios.get(
+            endpoints.agentDefinitions.codePatches(agentId, versionId),
+            {
+              params: { against, path: paths },
+              paramsSerializer: { indexes: null },
+            },
+          )
+        ).data,
+      staleTime: Infinity,
+    })),
   });
 }

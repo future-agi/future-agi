@@ -1,20 +1,113 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSnackbar } from "notistack";
-import { Alert, Button, CircularProgress } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  Stack,
+  TextField,
+} from "@mui/material";
 import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
 import {
   agentDetailQueryKey,
   pollWhileChecking,
   toVersion,
+  useChangeVersion,
   useRetryVersion,
 } from "src/api/agents/agentDetail";
 import { useFoundCheck } from "src/api/agents/agentConnect";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
-import { STEP_LABEL, failureText } from "./versionLabels";
+import { LabeledField } from "./bits";
+import {
+  STEP_LABEL,
+  failureText,
+  isStalled,
+  missingCredentials,
+} from "./versionLabels";
+
+function CredentialsForm({ agentId, names }) {
+  const { enqueueSnackbar } = useSnackbar();
+  const change = useChangeVersion(agentId);
+  const [values, setValues] = useState({});
+  const complete = names.every((name) => values[name]);
+
+  const submit = (event) => {
+    event.preventDefault();
+    if (!complete) return;
+    change.mutate(
+      {
+        kind: "credentials",
+        secret_values: Object.fromEntries(
+          names.map((name) => [name, values[name]]),
+        ),
+      },
+      {
+        onSuccess: (data) => {
+          setValues({});
+          const label = data?.version?.version_name_display;
+          enqueueSnackbar(
+            label
+              ? `${label} created with these credentials and is being checked`
+              : "Credentials saved; the agent is being checked again",
+            { variant: "success" },
+          );
+        },
+        onError: (e) => enqueueSnackbar(errorMessage(e), { variant: "error" }),
+      },
+    );
+  };
+
+  return (
+    <Box
+      component="form"
+      onSubmit={submit}
+      data-testid="agent-credentials-form"
+      sx={{ mt: 1.5 }}
+    >
+      <Stack spacing={1.5}>
+        {names.map((name) => (
+          <LabeledField key={name} id={`agent-credential-${name}`} label={name}>
+            <TextField
+              id={`agent-credential-${name}`}
+              type="password"
+              size="small"
+              fullWidth
+              autoComplete="off"
+              value={values[name] ?? ""}
+              onChange={(e) =>
+                setValues((current) => ({
+                  ...current,
+                  [name]: e.target.value,
+                }))
+              }
+            />
+          </LabeledField>
+        ))}
+        <Box>
+          <Button
+            type="submit"
+            size="small"
+            variant="contained"
+            color="primary"
+            disabled={!complete || change.isPending}
+          >
+            Save credentials
+          </Button>
+        </Box>
+      </Stack>
+    </Box>
+  );
+}
+
+CredentialsForm.propTypes = {
+  agentId: PropTypes.string.isRequired,
+  names: PropTypes.arrayOf(PropTypes.string).isRequired,
+};
 
 /**
  * Where the newest version's reading stands, above the tabs: reading, failed
@@ -55,6 +148,42 @@ export default function AgentReadingState({ agent }) {
 
   if (!newest) return null;
 
+  const retryButton = (
+    <Button
+      size="small"
+      color="inherit"
+      disabled={retry.isPending}
+      onClick={() =>
+        retry.mutate(
+          { versionId: newest.id },
+          {
+            onSuccess: () =>
+              enqueueSnackbar(`${newest.label} is being read again`, {
+                variant: "info",
+              }),
+            onError: (e) =>
+              enqueueSnackbar(errorMessage(e), { variant: "error" }),
+          },
+        )
+      }
+    >
+      Retry
+    </Button>
+  );
+
+  if (newest.check === "pending" && isStalled(newest)) {
+    return (
+      <Alert
+        severity="warning"
+        data-testid="agent-reading-state"
+        sx={{ mb: 1.5 }}
+        action={canEdit ? retryButton : null}
+      >
+        {`Checking ${newest.label} is taking longer than it should and may have stopped.`}
+      </Alert>
+    );
+  }
+
   if (newest.check === "pending") {
     return (
       <Alert
@@ -73,37 +202,18 @@ export default function AgentReadingState({ agent }) {
 
   if (newest.check === "failed" && newest.checkFailure) {
     const canRetry = canEdit && newest.checkFailure.retryable;
+    const missing = canEdit ? missingCredentials(newest.checkFailure) : [];
     return (
       <Alert
         severity="warning"
         data-testid="agent-reading-state"
-        sx={{ mb: 1.5 }}
-        action={
-          canRetry ? (
-            <Button
-              size="small"
-              color="inherit"
-              disabled={retry.isPending}
-              onClick={() =>
-                retry.mutate(
-                  { versionId: newest.id },
-                  {
-                    onSuccess: () =>
-                      enqueueSnackbar(`${newest.label} is being read again`, {
-                        variant: "info",
-                      }),
-                    onError: (e) =>
-                      enqueueSnackbar(errorMessage(e), { variant: "error" }),
-                  },
-                )
-              }
-            >
-              Retry
-            </Button>
-          ) : null
-        }
+        sx={{ mb: 1.5, "& .MuiAlert-message": { flexGrow: 1 } }}
+        action={canRetry ? retryButton : null}
       >
         {`Couldn't read ${newest.label}: ${failureText(newest.checkFailure)}`}
+        {missing.length > 0 && (
+          <CredentialsForm agentId={agent.id} names={missing} />
+        )}
       </Alert>
     );
   }

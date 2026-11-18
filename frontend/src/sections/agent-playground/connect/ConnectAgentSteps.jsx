@@ -119,10 +119,12 @@ export function FoundAgents({
       )}
       {shown.map((agent) => {
         const selected =
-          picked?.subfolder === agent.subfolder && picked?.name === agent.name;
+          picked?.subfolder === agent.subfolder &&
+          picked?.name === agent.name &&
+          picked?.entry === agent.entry;
         return (
           <Stack
-            key={`${agent.subfolder}:${agent.name}`}
+            key={`${agent.subfolder}:${agent.entry}:${agent.name}`}
             component="label"
             direction="row"
             spacing={1.25}
@@ -225,14 +227,21 @@ ManualAgent.propTypes = {
  * What the agent is called and the environment values its code reads. Values
  * are kept as the agent's credentials; a name left blank is simply not set.
  */
-export function AgentDetails({ name, onName, envNames, values, onValue }) {
-  const [extra, setExtra] = useState([]);
+export function AgentDetails({
+  name,
+  onName,
+  envNames,
+  values,
+  onValue,
+  extra,
+  onExtra,
+}) {
   const names = [...envNames, ...extra.filter((n) => !envNames.includes(n))];
   const [draft, setDraft] = useState("");
   const addName = () => {
     const trimmed = draft.trim().toUpperCase();
     if (!trimmed || names.includes(trimmed)) return;
-    setExtra((prev) => [...prev, trimmed]);
+    onExtra([...extra, trimmed]);
     setDraft("");
   };
   return (
@@ -309,4 +318,6 @@ AgentDetails.propTypes = {
   envNames: PropTypes.arrayOf(PropTypes.string).isRequired,
   values: PropTypes.object.isRequired,
   onValue: PropTypes.func.isRequired,
+  extra: PropTypes.arrayOf(PropTypes.string).isRequired,
+  onExtra: PropTypes.func.isRequired,
 };

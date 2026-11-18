@@ -15,7 +15,7 @@ import { paths } from "src/routes/paths";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import StatusPill from "src/sections/simulate/environments/components/StatusPill";
 import BuildEnvironmentButton from "./BuildEnvironmentButton";
-import { isBehind, policyLabel } from "./environmentPolicy";
+import { canFollow, isBehind, policyLabel } from "./environmentPolicy";
 import { Card, LineSkeleton, Row } from "./bits";
 import { MONO, ago, rateTone } from "./format";
 import { isRunning, pairLabel } from "./runModel";
@@ -74,7 +74,7 @@ export default function AgentEnvironmentsTab() {
   const open = (env) =>
     navigate(paths.dashboard.simulate.environments.detail(env.id));
 
-  const defaultToProduction = (env) =>
+  const followProduction = (env) =>
     setPolicy.mutate(
       { environmentId: env.id, policy: "follow" },
       {
@@ -210,15 +210,15 @@ export default function AgentEnvironmentsTab() {
                   justifyContent="flex-end"
                   spacing={0.75}
                 >
-                  {canEdit && behind && (
+                  {canEdit && canFollow(env) && (
                     <Button
                       size="small"
                       variant="outlined"
                       color="inherit"
                       disabled={setPolicy.isPending}
-                      onClick={() => defaultToProduction(env)}
+                      onClick={() => followProduction(env)}
                     >
-                      Default to production
+                      {behind ? "Default to production" : "Follow production"}
                     </Button>
                   )}
                   <Button

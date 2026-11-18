@@ -1,8 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithRouter, screen } from "src/utils/test-utils";
+import {
+  fireEvent,
+  renderWithRouter,
+  screen,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
 import UploadConnectFlow from "../UploadConnectFlow";
 
 const mockConnect = vi.fn();
+const mockUpload = vi.fn();
+const startScanState = vi.hoisted(() => ({
+  mutate: () => {},
+  isPending: false,
+}));
 const scanState = vi.hoisted(() => ({
   data: null,
   isError: false,
@@ -16,9 +27,19 @@ vi.mock("react-router-dom", async () => {
 });
 
 vi.mock("src/api/agents/agentConnect", () => ({
-  useStartScan: () => ({ mutate: vi.fn(), isPending: false }),
+  useStartScan: () => ({ ...startScanState }),
   useAgentScan: () => ({ ...scanState }),
   useConnectAgent: () => ({ mutate: mockConnect, isPending: false }),
+}));
+
+vi.mock("src/pages/dashboard/harness/sourceUpload", () => ({
+  prepareSourceFolder: (files) => ({
+    name: files[0].name,
+    files,
+    totalBytes: 10,
+  }),
+  uploadSourceFolder: (...args) => mockUpload(...args),
+  uploadErrorText: () => "The upload failed",
 }));
 
 vi.mock("src/auth/hooks", async (importOriginal) => ({
@@ -43,9 +64,23 @@ const connectBody = () => {
   return mockConnect.mock.calls[0][0];
 };
 
+const pickFolder = (name) =>
+  fireEvent.change(document.querySelector('input[type="file"]'), {
+    target: { files: [new File(["x"], name)] },
+  });
+
+const pick = (name) =>
+  fireEvent.click(
+    within(screen.getByTestId(`found-agent-${name}`)).getByRole("radio"),
+  );
+
 beforeEach(() => {
   sessionStorage.clear();
   mockConnect.mockReset();
+  mockUpload.mockReset();
+  startScanState.mutate = vi.fn();
+  startScanState.isPending = false;
+  scanState.data = null;
   scanState.isError = false;
   scanState.error = null;
   scanState.refetch = () => {};
@@ -120,5 +155,73 @@ describe("UploadConnectFlow", () => {
     expect(screen.getByText("Network Error")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(scanState.refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("connects the entry file of the agent picked", () => {
+    startAt({
+      status: "completed",
+      agents: [
+        { name: "support", subfolder: "", entry: "support.py", envNames: [] },
+        { name: "billing", subfolder: "", entry: "billing.py", envNames: [] },
+      ],
+    });
+
+    pick("billing");
+
+    expect(connectBody()).toMatchObject({
+      archive_artifact_id: "src-1",
+      entry: "billing.py",
+    });
+  });
+
+  it("sends only the values of the agent picked", () => {
+    startAt({
+      status: "completed",
+      agents: [
+        { name: "x", subfolder: "", entry: "x.py", envNames: ["X_KEY"] },
+        { name: "y", subfolder: "", entry: "y.py", envNames: ["Y_KEY"] },
+      ],
+    });
+
+    pick("x");
+    fireEvent.click(screen.getByRole("button", { name: /^Next/ }));
+    fireEvent.change(screen.getByTestId("env-value-X_KEY"), {
+      target: { value: "secret-x" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Back/ }));
+    pick("y");
+
+    expect(connectBody().env_values).toEqual({});
+  });
+
+  it("holds the folder while the agents are being found", () => {
+    startScanState.isPending = true;
+    sessionStorage.setItem(
+      "agents.connect.upload.draft",
+      JSON.stringify({ stage: "source", folder: FOLDER }),
+    );
+    renderWithRouter(<UploadConnectFlow />);
+
+    expect(screen.getByTestId("connect-upload-dropzone")).toBeDisabled();
+  });
+
+  it("forgets the first upload once another folder is picked", async () => {
+    mockUpload
+      .mockResolvedValueOnce({ source_id: "src-1" })
+      .mockRejectedValueOnce(new Error("rejected"));
+    renderWithRouter(<UploadConnectFlow />);
+    const findAgents = () =>
+      screen.getByRole("button", { name: "Find agents" });
+
+    pickFolder("first");
+    await waitFor(() => expect(findAgents()).toBeEnabled());
+    pickFolder("second");
+    expect(
+      await screen.findByTestId("connect-upload-dropzone-error"),
+    ).toHaveTextContent("The upload failed");
+
+    expect(findAgents()).toBeDisabled();
+    fireEvent.click(findAgents());
+    expect(startScanState.mutate).not.toHaveBeenCalled();
   });
 });

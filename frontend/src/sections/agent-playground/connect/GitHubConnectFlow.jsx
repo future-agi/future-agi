@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSnackbar } from "notistack";
 import {
@@ -40,9 +40,12 @@ import { AgentDetails, FoundAgents, ManualAgent } from "./ConnectAgentSteps";
 import { githubSource } from "./githubSource";
 import {
   clearConnectDraft,
+  credentialsOf,
   draftHasProgress,
   readConnectDraft,
   saveConnectDraft,
+  selectionKey,
+  shownEnvValues,
 } from "./connectDraft";
 import { LogoTile, OptionCard, TextLink } from "./connectBits";
 import { MONO } from "./connectStyles";
@@ -339,15 +342,20 @@ export default function GitHubConnectFlow({ outcome }) {
   const [linkBranch, setLinkBranch] = useState(draft.linkBranch || "");
   // "source": pick where the code is. "agents": the scan's list. "details":
   // name and values of the one picked.
+  const resumable = !!(draft.scanId && draft.scanSource);
   const [stage, setStage] = useState(
-    draft.scanId ? draft.stage || "source" : "source",
+    resumable ? draft.stage || "source" : "source",
   );
-  const [scanId, setScanId] = useState(draft.scanId || null);
+  const [scanId, setScanId] = useState(resumable ? draft.scanId : null);
+  const [scanSource, setScanSource] = useState(
+    resumable ? draft.scanSource : null,
+  );
   const [picked, setPicked] = useState(draft.picked || null);
   const [manual, setManual] = useState(!!draft.manual);
   const [subfolder, setSubfolder] = useState(draft.subfolder || "");
   const [name, setName] = useState(draft.name || "");
-  const [values, setValues] = useState({});
+  const [named, setNamed] = useState(draft.named || null);
+  const [held, setHeld] = useState(null);
 
   useEffect(() => {
     const next = {
@@ -358,10 +366,12 @@ export default function GitHubConnectFlow({ outcome }) {
       linkBranch,
       stage,
       scanId,
+      scanSource,
       picked,
       manual,
       subfolder,
       name,
+      named,
     };
     if (draftHasProgress(next)) {
       saveConnectDraft(next);
@@ -376,10 +386,12 @@ export default function GitHubConnectFlow({ outcome }) {
     linkBranch,
     stage,
     scanId,
+    scanSource,
     picked,
     manual,
     subfolder,
     name,
+    named,
   ]);
   const startScan = useStartScan();
   const scan = useAgentScan(scanId);
@@ -403,10 +415,19 @@ export default function GitHubConnectFlow({ outcome }) {
     link,
     linkBranch,
   });
+  const sourceKey = source ? JSON.stringify(source) : "";
+  const currentSource = useRef(sourceKey);
+  useEffect(() => {
+    currentSource.current = sourceKey;
+  }, [sourceKey]);
 
-  const findAgents = () =>
-    startScan.mutate(source, {
+  const findAgents = () => {
+    const scanned = source;
+    const scannedKey = sourceKey;
+    startScan.mutate(scanned, {
       onSuccess: (data) => {
+        if (currentSource.current !== scannedKey) return;
+        setScanSource(scanned);
         setScanId(data.id);
         setPicked(null);
         setManual(false);
@@ -414,28 +435,40 @@ export default function GitHubConnectFlow({ outcome }) {
       },
       onError: (e) => enqueueSnackbar(errorMessage(e), { variant: "error" }),
     });
-
-  const toDetails = () => {
-    const chosen = manual
-      ? { name: "", subfolder: subfolder.trim(), envNames: [] }
-      : picked;
-    setName((current) => current || defaultName(chosen, source));
-    setStage("details");
   };
 
   const chosenFolder = manual ? subfolder.trim() : picked?.subfolder || "";
+  const chosenEntry = manual ? "" : picked?.entry || "";
   const envNames = manual ? [] : picked?.envNames || [];
+  const selection = selectionKey(
+    scanSource,
+    scanId,
+    chosenFolder,
+    chosenEntry,
+    manual,
+  );
+  const credentials = credentialsOf(held, selection);
+
+  const toDetails = () => {
+    if (named !== selection) {
+      const chosen = manual
+        ? { name: "", subfolder: chosenFolder, envNames: [] }
+        : picked;
+      setName(defaultName(chosen, scanSource));
+      setNamed(selection);
+    }
+    setStage("details");
+  };
 
   const connectAgent = () =>
     connect.mutate(
       {
-        ...source,
+        ...scanSource,
         ...(chosenFolder ? { subfolder: chosenFolder } : {}),
+        ...(chosenEntry ? { entry: chosenEntry } : {}),
         ...(scan.data?.commitSha ? { commit_sha: scan.data.commitSha } : {}),
         name: name.trim(),
-        env_values: Object.fromEntries(
-          Object.entries(values).filter(([, value]) => value),
-        ),
+        env_values: shownEnvValues(credentials, envNames),
       },
       {
         onSuccess: (data) => {
@@ -573,9 +606,9 @@ export default function GitHubConnectFlow({ outcome }) {
             component="span"
             sx={{ fontFamily: MONO, color: "text.primary" }}
           >
-            {source?.repository}
+            {scanSource?.repository}
           </Box>
-          {source?.ref ? ` at ${source.ref}` : ""}
+          {scanSource?.ref ? ` at ${scanSource.ref}` : ""}
           {" · "}
           <TextLink onClick={() => setStage("source")}>Change</TextLink>
         </Typography>
@@ -624,7 +657,7 @@ export default function GitHubConnectFlow({ outcome }) {
             component="span"
             sx={{ fontFamily: MONO, color: "text.primary" }}
           >
-            {source?.repository}
+            {scanSource?.repository}
           </Box>
           {chosenFolder ? ` · ${chosenFolder}/` : " · repository root"}
           {" · "}
@@ -634,9 +667,19 @@ export default function GitHubConnectFlow({ outcome }) {
           name={name}
           onName={setName}
           envNames={envNames}
-          values={values}
+          values={credentials.values}
           onValue={(envName, value) =>
-            setValues((prev) => ({ ...prev, [envName]: value }))
+            setHeld((prev) => {
+              const current = credentialsOf(prev, selection);
+              return {
+                ...current,
+                values: { ...current.values, [envName]: value },
+              };
+            })
+          }
+          extra={credentials.extra}
+          onExtra={(extra) =>
+            setHeld((prev) => ({ ...credentialsOf(prev, selection), extra }))
           }
         />
       </>

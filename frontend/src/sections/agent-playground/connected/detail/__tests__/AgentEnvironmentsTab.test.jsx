@@ -285,6 +285,51 @@ describe("AgentEnvironmentsTab", () => {
     );
   });
 
+  it("lets a pinned environment on the production version follow production", () => {
+    envState.current = {
+      isLoading: false,
+      isError: false,
+      data: [{ ...TESTED, policy: "pinned" }, UNTESTED],
+    };
+    renderTab();
+    expect(
+      screen.queryByRole("button", { name: "Default to production" }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Follow production" }));
+    expect(policyMutate).toHaveBeenCalledWith(
+      { environmentId: "e5391b8a", policy: "follow" },
+      expect.any(Object),
+    );
+  });
+
+  it("lets a pinned environment ahead of production follow production", () => {
+    agentState.current = { environmentCount: 2, activeVersionNumber: 2 };
+    envState.current = {
+      isLoading: false,
+      isError: false,
+      data: [{ ...TESTED, policy: "pinned" }],
+    };
+    renderTab();
+    expect(
+      screen.getByRole("button", { name: "Follow production" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers no follow action to an environment that already follows production", () => {
+    envState.current = {
+      isLoading: false,
+      isError: false,
+      data: [{ ...TESTED, policy: "follow" }],
+    };
+    renderTab();
+    expect(
+      screen.queryByRole("button", { name: "Follow production" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Default to production" }),
+    ).toBeNull();
+  });
+
   it("hides Default to production from a viewer", () => {
     auth.role = "workspace_viewer";
     envState.current = {

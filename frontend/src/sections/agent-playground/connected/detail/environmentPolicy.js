@@ -19,3 +19,5 @@ export const policyLabel = (env, agent) => {
 
 export const isBehind = (env, agent) =>
   env.policy === "pinned" && productionAhead(env, agent) != null;
+
+export const canFollow = (env) => env.policy === "pinned" && !!env.agentVersion;

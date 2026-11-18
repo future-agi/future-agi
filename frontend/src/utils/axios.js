@@ -1671,6 +1671,16 @@ export const endpoints = {
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/",
         { agent_id: id, version_id: version },
       ),
+    codeCompare: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/",
+        { agent_id: id, version_id: version },
+      ),
+    codePatches: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/patches/",
+        { agent_id: id, version_id: version },
+      ),
     environmentAgentPolicy: (environmentId) =>
       apiPath("/simulate/api/harness-environments/{id}/agent-policy/", {
         id: environmentId,

@@ -16,9 +16,12 @@ import { AgentDetails, FoundAgents } from "./ConnectAgentSteps";
 import { TextLink } from "./connectBits";
 import {
   clearConnectDraft,
+  credentialsOf,
   draftHasProgress,
   readConnectDraft,
   saveConnectDraft,
+  selectionKey,
+  shownEnvValues,
 } from "./connectDraft";
 import { UPLOAD_SOURCE } from "./connectSources";
 import { MONO } from "./connectStyles";
@@ -49,29 +52,36 @@ export default function UploadConnectFlow() {
   const [picked, setPicked] = useState(draft.picked || null);
   const [manual, setManual] = useState(!!draft.manual);
   const [name, setName] = useState(draft.name || "");
-  const [values, setValues] = useState({});
+  const [named, setNamed] = useState(draft.named || null);
+  const [held, setHeld] = useState(null);
   const startScan = useStartScan();
   const scan = useAgentScan(scanId);
   const connect = useConnectAgent();
 
   useEffect(() => {
-    const next = { stage, folder, scanId, picked, manual, name };
+    const next = { stage, folder, scanId, picked, manual, name, named };
     if (draftHasProgress(next)) {
       saveConnectDraft(next, UPLOAD_SOURCE);
     } else {
       clearConnectDraft(UPLOAD_SOURCE);
     }
-  }, [stage, folder, scanId, picked, manual, name]);
+  }, [stage, folder, scanId, picked, manual, name, named]);
 
   const source = folder?.sourceId
     ? { kind: "archive", archive_artifact_id: folder.sourceId }
     : null;
 
-  const uploaded = (next) => {
+  const forgetUpload = (next) => {
     setFolder(next);
     setScanId(null);
     setPicked(null);
     setManual(false);
+    setHeld(null);
+  };
+
+  const uploadingChanged = (busy) => {
+    setUploading(busy);
+    if (busy) forgetUpload(null);
   };
 
   const findAgents = () =>
@@ -85,23 +95,26 @@ export default function UploadConnectFlow() {
       onError: (e) => enqueueSnackbar(errorMessage(e), { variant: "error" }),
     });
 
+  const envNames = manual ? [] : picked?.envNames || [];
+  const chosenEntry = manual ? "" : picked?.entry || "";
+  const selection = selectionKey(source, scanId, chosenEntry, manual);
+  const credentials = credentialsOf(held, selection);
+
   const toDetails = () => {
-    setName(
-      (current) => current || defaultName(manual ? null : picked, folder),
-    );
+    if (named !== selection) {
+      setName(defaultName(manual ? null : picked, folder));
+      setNamed(selection);
+    }
     setStage("details");
   };
-
-  const envNames = manual ? [] : picked?.envNames || [];
 
   const connectAgent = () =>
     connect.mutate(
       {
         ...source,
+        ...(chosenEntry ? { entry: chosenEntry } : {}),
         name: name.trim(),
-        env_values: Object.fromEntries(
-          Object.entries(values).filter(([, value]) => value),
-        ),
+        env_values: shownEnvValues(credentials, envNames),
       },
       {
         onSuccess: (data) => {
@@ -150,9 +163,9 @@ export default function UploadConnectFlow() {
         </Typography>
         <FolderUploadField
           folder={folder}
-          onUploaded={uploaded}
-          onUploading={setUploading}
-          disabled={!canConnect}
+          onUploaded={forgetUpload}
+          onUploading={uploadingChanged}
+          disabled={!canConnect || startScan.isPending}
           testId="connect-upload-dropzone"
         />
       </>
@@ -228,9 +241,19 @@ export default function UploadConnectFlow() {
           name={name}
           onName={setName}
           envNames={envNames}
-          values={values}
+          values={credentials.values}
           onValue={(envName, value) =>
-            setValues((prev) => ({ ...prev, [envName]: value }))
+            setHeld((prev) => {
+              const current = credentialsOf(prev, selection);
+              return {
+                ...current,
+                values: { ...current.values, [envName]: value },
+              };
+            })
+          }
+          extra={credentials.extra}
+          onExtra={(extra) =>
+            setHeld((prev) => ({ ...credentialsOf(prev, selection), extra }))
           }
         />
       </>

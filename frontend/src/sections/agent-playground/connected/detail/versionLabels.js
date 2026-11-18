@@ -41,8 +41,24 @@ export const environmentsLabel = (count) =>
 // Whether a checked version may be made production, retried or discarded.
 export const canPromote = (v) =>
   !v.isActive && !["pending", "failed", "discarded"].includes(v.check);
-export const canRetry = (v) =>
-  v.check === "failed" && v.checkFailure?.retryable !== false;
+export const CHECK_WAIT_LIMIT_MS = 60 * 60 * 1000;
+export const isStalled = (v, now = Date.now()) => {
+  if (v.check !== "pending") return false;
+  const started = Math.max(
+    0,
+    ...[v.createdAt, v.checkStartedAt]
+      .filter(Boolean)
+      .map((at) => new Date(at).getTime())
+      .filter(Number.isFinite),
+  );
+  return started > 0 && now - started >= CHECK_WAIT_LIMIT_MS;
+};
+export const canRetry = (v, now = Date.now()) =>
+  (v.check === "failed" && v.checkFailure?.retryable !== false) ||
+  isStalled(v, now);
+
+export const missingCredentials = (failure) =>
+  failure?.code === "credentials_missing" ? failure.missing ?? [] : [];
 export const canDiscard = (v) =>
   !v.isActive && ["pending", "failed"].includes(v.check);
 
