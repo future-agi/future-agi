@@ -2946,3 +2946,307 @@
 
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
+
+### SIM-E2E-003 — an environment-only org turns Observe sessions into an environment test import through the reviewed bridge
+
+**Goal:** An environment-only organisation turns production sessions from Observe into a draft regression import for one of its environments, through the reviewed bridge and never legacy Replay, and sees what the evidence holds and lacks
+
+**Spec:** `flows/simulate/evidence-import-from-observe.spec.ts:37`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two sessions in a minted Observe project; one user turn carries a minted ask and a minted email
+2. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
+3. open the project's Sessions and select the two seeded rows
+4. open Actions and read the menu
+5. choose Create environment test, pick the seeded environment and import
+6. land on the environment's Scenarios tab with the import's review open
+
+**Backend state verified:**
+
+- both seeded sessions are stored for the minted project in ClickHouse trace_sessions (FINAL)
+- the Actions menu is exactly "Add to annotation queue" and "Create environment test": no Replay for an environment-only org
+- from the Actions click on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201, and no request names replay
+- simulate_evidence_import has one row for the actor org, the seeded environment and the minted project, with two pending cases whose source ids are the seeded sessions
+- the import's bundle re-reads Observe: each case's transcript holds its minted ask, and redaction reports the minted email as an EMAIL_ADDRESS finding
+- the review shows both cases waiting, the transcript present, the starting state missing, and that the test is not an exact replay
+
+### SIM-E2E-004 — a person pastes a transcript into an environment and sees its personal data replaced and marked as their transcript
+
+**Goal:** A person pastes a transcript, imports it into an environment, and sees its personal data replaced and marked as their transcript
+
+**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:44`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
+2. open the environment's Scenarios tab, choose Import evidence, then Add a transcript
+3. paste a transcript whose second line has an unknown speaker, import it and read the refusal
+4. fix the line, name the transcript and import it
+5. land on the Scenarios tab with the import's review open
+
+**Backend state verified:**
+
+- the first import is answered 400 transcript_unreadable naming transcript 1 and line 2, the dialog shows that message, and no simulate_evidence_import row is made
+- from the fixed import on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201
+- simulate_evidence_import has one row for the actor org and the seeded environment: source_kind transcript, no project, not declared production, with one pending case transcript-1
+- neither the import's stored redaction nor its case's stored transcript holds the minted email, and the stored transcript holds the minted ask
+- the bundle read again holds the minted ask, shows the email as <EMAIL_ADDRESS>, counts at least one replaced value, lists no finding and is not production
+- the review shows the case under its given name, marked "Your transcript", says "1 transcript you added" and that it is not marked production, shows tool calls missing, and that the test is not an exact replay
+
+### SIM-E2E-005 — a person picks dataset rows and their columns and reviews them in an environment as evidence read live from the dataset
+
+**Goal:** A person picks rows in a dataset, says which column is the conversation, the labels and the expected outcome, and reviews them in an environment as evidence read live from the dataset
+
+**Spec:** `flows/simulate/evidence-import-from-dataset.spec.ts:63`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment (lib/environment-seed.ts) and a dataset with text columns chat, intent and expected, and three rows
+2. open the dataset and tick the two rows whose chat holds a minted ask
+3. choose Create environment test, pick the environment, chat as the conversation, intent as a label and expected as the expected outcome, leave production off and import
+4. land on the environment's Scenarios tab with the import's review open
+5. edit one picked row's expected cell through the dataset API and reload the review
+
+**Backend state verified:**
+
+- from the Import click on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201, naming the dataset, the two ticked rows, the three picked columns and production false
+- simulate_evidence_import has one row for the actor org and the seeded environment: source_kind dataset, no project, the seeded dataset, not declared production, with the picked column ids; its two cases are pending, store no transcript and carry a 64-character digest
+- no simulate_evidence_import or simulate_evidence_import_case row holds the minted asks, email or expected text
+- the bundle read again shows the first row as the dataset holds it now, a transcript finding that replaces the minted email with <EMAIL_ADDRESS>, the intent label on the row, the minted expected text as the expected outcome, and is not production
+- after the cell edit the bundle says only the edited row changed since import, and shows its new expected text
+- the review shows two cards marked "Dataset row", each with its expected outcome, "2 rows from a dataset" and that they are not marked production; after the reload only the edited card says the source changed
+
+### SIM-E2E-006 — a person finds two imports they never drafted under Draft imports, resumes one and discards the other
+
+**Goal:** A person finds two imports they never drafted under Draft imports on an environment's Scenarios tab, resumes one, and discards the other
+
+**Spec:** `flows/simulate/evidence-import-resume.spec.ts:32`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment (lib/environment-seed.ts) and two transcript imports, A then B, through the create route
+2. open the environment's Scenarios tab and read the Draft imports strip
+3. resume A: its review opens
+4. close the review
+5. discard B and confirm
+
+**Backend state verified:**
+
+- the strip rows are exactly B then A, newest first, each "1 transcript · waiting to be drafted", and equal the list route's answer
+- Resume sends no mutating /simulate/ request, puts import=<A> in the URL, and the review shows A's name
+- from the confirm on, the only mutating /simulate/ request is DELETE on B, answered 204; B is deleted with its redaction and its case's stored transcript cleared, and A is untouched
+- afterwards the list route answers exactly [A] and the strip shows only A
+
+### SIM-E2E-007 — a run with fewer failing cases than an epoch needs starts one that writes variations first
+
+**Goal:** A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step
+
+**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:226`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a finished run of the environment
+2. open Debug failures
+3. press Run Epoch
+4. read the Scenarios row of the launch form
+5. press Run Epoch in the form
+6. read the epoch page
+
+**Browser observations:**
+
+- the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
+- the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit
+- the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
+- the epoch page's steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
+- the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)
+
+### SIM-E2E-008 — an epoch that found no safe improvement shows why and starts a new one with limits
+
+**Goal:** A developer whose epoch found no safe improvement sees why, with the numbers it was decided on, and starts a new epoch from it with the agent's models locked and a cost limit
+
+**Spec:** `flows/simulate/epoch-limits-rerun.spec.ts:206`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the finished epoch
+2. read its ending
+3. open How it was decided
+4. press Run a new epoch
+5. read the model lock
+6. type a cost limit of 0.01
+7. press Run Epoch
+8. read the new epoch's page
+
+**Browser observations:**
+
+- the ending reads "No safe improvement: the only candidate went over the cost or latency limit."
+- the rejected candidate's Reply time line reads "Over the limit: 19.38 s against 13.22 s on the current version, allowed up to 16.53 s." and its cost line has its numbers too
+- the launch form asks launch-options for the epoch's own run and locks the model its spans named, gpt-4o-mini
+- the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
+- the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
+
+### SIM-E2E-010 — an actor with no channel is named on Scenarios, and World state reads a read apart from a write
+
+**Goal:** A developer sees every actor of the cast on the scenarios that include it, speaking or not, and a trial's World state says what the agent only read apart from what it committed
+
+**Spec:** `flows/simulate/actors-world-changes.spec.ts:22`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment whose refunds include a world actor with no channel and one finished trial (e2e/lib/harness_environment_seed.py)
+2. read the cast (GET actors)
+3. check an edit to the actor (POST actor-validation)
+4. read the scenarios (GET harness-jobs/<id>/scenarios)
+5. read the trial (GET v3/call-executions/<id>)
+6. open the Actors tab and pick a side from Add actor
+7. open the Scenarios tab
+8. open the trial's World state
+
+**Backend state verified:**
+
+- the cast lists the actor with no channel
+- checking an edit to it finds nothing to fix and writes nothing
+- the refund scenario includes it by id
+- the trial's World state count 1 committed (issue_refund) and 1 read (lookup_order)
+
+**Browser observations:**
+
+- Add actor offers the caller's side and the world, and opens Add actor on the side picked
+- the Scenarios table names the actor, never its raw id
+- World state reads "1 read" and "Committed: issue_refund"
+
+### SIM-E2E-017 — the Tools card shows each tool's inputs with units, what it returns, and a production-only tool as Unsupported
+
+**Goal:** A developer inspects each tool of the test world: its inputs with units, the fields it returns, whether it changes records, whether it is reset between trials, and which tools only production answers
+
+**Spec:** `flows/simulate/tool-contract-view.spec.ts:13`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment whose contract records each tool's fields and one tool that reaches production (e2e/lib/harness_environment_seed.py)
+2. read the environment (GET harness-environments/<id>/)
+3. open the Contract tab
+4. expand lookup_order
+5. read issue_refund's Unsupported label
+
+**Backend state verified:**
+
+- the contract section names issue_refund production-only
+- lookup_order returns status and total
+
+**Browser observations:**
+
+- lookup_order reads "Reads only" and its returned fields with units
+- issue_refund reads Unsupported, never Simulated
+
+### SIM-E2E-019 — World state shows a faulted call apart from a commit, and an actor's change made during the call
+
+**Goal:** A developer reads what each trial did to the world: a call the scenario's test condition faulted, counted apart from what was committed, and what a world actor decided and committed during the call
+
+**Spec:** `flows/simulate/world-changes-fault-and-actor.spec.ts:14`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trial whose refund was faulted by its test condition (e2e/lib/harness_environment_seed.py)
+2. open its World state
+3. seed a trial where the world actor approved during the call
+4. open its World state
+
+**Backend state verified:**
+
+- seeded through the backend container; the World state record is the one ingestion keeps
+
+**Browser observations:**
+
+- the faulted trial reads 1 faulted and No change, never Committed: issue_refund
+- the actor trial names Dana Brooks, her committed approvals.put and her decision
+
+### SIM-E2E-020 — giving an actor an action only another actor holds is flagged before saving
+
+**Goal:** A developer adding an actor sees, before saving, that an action they give it is held only by another actor, and saves only once they confirm both should have it
+
+**Spec:** `flows/simulate/actor-permission-conflict.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment whose world actor alone may take approvals.put (e2e/lib/harness_environment_seed.py)
+2. check a new actor given approvals.put (POST actor-validation)
+3. open the Actors tab and add an actor in the world
+4. name it and give it approvals.put
+5. tick Both should have it
+
+**Backend state verified:**
+
+- the check names Dana Brooks as the only holder of approvals.put and writes nothing
+
+**Browser observations:**
+
+- the form says approvals.put is held only by Dana Brooks before anything is saved
+- Save to draft stays off until Both should have it is ticked
+
+### SIM-E2E-021 — World state flags a write committed twice
+
+**Goal:** A developer sees that the world committed the agent's refund twice after its first answer was lost, said apart from a single commit
+
+**Spec:** `flows/simulate/world-state-duplicate-and-refusal.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trial whose refund the world committed twice (e2e/lib/harness_environment_seed.py)
+2. read the trial (GET v3/call-executions/<id>)
+3. open its World state
+
+**Backend state verified:**
+
+- the trial's World state lists issue_refund among the writes committed twice
+
+**Browser observations:**
+
+- World state reads "Committed twice: issue_refund" and counts 1 duplicate
+
+### SIM-E2E-022 — World state says an approval was refused and the agent committed anyway
+
+**Goal:** A developer reads that an approver refused the agent's request and that the agent committed the change after the refusal, never that the agent waited for the decision and stopped
+
+**Spec:** `flows/simulate/world-state-duplicate-and-refusal.spec.ts:48`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trial where Dana Brooks refused the refund and the agent issued it anyway (e2e/lib/harness_environment_seed.py)
+2. read the trial (GET v3/call-executions/<id>)
+3. open its World state
+
+**Backend state verified:**
+
+- the trial's decision by Dana Brooks is refused and flagged committed after the refusal
+
+**Browser observations:**
+
+- her decision reads Refused
+- a line says the agent committed the change after Dana Brooks refused it
+- the approval names the refund the agent wrote after the decision

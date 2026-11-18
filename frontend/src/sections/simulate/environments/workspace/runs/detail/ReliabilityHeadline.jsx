@@ -118,6 +118,13 @@ export default function ReliabilityHeadline({ executionId, enabled }) {
           help="Infra, simulator or missing-evidence results. They say nothing about the agent, so they are left out of every rate."
         />
       )}
+      {reliability.excluded_not_comparable > 0 && (
+        <Stat
+          label="Not comparable"
+          value={`${reliability.excluded_not_comparable} trial${reliability.excluded_not_comparable === 1 ? "" : "s"}`}
+          help="Did not start from the seeded records, so they cannot show whether results repeat. They are left out of pass^1, pass^k and the range."
+        />
+      )}
     </Stack>
   );
 }

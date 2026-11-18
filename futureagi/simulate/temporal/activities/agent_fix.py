@@ -10,6 +10,7 @@ from simulate.temporal.types.agent_fix import (
     AgentFixCloseInput,
     AgentFixInput,
     AgentFixLaunch,
+    AgentFixVariations,
     AgentFixWatch,
     AgentFixWatchInput,
 )
@@ -22,6 +23,16 @@ async def launch_agent_fix_sandbox(input: AgentFixInput) -> AgentFixLaunch:
 
     async with Heartbeater():
         return await _run_db(launch, input.fix_run_id)
+
+
+@activity.defn(name="advance_agent_fix_variations")
+async def advance_agent_fix_variations(input: AgentFixInput) -> AgentFixVariations:
+    """One look at the fix's first step, which also takes it as far as it can go now."""
+    from simulate.services.agent_fix_variations import advance, step_minutes
+
+    step = await _run_db(advance, input.fix_run_id)
+    minutes = await _run_db(step_minutes, input.fix_run_id, step)
+    return AgentFixVariations(step=step, minutes=minutes)
 
 
 @activity.defn(name="watch_agent_fix_engine")

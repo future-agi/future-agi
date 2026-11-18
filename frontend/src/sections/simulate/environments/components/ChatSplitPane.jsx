@@ -12,6 +12,7 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { ENV_TAB_RAIL_HEIGHT } from "../environmentOptions";
+import { subscribeBuilderChatFocus } from "../buildEnvironment/console/builderChatFocusBus";
 import {
   CHAT_PANE_COPY as COPY,
   CHAT_PANE_DEFAULT_WIDTH,
@@ -161,6 +162,8 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
 
   const collapse = useCallback(() => setOpen(false), [setOpen]);
   const expand = useCallback(() => setOpen(true), [setOpen]);
+  // Asked to show one of its messages, the chat opens.
+  useEffect(() => subscribeBuilderChatFocus(expand), [expand]);
 
   const onPointerDown = (event) => {
     // Primary button only: a right-click opens the context menu, which can
@@ -339,7 +342,10 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
                     "&:hover": { color: "text.primary" },
                   }}
                 >
-                  <Iconify icon="solar:double-alt-arrow-right-linear" width={16} />
+                  <Iconify
+                    icon="solar:double-alt-arrow-right-linear"
+                    width={16}
+                  />
                 </IconButton>
               </CustomTooltip>
             </Box>

@@ -7,13 +7,28 @@ import {
   budgetSteps,
   minuteSteps,
   launchError,
+  variationsNote,
+  blockedReason,
+  costLimitOf,
+  isTraced,
+  seesModels,
+  tracesUnreadable,
+  marginSteps,
 } from "../launchFormView";
 
 const LIMITS = {
   budget_credits_max: 50000,
   max_minutes_max: 1440,
   scenarios_min: 1,
+  cases_min: 1,
+  variations_per_case: 3,
   scenarios_max: 200,
+};
+const FLOOR = {
+  ...LIMITS,
+  scenarios_min: 3,
+  cases_min: 12,
+  verified_cases_min: 6,
 };
 const SURFACES = [
   { id: "prompt", label: "Instructions" },
@@ -30,9 +45,59 @@ describe("held back", () => {
 
   it("counts what is fixed, held back and protected", () => {
     expect(countsLine(12, 9)).toBe(
-      "12 failing: 8 to fix, 4 held back to prove it · 9 must keep passing",
+      "12 failing: 8 to fix, 4 held back to prove it · 9 protected",
     );
-    expect(countsLine(3, 1)).toBe("3 failing to fix · 1 must keep passing");
+    expect(countsLine(3, 1)).toBe("3 failing to fix · 1 protected");
+  });
+});
+
+describe("variations", () => {
+  it("writes variations first below the floor, instead of refusing", () => {
+    expect(countsLine(5, 1, FLOOR)).toBe(
+      "5 failing, and up to 15 variations of them · 1 protected",
+    );
+    expect(variationsNote(7, FLOOR)).toBe(
+      "An epoch needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails.",
+    );
+    expect(variationsNote(12, FLOOR)).toBeNull();
+    expect(
+      launchError({
+        targets: ["a", "b", "c", "d", "e"],
+        protectedKeys: [],
+        surfaces: ["prompt"],
+        limits: FLOOR,
+      }),
+    ).toBeNull();
+  });
+
+  it("says a fix from too few cases can only end with Limited validation", () => {
+    const tail =
+      "With fewer than 6 failing cases it can only end with Limited validation";
+    expect(variationsNote(5, FLOOR, "archive")).toMatch(
+      new RegExp(`${tail}\\.$`),
+    );
+    expect(variationsNote(5, FLOOR, "github")).toMatch(
+      new RegExp(`${tail} and opens a draft pull request\\.$`),
+    );
+    expect(variationsNote(6, FLOOR, "github")).not.toMatch(
+      /Limited validation/,
+    );
+  });
+
+  it("blocks Start for the variations only when the pick needs them", () => {
+    const options = {
+      blocked: null,
+      variations_blocked: {
+        code: "fix_draft_open",
+        message: "Save first",
+      },
+      limits: FLOOR,
+    };
+    expect(blockedReason(options, 5)).toBe("Save first");
+    expect(blockedReason(options, 12)).toBeNull();
+    expect(blockedReason({ ...options, blocked: { message: "Busy" } }, 5)).toBe(
+      "Busy",
+    );
   });
 });
 
@@ -90,8 +155,8 @@ describe("launch checks", () => {
     [ok, null],
     [{ ...ok, targets: [] }, "Pick at least one failing case to fix."],
     [
-      { ...ok, limits: { ...LIMITS, scenarios_min: 12 } },
-      "Needs at least 12 failing cases to prove a fix.",
+      { ...ok, limits: FLOOR },
+      "Needs at least 3 failing cases: with 3 variations of each, they can reach the 12 an epoch needs.",
     ],
     [
       { ...ok, targets: Array.from({ length: 201 }, (_, i) => `t${i}`) },
@@ -102,7 +167,62 @@ describe("launch checks", () => {
       "A case can't be both fixed and protected.",
     ],
     [{ ...ok, surfaces: [] }, "Pick at least one part it may change."],
+    [{ ...ok, seenModels: ["m1"], models: ["m1"] }, null],
+    [{ ...ok, seenModels: ["m1"], models: [] }, "Allow at least one model."],
+    [
+      { ...ok, seenModels: ["m1", "vertex_ai/m2"], models: ["m1"] },
+      "Allow every model this run called: vertex_ai/m2.",
+    ],
+    [{ ...ok, seenModels: ["m1", "vertex_ai/m2"], models: ["m1", "M2"] }, null],
+    // A fix that sees no model needs none allowed.
+    [{ ...ok, seenModels: [], models: [] }, null],
+    [{ ...ok, costLimit: "0.05" }, null],
+    [
+      { ...ok, costLimit: "0" },
+      "The cost limit must be a number of dollars above 0.",
+    ],
+    [
+      { ...ok, costLimit: "five" },
+      "The cost limit must be a number of dollars above 0.",
+    ],
   ])("passes a valid pick and refuses the rest %#", (input, message) => {
     expect(launchError(input)).toBe(message);
+  });
+});
+
+describe("constraints", () => {
+  it("reads an empty cost limit as none", () => {
+    expect(costLimitOf("")).toBeNull();
+    expect(costLimitOf("  ")).toBeNull();
+    expect(costLimitOf(" 0.02 ")).toBe(0.02);
+    expect(costLimitOf("-1")).toBeNaN();
+  });
+
+  it("offers the margins with the default among them", () => {
+    expect(marginSteps(25)).toEqual([0, 10, 25, 50, 100]);
+    expect(marginSteps(40)).toEqual([0, 10, 25, 40, 50, 100]);
+    // No increase is a choice of its own, offered once even when it is the value.
+    expect(marginSteps(0)).toEqual([0, 10, 25, 50, 100]);
+  });
+
+  it("tells an unreadable run's traces from an untraced agent", () => {
+    expect(
+      tracesUnreadable({ blocked: { code: "fix_traces_unreadable" } }),
+    ).toBe(true);
+    expect(tracesUnreadable({ blocked: { code: "fix_run_active" } })).toBe(
+      false,
+    );
+    expect(tracesUnreadable({ blocked: null })).toBe(false);
+  });
+
+  it("calls an agent traced when its spans named a model or measured its cost", () => {
+    const options = (allowed_models, agent_cost_metered) => ({
+      defaults: { allowed_models, agent_cost_metered },
+    });
+    expect(isTraced(options([], false))).toBe(false);
+    expect(isTraced(options([], true))).toBe(true);
+    expect(isTraced(options(["m1"], false))).toBe(true);
+    expect(seesModels(options([], true))).toBe(false);
+    expect(seesModels(options(["m1"], false))).toBe(true);
   });
 });

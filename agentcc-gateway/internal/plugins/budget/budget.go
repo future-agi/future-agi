@@ -499,6 +499,8 @@ func (p *Plugin) recordToCounter(bc *orgBudgetCounter, model string, cost float6
 		bc.modelSpend = make(map[string]float64)
 		bc.periodStart = start
 	}
+	// Recorded as the shared ledger records it, so the ledgers agree.
+	cost = models.SpendUSD(cost)
 	bc.totalSpend += cost
 	if model != "" {
 		bc.modelSpend[model] += cost
