@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from simulate.models import (
     AgentVersion,
+    AgentVersionSetup,
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
@@ -20,6 +21,7 @@ from simulate.models import (
 )
 from simulate.models.harness_versioning import VersionStatus
 from simulate.services.canonical_json import canonical_digest
+from simulate.services.harness_agent_versions import lineage_version_ids
 from simulate.services.harness_readiness.catalogue import (
     AREAS,
     CATALOG_VERSION,
@@ -55,6 +57,7 @@ from simulate.services.harness_readiness.workers import (
     recent_calls,
     worker_boundaries,
 )
+from simulate.services.harness_usage import require_harness_authoring
 from simulate.services.harness_versioning import validation
 from simulate.services.harness_versioning.read import (
     _agent_definition_id,
@@ -147,8 +150,6 @@ def resolve_pairing(
 
 
 def _require_environments_agent(environment: HostedHarnessJob, agent_id: Any) -> None:
-    from simulate.services.harness_agent_versions import lineage_version_ids
-
     definition_id = _agent_definition_id(environment)
     found = (
         definition_id is not None
@@ -244,8 +245,6 @@ def recheck(pairing: Pairing) -> validation.ValidationView:
             agent version's tools are still to be read or an earlier harness made
             its certificate.
     """
-    from simulate.services.harness_usage import require_harness_authoring
-
     agent = pairing.agent_version
     bundle = pair_bundle(pairing)
     if (
@@ -318,8 +317,6 @@ def _report_key(pairing: Pairing, bundle: HarnessAssembledBundle | None) -> str:
     """What a report is read from: the versions and their side row, the bundle and
     its latest check, the agent's stored document, and the agent's newest job of this
     environment (its runs and Stops). Any change reads the report again."""
-    from simulate.models import AgentVersionSetup
-
     agent_id = getattr(pairing.agent_version, "id", None)
     check = (
         HostedHarnessJob.no_workspace_objects.filter(

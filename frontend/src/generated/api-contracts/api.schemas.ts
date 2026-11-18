@@ -21045,6 +21045,9 @@ export const HarnessCapabilitySelectionRowApiWas = {
   stale: "stale",
 } as const;
 
+/**
+ * What the row read, one line each. The children row lists its seven checklist items (stable_ids, delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item.
+ */
 export interface HarnessCapabilityEvidenceApi {
   /** @minLength 1 */
   check: string;
@@ -21139,6 +21142,7 @@ export interface HarnessCapabilitySelectionRowApi {
   /** @minLength 1 */
   stale_because: string;
   was: HarnessCapabilitySelectionRowApiWas;
+  /** What the row read, one line each. The children row lists its seven checklist items (stable_ids, delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item. */
   evidence: HarnessCapabilityEvidenceApi[];
   /** @minLength 1 */
   checked_at: string;
@@ -30604,6 +30608,7 @@ export interface HarnessCapabilityRowApi {
   /** @minLength 1 */
   stale_because: string;
   was: HarnessCapabilityRowApiWas;
+  /** What the row read, one line each. The children row lists its seven checklist items (stable_ids, delegation_and_return, tool_attribution, permissions_exercised, timeout_or_cancel, worker_verdicts, unmeasured_without_evidence), each seen, not_seen or not_applicable; the row reads its worst item. */
   evidence: HarnessCapabilityEvidenceApi[];
   /** @minLength 1 */
   checked_at: string;

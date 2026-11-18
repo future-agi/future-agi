@@ -167,6 +167,28 @@ class TestWorkerRows:
             assert set(_boundaries(row).values()) == {"not_enforced"}
 
     @pytest.mark.parametrize(
+        "evidence",
+        [
+            {"door_outcome": {"present": False, "reason": "tool_service_not_fronted"}},
+            {"door_outcome": IN_PROCESS_DOOR, "worker_permissions": None},
+            {"worker_permissions": {}},
+            {"door_outcome": None, "worker_limits": None},
+        ],
+        ids=["no_door", "in_process", "no_sealed_allow_list", "sealed_before_limits"],
+    )
+    def test_limits_only_the_contract_declares_read_not_enforced_never_allowed(
+        self, evidence
+    ):
+        """A worker's `allowed_tools` in the contract is the customer's own restriction: unless the world's door
+        holds the worker to a sealed allow-list, each of its tools reads Not enforced and the worker never Supported."""
+        rows = _rows(evidence=_evidence(**evidence))
+
+        for worker in CONTRACT["workers"]:
+            row = rows[worker["id"]]
+            assert row["status"] != "supported"
+            assert set(_boundaries(row).values()) == {"not_enforced"}, row
+
+    @pytest.mark.parametrize(
         "reason", ["tool_service_not_fronted", "in_process_unbound", "no_tool_service"]
     )
     def test_a_build_sealed_without_a_door_reads_alk_s_reason_and_offers_no_rebuild(
@@ -524,8 +546,9 @@ class TestSubAgentEvidence:
 
         reading = _children(monkeypatch, [_call("r1", record)])
 
-        assert reading.finding == "passed"
         assert _checks(reading)["delegation_and_return"] == "seen"
+        # Its other items were not seen, so the row reads its worst item.
+        assert (reading.finding, reading.reason_code) == ("limited", "items_not_seen")
 
     def test_a_worker_cut_short_is_still_seen_but_its_hand_off_is_not_whole(
         self, monkeypatch
@@ -539,11 +562,10 @@ class TestSubAgentEvidence:
 
         reading = _children(monkeypatch, [_call("r1", record)])
 
-        assert (reading.finding, reading.reason_code) == (
-            "limited",
-            "workers_partly_observed",
-        )
+        # Both workers were seen; the unreturned hand-off is an item not seen.
+        assert (reading.finding, reading.reason_code) == ("limited", "items_not_seen")
         assert _checks(reading)["delegation_and_return"] == "not_seen"
+        assert "a hand-off that returned" in reading.reason
 
     def test_a_worker_stored_as_cut_short_is_seen_timed_out_or_cancelled(
         self, monkeypatch
@@ -579,3 +601,92 @@ class TestSubAgentEvidence:
 
         assert single.finding == "not_applicable"
         assert waiting.finding == "not_run"
+
+    @staticmethod
+    def _every_item(run, *, worker_state="returned"):
+        """One call's record and metadata in which every checklist item can be seen."""
+        record = {
+            "workers": [
+                {**_worker(run, "order_lookup"), "state": worker_state},
+                _worker(run, "refund"),
+            ],
+            "events": [
+                {
+                    "type": "delegated",
+                    "worker_id": f"{run}/refund",
+                    "delegation_id": "d1",
+                },
+                {
+                    "type": "returned",
+                    "worker_id": f"{run}/refund",
+                    "delegation_id": "d1",
+                },
+                {
+                    "type": "tool_call",
+                    "worker_id": f"{run}/refund",
+                    "attribution": "reported",
+                },
+            ],
+        }
+        trial = {
+            "state_changes": [
+                {"who": "worker:refund", "refused_actions": ["refunds.issue"]}
+            ]
+        }
+        receipt = {
+            "sub_goals": [
+                {"subject": "worker:refund", "held": True},
+                {"subject": "worker:order_lookup", "held": None},
+            ]
+        }
+        return record, trial, receipt
+
+    def test_every_item_seen_reads_supported_with_one_status_each(self, monkeypatch):
+        calls = [
+            _call(run, *self._every_item(run, worker_state=state))
+            for run, state in (("r1", "deadline_passed"), ("r2", "returned"))
+        ]
+
+        reading = _children(monkeypatch, calls, runs=("r1", "r2"))
+
+        assert reading.finding == "passed"
+        assert _checks(reading) == dict.fromkeys(children_module.CHECK_LABELS, "seen")
+
+    @pytest.mark.parametrize("missing", list(children_module.CHECK_LABELS))
+    def test_one_item_not_seen_keeps_the_row_partial_and_names_it(
+        self, monkeypatch, missing
+    ):
+        calls = []
+        for run, state in (("r1", "deadline_passed"), ("r2", "returned")):
+            record, trial, receipt = self._every_item(run, worker_state=state)
+            if missing == "stable_ids" and run == "r2":
+                record["workers"] = [
+                    {**one, "id": f"other_{one['id']}"} for one in record["workers"]
+                ]
+            if missing == "delegation_and_return":
+                record["events"] = [
+                    one for one in record["events"] if one["type"] != "returned"
+                ]
+            if missing == "tool_attribution":
+                record["events"] = [
+                    one for one in record["events"] if one["type"] != "tool_call"
+                ]
+            if missing == "permissions_exercised":
+                trial = {}
+            if missing == "timeout_or_cancel":
+                record["workers"] = [
+                    {**one, "state": "returned"} for one in record["workers"]
+                ]
+            if missing == "worker_verdicts":
+                receipt = {}
+            if missing == "unmeasured_without_evidence":
+                receipt = {"sub_goals": [{"subject": "worker:refund", "held": True}]}
+            calls.append(_call(run, record, trial, receipt))
+
+        reading = _children(monkeypatch, calls, runs=("r1", "r2"))
+
+        assert _checks(reading)[missing] == "not_seen"
+        assert reading.finding == "limited"
+        assert reading.finding != "passed"
+        if missing != "stable_ids":
+            assert children_module.CHECK_LABELS[missing] in reading.reason

@@ -60,6 +60,7 @@ from simulate.services.harness_scenario_needs import (
 )
 from simulate.services.harness_starting_records import scenario_token
 from simulate.services.harness_versioning import validation
+from simulate.services.harness_versioning.read import version_refs
 from simulate.services.hosted_harness import HostedHarnessError
 
 Bucket = Literal["eligible", "blocked", "stale", "untested"]
@@ -619,8 +620,6 @@ def changed_since_last_run(
     """The newest run of the pairing's agent and environment version, and which of
     ``keys`` it ran with other contents, or did not have: a case whose stored contents
     differ by digest from that run's suite version. No run: none changed."""
-    from simulate.services.harness_versioning.read import version_refs
-
     last = (
         HostedHarnessJob.no_workspace_objects.filter(
             environment_id=pairing.environment.id,
