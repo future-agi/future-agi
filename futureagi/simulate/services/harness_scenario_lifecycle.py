@@ -37,9 +37,9 @@ LifecycleState = Literal["draft", "validated", "active", "kept_as_written", "arc
 # The states a run may pick (decision of 18 Nov): Active, and Kept as written, which runs labelled as not proved so a
 # case the harness cannot prove (an agent-bound tool) can still be run. Tighten here if product asks.
 RUNNABLE_STATES: frozenset[LifecycleState] = frozenset({"active", "kept_as_written"})
-LANE_CODES = frozenset(
-    {"proof_deferred", "solution_assumed", "control_not_run", "judged_only"}
-)
+# Shown for a reason or a warning code this release has no words for: never the code itself.
+UNKNOWN_REASON_TEXT = "Not proved on these versions: validate it again to see why."
+UNKNOWN_WARNING_TEXT = "Kept as written: part of this case could not be proved here."
 DRAFT_CHANGES = frozenset({"added", "changed"})
 
 REASON_TEXTS = {
@@ -74,11 +74,11 @@ ENDING_REASONS = {
     "unavailable": "validation_ended_on_our_side",
 }
 WARNING_TEXTS = {
-    "solution_assumed": "Kept as written: {k} of {n} solution steps never ran, because {tools} have no endpoint here.",
+    "solution_assumed": "Kept as written: {k} of {n} solution steps never ran, because {tools} {have} no endpoint here.",
     "proof_deferred": (
         "Kept as written: this agent's world is its own service; the reference solution can only run against it live."
     ),
-    "control_not_run": "Kept as written: negative control {name} could not run, because {tools} have no endpoint here.",
+    "control_not_run": "Kept as written: negative control {name} could not run, because {tools} {have} no endpoint here.",
     "judged_only": (
         "Kept as written: only a judge grades this case, and nothing has shown the judge fails a wrong behaviour."
     ),
@@ -202,7 +202,8 @@ def reason_text(
         )
     if code == "source_unresolved" and not values.get("kind"):
         return "A cited source is not in this environment."
-    return REASON_TEXTS.get(code, code).format_map(values)
+    template = REASON_TEXTS.get(code)
+    return template.format_map(values) if template is not None else UNKNOWN_REASON_TEXT
 
 
 def warning_text(
@@ -221,10 +222,13 @@ def warning_text(
         **extra,
     )
     if code == "control_not_run":
-        values["tools"] = ", ".join(
-            sorted({tool for one in controls for tool in one.get("assumed") or []})
+        assumed = sorted(
+            {tool for one in controls for tool in one.get("assumed") or []}
         )
-    return WARNING_TEXTS.get(code, code).format_map(values)
+        values["tools"] = ", ".join(assumed)
+    values["have"] = "has" if len(assumed) == 1 else "have"
+    template = WARNING_TEXTS.get(code)
+    return template.format_map(values) if template is not None else UNKNOWN_WARNING_TEXT
 
 
 def _summary(entry: Mapping[str, Any] | None) -> ProofSummary | None:
@@ -525,7 +529,8 @@ def scenario_lifecycle(
                 view = _view("draft", reason="proved_on_other_agent", entry=entry)
             elif entry.get("proved") is True:
                 view = _view(good, entry=entry)
-            elif entry.get("kept_as_written") is True and blocked in LANE_CODES:
+            elif entry.get("kept_as_written") is True:
+                # ALK decides kept-as-written and writes it on the entry; its code only picks the words.
                 view = _view("kept_as_written", entry=entry, warning=blocked)
             else:
                 view = _view(
