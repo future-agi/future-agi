@@ -28786,6 +28786,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/SimulateEvalConfigResponse",
           },
+          409: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -31722,6 +31725,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/EvalErrorResponse",
           },
           404: {
+            $ref: "#/definitions/EvalErrorResponse",
+          },
+          409: {
             $ref: "#/definitions/EvalErrorResponse",
           },
           500: {

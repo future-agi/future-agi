@@ -60334,19 +60334,26 @@ export type simulateApiHarnessEnvironmentsEditEvaluationResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsEditEvaluationResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
 export type simulateApiHarnessEnvironmentsEditEvaluationResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 409>;
 };
 
 export type simulateApiHarnessEnvironmentsEditEvaluationResponseSuccess =
   simulateApiHarnessEnvironmentsEditEvaluationResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsEditEvaluationResponseError =
-  simulateApiHarnessEnvironmentsEditEvaluationResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsEditEvaluationResponseError = (
+  | simulateApiHarnessEnvironmentsEditEvaluationResponse409
+  | simulateApiHarnessEnvironmentsEditEvaluationResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsEditEvaluationResponse =
   | simulateApiHarnessEnvironmentsEditEvaluationResponseSuccess
@@ -66893,6 +66900,11 @@ export type simulateRunTestsEvalConfigsUpdateCreateResponse404 = {
   status: 404;
 };
 
+export type simulateRunTestsEvalConfigsUpdateCreateResponse409 = {
+  data: EvalErrorResponseApi;
+  status: 409;
+};
+
 export type simulateRunTestsEvalConfigsUpdateCreateResponse500 = {
   data: EvalErrorResponseApi;
   status: 500;
@@ -66900,7 +66912,7 @@ export type simulateRunTestsEvalConfigsUpdateCreateResponse500 = {
 
 export type simulateRunTestsEvalConfigsUpdateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 404 | 409 | 500>;
 };
 
 export type simulateRunTestsEvalConfigsUpdateCreateResponseSuccess =
@@ -66911,6 +66923,7 @@ export type simulateRunTestsEvalConfigsUpdateCreateResponseError = (
   | simulateRunTestsEvalConfigsUpdateCreateResponse400
   | simulateRunTestsEvalConfigsUpdateCreateResponse401
   | simulateRunTestsEvalConfigsUpdateCreateResponse404
+  | simulateRunTestsEvalConfigsUpdateCreateResponse409
   | simulateRunTestsEvalConfigsUpdateCreateResponse500
   | simulateRunTestsEvalConfigsUpdateCreateResponseDefault
 ) & {

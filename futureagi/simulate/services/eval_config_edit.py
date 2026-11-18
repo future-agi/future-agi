@@ -14,6 +14,9 @@ from model_hub.utils.function_eval_params import normalize_eval_runtime_config
 from simulate.models import SimulateEvalConfig
 from simulate.services.harness_evals import regrade_mapping
 
+# The code both edit routes answer a harness result column's refusal with (409).
+HARNESS_RESULT_COLUMN = "harness_result_column"
+
 
 class EvalConfigEditRefused(Exception):
     """The change can't be applied as asked. Nothing was saved."""

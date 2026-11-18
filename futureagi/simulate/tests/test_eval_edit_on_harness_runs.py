@@ -201,7 +201,8 @@ def test_a_harness_result_column_is_not_edited(
 
     response = _update(auth_client, harness_run, config, body)
 
-    assert response.status_code == 400, response.content
+    assert response.status_code == 409, response.content
+    assert response.json()["code"] == "harness_result_column"
     assert response.json()["detail"] == REFUSED
     # The run-test page toasts the envelope's result.
     assert response.json()["result"] == REFUSED
@@ -282,7 +283,8 @@ def test_the_route_asks_the_shared_harness_test(
     with patch("simulate.views.run_test.is_harness_run_test", return_value=True):
         response = _update(auth_client, run_test, config, {"model": "x"})
 
-    assert response.status_code == 400, response.content
+    assert response.status_code == 409, response.content
+    assert response.json()["code"] == "harness_result_column"
     assert response.json()["detail"] == REFUSED
     assert _row(config) == before
 
@@ -308,7 +310,8 @@ def test_a_harness_result_column_is_not_edited_on_an_sdk_run(
         {"model": "x", "run": True, "test_execution_id": str(execution.id)},
     )
 
-    assert response.status_code == 400, response.content
+    assert response.status_code == 409, response.content
+    assert response.json()["code"] == "harness_result_column"
     assert response.json()["detail"] == REFUSED
     assert _call_state(call) == cell
 
@@ -330,9 +333,8 @@ def test_a_run_no_harness_touched_edits_a_stored_empty_mapping_config_as_before(
 
 # --- edit + run on a harness run: the grading #3428's route does -----------
 #
-# The route answers from the statuses it declares (200, 400, 404, 500). The
-# codes are #3428's; the move to 409 for a refusal caused by the run's state
-# is a follow-up for this route and the environments route together.
+# A refusal caused by the run's state is a 409 with #3428's code; one caused
+# by the request is a 400.
 
 
 def _mapped_harness_cell(harness_run, eval_template, execution_status):
@@ -392,7 +394,7 @@ def test_two_edit_and_run_requests_dispatch_once(
     second = _edit_and_run(auth_client, harness_run, config, execution)
 
     assert first.status_code == 200, first.content
-    assert second.status_code == 400, second.content
+    assert second.status_code == 409, second.content
     assert second.json()["code"] == "rerun_evals_run_not_completed"
     grading.assert_called_once()
     call.refresh_from_db()
@@ -422,7 +424,7 @@ def test_an_edit_and_run_that_loses_the_claim_dispatches_nothing(
     ):
         response = _edit_and_run(auth_client, harness_run, config, execution)
 
-    assert response.status_code == 400, response.content
+    assert response.status_code == 409, response.content
     assert response.json()["code"] == "rerun_evals_already_running"
     grading.assert_not_called()
     assert _call_state(call)[0] == {str(config.id): HARNESS_VERDICT}
@@ -447,7 +449,7 @@ def test_an_edit_and_run_on_a_run_that_did_not_complete_marks_no_call(
 
     response = _edit_and_run(auth_client, harness_run, config, execution)
 
-    assert response.status_code == 400, response.content
+    assert response.status_code == 409, response.content
     assert response.json()["code"] == "rerun_evals_run_not_completed"
     assert _call_state(call) == cell
     execution.refresh_from_db()
@@ -501,7 +503,7 @@ def test_an_edit_and_run_on_a_run_still_finishing_is_refused(
 
     response = _edit_and_run(auth_client, harness_run, config, execution)
 
-    assert response.status_code == 400, response.content
+    assert response.status_code == 409, response.content
     assert response.json()["code"] == "rerun_evals_still_finishing"
     assert _call_state(call) == cell
     execution.refresh_from_db()
@@ -603,7 +605,8 @@ def test_a_bare_rerun_of_a_column_only_the_harness_can_judge_points_to_re_run_ev
         {"run": True, "test_execution_id": str(execution.id)},
     )
 
-    assert response.status_code == 400, response.content
+    assert response.status_code == 409, response.content
+    assert response.json()["code"] == "harness_result_column"
     assert 'Use "Re-run evals"' in response.json()["result"]
     assert response.json()["result"] == harness_column_refusal(
         config, harness_run=True, bare_rerun=True
@@ -623,7 +626,27 @@ def test_a_rerun_that_also_edits_a_suite_result_column_is_still_refused(
 
     response = _edit_and_run(auth_client, harness_run, config, execution)
 
-    assert response.status_code == 400, response.content
+    assert response.status_code == 409, response.content
+    assert response.json()["code"] == "harness_result_column"
     assert response.json()["result"] == REFUSED
+    assert _call_state(call) == cell
+    grading.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_an_edit_and_run_on_a_run_still_running_is_a_409_with_a_code(
+    auth_client, run_test, eval_template, grading
+):
+    """A run no harness touched, not finished yet: the run's state refuses it."""
+    config = scoring._config(run_test, eval_template, name="Politeness")
+    execution = scoring._run(run_test, TestExecution.ExecutionStatus.RUNNING)
+    call = scoring._call(execution)
+    cell = _call_state(call)
+
+    response = _edit_and_run(auth_client, run_test, config, execution, {"name": "New"})
+
+    assert response.status_code == 409, response.content
+    assert response.json()["code"] == "rerun_evals_run_not_completed"
+    assert "COMPLETED, CANCELLED, or FAILED" in response.json()["result"]
     assert _call_state(call) == cell
     grading.assert_not_called()

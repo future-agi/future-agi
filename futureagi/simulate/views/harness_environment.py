@@ -73,7 +73,10 @@ from simulate.services.harness_versioning import read as version_reads
 from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
-from tfc.utils.api_serializers import EmptyRequestSerializer
+from tfc.utils.api_serializers import (
+    ApiTextErrorResponseSerializer,
+    EmptyRequestSerializer,
+)
 from tfc.utils.pagination import ExtendedPageNumberPagination
 
 
@@ -1170,7 +1173,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessEnvironmentEvalEditSerializer,
-        responses={200: SimulateEvalConfigResponseSerializer},
+        responses={
+            200: SimulateEvalConfigResponseSerializer,
+            409: ApiTextErrorResponseSerializer,
+        },
         request_methods=["PATCH"],
         reject_unknown_fields=True,
         operation_id="simulate_api_harness-environments_edit_evaluation",
@@ -1197,6 +1203,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         from simulate.models.eval_config import SimulateEvalConfig
         from simulate.serializers.run_test import SimulateEvalConfigSimpleSerializer
         from simulate.services.eval_config_edit import (
+            HARNESS_RESULT_COLUMN,
             EvalConfigEditRefused,
             harness_column_refusal,
             keeps_own_mapping,
@@ -1227,12 +1234,14 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             config, harness_run=is_harness_run_test(job.run_test_id)
         )
         if harness_refusal is not None:
+            # The row's state on this run refuses it, not the request.
             return Response(
                 build_error_envelope(
                     harness_refusal,
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=status.HTTP_409_CONFLICT,
+                    code=HARNESS_RESULT_COLUMN,
                 ),
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_409_CONFLICT,
             )
         if not request.validated_data:
             return Response(

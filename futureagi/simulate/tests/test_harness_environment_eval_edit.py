@@ -267,7 +267,8 @@ def test_edit_refuses_a_harness_filled_eval_whatever_the_body(
 
     response = _edit(env_client, environment.id, suite.id, workspace, body)
 
-    assert response.status_code == 400, response.content
+    assert response.status_code == 409, response.content
+    assert response.json()["code"] == "harness_result_column"
     assert (
         response.json()["detail"]
         == "Task completion is set by the harness and can't be edited here."
