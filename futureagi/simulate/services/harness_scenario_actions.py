@@ -11,10 +11,12 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict
 
 import structlog
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
 
 from simulate.models import (
+    AgentVersion,
     HarnessEnvironmentVersion,
     HarnessSuiteMember,
     HarnessSuiteValidation,
@@ -58,7 +60,11 @@ def _write(
         ) from exc
 
 
-def _of_environment(
+def _versions_invalid(message: str) -> HostedHarnessError:
+    return _error("versions_invalid", message, 400)
+
+
+def _environment_piece(
     model: Any, environment: HostedHarnessJob, value: Any, default: Any
 ) -> Any:
     if value in (None, ""):
@@ -67,42 +73,55 @@ def _of_environment(
             if default
             else None
         )
-    found = model._base_manager.filter(
-        id=value, job_id=environment.id, deleted=False
-    ).first()
+    try:
+        found = model._base_manager.filter(
+            id=value, job_id=environment.id, deleted=False
+        ).first()
+    except (ValueError, DjangoValidationError):
+        found = None
     if found is None:
-        raise _error(
-            "versions_invalid", "those versions are not this environment's", 400
-        )
+        raise _versions_invalid("those versions are not this environment's")
     return found
 
 
-def _pair(environment: HostedHarnessJob, body: Mapping[str, Any]):
-    from simulate.models import AgentVersion
+def resolve_versions(
+    environment: HostedHarnessJob, query: Mapping[str, Any]
+) -> tuple[AgentVersion | None, Any, Any]:
+    """The agent, environment and suite versions a request names, each the environment's default when not named.
+    An agent version is this environment's only by the rule readiness and runs use (its workspace, organization,
+    agent and, for a shared agent, its own lineage); an environment or suite version only when this environment
+    holds it, saved or not. Refuses `versions_invalid` (400) otherwise, and for an id that is not one."""
+    from simulate.services.harness_readiness.report import require_environments_agent
 
-    agent_id = body.get("agent_version_id") or environment.agent_version_id
+    agent_id = query.get("agent_version_id") or None
+    if agent_id is not None:
+        try:
+            require_environments_agent(environment, agent_id)
+        except (HostedHarnessError, ValueError, DjangoValidationError) as exc:
+            raise _versions_invalid(
+                "that agent version is not this environment's"
+            ) from exc
+    agent_id = agent_id or environment.agent_version_id
     agent = (
         AgentVersion.no_workspace_objects.filter(id=agent_id).first()
         if agent_id
         else None
     )
-    if body.get("agent_version_id") and agent is None:
-        raise _error(
-            "versions_invalid", "that agent version is not this environment's", 400
-        )
-    environment_version = _of_environment(
-        HarnessEnvironmentVersion,
-        environment,
-        body.get("environment_version_id"),
-        environment.environment_version_id,
+    return (
+        agent,
+        _environment_piece(
+            HarnessEnvironmentVersion,
+            environment,
+            query.get("environment_version_id"),
+            environment.environment_version_id,
+        ),
+        _environment_piece(
+            HarnessSuiteVersion,
+            environment,
+            query.get("suite_version_id"),
+            environment.suite_version_id,
+        ),
     )
-    suite_version = _of_environment(
-        HarnessSuiteVersion,
-        environment,
-        body.get("suite_version_id"),
-        environment.suite_version_id,
-    )
-    return agent, environment_version, suite_version
 
 
 def _last_change(
@@ -207,7 +226,7 @@ def validate_scenarios(
             f"keys must be 1 to {VALIDATE_KEYS_MAX} scenario keys of letters, digits and ._:-",
             400,
         )
-    agent, environment_version, suite_version = _pair(environment, body)
+    agent, environment_version, suite_version = resolve_versions(environment, body)
     if agent is None or environment_version is None or suite_version is None:
         raise _error(
             "cannot_validate",

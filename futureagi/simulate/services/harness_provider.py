@@ -14,7 +14,6 @@ import re
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from django.conf import settings
-from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
@@ -3418,61 +3417,34 @@ LIFECYCLE_FILTERS = frozenset(
 )
 
 
-def _version_of(
-    model: Any, job: HostedHarnessJob, value: str | None, default_id: Any
-) -> Any:
-    if not value:
-        return (
-            model._base_manager.filter(id=default_id, job_id=job.id).first()
-            if default_id
-            else None
-        )
-    try:
-        return model._base_manager.filter(
-            id=value, job_id=job.id, deleted=False
-        ).first()
-    except (ValueError, DjangoValidationError):
-        return None
-
-
 def _lifecycle_for_list(
     job: HostedHarnessJob, params: Any
 ) -> ListLifecycle | Response | None:
     """The lifecycle of every case on the pair in view (the defaults unless the query names
-    versions), or ``None`` for an environment that is not versioned."""
-    from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
+    versions, the agent's included), or ``None`` for an environment that is not versioned.
+    A refusal is the same body every harness refusal has."""
+    from simulate.services.harness_scenario_actions import resolve_versions
     from simulate.services.harness_scenario_lifecycle import scenario_lifecycle
+    from simulate.services.hosted_harness import HostedHarnessError
 
     if not job.suite_version_id or not job.environment_version_id:
         return None
     wanted = params.get("lifecycle") or ""
-    if wanted and wanted not in LIFECYCLE_FILTERS:
-        return Response(
-            {
-                "error": "lifecycle_invalid",
-                "message": f"lifecycle must be one of {', '.join(sorted(LIFECYCLE_FILTERS))}",
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    suite = _version_of(
-        HarnessSuiteVersion, job, params.get("suite_version_id"), job.suite_version_id
-    )
-    environment_version = _version_of(
-        HarnessEnvironmentVersion,
-        job,
-        params.get("environment_version_id"),
-        job.environment_version_id,
-    )
-    if suite is None or environment_version is None:
-        return Response(
-            {
-                "error": "versions_invalid",
-                "message": "those versions are not this environment's",
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    try:
+        if wanted and wanted not in LIFECYCLE_FILTERS:
+            raise HostedHarnessError(
+                "lifecycle_invalid",
+                f"lifecycle must be one of {', '.join(sorted(LIFECYCLE_FILTERS))}",
+                status_code=400,
+            )
+        agent, environment_version, suite = resolve_versions(job, params)
+    except HostedHarnessError as refused:
+        return Response(refused.as_dict(), status=refused.status_code)
     views = scenario_lifecycle(
-        job, suite_version=suite, environment_version=environment_version
+        job,
+        suite_version=suite,
+        environment_version=environment_version,
+        agent_version_id=agent.id if agent is not None else None,
     )
     archived_rows = list(
         HostedHarnessScenario.no_workspace_objects.filter(

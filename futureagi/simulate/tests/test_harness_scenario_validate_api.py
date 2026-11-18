@@ -255,3 +255,32 @@ def test_a_failed_validation_still_says_why_after_a_reload_until_a_newer_one(
 
     _post(auth_client, certified)
     assert {view["reason"] for view in unproved()} == {"not_validated"}
+
+
+@pytest.mark.parametrize("where", ["validate", "list"])
+def test_another_organizations_agent_version_is_refused(
+    user, workspace, storage, auth_client, where
+):
+    """A request names an agent version by id: validation and the scenarios list take only this environment's."""
+    from accounts.models import Organization
+
+    from simulate.models import AgentVersion
+    from simulate.tests.test_harness_readiness import _with_a2
+
+    environment, theirs = _with_a2(user, workspace, storage, f"rv-scope-{where}")
+    other = Organization.objects.create(name="another organization")
+    AgentVersion.no_workspace_objects.filter(id=theirs.id).update(organization=other)
+    jobs = HostedHarnessJob.no_workspace_objects.count()
+
+    if where == "validate":
+        response = _post(auth_client, environment, {"agent_version_id": str(theirs.id)})
+    else:
+        response = auth_client.get(
+            f"/simulate/api/harness-jobs/{environment.id}/scenarios/",
+            {"agent_version_id": str(theirs.id)},
+        )
+
+    assert response.status_code == 400, response.content
+    assert response.json()["error"] == "versions_invalid"
+    assert response.json()["retryable"] is False
+    assert HostedHarnessJob.no_workspace_objects.count() == jobs
