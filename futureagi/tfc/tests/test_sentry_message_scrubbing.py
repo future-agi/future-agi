@@ -529,3 +529,69 @@ def test_many_log_arguments_without_a_replayable_template_are_redacted_fast():
     scrubbed, redacted = _scrub_log_params(["y"] * _MANY, "password=x " * _MANY)
     assert time.perf_counter() - start < _BOUND_SECONDS
     assert not redacted and scrubbed == ["y"] * _MANY
+
+
+class _StrAndRepr:
+    """Renders as ``text`` but has another ``repr``, so the params Sentry
+    serialises do not replay the template into the formatted message."""
+
+    def __init__(self, text):
+        self.text = text
+
+    def __str__(self):
+        return self.text
+
+    def __repr__(self):
+        return "R" + self.text
+
+
+@pytest.mark.parametrize("count", [1000, 1100])
+def test_an_over_budget_event_sends_no_glued_literal(count):
+    # Past the search budget every argument is redacted; re-rendering the
+    # template from them would glue "[Filtered]" to the literal after the last
+    # one, and that literal is part of the credential value. The SDK's own
+    # limit on a value's length (1024 in older releases, far more since)
+    # would otherwise cut the formatted message short of the budget.
+    with sentry_capture(
+        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+        max_value_length=100_000,
+    ) as transport:
+        logging.getLogger(LOGGER).error(
+            " ".join(["password=%s"] * count) + " password=a%sZqN6 more",
+            *[f"v{i:05d}" for i in range(count)],
+            _StrAndRepr("b"),
+        )
+
+    sent = _sent(transport)
+    assert "ZqN6" not in sent
+    for i in range(count):
+        assert f"v{i:05d}" not in sent
+    logentry = transport.events[0]["logentry"]
+    assert logentry["formatted"] == "[Filtered]"
+    assert logentry["message"] == "[Filtered]"
+    assert logentry["params"] == ["[Filtered]"] * (count + 1)
+
+
+@pytest.mark.parametrize("as_dict", [False, True])
+def test_an_over_budget_event_filters_every_param(as_dict):
+    # Empty arguments too: past the budget nothing of the event is kept.
+    message = "password=x%s " * _MANY
+    params = [f"y{i}" for i in range(_MANY)] + [""]
+    if as_dict:
+        params = {f"k{i}": param for i, param in enumerate(params)}
+    event = {
+        "logentry": {
+            "message": message,
+            "params": params,
+            "formatted": "password=x"
+            + " password=x".join(
+                str(p) for p in (params.values() if as_dict else params)
+            )
+            + "...",
+        }
+    }
+    _scrub_message_fields(event, [])
+    logentry = event["logentry"]
+    assert logentry["message"] == logentry["formatted"] == "[Filtered]"
+    values = logentry["params"].values() if as_dict else logentry["params"]
+    assert list(values) == ["[Filtered]"] * (_MANY + 1)

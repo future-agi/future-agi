@@ -390,6 +390,14 @@ _SEARCH_BUDGET = 1_000_000
 def _scrub_log_params(
     params: Any, formatted: Any, message: Any = None
 ) -> tuple[Any, bool]:
+    """``_scrub_log_args`` without whether the search budget ran out."""
+    params, redacted, _ = _scrub_log_args(params, formatted, message)
+    return params, redacted
+
+
+def _scrub_log_args(
+    params: Any, formatted: Any, message: Any = None
+) -> tuple[Any, bool, bool]:
     """Redact log arguments that ``formatted`` shows as credential values.
 
     ``logger.error("api_key=%s", key)`` passes the credential as a bare
@@ -402,7 +410,8 @@ def _scrub_log_params(
     cannot be replayed, an argument is redacted when one of its occurrences in
     ``formatted`` starts where a redacted value starts or overlaps a value
     that runs to the end of the text. Every argument is also scrubbed on its
-    own. Returns the params and whether any was redacted.
+    own. Returns the params, whether any was redacted, and whether the
+    search budget ran out so that every argument was redacted.
     """
     spans = _redacted_spans(formatted)
     located = (
@@ -460,7 +469,8 @@ def _scrub_log_params(
         return _scrub_text_deep(param)
 
     if isinstance(params, (list, tuple)):
-        return [one(param, i) for i, param in enumerate(params)], redacted
+        scrubbed_list = [one(param, i) for i, param in enumerate(params)]
+        return scrubbed_list, redacted, over_budget
     if isinstance(params, dict):
         scrubbed = {}
         for key, param in params.items():
@@ -469,8 +479,8 @@ def _scrub_log_params(
                 scrubbed[key] = _REDACTED
             else:
                 scrubbed[key] = one(param, key)
-        return scrubbed, redacted
-    return params, redacted
+        return scrubbed, redacted, over_budget
+    return params, redacted, over_budget
 
 
 def _scrub_message_fields(event: dict, values: list[dict]) -> None:
@@ -482,12 +492,23 @@ def _scrub_message_fields(event: dict, values: list[dict]) -> None:
         event["message"] = _scrub_text(event["message"])
     logentry = event.get("logentry")
     if isinstance(logentry, dict):
-        redacted = False
+        redacted = over_budget = False
         if "params" in logentry:
-            logentry["params"], redacted = _scrub_log_params(
+            logentry["params"], redacted, over_budget = _scrub_log_args(
                 logentry["params"], logentry.get("formatted"), logentry.get("message")
             )
-        if redacted and isinstance(logentry.get("message"), str):
+        if over_budget:
+            # Every argument was redacted without knowing which were
+            # credentials, so re-rendering would glue a redaction to template
+            # text that was part of a credential value. Send no text at all.
+            for key in ("message", "formatted"):
+                logentry[key] = _REDACTED
+            params = logentry["params"]
+            if isinstance(params, dict):
+                logentry["params"] = dict.fromkeys(params, _REDACTED)
+            else:
+                logentry["params"] = [_REDACTED] * len(params)
+        elif redacted and isinstance(logentry.get("message"), str):
             # Re-render from the redacted arguments: the formatted text would
             # otherwise keep whatever of an argument the text match missed,
             # such as the second word of a spaced credential.
