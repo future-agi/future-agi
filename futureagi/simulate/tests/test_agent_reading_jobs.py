@@ -2,6 +2,7 @@
 agent-learning-kit's job model requires, so the sandbox never refuses them."""
 
 import json
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
@@ -28,6 +29,17 @@ from simulate.temporal.constants import READING_ACTIVITY_TIMEOUT_SECONDS
 from simulate.tests.test_agent_setup_service import source_agent
 from simulate.tests.test_code_archives import storage as storage  # noqa: F401
 from simulate.tests.test_harness_connected_versions import _connect, _runtime
+from simulate.tests.test_reading_charge_ledger import (
+    CREDITS_PER_USD,
+    _cost_file,
+    _drain,
+    _expected_usd,
+    requires_cloud_billing,
+)
+from simulate.tests.test_reading_charge_ledger import ledger as ledger  # noqa: F401
+from simulate.tests.test_reading_charge_ledger import (  # noqa: F401
+    subscription as subscription,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -520,6 +532,49 @@ class TestReadingBill:
         assert [
             (one["subject_id"], one["run_id"], one["purpose"]) for one in billed
         ] == [(scan.id, sent["run_id"], "scan")]
+
+    @pytest.mark.requires_ee
+    @requires_cloud_billing
+    def test_a_step_retried_after_its_charge_is_charged_once(
+        self, agent, monkeypatch, no_evals, ledger
+    ):
+        """A fault after the charge (the worker dies storing the reading) makes the
+        workflow run the step again: read_version reads the same pending version
+        under a new run id each time. Through the real ledger, one charge."""
+        from ee.usage.models.usage import UsageEventLog
+
+        version = _connect(agent)
+        spend = _cost_file()
+        runs = []
+        _reading(monkeypatch, (None, {"agent": {}}, {}, spend))
+        original_bill = agent_reading_sandbox._bill
+
+        def bill(runtime, run_id, spend):
+            runs.append(run_id)
+            return original_bill(runtime, run_id, spend)
+
+        stored = iter([RuntimeError("worker lost"), RuntimeError("worker lost"), None])
+
+        def store(*_args, **_kwargs):
+            fault = next(stored)
+            if fault is not None:
+                raise fault
+            return agent_reading_sandbox.ReadOutcome("stored")
+
+        monkeypatch.setattr(agent_reading_sandbox, "_bill", bill)
+        monkeypatch.setattr(agent_reading_sandbox, "_store_reading", store)
+
+        for _attempt in range(2):
+            with pytest.raises(RuntimeError):
+                read_version(version.id)
+        assert read_version(version.id).status == "stored"
+        _drain()
+
+        assert len(set(runs)) == 3
+        row = UsageEventLog.objects.get(organization=agent.organization)
+        assert row.amount_raw == pytest.approx(
+            _expected_usd(spend["stages"][0]) * CREDITS_PER_USD, abs=Decimal("0.001")
+        )
 
 
 class TestReadingFolder:

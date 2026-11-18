@@ -745,6 +745,12 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "`true` reads every new code version of an Agents-page agent in the sandbox before its check, and turns on Find agents and Connect for GitHub and uploads. `false` keeps today's check, and a version's tools, prompt and model arrive with its first build. Turn it on only once the sandbox template carries an agent-learning-kit release with the read-only reading mode, and before `HARNESS_SEED_CONTRACT_ENABLED`."
 
     [[part.section.row]]
+    keys = ["HARNESS_AGENT_READING_CHARGE_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` charges the organization for the model use of each reading of an agent and each scan for agents in a source, once per stage of an agent version or scan, however many times it is tried. `false` charges nothing for any reading, background ones included, and logs one line per reading with what it would have cost. Leave it off until three things hold: the charge is recorded after the reading's outcome is known, which outcomes are charged is decided, and the reading model's cached-input price is in the catalog. As built, `true` also charges readings that fail, readings that end \"not supported\" and background readings."
+
+    [[part.section.row]]
     keys = ["HARNESS_SEED_CONTRACT_ENABLED"]
     default = "`false`"
     setups = ["S", "D", "H"]

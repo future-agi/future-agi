@@ -7,10 +7,9 @@ charged for one reading: the amount, the organization, one row per stage, and
 one charge for every attempt at the same reading, a retried step included.
 With the setting off, its default, nothing is charged and one line is logged.
 
-The token counts are one real reading's: the OpenAI Agents SDK reference, read
-on 18 Nov 2026 (readings/2026-11-18/out/openai_agents/cost.json). That reading
-went through a laptop gateway alias; production reads with
-``vertex_ai/gemini-3.7-flash`` (ALK_HARNESS_MODEL in both regions), so the
+The token counts are one real reading's cost file, of the OpenAI Agents SDK
+reference. That reading named a gateway alias the price catalog does not list;
+production reads with ``vertex_ai/gemini-3.7-flash`` (ALK_HARNESS_MODEL), so the
 priced tests name that model and keep every count as the reading wrote it.
 """
 
@@ -32,7 +31,7 @@ requires_cloud_billing = pytest.mark.skipif(
     not has_ee("ee.cloud"), reason="requires ee/cloud billing.yaml and its consumer"
 )
 
-# readings/2026-11-18/out/openai_agents/cost.json, as the kit wrote it.
+# One real reading's cost file, as the kit wrote it.
 READING_COST_FILE = {
     "complete": False,
     "schema": "futureagi.harness-spend.v1",
@@ -133,13 +132,14 @@ def subscription(db, organization):
 @pytest.fixture
 def ledger(monkeypatch, settings, subscription):
     """The real usage stream and consumer, with charging forced on."""
-    from ee.cloud.billing.consumer import _ensure_consumer_group
     from ee.usage.services.emitter import get_redis
 
     settings.USAGE_EVENTS_ENABLED = True
     settings.HARNESS_AGENT_READING_CHARGE_ENABLED = True
     monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
     redis = get_redis()
+    # ee.cloud is absent in the open-source tree, so it is imported on its own.
+    from ee.cloud.billing.consumer import _ensure_consumer_group
 
     def purge():
         for pattern in ("usage:*", "plan:*", "pause:*", "budget:*"):
@@ -367,9 +367,7 @@ def test_charging_for_readings_is_off_by_default():
 @pytest.mark.django_db
 @pytest.mark.requires_ee
 @requires_cloud_billing
-def test_the_cost_file_as_the_laptop_gateway_wrote_it_charges_nothing(
-    ledger, organization
-):
+def test_a_cost_file_naming_an_unpriced_alias_charges_nothing(ledger, organization):
     """The reading names a model the platform catalog does not price, so no stage
     is charged: no row, not a zero row. The reading itself is kept by the caller
     (agent_reading_sandbox._bill logs agent_reading_not_billed)."""
@@ -390,12 +388,13 @@ def test_without_a_licence_a_reading_is_not_charged(
     monkeypatch, settings, organization, subscription
 ):
     """On a self-hosted install with no enterprise licence (is_oss), nothing is
-    recorded at all. That is the E2E test VM as it stands."""
-    from ee.cloud.billing.consumer import _ensure_consumer_group
+    recorded at all."""
     from ee.usage.models.usage import UsageEventLog
 
     settings.USAGE_EVENTS_ENABLED = True
     monkeypatch.setattr(harness_usage, "is_oss", lambda: True)
+    from ee.cloud.billing.consumer import _ensure_consumer_group
+
     _ensure_consumer_group()
 
     assert _record(organization, uuid4(), _cost_file()) is None
