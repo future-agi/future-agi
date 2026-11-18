@@ -99,6 +99,12 @@ echo "== inconsistent values: refuse to render"
 # values.schema.json rejects some values before validate.yaml runs, and Helm
 # 3.18+ and Helm 4 word schema errors differently from older Helm 3.
 refused=(
+  "collector loopback admin bind|fiCollector.extraEnv.FI_ADMIN_ADDR must be a pod-reachable wildcard|--set-string fiCollector.extraEnv.FI_ADMIN_ADDR=127.0.0.1:9500"
+  "collector invalid admin port|fiCollector.extraEnv.FI_ADMIN_ADDR must use an unprivileged port|--set-string fiCollector.extraEnv.FI_ADMIN_ADDR=:65536"
+  "collector admin overlaps custom OTLP HTTP|FI_ADMIN_ADDR conflicts with FI_HTTP_ADDR on port 9500|--set-string fiCollector.extraEnv.FI_ADMIN_ADDR=:9500 --set-string fiCollector.extraEnv.FI_HTTP_ADDR=:9500"
+  "collector admin overlaps custom OTLP gRPC|FI_ADMIN_ADDR conflicts with FI_GRPC_ADDR on port 9500|--set-string fiCollector.extraEnv.FI_ADMIN_ADDR=:9500 --set-string fiCollector.extraEnv.FI_GRPC_ADDR=127.0.0.1:09500"
+  "collector cannot resolve receiver port|FI_HTTP_ADDR must specify a numeric port|--set-string fiCollector.extraEnv.FI_HTTP_ADDR=:https-alt"
+  "collector admin overlaps OTLP|fiCollector.extraEnv.FI_ADMIN_ADDR must use an unprivileged port|--set-string fiCollector.extraEnv.FI_ADMIN_ADDR=:4318"
   "gateway TLS without a Secret|agentccGateway.tls.existingSecret is required|--set agentccGateway.tls.enabled=true"
   "frontend TLS without a Secret|frontend.tls.existingSecret is required|--set frontend.tls.enabled=true"
   "gateway TLS overlaps HTTP|agentccGateway.tls.port must differ|--set agentccGateway.tls.enabled=true --set agentccGateway.tls.existingSecret=gw --set agentccGateway.tls.port=8080"
@@ -237,6 +243,25 @@ for set in "${value_sets[@]}"; do
       fail "kubeconform ($name, Kubernetes $version)"
   done
 done
+
+# A saved listener override moves the Pod port, not the client-facing port.
+# The GKE policy is checked against the probe in rendered_checks.py.
+"$python" - "$out/bundled.yaml" "$out/gateway-api.yaml" <<'PY'
+import sys
+import yaml
+
+for manifest, expected in zip(sys.argv[1:], (9464, 9500)):
+    with open(manifest) as f:
+        docs = {d['kind']: d for d in yaml.safe_load_all(f) if d and d['metadata']['name'] == 'futureagi-fi-collector'}
+    container = docs['Deployment']['spec']['template']['spec']['containers'][0]
+    addr = next(e['value'] for e in container['env'] if e['name'] == 'FI_ADMIN_ADDR')
+    ports = {p['name']: p['containerPort'] for p in container['ports']}
+    probe = container['readinessProbe']['httpGet']
+    service = next(p for p in docs['Service']['spec']['ports'] if p['name'] == 'admin')
+    assert addr == f':{expected}', (manifest, addr)
+    assert probe['path'] == '/healthz' and ports[probe['port']] == expected, (manifest, probe, ports)
+    assert service['port'] == 9464 and ports[service['targetPort']] == expected, (manifest, service, ports)
+PY
 
 echo "== GitOps: rendering again changes nothing"
 # Argo CD renders on every sync, where `lookup` finds nothing: with the

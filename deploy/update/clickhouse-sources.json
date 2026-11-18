@@ -363,6 +363,11 @@
       "sha256": "5b07c307516303c563206aeeb72b970bb66b190133d719d6d37ba54bfc9753a4"
     },
     {
+      "pattern": "fi-collector/test/standalone/seed.sql",
+      "reason": "Only the standalone development Compose service mounts this seed, as a PostgreSQL init script for the collector's authentication and project lookup. It does not run against ClickHouse or in the root deployment.",
+      "sha256": "38c11c74bcde3785807a41421732216cb7f7e794651cb3ccb74b89e2668fa8fb"
+    },
+    {
       "pattern": "fi-collector/pkg/auth/pgresolver_test.go",
       "reason": "Inspected testing.T disposable PostgreSQL resolver fixtures, not a shipping entrypoint.",
       "sha256": "674edfe923e198209e909f1579bde79d0af4028dc98c9d38a594b1f4d6e69afd"
