@@ -1,4 +1,4 @@
-"""Complete 32/37-pending-migration A9 intersection regression, without Django.
+"""Complete 62/67-pending-migration A9 intersection regression, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -12,22 +12,11 @@ import re
 import subprocess
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 from scripts import rehearse_update_compatibility as p
 from deploy.tests.test_update_usage_reference import ROOT, REVISIONS, source
 
-# Explicit SQL additions to BOTH release histories, not inferred from the
-# current graph. Inventory membership does not certify opaque operation safety.
-SQL_ADDITIONS = (
-    ('tracer','0117_sql_workbench'),
-    ('tracer','0118_merge_sql_workbench_and_simulation_project'),
-    ('tracer','0119_sql_execution_result_reuse'),
-    ('tracer','0120_merge_sql_execution_and_shared_issue'),
-    ('tracer','0121_merge_sql_execution_and_alert_high_water'),
-    ('tracer','0122_sql_payload_expiry_index'),
-    ('tracer','0130_merge_20261104_0940'),
-    ('tracer','0131_merge_sql_workbench_and_observationspan_internal_type'),
-)
 LATEST = (
     ('accounts','0029_demotracepublication_demoseedrequest'),
     ('accounts','0030_queue_existing_demo_trace_publications'),
@@ -50,26 +39,63 @@ LATEST = (
     ('tracer','0130_observationspan_internal_type'),
     ('simulate','0102_agent_fix_engine_notes'),
     ('simulate','0103_harness_job_verify_of'),
+    ('simulate','0104_actors'),
+    ('simulate','0105_scenario_faults'),
+    ('simulate','0104_agent_fix_variations'),
+    ('simulate','0106_merge_0104_agent_fix_variations_0105_scenario_faults'),
+    ('simulate','0105_harness_job_fix_eval_cost'),
+    ('simulate','0106_harness_job_graded_for'),
+    ('simulate','0107_builder_turn_usage'),
     ('tracer','0098_useralertmonitor_webhook_url'),
     ('tracer','0131_merge_alert_webhook'),
     ('tracer','0132_merge_alert_webhook_and_sql_workbench'),
-) + SQL_ADDITIONS
+    ('accounts','0026_orgapikey_expires_at'),
+    ('accounts','0031_merge_api_key_expiry'),
+    ('accounts','0032_merge_expiry_and_coding_agent'),
+    ('tracer','0133_eval_recalculation'),
+    ('tracer','0134_merge_eval_recalculation_and_sampling'),
+    ('tracer','0135_eval_put_back'),
+    # Directory name, not app label: agentcc/ migrations run as app "prism".
+    ('agentcc','0030_guardrail_policy_runs_on_gateway'),
+    ('simulate','0108_evidence_import'),
+    ('simulate','0109_evidence_import_transcript'),
+    ('simulate','0110_evidence_import_dataset'),
+    ('simulate','0111_evidence_import_case_discarded'),
+    ('simulate','0112_evidence_import_case_duplicate'),
+    ('simulate','0113_merge_actors_and_evidence_import'),
+)
+# Eight SQL additions shared with the SQL-only candidate. These identities
+# account for the graph; they are not safety declarations for opaque operations.
+SQL_ADDITIONS = (
+    ('tracer','0117_sql_workbench'),
+    ('tracer','0118_merge_sql_workbench_and_simulation_project'),
+    ('tracer','0119_sql_execution_result_reuse'),
+    ('tracer','0120_merge_sql_execution_and_shared_issue'),
+    ('tracer','0121_merge_sql_execution_and_alert_high_water'),
+    ('tracer','0122_sql_payload_expiry_index'),
+    ('tracer','0130_merge_20261104_0940'),
+    ('tracer','0131_merge_sql_workbench_and_observationspan_internal_type'),
+)
+# Ten more identities on the sampling layer, including its graph joins.
+SAMPLING_ADDITIONS = (
+    ('tracer','0117_cohort_sampling'),
+    ('tracer','0117_sampling_project_db_default'),
+    ('tracer','0119_merge_sampling_default_and_simulation_project'),
+    ('tracer','0120_sampling_cohort_lease'),
+    ('tracer','0121_merge_sampling_and_sql_reuse'),
+    ('tracer','0122_merge_sampling_and_alert_issue_state'),
+    ('tracer','0123_merge_20261104_0743'),
+    ('tracer','0131_merge_20261104_1308'),
+    ('tracer','0132_merge_sampling_and_sql_workbench_dev_merge'),
+    ('tracer','0133_merge_sampling_and_alert_webhook'),
+)
+LATEST += SQL_ADDITIONS + SAMPLING_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
     ('simulate','0101_agent_fix_candidate_override'),
     ('tracer','0119_retire_deleted_eval_memberships'),
     ('tracer','0120_alert_issue_state_occurrences_high_water'),
 )
-
-
-BASELINES = ((REVISIONS[1], LATEST, 32), (REVISIONS[0], LATEST + FLOOR_ONLY, 37))
-
-
-def added_migration_identities(revision):
-    paths = subprocess.check_output([
-        'git', '-C', str(ROOT), 'diff', '--name-only', '--diff-filter=A',
-        revision, 'HEAD', '--', 'futureagi/**/migrations/*.py'], text=True).splitlines()
-    return {(Path(path).parent.parent.name, Path(path).stem) for path in paths}
 
 
 def keywords(node): return {k.arg:k.value for k in node.keywords}
@@ -139,13 +165,16 @@ class Operation:
         else:
             # All remaining operations in these COMPLETE plans affect catalog
             # indexes/constraints or carry declarations; no state table rename.
-            assert kind in ('RunPython','RunSQL','AddIndex','AddIndexConcurrently','RemoveIndex','AddConstraint')
+            assert kind in ('RunPython','RunSQL','AddIndex','AddIndexConcurrently','RemoveIndex','AddConstraint',
+                'RemoveConstraint')
 
 
 def operation_types():
     kinds=('CreateModel','AddField','AlterField','RemoveField','RenameField','AddIndex',
-        'AddIndexConcurrently','RemoveIndex','AddConstraint','RunPython','RunSQL','SeparateDatabaseAndState')
+        'RemoveIndex','AddConstraint','RemoveConstraint','RunPython','RunSQL','SeparateDatabaseAndState')
     result={kind:type(kind,(Operation,),{'__module__':'django.db.migrations.operations.fixtures'}) for kind in kinds}
+    result['AddIndexConcurrently']=type('AddIndexConcurrently',(result['AddIndex'],),
+        {'__module__':'django.contrib.postgres.operations'})
     result['RunPython'].noop=object(); result['RunSQL'].noop=''
     return SimpleNamespace(**result)
 
@@ -166,11 +195,9 @@ def scope_environment(state):
         isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id in ('IDENT','NO_TABLE','MODEL_OPS') for t in n.targets)]
     exec(compile(ast.Module(body=nodes,type_ignores=[]),'<shipping-table-scope>','exec'),env)
     def declared(migration):
-        # Do not invent table scopes for the SQL payload repair's RunPython.
-        # Like the native resolver, fail closed until a reviewed declaration exists.
         assert migration.declaration is not None, 'opaque_operation_table_scope_unavailable'
         return {env['resolved'](*v.split(':',1)) for v in migration.declaration['tables']}
-    env['declared'] = declared
+    env['declared']=declared
     return env
 
 
@@ -193,6 +220,16 @@ def baseline_state(revision):
             options=keywords(node)
             if 'name' not in options or 'fields' not in options: continue
             state.models[(app,ast.literal_eval(options['name']).lower())]=model(node)
+    # agentcc 0024 builds its RenameModel/AlterModelTable operations in a loop
+    # over a literal MODEL_RENAMES table, so no CreateModel names the current
+    # Agentcc* models. Re-key them from that literal (AST only, never executed).
+    renames=ast.parse(migration_path('agentcc','0024_rename_prism_to_agentcc').read_text())
+    renames=next(ast.literal_eval(n.value) for n in renames.body if isinstance(n,ast.Assign)
+        and any(isinstance(t,ast.Name) and t.id=='MODEL_RENAMES' for t in n.targets))
+    for old,new,table in renames:
+        renamed=state.models.pop(('agentcc',old.lower()))
+        renamed.options={**renamed.options,'db_table':table}
+        state.models[('agentcc',new.lower())]=renamed
     usage=ast.parse(source(revision,'ee/usage/models/usage.py'))
     for node in usage.body:
         if not isinstance(node,ast.ClassDef): continue
@@ -219,22 +256,21 @@ def pending_plan(identities,env):
         cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='Migration')
         values={n.targets[0].id:n.value for n in cls.body if isinstance(n,ast.Assign)}
         dependencies=[ast.literal_eval(n) for n in values['dependencies'].elts if isinstance(n,ast.Tuple)]
-        operations = []
+        operations=[]
         for node in values['operations'].elts:
-            if isinstance(node.func, ast.Name):
-                # Only the explicitly imported Django PostgreSQL operation is
-                # supported, not arbitrary same-named custom operations.
-                assert node.func.id == 'AddIndexConcurrently'
-                assert any(isinstance(item, ast.ImportFrom) and
-                    item.module == 'django.contrib.postgres.operations' and
-                    any(alias.name == 'AddIndexConcurrently' and alias.asname is None
-                        for alias in item.names) for item in tree.body)
-                kind = node.func.id
+            if isinstance(node.func,ast.Name):
+                # The SQL migration imports this standard Django operation by
+                # name. Do not accept arbitrary custom operations as AddIndex.
+                assert node.func.id=='AddIndexConcurrently'
+                assert any(isinstance(item,ast.ImportFrom) and item.module=='django.contrib.postgres.operations'
+                    and any(alias.name=='AddIndexConcurrently' and alias.asname is None for alias in item.names)
+                    for item in tree.body)
+                kind=node.func.id
             else:
-                assert isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
-                assert node.func.value.id == 'migrations'
-                kind = node.func.attr
-            operations.append(getattr(env['migrations'], kind)(node))
+                assert isinstance(node.func,ast.Attribute) and isinstance(node.func.value,ast.Name)
+                assert node.func.value.id=='migrations'
+                kind=node.func.attr
+            operations.append(getattr(env['migrations'],kind)(node))
         declaration=next((ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and
             any(isinstance(t,ast.Name) and t.id=='UPDATE_SAFETY' for t in n.targets)),None)
         migrations[(app,name)]=SimpleNamespace(app_label=app,name=name,operations=operations,dependencies=dependencies,declaration=declaration)
@@ -247,32 +283,48 @@ def pending_plan(identities,env):
 
 
 class CompleteUsagePendingIntersectionTests(unittest.TestCase):
-    def assert_pending_inventory(self, actual, identities, count):
-        self.assertEqual(len(identities), count)
-        self.assertEqual(actual, set(identities))
-        self.assertEqual(len(actual), count)
+    def assert_complete_inventory(self,revision,identities,count):
+        # Additions, not edited applied migrations. This deliberately breaks if
+        # the shipping plan changes without refreshing its complete inventory.
+        paths=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only','--diff-filter=A',
+            revision,'HEAD','--','futureagi/**/migrations/*.py'],text=True).splitlines()
+        actual={(Path(path).parent.parent.name,Path(path).stem) for path in paths}
+        self.assertEqual(actual,set(identities)); self.assertEqual(len(actual),count)
+        self.assertEqual(len(identities),count)  # duplicate fixture identities also fail
 
-    def test_complete_release_pending_inventory(self):
-        for revision, identities, count in BASELINES:
+    def test_complete_latest_and_floor_inventory(self):
+        self.assertEqual(len(SQL_ADDITIONS),8)
+        self.assertEqual(len(SAMPLING_ADDITIONS),10)
+        self.assertTrue(set(SQL_ADDITIONS).isdisjoint(SAMPLING_ADDITIONS))
+        for revision,identities,count in ((REVISIONS[1],LATEST,62),(REVISIONS[0],LATEST+FLOOR_ONLY,67)):
             with self.subTest(revision=revision):
-                self.assert_pending_inventory(added_migration_identities(revision), identities, count)
+                self.assert_complete_inventory(revision,identities,count)
 
     def test_pending_inventory_rejects_unknown_missing_and_substituted_migrations(self):
-        unknown = ('tracer', '9999_unreviewed_migration')
-        for revision, identities, count in BASELINES:
-            actual = added_migration_identities(revision)
-            self.assert_pending_inventory(actual, identities, count)
-            for missing in SQL_ADDITIONS:
-                for mutation, changed in (
-                    ('missing', actual - {missing}),
-                    ('unknown', actual | {unknown}),
-                    ('same_count_substitution', (actual - {missing}) | {unknown}),
-                ):
+        # Preserve the SQL-layer negative controls when adding sampling's graph.
+        # Same-count replacement must fail just as an extra or missing file does.
+        unknown = 'futureagi/tracer/migrations/9999_unreviewed_migration.py'
+        for revision, identities, count in ((REVISIONS[1], LATEST, 62),
+                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 67)):
+            paths = subprocess.check_output(['git', '-C', str(ROOT), 'diff',
+                '--name-only', '--diff-filter=A', revision, 'HEAD', '--',
+                'futureagi/**/migrations/*.py'], text=True).splitlines()
+            self.assert_complete_inventory(revision, identities, count)
+            for app, name in SQL_ADDITIONS + SAMPLING_ADDITIONS:
+                missing = 'futureagi/' + app + '/migrations/' + name + '.py'
+                self.assertIn(missing, paths)
+                without = [path for path in paths if path != missing]
+                for mutation, changed in (('missing', without),
+                        ('unknown', paths + [unknown]),
+                        ('same_count_substitution', without + [unknown])):
                     with self.subTest(revision=revision, missing=missing, mutation=mutation):
-                        with self.assertRaises(AssertionError):
-                            self.assert_pending_inventory(changed, identities, count)
+                        with mock.patch.object(subprocess, 'check_output',
+                                return_value='\n'.join(changed) + '\n'):
+                            with self.assertRaises(AssertionError):
+                                self.assert_complete_inventory(revision, identities, count)
 
     def test_sql_index_operations_have_explicit_state_table_scope(self):
+        # The sampling layer retains SQL's concurrent-index scope regression.
         state = baseline_state(REVISIONS[1])
         env = scope_environment(state)
         migration = pending_plan([('tracer', '0122_sql_payload_expiry_index')], env)[0]
@@ -281,16 +333,67 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         for op in migration.operations[:2]:
             self.assertEqual(env['touched'](op, migration, state),
                              {('postgres', 'public.tracer_sqlexecution')})
-        # The complete-plan test below still refuses undeclared RunPython; the
-        # successful index checks do not certify this migration or its backfill.
+        # This does not authorize the separate undeclared RunPython operation.
+
+    def test_unexpected_migration_still_fails_complete_inventory(self):
+        paths=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only','--diff-filter=A',
+            REVISIONS[1],'HEAD','--','futureagi/**/migrations/*.py'],text=True)
+        with mock.patch.object(subprocess,'check_output',return_value=paths+
+                'futureagi/tracer/migrations/9999_unexpected.py\n'):
+            with self.assertRaises(AssertionError):
+                self.assert_complete_inventory(REVISIONS[1],LATEST,62)
+
+    def test_sampling_layer_has_exact_table_scopes(self):
+        expected={
+            '0117_cohort_sampling': {'public.tracer_project','public.tracer_eval_task',
+                'public.tracer_eval_sampling_cohort','public.tracer_eval_sampling_member'},
+            # The default ships in 0117_cohort_sampling; this AlterField is
+            # identical, so Django emits no SQL and it touches no table.
+            '0117_sampling_project_db_default': set(),
+            '0119_merge_sampling_default_and_simulation_project': set(),
+            '0120_sampling_cohort_lease': {'public.tracer_eval_sampling_cohort'},
+            '0121_merge_sampling_and_sql_reuse': set(),
+            '0122_merge_sampling_and_alert_issue_state': set(),
+            '0123_merge_20261104_0743': set(),
+            '0131_merge_20261104_1308': set(),
+            '0132_merge_sampling_and_sql_workbench_dev_merge': set(),
+            '0133_merge_sampling_and_alert_webhook': set(),
+        }
+        for revision in REVISIONS:
+            state=baseline_state(revision); env=scope_environment(state)
+            actual={}
+            for migration in pending_plan(SAMPLING_ADDITIONS,env):
+                tables=set()
+                for op in migration.operations:
+                    tables |= env['touched'](op,migration,state)
+                    op.state_forwards(migration.app_label,state)
+                self.assertTrue(all(engine=='postgres' for engine,table in tables))
+                actual[migration.name]={table for engine,table in tables}
+            with self.subTest(revision=revision):
+                self.assertEqual(actual,expected)
+
+    def test_guardrail_policy_runs_on_gateway_scope_is_its_own_table(self):
+        # prism 0030 is one AddField on the guardrail policy model; it must
+        # resolve to that table alone and select no high-volume reference.
+        registry=p.load_high_volume_registry()
+        identity=('agentcc','0030_guardrail_policy_runs_on_gateway')
+        for revision in REVISIONS:
+            with self.subTest(revision=revision):
+                state=baseline_state(revision)
+                env=scope_environment(state)
+                migration=pending_plan([identity],env)[0]
+                self.assertEqual([type(op).__name__ for op in migration.operations],['AddField'])
+                tables=env['touched'](migration.operations[0],migration,state)
+                self.assertEqual(tables,{('postgres','public.agentcc_guardrail_policy')})
+                plan=[{'app_label':identity[0],'name':identity[1]}]
+                row={**plan[0],'tables':[{'engine':e,'table':t} for e,t in sorted(tables)]}
+                self.assertEqual(list(p.select_reference_registry(registry,[row],plan=plan)),[])
 
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
         registry=p.load_high_volume_registry()
-        for revision, identities, count in BASELINES:
+        for revision,identities,count in ((REVISIONS[1],LATEST,62),(REVISIONS[0],LATEST+FLOOR_ONLY,67)):
             with self.subTest(revision=revision):
-                # Additions, not edited applied migrations. This deliberately
-                # breaks if the shipping plan changes without refreshing coverage.
-                self.assert_pending_inventory(added_migration_identities(revision), identities, count)
+                self.assert_complete_inventory(revision,identities,count)
                 state=baseline_state(revision); env=scope_environment(state)
                 plan=pending_plan(identities,env); scopes=[]
                 for migration in plan:
@@ -303,7 +406,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 identities_in_order=[dict(app_label=m.app_label,name=m.name) for m in plan]
                 selected=p.select_reference_registry(registry,scopes,plan=identities_in_order)
                 expected={'tracer_trace','tracer_observation_span','tracer_eval_task','usage_apicalllog'}
-                if revision == REVISIONS[0]: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
+                if count==67: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                 self.assertEqual({row['table'] for row in selected},expected)
                 self.assertTrue(all(row['database']=='postgres' for row in selected))
                 self.assertFalse(any(row.get('app_label')=='prism' or row.get('model') in ('UsageEventLog','UsageSummary') for row in selected))
@@ -315,7 +418,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                     names={item['table'] for item in scoped}
                     if row['name']=='0030_queue_existing_demo_trace_publications': expected_row={'tracer_trace','tracer_observation_span'}
                     elif row['app_label']=='usage': expected_row={'usage_apicalllog'}
-                    elif row['name']=='0118_instant_eval_answers': expected_row={'tracer_eval_task'}
+                    elif row['name'] in ('0118_instant_eval_answers','0117_cohort_sampling'): expected_row={'tracer_eval_task'}
                     elif row['name']=='0130_observationspan_internal_type': expected_row=set()  # Choices-only state change.
                     elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
                     else: expected_row=set()

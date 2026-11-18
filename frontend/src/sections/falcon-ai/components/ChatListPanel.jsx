@@ -87,7 +87,7 @@ function ConversationItem({ conv, isActive, onSelect, onMenuOpen, theme }) {
         noWrap
         sx={{
           flex: 1,
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: isActive ? 500 : 400,
           color: "text.primary",
           lineHeight: 1.3,
@@ -365,7 +365,7 @@ export default function ChatListPanel() {
           }}
         >
           <Iconify icon="solar:add-linear" width={16} />
-          <Typography sx={{ fontSize: 13, fontWeight: 500 }}>
+          <Typography sx={{ fontSize: 12, fontWeight: 500 }}>
             New chat
           </Typography>
         </ButtonBase>
@@ -391,7 +391,7 @@ export default function ChatListPanel() {
           }}
         >
           <Iconify icon="solar:tuning-2-linear" width={16} />
-          <Typography sx={{ fontSize: 13, fontWeight: 500 }}>
+          <Typography sx={{ fontSize: 12, fontWeight: 500 }}>
             Customize
           </Typography>
         </ButtonBase>
@@ -427,7 +427,7 @@ export default function ChatListPanel() {
           }}
           sx={{
             "& .MuiInputBase-root": {
-              fontSize: 13,
+              fontSize: 12,
               height: 36,
               borderRadius: "8px",
               bgcolor: "transparent",
@@ -503,7 +503,7 @@ export default function ChatListPanel() {
               textAlign: "center",
               py: 4,
               color: "text.disabled",
-              fontSize: 13,
+              fontSize: 12,
             }}
           >
             {search ? "No matching chats" : "No conversations yet"}

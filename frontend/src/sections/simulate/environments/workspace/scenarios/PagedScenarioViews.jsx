@@ -1,6 +1,14 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
-import { Box, Stack, Typography, Pagination, CircularProgress, Collapse, Button } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Pagination,
+  CircularProgress,
+  Collapse,
+  Button,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import ScenarioTable from "./ScenarioTable";
@@ -18,15 +26,31 @@ import { SCENARIOS_COPY } from "./scenarios.constants";
  * and the exact bulk payload, so the server-side contract is visible.
  */
 export default function PagedScenarioViews({
-  pageData, selection, env, view, hiddenGroupIds, onHideGroup, onEdit, onRemove,
-  page, onPageChange, query, filters, groupBy, showInspector, locked, rowHeight,
-  readout, onOpen,
+  pageData,
+  selection,
+  env,
+  view,
+  hiddenGroupIds,
+  onHideGroup,
+  onEdit,
+  onRemove,
+  page,
+  onPageChange,
+  query,
+  filters,
+  groupBy,
+  showInspector,
+  locked,
+  rowHeight,
+  readout,
+  onOpen,
 }) {
   const [inspect, setInspect] = useState(false);
-  const { rows, total, pageCount, limit, pageGroups, pageIds, loading } = pageData;
+  const { rows, total, pageCount, limit, pageGroups, pageIds, loading } =
+    pageData;
 
   const shownGroups = pageGroups.filter((g) => !hiddenGroupIds.includes(g.id));
-  const allHidden = shownGroups.length === 0 && hiddenGroupIds.length > 0 && !query.trim();
+  const allHidden = shownGroups.length === 0 && pageGroups.length > 0;
   const isEmpty = shownGroups.length === 0;
 
   // The rows live in a scroll box that fills the card, with the pager BELOW it.
@@ -54,18 +78,44 @@ export default function PagedScenarioViews({
   const rangeStart = total === 0 ? 0 : page * limit + 1;
   const rangeEnd = Math.min(total, rangeStart + rows.length - 1);
 
-  const listPayload = { search: query || undefined, filters, groupBy, page, limit };
-  const bulkPayload = selection.payload({ search: query || undefined, filters });
+  const listPayload = {
+    search: query || undefined,
+    filters,
+    groupBy,
+    page,
+    limit,
+  };
+  const bulkPayload = selection.payload({
+    search: query || undefined,
+    filters,
+  });
 
   return (
-    <Box sx={{ position: "relative", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+    <Box
+      sx={{
+        position: "relative",
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       {/* The bulk-action bar isn't here — it takes over the toolbar row above
           (in ScenariosStep) while a selection is active, so acting on rows
           never shifts this table down. */}
 
       {/* Loading veil — a page fetch is a real round trip in the seam. */}
       {loading && (
-        <Box sx={{ position: "absolute", inset: 0, zIndex: 3, display: "grid", placeItems: "center", bgcolor: (t) => `${t.palette.background.paper}99` }}>
+        <Box
+          sx={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 3,
+            display: "grid",
+            placeItems: "center",
+            bgcolor: (t) => `${t.palette.background.paper}99`,
+          }}
+        >
           <CircularProgress size={22} />
         </Box>
       )}
@@ -81,7 +131,6 @@ export default function PagedScenarioViews({
           <ScenarioTable
             rows={rows}
             groups={shownGroups}
-            env={env}
             onEdit={onEdit}
             onRemove={onRemove}
             onOpen={onOpen}
@@ -111,56 +160,119 @@ export default function PagedScenarioViews({
           of it. */}
       {(pageCount > 1 || readout) && (
         <Stack
-          direction="row" alignItems="center" flexWrap="wrap" gap={1}
-          sx={{ px: 2, py: 1, minHeight: 44, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          direction="row"
+          alignItems="center"
+          flexWrap="wrap"
+          gap={1}
+          sx={{
+            px: 2,
+            py: 1,
+            minHeight: 44,
+            borderTop: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
           {readout && <FilterReadout {...readout} />}
           {pageCount > 1 && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
-              Showing {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()} of {total.toLocaleString()}
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.subtitle",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              Showing {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()}{" "}
+              of {total.toLocaleString()}
             </Typography>
           )}
           {pageCount > 1 && (
-          <Pagination
-            sx={{ ml: "auto" }}
-            size="small"
-            shape="rounded"
-            count={pageCount}
-            page={page + 1}
-            onChange={(_, p) => onPageChange(p - 1)}
-            siblingCount={1}
-            boundaryCount={1}
-          />
+            <Pagination
+              sx={{ ml: "auto" }}
+              size="small"
+              shape="rounded"
+              count={pageCount}
+              page={page + 1}
+              onChange={(_, p) => onPageChange(p - 1)}
+              siblingCount={1}
+              boundaryCount={1}
+            />
           )}
         </Stack>
       )}
 
       {/* Scale-harness inspector (?scnDemo) — the server contract made visible. */}
       {showInspector && (
-      <Box sx={{ px: 2, pb: 1.5, flexShrink: 0 }}>
-        <Button
-          size="small" variant="text" color="inherit" onClick={() => setInspect((v) => !v)}
-          startIcon={<Iconify icon={inspect ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"} width={14} />}
-        >
-          Backend calls (POC)
-        </Button>
-        <Collapse in={inspect}>
-          <Box sx={{ p: 1.5, borderRadius: 1, bgcolor: "background.neutral", border: "1px solid", borderColor: "divider" }}>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.5 }}>
-              GET /scenarios - one request per page
-            </Typography>
-            <Box component="pre" sx={{ m: 0, mb: 1.5, typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", whiteSpace: "pre-wrap", color: "text.secondary" }}>
-              {JSON.stringify(listPayload, null, 2)}
+        <Box sx={{ px: 2, pb: 1.5, flexShrink: 0 }}>
+          <Button
+            size="small"
+            variant="text"
+            color="inherit"
+            onClick={() => setInspect((v) => !v)}
+            startIcon={
+              <Iconify
+                icon={
+                  inspect
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
+                width={14}
+              />
+            }
+          >
+            Backend calls (POC)
+          </Button>
+          <Collapse in={inspect}>
+            <Box
+              sx={{
+                p: 1.5,
+                borderRadius: 1,
+                bgcolor: "background.neutral",
+                border: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Typography
+                sx={{ typography: "s3", color: "text.subtitle", mb: 0.5 }}
+              >
+                GET /scenarios - one request per page
+              </Typography>
+              <Box
+                component="pre"
+                sx={{
+                  m: 0,
+                  mb: 1.5,
+                  typography: "s3",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                  whiteSpace: "pre-wrap",
+                  color: "text.secondary",
+                }}
+              >
+                {JSON.stringify(listPayload, null, 2)}
+              </Box>
+              <Typography
+                sx={{ typography: "s3", color: "text.subtitle", mb: 0.5 }}
+              >
+                POST /scenarios/bulk-delete -{" "}
+                {selection.mode === "all"
+                  ? "by predicate + exclusions"
+                  : "by id list"}
+              </Typography>
+              <Box
+                component="pre"
+                sx={{
+                  m: 0,
+                  typography: "s3",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                  whiteSpace: "pre-wrap",
+                  color: "text.secondary",
+                }}
+              >
+                {JSON.stringify(bulkPayload, null, 2)}
+              </Box>
             </Box>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.5 }}>
-              POST /scenarios/bulk-delete - {selection.mode === "all" ? "by predicate + exclusions" : "by id list"}
-            </Typography>
-            <Box component="pre" sx={{ m: 0, typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", whiteSpace: "pre-wrap", color: "text.secondary" }}>
-              {JSON.stringify(bulkPayload, null, 2)}
-            </Box>
-          </Box>
-        </Collapse>
-      </Box>
+          </Collapse>
+        </Box>
       )}
     </Box>
   );
@@ -189,25 +301,39 @@ PagedScenarioViews.propTypes = {
     shown: PropTypes.number,
     total: PropTypes.number,
     hiddenCount: PropTypes.number,
-    onlyGroupsHidden: PropTypes.bool,
+    onShowAll: PropTypes.func.isRequired,
     onClear: PropTypes.func,
   }),
 };
 
-// "N of M · N groups hidden" with its reset. "Show all" reads truer than
-// "Clear" when the only thing set is a hidden group.
-function FilterReadout({ shown, total, hiddenCount = 0, onlyGroupsHidden, onClear }) {
-  const hiddenSuffix = hiddenCount > 0
-    ? ` · ${hiddenCount} group${hiddenCount === 1 ? "" : "s"} hidden`
-    : "";
+// Restore hidden groups without changing the active search or filters.
+function FilterReadout({ shown, total, hiddenCount = 0, onShowAll, onClear }) {
+  const hiddenSuffix =
+    hiddenCount > 0
+      ? ` · ${hiddenCount} group${hiddenCount === 1 ? "" : "s"} hidden`
+      : "";
   return (
     <Stack direction="row" alignItems="center" spacing={0.5}>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          color: "text.subtitle",
+          whiteSpace: "nowrap",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
         {`${shown} of ${total}${hiddenSuffix}`}
       </Typography>
-      <Button size="small" variant="text" color="inherit" onClick={onClear}>
-        {onlyGroupsHidden ? SCENARIOS_COPY.showAll : SCENARIOS_COPY.clearLabel}
-      </Button>
+      {hiddenCount > 0 && (
+        <Button size="small" variant="text" color="inherit" onClick={onShowAll}>
+          {SCENARIOS_COPY.showAll}
+        </Button>
+      )}
+      {onClear && (
+        <Button size="small" variant="text" color="inherit" onClick={onClear}>
+          {SCENARIOS_COPY.clearLabel}
+        </Button>
+      )}
     </Stack>
   );
 }
@@ -215,6 +341,6 @@ FilterReadout.propTypes = {
   shown: PropTypes.number,
   total: PropTypes.number,
   hiddenCount: PropTypes.number,
-  onlyGroupsHidden: PropTypes.bool,
+  onShowAll: PropTypes.func.isRequired,
   onClear: PropTypes.func,
 };

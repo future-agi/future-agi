@@ -37,6 +37,7 @@ from simulate.services.run_results_v3_page import (
 )
 from simulate.services.run_results_v3_queries import (
     UNGROUPED,
+    _call_actor_facet,
     _result_sub_goals_expression,
     apply_run_call_query,
     run_call_facets,
@@ -80,6 +81,7 @@ def _reference_facets(queryset: QuerySet) -> dict[str, list[dict[str, Any]]]:
             sub_goals.items(), key=lambda item: (-item[1], item[0].lower())
         )
     ]
+    facets["actor"] = _call_actor_facet(queryset)
     return facets
 
 
@@ -223,6 +225,7 @@ class TestFacetsFromRows:
             "age": [],
             "attack": [],
             "task": [],
+            "actor": [],
         }
 
     def test_scenario_enums_match_the_database(

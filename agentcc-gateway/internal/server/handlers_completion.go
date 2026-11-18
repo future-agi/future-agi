@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
@@ -65,11 +66,14 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = req.Model
 	rc.Request = chatReq
+	if _, inspectable := textInputMessages(req.Prompt); !inspectable {
+		rc.GuardrailInputUnsupported = "completion prompt is not inspectable text"
+	}
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
 
 	// Extract client IP for audit.
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.clientIP(r)
 
 	setAuthMetadataFromRequest(rc, r)
 
@@ -178,31 +182,34 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 		h.handleCompletionStream(ctx, w, rc, provider)
 	} else if native, ok := provider.(nativeTextCompletionProvider); ok {
+		// This path forwards req, not rc.Request. Only selected checks inspect
+		// immutable original content; legacy org/static checks keep their working
+		// projection and remediation sequence. Streaming/non-native paths are mutable.
+		rc.GuardrailInspectionOnly = true
+		if messages, inspectable := textInputMessages(req.Prompt); inspectable {
+			// Keep ToChatRequest's joined prompt for legacy org/static checks.
+			// Selected checks additionally inspect every prompt and the native suffix,
+			// without changing either that legacy view or the forwarded request.
+			selected := *rc.Request
+			selected.Messages = messages
+			if req.Suffix != "" {
+				selected.Messages = append(selected.Messages, textMessage("user", req.Suffix))
+			}
+			rc.SelectedGuardrailRequest = &selected
+		} else {
+			rc.GuardrailInputUnsupported = "native completion prompt is not text; token IDs and unsupported input forms cannot be inspected"
+		}
 		h.handleCompletionNative(ctx, w, rc, native, &req)
 	} else {
 		h.handleCompletionNonStream(ctx, w, rc, provider)
 	}
 
-	// Record health metrics.
-	if h.healthMonitor != nil && rc.Provider != "" {
-		if len(rc.Errors) > 0 {
-			h.healthMonitor.RecordError(rc.Provider, rc.Errors[0])
-		} else {
-			h.healthMonitor.RecordSuccess(rc.Provider)
-		}
-	}
-
-	// Record provider latency for routing.
-	if router := h.registry.Router(); router != nil {
-		if d, ok := rc.Timings["provider"]; ok {
-			router.RecordLatency(rc.Provider, d)
-		}
-	}
 }
 
 // nativeTextCompletionProvider is implemented by providers that can serve
 // /v1/completions directly (currently only the openai-compat provider).
 type nativeTextCompletionProvider interface {
+	providers.Provider
 	TextCompletion(ctx context.Context, req *models.CompletionRequest) (*models.CompletionResponse, error)
 }
 
@@ -223,25 +230,23 @@ func isLegacyCompletionModel(model string) bool {
 // equivalent ChatCompletionResponse so downstream post-plugins
 // (cost/credits/logging/prometheus) that key off rc.Response.Usage and
 // rc.Response.Model keep working uniformly — they don't need to branch on
-// completion vs chat format. The assistant message content mirrors the first
-// choice's text so logs remain human-readable.
+// completion vs chat format. The legacy response contains choice zero only;
+// selected policies receive every choice through their separate output view.
 func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider nativeTextCompletionProvider, req *models.CompletionRequest) {
 	var nativeResp *models.CompletionResponse
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		start := time.Now()
 		resp, err := provider.TextCompletion(ctx, req)
+		h.recordProviderOutcome(ctx, provider, time.Since(start), err)
 		if err != nil {
 			return err
 		}
+		recordServedBy(rc, provider)
 		nativeResp = resp
-		text := ""
+		text, finish := "", ""
 		if len(resp.Choices) > 0 {
-			text = resp.Choices[0].Text
-		}
-		contentJSON, _ := json.Marshal(text)
-		finish := ""
-		if len(resp.Choices) > 0 {
-			finish = resp.Choices[0].FinishReason
+			text, finish = resp.Choices[0].Text, resp.Choices[0].FinishReason
 		}
 		rc.Response = &models.ChatCompletionResponse{
 			ID:      resp.ID,
@@ -249,18 +254,25 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 			Created: resp.Created,
 			Model:   resp.Model,
 			Choices: []models.Choice{{
-				Index:        0,
-				Message:      models.Message{Role: "assistant", Content: contentJSON},
-				FinishReason: finish,
+				Index: 0, Message: textMessage("assistant", text), FinishReason: finish,
 			}},
 			Usage:             resp.Usage,
 			SystemFingerprint: resp.SystemFingerprint,
 		}
+		selected := *rc.Response
+		selected.Choices = make([]models.Choice, 0, len(resp.Choices))
+		for _, choice := range resp.Choices {
+			selected.Choices = append(selected.Choices, models.Choice{
+				Index: choice.Index, Message: textMessage("assistant", choice.Text),
+				FinishReason: choice.FinishReason, Logprobs: choice.Logprobs,
+			})
+		}
+		rc.SelectedGuardrailResponse = &selected
 		rc.ResolvedModel = resp.Model
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "completions.create", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -278,16 +290,17 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 
 func (h *Handlers) handleCompletionNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider) {
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		resp, err := provider.ChatCompletion(ctx, rc.Request)
+		resp, err := h.callChatProvider(ctx, provider, rc.Request)
 		if err != nil {
 			return err
 		}
+		recordServedBy(rc, provider)
 		rc.Response = resp
 		rc.ResolvedModel = resp.Model
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "completions.create", providerCall); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -317,13 +330,22 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 
 	var chunks <-chan models.StreamChunk
 	var errCh <-chan error
+	var upstreamStart time.Time
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		upstreamStart = time.Now()
 		chunks, errCh = provider.StreamChatCompletion(ctx, rc.Request)
+		// Sample here: after Process, a nil stream can also mean a pre-plugin
+		// short-circuited and the provider was never called.
+		if chunks == nil {
+			h.recordProviderOutcome(ctx, provider, time.Since(upstreamStart), models.ErrInternal("no stream from provider"))
+		} else {
+			recordServedBy(rc, provider)
+		}
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	if err := h.processTextInspection(ctx, rc, "completions.create", providerCall); err != nil {
 		// A pre-plugin's refusal — auth, rate limit, budget — keeps its status.
 		models.WriteErrorFromError(w, err)
 		return
@@ -403,6 +425,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 	// its own status, as /v1/chat/completions does.
 	first, startErr := waitForFirstStreamChunk(ctx, chunks, errCh)
 	if startErr != nil {
+		h.recordProviderOutcome(ctx, provider, time.Since(upstreamStart), startErr)
 		if apiErr := streamEndError(ctx, startErr); apiErr != nil {
 			rc.AddError(apiErr)
 			models.WriteError(w, apiErr)
@@ -410,6 +433,9 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		finalizeStream(ctx.Err() != nil)
 		return
 	}
+	// Routing latency is time to first chunk, not the whole stream's length,
+	// for the outcome recorded below whether the stream succeeds or fails.
+	firstChunkLatency := time.Since(upstreamStart)
 	sseWriter.WriteHeaders()
 	if !relay(*first) {
 		return
@@ -421,12 +447,14 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 			if !ok {
 				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
 					if apiErr != nil {
+						h.recordProviderOutcome(ctx, provider, firstChunkLatency, apiErr)
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
 					}
 					finalizeStream(ctx.Err() != nil)
 					return
 				}
+				h.recordProviderOutcome(ctx, provider, firstChunkLatency, nil)
 				if wantsStreamMetadata(rc) {
 					// Finalise first: the last chunk carries the cost.
 					finalizeStream(false)
@@ -447,6 +475,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
+				h.recordProviderOutcome(ctx, provider, firstChunkLatency, err)
 				apiErr, isAPI := err.(*models.APIError)
 				if !isAPI {
 					apiErr = models.ErrInternal(err.Error())
@@ -461,6 +490,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 			// The client left, or the request reached its deadline; only the
 			// second has anyone to tell. Drain the channel and run post-plugins.
 			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
+				h.recordProviderOutcome(ctx, provider, firstChunkLatency, ctx.Err())
 				rc.AddError(apiErr)
 				sseWriter.WriteError(apiErr)
 			}

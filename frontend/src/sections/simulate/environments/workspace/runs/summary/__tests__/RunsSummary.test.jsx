@@ -26,7 +26,9 @@ vi.mock("react-router-dom", async (importOriginal) => ({
   useNavigate: () => navigate,
 }));
 
-const { useEnvironmentRuns } = await import("src/api/simulate-environments/runs");
+const { useEnvironmentRuns } = await import(
+  "src/api/simulate-environments/runs"
+);
 const { default: RunsSummary } = await import("../RunsSummary");
 const { STATUS_META } = await import("../../runs.constants");
 
@@ -43,7 +45,6 @@ const RUNS = [
     passed: 15,
     failed: 5,
     passRate: 75,
-    measured: 20,
     agentVersion: "v2",
     durationS: 11.9,
     scores: { task_success: 58, policy_adherence: 39 },
@@ -60,7 +61,6 @@ const RUNS = [
     passed: 10,
     failed: 10,
     passRate: 50,
-    measured: 20,
     agentVersion: "v1",
     durationS: 13.2,
     scores: { task_success: 49, policy_adherence: 28 },
@@ -68,20 +68,36 @@ const RUNS = [
 ];
 
 const env = { id: "env-1", name: "Refund Support", version: "v3" };
-const envState = { scenarios: Array.from({ length: 20 }, (_, i) => ({ id: `s${i}` })) };
+const envState = {
+  scenarios: Array.from({ length: 20 }, (_, i) => ({ id: `s${i}` })),
+};
 
-function renderSummary(props = {}, runs = RUNS, isLoading = false, totals = {}) {
+function renderSummary(
+  props = {},
+  runs = RUNS,
+  isLoading = false,
+  totals = {},
+) {
   useEnvironmentRuns.mockReturnValue({
     runs,
     count: runs.length,
     isLoading,
     ...totals,
   });
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   const ui = () => (
     <MemoryRouter>
       <QueryClientProvider client={client}>
-        <RunsSummary env={env} envState={envState} onStart={vi.fn()} onOpenRun={vi.fn()} onGo={vi.fn()} {...props} />
+        <RunsSummary
+          env={env}
+          envState={envState}
+          onStart={vi.fn()}
+          onOpenRun={vi.fn()}
+          onGo={vi.fn()}
+          {...props}
+        />
       </QueryClientProvider>
     </MemoryRouter>
   );
@@ -99,9 +115,9 @@ function closestCommon(a, b) {
 describe("RunsSummary", () => {
   beforeEach(() => useEnvironmentRuns.mockReset());
 
-  it("shows a spinner, not an empty summary, while the runs load", () => {
+  it("shows a loading skeleton, not an empty summary, while the runs load", () => {
     renderSummary({}, [], true);
-    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
     expect(screen.queryByText(/^Runs \(/)).toBeNull();
   });
 
@@ -124,11 +140,19 @@ describe("RunsSummary", () => {
     const graphControls = screen.getByLabelText("Runs in graph");
     const tableTitle = screen.getByText("Runs (2)");
     for (const name of ["Add evals", /Choose winner/]) {
-      const area = closestCommon(tableTitle, screen.getByRole("button", { name }));
+      const area = closestCommon(
+        tableTitle,
+        screen.getByRole("button", { name }),
+      );
       expect(area.contains(graphControls)).toBe(false);
     }
-    const runsBar = closestCommon(tableTitle, screen.getByRole("button", { name: "Add evals" }));
-    expect(within(runsBar).getByRole("button", { name: "Add evals" })).toBeEnabled();
+    const runsBar = closestCommon(
+      tableTitle,
+      screen.getByRole("button", { name: "Add evals" }),
+    );
+    expect(
+      within(runsBar).getByRole("button", { name: "Add evals" }),
+    ).toBeEnabled();
   });
 
   it("says scenario, not scenarios, for one", () => {
@@ -138,12 +162,12 @@ describe("RunsSummary", () => {
 
   it("shows the server's graded pass rate per run", () => {
     renderSummary();
-    expect(screen.getByText("75%")).toBeInTheDocument(); // Run 2: 15/20
-    expect(screen.getByText("50%")).toBeInTheDocument(); // Run 1: 10/20
+    expect(screen.getByText("75%")).toBeInTheDocument();
+    expect(screen.getByText("50%")).toBeInTheDocument();
   });
 
   it("shows a dash, not 0%, for a run with no measured call", () => {
-    renderSummary({}, [{ ...RUNS[0], passRate: null, measured: 0 }]);
+    renderSummary({}, [{ ...RUNS[0], passRate: null }]);
     expect(screen.queryByText("0%")).toBeNull();
     expect(screen.queryByText("75%")).toBeNull();
     const pass = screen
@@ -184,7 +208,9 @@ describe("RunsSummary", () => {
 
   it("defers Choose winner behind a disabled 'coming soon' control", () => {
     renderSummary();
-    expect(screen.getByRole("button", { name: /Choose winner/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Choose winner/ }),
+    ).toBeDisabled();
   });
 
   it("renders a run with no ordinal without crashing the identity chip", () => {
@@ -195,11 +221,19 @@ describe("RunsSummary", () => {
       runs: [{ ...RUNS[0], ordinal: undefined }],
       isLoading: false,
     });
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     expect(() =>
       render(
         <QueryClientProvider client={client}>
-          <RunsSummary env={env} envState={envState} onStart={vi.fn()} onOpenRun={vi.fn()} onGo={vi.fn()} />
+          <RunsSummary
+            env={env}
+            envState={envState}
+            onStart={vi.fn()}
+            onOpenRun={vi.fn()}
+            onGo={vi.fn()}
+          />
         </QueryClientProvider>,
       ),
     ).not.toThrow();
@@ -245,20 +279,38 @@ describe("RunsSummary", () => {
   it("adds a Status column that reads each run's lifecycle", () => {
     useEnvironmentRuns.mockReturnValue({
       runs: [
-        { ...RUNS[0], id: "ex3", executionId: "ex3", ordinal: 3, label: "Run 3", runState: "queued", stoppable: true },
+        {
+          ...RUNS[0],
+          id: "ex3",
+          executionId: "ex3",
+          ordinal: 3,
+          label: "Run 3",
+          runState: "queued",
+          stoppable: true,
+        },
         { ...RUNS[0], runState: "finished", stoppable: false },
         { ...RUNS[1], runState: "running", stoppable: true },
       ],
       isLoading: false,
     });
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     render(
       <QueryClientProvider client={client}>
-        <RunsSummary env={env} envState={envState} onStart={vi.fn()} onOpenRun={vi.fn()} onGo={vi.fn()} />
+        <RunsSummary
+          env={env}
+          envState={envState}
+          onStart={vi.fn()}
+          onOpenRun={vi.fn()}
+          onGo={vi.fn()}
+        />
       </QueryClientProvider>,
     );
 
-    expect(screen.getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Status" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("Running")).toBeInTheDocument();
@@ -266,10 +318,17 @@ describe("RunsSummary", () => {
     const stops = screen.getAllByRole("button", { name: "Stop simulation" });
     expect(stops).toHaveLength(2);
     expect(stops[0].closest("td")).toContainElement(screen.getByText("Queued"));
-    expect(stops[1].closest("td")).toContainElement(screen.getByText("Running"));
-    expect(screen.getByText("Completed").closest("td").querySelector("button")).toBeNull();
+    expect(stops[1].closest("td")).toContainElement(
+      screen.getByText("Running"),
+    );
+    expect(
+      screen.getByText("Completed").closest("td").querySelector("button"),
+    ).toBeNull();
     // A finished run reads Completed in the table, in the shared status map's role.
-    expect(STATUS_META.finished).toEqual({ role: "neutral", label: "Completed" });
+    expect(STATUS_META.finished).toEqual({
+      role: "neutral",
+      label: "Completed",
+    });
   });
 
   it("shows a stopped run as Cancelling, without a second Stop", () => {
@@ -277,23 +336,38 @@ describe("RunsSummary", () => {
       runs: [{ ...RUNS[0], runState: "cancelling", stoppable: false }],
       isLoading: false,
     });
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     render(
       <QueryClientProvider client={client}>
-        <RunsSummary env={env} envState={envState} onStart={vi.fn()} onOpenRun={vi.fn()} onGo={vi.fn()} />
+        <RunsSummary
+          env={env}
+          envState={envState}
+          onStart={vi.fn()}
+          onOpenRun={vi.fn()}
+          onGo={vi.fn()}
+        />
       </QueryClientProvider>,
     );
 
     expect(screen.getByText("Cancelling")).toBeInTheDocument();
     expect(screen.queryByText("Running")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Stop simulation" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Stop simulation" }),
+    ).toBeNull();
   });
 
   it("marks the newest run on the graph's axis", async () => {
     renderSummary();
     fireEvent.mouseDown(screen.getByText("Latest 1 run"));
-    fireEvent.click(await screen.findByRole("option", { name: "Latest 2 runs" }));
-    expect(lastChart().options.xaxis.categories).toEqual(["Run 1", "Run 2 · latest"]);
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Latest 2 runs" }),
+    );
+    expect(lastChart().options.xaxis.categories).toEqual([
+      "Run 1",
+      "Run 2 · latest",
+    ]);
   });
 
   it("draws a one-run environment as a column per eval, not a single stacked point", () => {
@@ -318,7 +392,11 @@ describe("RunsSummary", () => {
     it("draws only the first five evals by default", () => {
       renderSummary({}, manyEvals);
       expect(lastChart().series.map((x) => x.name)).toEqual([
-        "E1", "E2", "E3", "E4", "E5",
+        "E1",
+        "E2",
+        "E3",
+        "E4",
+        "E5",
       ]);
       expect(screen.getByText("5 of 7 evals")).toBeInTheDocument();
     });
@@ -334,7 +412,12 @@ describe("RunsSummary", () => {
       fireEvent.mouseDown(screen.getByText("5 of 7 evals"));
       fireEvent.click(screen.getByRole("option", { name: /E7/ }));
       expect(lastChart().series.map((x) => x.name)).toEqual([
-        "E1", "E2", "E3", "E4", "E5", "E7",
+        "E1",
+        "E2",
+        "E3",
+        "E4",
+        "E5",
+        "E7",
       ]);
     });
   });

@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
+import re
 import tempfile
 from datetime import datetime, timedelta
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
@@ -26,6 +28,7 @@ from simulate.models import (
     HostedHarnessScenario,
 )
 from simulate.models.chat_message import ChatMessageModel
+from simulate.services.call_transcripts import SpokenTurn, store_transcript
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     _resolve_scenario_modality,
@@ -33,10 +36,42 @@ from simulate.services.hosted_harness import (
     canonical_json_bytes,
     update_execution_counts,
 )
+from simulate.services.hosted_harness_validation import (
+    receipt_call_times,
+    validate_jsonb_strings,
+)
+from simulate.types import CallCallActors
+from simulate.utils.test_execution_utils import is_fix_check_run
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
 
 logger = logging.getLogger(__name__)
+
+# The actor limits a trial reports (agent-learning-kit's actor `Limits`); anything else the sandbox sends is dropped.
+_ACTOR_LIMIT_KEYS = (
+    "max_active",
+    "caller_takes_back_after_turns",
+    "actor_seconds_per_call",
+    "max_messages",
+    "live_turns_per_actor",
+    "live_turns_per_trial",
+    "model",
+)
+
+
+def _actor_limits(limits: dict) -> dict:
+    """The known actor limits, each a number, a short model name or unset."""
+    kept: dict[str, Any] = {}
+    for key in _ACTOR_LIMIT_KEYS:
+        value = limits.get(key)
+        if value is None or (
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+        ):
+            kept[key] = value
+        elif isinstance(value, str) and len(value) <= 120:
+            kept[key] = value
+    return {key: value for key, value in kept.items() if key in limits}
+
 
 _EVENT_TYPES = {
     "stage_changed",
@@ -67,6 +102,8 @@ _ARTIFACT_KINDS = {
     "recording_assistant",
     "transcript",
     "tool_trace",
+    # The world's records at a trial's end with its action log, kept so a fixed check can grade it again.
+    "world_state",
     "result",
     "build",
     "trace",
@@ -75,7 +112,15 @@ _ARTIFACT_KINDS = {
 }
 _ALLOWED_ARTIFACTS = {
     "metadata-only": {"build", "result", "log"},
-    "traces": {"build", "result", "log", "trace", "tool_trace", "transcript"},
+    "traces": {
+        "build",
+        "result",
+        "log",
+        "trace",
+        "tool_trace",
+        "transcript",
+        "world_state",
+    },
     "traces-and-recordings": _ARTIFACT_KINDS - {"other"},
     "full": _ARTIFACT_KINDS,
 }
@@ -113,6 +158,9 @@ def _normalized_artifact_content_type(
 def ingest_event_batch(
     attempt: HostedHarnessAttempt, events: list[dict[str, Any]]
 ) -> dict[str, Any]:
+    # Validate the entire raw batch before digest encoding or any event, watermark
+    # or heartbeat write, matching the conversation event channel.
+    validate_jsonb_strings(events, field="events")
     rejected: list[dict[str, Any]] = []
     with transaction.atomic():
         attempt = (
@@ -170,6 +218,10 @@ def ingest_result_receipt(
             "digest_mismatch", "result receipt digest did not match", status_code=422
         )
     _assert_body_binding(attempt, body)
+    # Offline spool replay bypasses DRF's datetime conversion. Reject malformed
+    # call timestamps before receipt writes, while retaining the original wire body.
+    if body.get("call") is not None:
+        receipt_call_times(body["call"])
     with transaction.atomic():
         attempt = (
             HostedHarnessAttempt.no_workspace_objects.select_for_update()
@@ -888,9 +940,8 @@ def _apply_receipt_to_call(
         resolved_modality = CallExecution.SimulationCallType.VOICE
     call.simulation_call_type = resolved_modality
     if call_data:
-        call.started_at = call_data["started_at"]
-        call.ended_at = call_data["ended_at"]
-        call.completed_at = call_data["ended_at"]
+        call.started_at, call.ended_at = receipt_call_times(call_data)
+        call.completed_at = call.ended_at
         call.duration_seconds = round(call_data["duration_ms"] / 1000)
     elif body["status"] == "skipped":
         call.completed_at = timezone.now()
@@ -904,7 +955,7 @@ def _apply_receipt_to_call(
         recovered_artifact_ids = metadata.get("hosted_harness_recovered_artifact_ids")
     metadata["hosted_harness_receipt"] = _json_ready(body)
     metadata["harness_evaluations"] = _receipt_evaluations(body)
-    metadata["harness_outcome_status"] = body["status"]
+    metadata["harness_outcome_status"] = receipt_outcome_status(body)
     coverage = _receipt_evaluation_coverage(body)
     metadata["harness_eval_coverage"] = coverage
     if coverage["complete"]:
@@ -915,10 +966,15 @@ def _apply_receipt_to_call(
         failure = body.get("failure") or {}
         metadata["harness_grading_error"] = (
             "Required evaluation coverage was incomplete "
-            f"({coverage['executed']}/{coverage['expected']} executed). "
+            f"({coverage['executed']}/{coverage['expected']} executed"
             + (
-                "The trial ended with "
-                f"{failure.get('code') or failure.get('message')}."
+                f", {coverage['unmeasured']} not measured"
+                if coverage.get("unmeasured")
+                else ""
+            )
+            + "). "
+            + (
+                f"The trial ended with {failure.get('code') or failure.get('message')}."
                 if failure
                 else "This is a grading failure, not an agent failure."
             )
@@ -1006,7 +1062,7 @@ def _apply_receipt_to_call(
         )
         base_time = None
         if transcript is not None:
-            base_time = _ingest_hosted_transcript(call, transcript)
+            base_time = _ingest_hosted_transcript(call, transcript, metadata)
             call.transcript_available = True
             update_fields.append("transcript_available")
         if tool_trace is not None:
@@ -1097,6 +1153,10 @@ def _apply_receipt_to_call(
                 known = isinstance(run_test_id, (str, UUID))
                 selected = runnable_eval_config_ids(run_test_id) if known else []
                 tool_on = _tool_evaluation_on(run_test_id) if known else False
+                # A fix's check run starts no grading here: its fix grades the base
+                # version's and the winner's runs once it has a winner.
+                if is_fix_check_run(call.test_execution_id):
+                    selected, tool_on = [], False
         except Exception:  # noqa: BLE001 - a receipt is never lost over scheduling
             logger.exception(
                 "harness_eval_selection_lookup_failed for call %s", call_id
@@ -1189,22 +1249,60 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
     return CallExecution.CallStatus.FAILED
 
 
+def receipt_outcome_status(body: dict[str, Any]) -> str:
+    """The receipt's status, or no_score when no sub-goal or evaluation passed or failed; an error stays an error."""
+    results = {
+        sub_goal_result(one)
+        for one in body.get("sub_goals") or []
+        if isinstance(one, dict)
+    }
+    decided = any(
+        isinstance(one, dict)
+        and isinstance(one.get("passed"), bool)
+        and not one.get("grading_error")
+        for one in body.get("evaluations") or []
+    )
+    if (
+        body["status"] == "passed"
+        and results & {"not_applicable", "inconclusive"}
+        and not results & {"pass", "fail"}
+        and not decided
+    ):
+        return "no_score"
+    return str(body["status"])
+
+
+# A sub-goal's pass or fail as `passed`; any other result has no pass or fail.
+SUB_GOAL_PASSED: dict[str | None, bool] = {"pass": True, "fail": False}
+
+
+def sub_goal_result(goal: dict[str, Any]) -> str | None:
+    """pass, fail, not_applicable, inconclusive or unmeasured; a receipt from before verdicts reads from `held`."""
+    if goal.get("verdict"):
+        return str(goal["verdict"])
+    if not isinstance(goal.get("held"), bool):
+        return None
+    return "pass" if goal["held"] else "fail"
+
+
 def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert hosted receipt checks to the platform's existing eval-output shape."""
     results: list[dict[str, Any]] = []
     for goal in body.get("sub_goals") or []:
         if not isinstance(goal, dict) or not goal.get("name"):
             continue
-        # Nothing decided this sub-goal, which is not the same as deciding against it.
-        # Coercing it would publish a failed, reasonless eval. Coverage carries the count.
-        if goal.get("held") is None:
+        result = sub_goal_result(goal)
+        # Nothing decided this sub-goal (or nothing could measure it), which is not the same as deciding against it.
+        # Publishing it would read as a failed, reasonless eval. Coverage carries the count.
+        if result in (None, "unmeasured"):
             continue
         results.append(
             {
                 "name": str(goal["name"]),
                 "kind": "judge" if goal.get("judged") else "checkpoint",
-                "passed": bool(goal["held"]),
+                "passed": SUB_GOAL_PASSED.get(result),
                 "reason": str(goal.get("reason") or ""),
+                **({"result": result} if result not in ("pass", "fail") else {}),
             }
         )
     for evaluation in body.get("evaluations") or []:
@@ -1220,15 +1318,108 @@ def _receipt_evaluation_coverage(body: dict[str, Any]) -> dict[str, int | bool]:
         item for item in body.get("evaluations") or [] if isinstance(item, dict)
     ]
     expected = len(sub_goals) + len(evaluations)
-    executed = sum(item.get("held") is not None for item in sub_goals) + sum(
-        not bool(item.get("grading_error")) for item in evaluations
-    )
+    # An unmeasured sub-goal stays among those requested and is never counted as evaluated, passed or failed.
+    unmeasured = sum(sub_goal_result(item) == "unmeasured" for item in sub_goals)
+    executed = sum(
+        sub_goal_result(item) not in (None, "unmeasured") for item in sub_goals
+    ) + sum(not bool(item.get("grading_error")) for item in evaluations)
     return {
         "expected": expected,
         "executed": executed,
-        "failed": max(0, expected - executed),
-        "complete": executed == expected,
+        "failed": max(0, expected - executed - unmeasured),
+        "unmeasured": unmeasured,
+        "complete": executed + unmeasured == expected,
     }
+
+
+def _decode_artifact_text(data: bytes, *, field: str) -> str:
+    """Decode an uploaded artifact, refusing bytes that are not UTF-8 without echoing them."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HostedHarnessError(
+            "invalid_jsonb_string",
+            f"{field} is not valid UTF-8 text",
+            status_code=400,
+        ) from None
+
+
+def _load_artifact_json(text: str, *, field: str) -> Any:
+    """Parse artifact JSON, refusing unsupported numbers before any timing math."""
+
+    def nonfinite(_token: str) -> float:
+        raise HostedHarnessError(
+            "invalid_jsonb_number",
+            f"{field} contains a non-finite number",
+            status_code=400,
+        )
+
+    def finite_float(token: str) -> float:
+        value = float(token)
+        if not math.isfinite(value):
+            nonfinite(token)
+        return value
+
+    def bounded_int(token: str) -> int:
+        try:
+            return int(token)
+        except ValueError:
+            # Python's integer digit limit raises ValueError, not JSONDecodeError.
+            # Refuse it rather than treating it as legacy text or a skippable line.
+            raise HostedHarnessError(
+                "invalid_jsonb_number",
+                f"{field} contains an integer exceeding the digit limit",
+                status_code=400,
+            ) from None
+
+    return json.loads(
+        text,
+        parse_constant=nonfinite,
+        parse_float=finite_float,
+        parse_int=bounded_int,
+    )
+
+
+# The latest epoch second a timing value may name (9999-12-31T23:59:59Z). Bounding
+# timing inputs keeps every derived offset within float and BigInteger range.
+_MAX_TIMING_SECONDS = 253402300799
+
+
+def _timing_number(value: Any, *, field: str, scale: float = 1.0) -> float | None:
+    """A timing number from an artifact, or None when it is not a number.
+
+    ``scale`` is 1000 for millisecond values. A number beyond any plausible
+    timestamp (or too large for a float) is refused instead of overflowing the
+    offset arithmetic or the stored offset column.
+    """
+    if not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        number = math.inf
+    if not math.isfinite(number) or abs(number) > _MAX_TIMING_SECONDS * scale:
+        raise HostedHarnessError(
+            "invalid_jsonb_number",
+            f"{field} contains a timing value out of range",
+            status_code=400,
+        )
+    return number
+
+
+def _jsonl_lines(text: str) -> list[str]:
+    """Split JSONL on newlines only; U+2028 and other separators belong to the data."""
+    return [line.removesuffix("\r") for line in text.split("\n")]
+
+
+def _rebased(
+    value: dict[str, Any], base_time: float | None, *, field: str
+) -> dict[str, Any]:
+    """A row with an epoch `at` placed on the transcript's clock as `start_time_ms`."""
+    at = _timing_number(value.get("at"), field=field)
+    if base_time is not None and at is not None and at > 0:
+        value["start_time_ms"] = int(round((at - base_time) * 1000))
+    return value
 
 
 def _read_hosted_tool_trace(
@@ -1244,20 +1435,20 @@ def _read_hosted_tool_trace(
         response = get_storage_client().get_object(
             UPLOAD_BUCKET_NAME, artifact.object_key
         )
-        raw = response.read().decode("utf-8")
+        raw = _decode_artifact_text(response.read(), field="tool trace artifact")
         calls: list[dict[str, Any]] = []
-        for line in raw.splitlines():
+        for line in _jsonl_lines(raw):
             if not line.strip():
                 continue
             try:
-                value = json.loads(line)
+                value = _load_artifact_json(line, field="tool trace artifact")
             except json.JSONDecodeError:
                 continue
             if isinstance(value, dict):
-                at = value.get("at")
-                if base_time is not None and isinstance(at, (int, float)) and at > 0:
-                    value["start_time_ms"] = int(round((at - base_time) * 1000))
-                calls.append(value)
+                calls.append(_rebased(value, base_time, field="tool trace artifact"))
+        # These calls are stored in provider_call_data. Malformed lines are skipped
+        # above, but readable text Postgres cannot store fails the receipt instead.
+        validate_jsonb_strings(calls, field="tool trace artifact")
         return calls
     finally:
         if response is not None:
@@ -1304,8 +1495,135 @@ def _epoch_seconds(value: Any) -> float | None:
     return value.timestamp() if isinstance(value, datetime) else None
 
 
+# Where a call keeps its world actors' actions, sealed in the transcript beside the actors.
+WORLD_ACTIONS_KEY = "harness_world_actions"
+# Where a call keeps what changed in the world during its trial, per participant, and what each actor decided.
+TRIAL_STATE_KEY = "harness_trial_state"
+# What started a call that no person began: the scenario's own task.
+STARTED_BY_KEY = "harness_started_by"
+STARTED_BY_TASK = "task"
+# The most entries one list from the sandbox may add to a call's metadata; the rest is dropped, not stored.
+MAX_RECORDED_ENTRIES = 500
+# Longest text one field of a record change keeps, as the harness cuts it: a document column from an older harness or
+# another producer would otherwise ride whole into the call's metadata.
+MAX_CHANGE_VALUE_CHARS = 2000
+
+
+def _entries(raw: object) -> list[dict[str, Any]]:
+    """A sandbox list's dict entries, at most MAX_RECORDED_ENTRIES of them, in their order."""
+    if not isinstance(raw, list):
+        return []
+    return [one for one in raw if isinstance(one, dict)][:MAX_RECORDED_ENTRIES]
+
+
+def _call_actor_record(raw: object) -> CallCallActors | None:
+    """The transcript's actor record, keeping only the entries of its three lists."""
+    if not isinstance(raw, dict):
+        return None
+    record = cast(
+        CallCallActors,
+        {
+            key: _entries(raw[key])
+            for key in ("resolved", "summary", "events")
+            if isinstance(raw.get(key), list)
+        },
+    )
+    return record or None
+
+
+_START_STATES = ("seeded", "differs", "unknown")
+_START_BASELINES = ("sealed_seed", "first_trial")
+
+
+def _shown_record(row: object) -> object:
+    """A record in a change with each field's text cut at MAX_CHANGE_VALUE_CHARS, saying how much was cut."""
+    if not isinstance(row, dict):
+        return row
+    shown: dict[str, Any] = {}
+    for name, value in row.items():
+        text = (
+            value
+            if isinstance(value, str)
+            else json.dumps(value, default=str)
+            if isinstance(value, (dict, list))
+            else None
+        )
+        if text is not None and len(text) > MAX_CHANGE_VALUE_CHARS:
+            value = f"{text[:MAX_CHANGE_VALUE_CHARS]}... ({len(text) - MAX_CHANGE_VALUE_CHARS} more characters)"
+        shown[str(name)] = value
+    return shown
+
+
+def _shown_change(change: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **change,
+        **{
+            side: _shown_record(change[side])
+            for side in ("before", "after")
+            if side in change
+        },
+    }
+
+
+def _world_change_fields(world: dict[str, Any]) -> dict[str, Any]:
+    """World changes beyond each participant's attempts: why they were not recorded (an agent whose tools run
+    inside it), whether they could be read, the records before and after, and whether the trial started from the
+    seeded records. Lists are capped at MAX_RECORDED_ENTRIES; what is cut is counted in `truncated`."""
+    kept: dict[str, Any] = {}
+    if world.get("recorded") is False:
+        kept["recorded"] = False
+        kept["why"] = str(world.get("why") or "")[:64]
+    elif world.get("door") is True:
+        # A door stood for these counts; a record without this is from before the harness said so.
+        kept["door"] = True
+    records = world.get("records")
+    if world.get("unreadable") or (
+        isinstance(records, dict) and records.get("unreadable")
+    ):
+        kept["unreadable"] = True
+    elif isinstance(records, dict):
+        changes = [one for one in records.get("changes") or [] if isinstance(one, dict)]
+        try:
+            truncated = max(int(records.get("truncated") or 0), 0)
+        except (TypeError, ValueError):
+            truncated = 0
+        kept["records"] = {
+            "changes": [_shown_change(one) for one in changes[:MAX_RECORDED_ENTRIES]],
+            "skipped": _entries(records.get("skipped")),
+            "truncated": truncated + max(len(changes) - MAX_RECORDED_ENTRIES, 0),
+        }
+    end_state = world.get("end_state_artifact")
+    if isinstance(end_state, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", end_state):
+        kept["end_state_artifact"] = end_state
+    start = world.get("start")
+    if isinstance(start, dict) and start.get("state") in _START_STATES:
+        kept["start"] = {
+            "state": start["state"],
+            "tables": [
+                str(one) for one in start.get("tables") or [] if isinstance(one, str)
+            ][:MAX_RECORDED_ENTRIES],
+            **(
+                {"against": start["against"]}
+                if start.get("against") in _START_BASELINES
+                else {}
+            ),
+        }
+    return kept
+
+
+def _placed_world_actions(
+    metadata: dict[str, Any] | None, base_time: float | None
+) -> float | None:
+    """The world actors' actions put on the transcript's clock; returns that clock's base."""
+    for action in (metadata or {}).get(WORLD_ACTIONS_KEY) or []:
+        _rebased(action, base_time, field="world actions")
+    return base_time
+
+
 def _ingest_hosted_transcript(
-    call: CallExecution, artifact: HostedHarnessArtifact
+    call: CallExecution,
+    artifact: HostedHarnessArtifact,
+    metadata: dict[str, Any] | None = None,
 ) -> float | None:
     """Materialize the sealed transcript artifact into the normal call transcript model.
 
@@ -1319,12 +1637,63 @@ def _ingest_hosted_transcript(
         response = get_storage_client().get_object(
             UPLOAD_BUCKET_NAME, artifact.object_key
         )
-        raw = response.read().decode("utf-8")
+        raw = _decode_artifact_text(response.read(), field="transcript artifact")
         try:
-            payload = json.loads(raw)
+            payload = _load_artifact_json(raw, field="transcript artifact")
         except json.JSONDecodeError:
             payload = {"transcript": raw, "messages": []}
         messages = payload.get("messages") if isinstance(payload, dict) else []
+        # Who else was in the call, who took part and when; a rerun without them clears it.
+        if metadata is not None:
+            record = _call_actor_record(
+                payload.get("call_actors") if isinstance(payload, dict) else None
+            )
+            if record:
+                metadata["harness_call_actors"] = record
+            else:
+                metadata.pop("harness_call_actors", None)
+            # World actors' actions are theirs, never the agent's tool calls; placed on the clock once it is known.
+            world = payload.get("world_actors") if isinstance(payload, dict) else None
+            actions = world.get("actions") if isinstance(world, dict) else None
+            actions = _entries(actions)
+            if actions:
+                metadata[WORLD_ACTIONS_KEY] = actions
+            else:
+                metadata.pop(WORLD_ACTIONS_KEY, None)
+            trial: dict[str, Any] = {
+                key: _entries(world.get(key))
+                for key in (
+                    "state_changes",
+                    "decisions",
+                    "approvals",
+                    "usage",
+                    "duplicates",
+                )
+                if isinstance(world, dict) and isinstance(world.get(key), list)
+            }
+            # The limits the trial ran with, so the record says which applied.
+            if isinstance(world, dict) and isinstance(world.get("limits"), dict):
+                trial["limits"] = _actor_limits(world["limits"])
+            if isinstance(world, dict):
+                trial.update(_world_change_fields(world))
+            # What the person should know about how the trial ran, e.g. a fault that did not take effect.
+            notices = payload.get("notices") if isinstance(payload, dict) else None
+            notices = [
+                # A fault's notice names its action, call and mode; evidence_incomplete counts the pieces instead.
+                {
+                    key: one.get(key)
+                    for key in ("code", "message", "action", "on_call", "mode", "count")
+                    if key in one
+                }
+                for one in _entries(notices)
+                if isinstance(one.get("message"), str)
+            ]
+            if notices:
+                trial["notices"] = notices
+            if any(trial.values()):
+                metadata[TRIAL_STATE_KEY] = trial
+            else:
+                metadata.pop(TRIAL_STATE_KEY, None)
         # Guests predating the structured transcript contract uploaded the
         # rendered `customer: ...` / `agent: ...` text. Preserve visibility for
         # those in-flight and retained runs while all new guests emit JSON.
@@ -1359,8 +1728,8 @@ def _ingest_hosted_transcript(
             # Turns carry the epoch second they were delivered (`at`), on the tool trace's
             # clock, so turns and tool calls are measured from one base into one timeline.
             def sent_at(message: dict) -> float | None:
-                value = message.get("at")
-                return value if isinstance(value, (int, float)) and value > 0 else None
+                value = _timing_number(message.get("at"), field="transcript artifact")
+                return value if value is not None and value > 0 else None
 
             messages = [
                 message
@@ -1383,16 +1752,28 @@ def _ingest_hosted_transcript(
                 }
                 if message.get("tool_calls"):
                     segment["tool_calls"] = message["tool_calls"]
+                if segment["speaker_role"] == CallTranscript.SpeakerRole.ACTOR:
+                    segment["actor"] = str(message.get("actor") or "")
+                    segment["name"] = str(message.get("name") or "")
                 at = sent_at(message)
                 if base_time is not None and at is not None:
                     segment["start_time_ms"] = int(round((at - base_time) * 1000))
                 segments.append(segment)
+            # Reject before replacing the stored chat, so the receipt rolls back to
+            # a stable 400 rather than a database error the runner would retry.
+            validate_jsonb_strings(segments, field="transcript artifact")
             ChatMessageModel.objects.filter(call_execution=call).delete()
             CallTranscript.objects.filter(call_execution=call).delete()
             if segments:
                 _store_alk_chat_messages(call, segments)
-            return base_time
-        rows: list[CallTranscript] = []
+            if metadata is not None:
+                # Started by the scenario's own task, with no person: the call has no customer to show.
+                if any(one["speaker_role"] == STARTED_BY_TASK for one in segments):
+                    metadata[STARTED_BY_KEY] = STARTED_BY_TASK
+                else:
+                    metadata.pop(STARTED_BY_KEY, None)
+            return _placed_world_actions(metadata, base_time)
+        rows: list[SpokenTurn] = []
         if isinstance(messages, list):
             # The v2 transcript carries absolute speech timing
             # (``started_speaking_at`` / ``stopped_speaking_at`` in epoch
@@ -1408,21 +1789,26 @@ def _ingest_hosted_transcript(
             # (the recorder attaches after the call starts, so this lands
             # late), and a call start after the first word (clock skew) falls
             # back to that word.
+            def spoken_at(message: dict, key: str) -> float | None:
+                return _timing_number(message.get(key), field="transcript artifact")
+
             speech_starts = [
-                message["started_speaking_at"]
+                start
                 for message in messages
                 if isinstance(message, dict)
-                and isinstance(message.get("started_speaking_at"), (int, float))
+                and (start := spoken_at(message, "started_speaking_at")) is not None
             ]
             first_speech = min(speech_starts) if speech_starts else None
-            recording_offset = (
+            recording_offset = _timing_number(
                 payload.get("recording_offset_ms")
                 if isinstance(payload, dict)
-                else None
+                else None,
+                field="transcript artifact",
+                scale=1000,
             )
             call_start = _epoch_seconds(call.started_at)
-            if first_speech is not None and isinstance(recording_offset, (int, float)):
-                base_time = first_speech - max(0.0, float(recording_offset)) / 1000
+            if first_speech is not None and recording_offset is not None:
+                base_time = first_speech - max(0.0, recording_offset) / 1000
             elif (
                 first_speech is not None
                 and call_start is not None
@@ -1442,13 +1828,13 @@ def _ingest_hosted_transcript(
                 if content is None:
                     continue
                 role = str(message.get("role") or "unknown")
-                started = message.get("started_speaking_at")
-                stopped = message.get("stopped_speaking_at")
-                if base_time is not None and isinstance(started, (int, float)):
+                started = spoken_at(message, "started_speaking_at")
+                stopped = spoken_at(message, "stopped_speaking_at")
+                if base_time is not None and started is not None:
                     start_ms = int(round((started - base_time) * 1000))
                     end_ms = (
                         int(round((stopped - base_time) * 1000))
-                        if isinstance(stopped, (int, float))
+                        if stopped is not None
                         else start_ms
                     )
                     previous_end_ms = end_ms
@@ -1462,27 +1848,46 @@ def _ingest_hosted_transcript(
                     # Older guests emit no timing; preserve turn order only.
                     start_ms = index
                     end_ms = index
+                spoken_by_actor = role == CallTranscript.SpeakerRole.ACTOR
                 rows.append(
-                    CallTranscript(
-                        call_execution=call,
-                        speaker_role=role if role in valid_roles else "unknown",
-                        content=str(content),
-                        start_time_ms=start_ms,
-                        end_time_ms=end_ms,
+                    SpokenTurn(
+                        row=CallTranscript(
+                            call_execution=call,
+                            speaker_role=role if role in valid_roles else "unknown",
+                            content=str(content),
+                            start_time_ms=start_ms,
+                            end_time_ms=end_ms,
+                        ),
+                        speaker_name=(
+                            str(message.get("name") or "")[:255]
+                            if spoken_by_actor
+                            else ""
+                        ),
+                        actor_id=(
+                            str(message.get("actor") or "")[:255] or None
+                            if spoken_by_actor
+                            else None
+                        ),
                     )
                 )
         if not rows and isinstance(payload, dict) and payload.get("transcript"):
             rows.append(
-                CallTranscript(
-                    call_execution=call,
-                    speaker_role=CallTranscript.SpeakerRole.UNKNOWN,
-                    content=str(payload["transcript"]),
+                SpokenTurn(
+                    row=CallTranscript(
+                        call_execution=call,
+                        speaker_role=CallTranscript.SpeakerRole.UNKNOWN,
+                        content=str(payload["transcript"]),
+                    )
                 )
             )
+        # Transcript text columns reject U+0000 and lone surrogates as JSONB does.
+        validate_jsonb_strings(
+            [turn.row.content for turn in rows], field="transcript artifact"
+        )
         CallTranscript.objects.filter(call_execution=call).delete()
         if rows:
-            CallTranscript.objects.bulk_create(rows)
-        return base_time
+            store_transcript(rows)
+        return _placed_world_actions(metadata, base_time)
     finally:
         if response is not None:
             response.close()

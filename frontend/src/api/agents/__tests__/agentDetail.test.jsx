@@ -89,20 +89,18 @@ describe("toRun", () => {
       agentVersion: { id: "93956ae6", number: 3 },
       passed: 3,
       failed: 7,
+      errored: 0,
+      noScore: 0,
       skipped: 0,
-      passRate: 30,
-      measured: 10,
+      // The trial pass the environment's runs list shows, never the older call-based rate.
+      passRate: 33.33,
+      trialsPassed: 3,
+      trialsEvaluated: 9,
+      trialsInconclusive: 1,
+      trialsExcluded: 0,
+      scored: 10,
       startedAt: "2026-10-14T11:58:53.368130+00:00",
       completedAt: "2026-10-14T12:27:36.569945+00:00",
-    });
-  });
-
-  it("rounds the server's graded pass rate for display", () => {
-    expect(
-      toRun({ ...ENVIRONMENT_RUN, pass_rate: 66.67, measured: 3 }),
-    ).toMatchObject({
-      passRate: 67,
-      measured: 3,
     });
   });
 

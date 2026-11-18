@@ -229,7 +229,7 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
         }}
       >
         <Box sx={{ p: 1.5, pb: 1 }}>
-          <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1 }}>
+          <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1 }}>
             Tags
           </Typography>
           <TextField

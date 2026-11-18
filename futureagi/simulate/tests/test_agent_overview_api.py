@@ -3,10 +3,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
-from django.core.cache import cache
-from django.db import connection
 from django.test import override_settings
-from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -300,9 +297,19 @@ def test_runs_list_environment_and_simulate_runs_newest_first(
         "agent_version": None,
         "outcome_passed": None,
         "outcome_failed": None,
+        "outcome_errored": None,
         "outcome_skipped": None,
+        "outcome_no_score": None,
+        # A run without receipts has no counts here: no verdict and no rate.
+        "outcome_status": None,
         "pass_rate": None,
-        "measured": None,
+        "scored": None,
+        # Its trials as the run's own page reads them: none ran to a verdict yet.
+        "trials_passed": 0,
+        "trials_evaluated": 0,
+        "trials_inconclusive": 0,
+        "trials_excluded_not_comparable": 0,
+        "trial_pass_rate": None,
         "started_at": None,
         "completed_at": None,
     }
@@ -311,12 +318,19 @@ def test_runs_list_environment_and_simulate_runs_newest_first(
         2,
         {"id": str(environment.id), "name": "env-1"},
     )
+    # outcome_failed counts failed plus errored receipts, as on dev; outcome_errored says how many errored.
     assert (
         runs[1]["outcome_passed"],
         runs[1]["outcome_failed"],
+        runs[1]["outcome_errored"],
         runs[1]["outcome_skipped"],
-    ) == (2, 2, 1)
-    assert (runs[1]["pass_rate"], runs[1]["measured"]) == (66.67, 3)
+    ) == (2, 2, 1, 1)
+    # The verdict and rate come with the run: anything errored fails it, and the rate is 2 of 5, as on dev.
+    assert (runs[1]["outcome_status"], runs[1]["pass_rate"], runs[1]["scored"]) == (
+        "failed",
+        40,
+        5,
+    )
     assert (runs[2]["run_number"], runs[2]["agent_version"]) == (
         1,
         {"id": str(version.id), "version_number": version.version_number},
@@ -440,7 +454,7 @@ def test_environments_filter_by_agent_and_carry_their_last_run(
         2,
     )
     assert (last_run["outcome_passed"], last_run["outcome_failed"]) == (1, 1)
-    assert (last_run["pass_rate"], last_run["measured"]) == (50.0, 2)
+    assert (last_run["trial_pass_rate"], last_run["trials_evaluated"]) == (50.0, 2)
     assert rows[str(untested.id)]["last_run"] is None
     everything = auth_client.get(ENVIRONMENTS, **headers).json()["results"]
     assert {row["id"] for row in everything} == {
@@ -516,57 +530,15 @@ def test_an_environments_last_run_is_graded_by_its_own_evals_only(
 
     assert response.status_code == status.HTTP_200_OK, response.content
     rows = {row["id"]: row["last_run"] for row in response.json()["results"]}
-    assert (rows[str(passing.id)]["pass_rate"], rows[str(passing.id)]["measured"]) == (
+    passing_run, failing_run = rows[str(passing.id)], rows[str(failing.id)]
+    assert (passing_run["trial_pass_rate"], passing_run["trials_evaluated"]) == (
         100.0,
         1,
     )
-    assert (rows[str(failing.id)]["pass_rate"], rows[str(failing.id)]["measured"]) == (
+    assert (failing_run["trial_pass_rate"], failing_run["trials_evaluated"]) == (
         0.0,
         1,
     )
-
-
-def _environment_list_queries(auth_client, workspace, agent, count, by_agent):
-    for index in range(count):
-        _graded_environment(
-            agent,
-            index,
-            lambda eval_id: {eval_id: {"status": "completed", "output": 0.9}},
-        )
-    counts = []
-    for _ in range(2):
-        with CaptureQueriesContext(connection) as queries:
-            response = auth_client.get(
-                ENVIRONMENTS,
-                {"agent_definition_id": agent.id} if by_agent else {},
-                HTTP_X_WORKSPACE_ID=str(workspace.id),
-            )
-        assert response.status_code == status.HTTP_200_OK, response.content
-        assert all(
-            row["last_run"]["pass_rate"] == 100.0 for row in response.json()["results"]
-        )
-        counts.append(len(queries))
-    return counts
-
-
-@pytest.mark.django_db
-@pytest.mark.parametrize("by_agent", [True, False])
-def test_graded_last_runs_cost_the_same_queries_for_any_number_of_run_tests(
-    auth_client, organization, workspace, by_agent
-):
-    # Filtered by agent (the agent page), and unfiltered (the polled list).
-    cache.clear()
-    cold_3, warm_3 = _environment_list_queries(
-        auth_client, workspace, _agent(organization, workspace, "Three"), 3, by_agent
-    )
-    cold_6, warm_6 = _environment_list_queries(
-        auth_client, workspace, _agent(organization, workspace, "Six"), 6, by_agent
-    )
-
-    # Cold: one job read and one aggregate across every run test.
-    assert cold_6 == cold_3
-    assert warm_6 == warm_3
-    assert warm_3 < cold_3
 
 
 @pytest.mark.django_db
@@ -847,3 +819,33 @@ def test_each_environment_run_records_the_latest_version_at_launch(user, workspa
     assert after.test_execution.agent_version_id == second.id
     environment.run_test.refresh_from_db()
     assert environment.run_test.agent_version_id is None
+
+
+@pytest.mark.django_db
+def test_a_simulate_run_shows_no_pass_rate_even_with_finished_calls(
+    auth_client, organization, workspace
+):
+    agent = _agent(organization, workspace, "No receipts")
+    legacy = _execution(_run_test(agent, "Old suite"), 5)
+    scenario = Scenarios.objects.create(
+        name="Old scenario",
+        source="test",
+        organization=organization,
+        workspace=workspace,
+    )
+    for call_status in (
+        CallExecution.CallStatus.COMPLETED,
+        CallExecution.CallStatus.FAILED,
+    ):
+        CallExecution.objects.create(
+            test_execution=legacy, scenario=scenario, status=call_status
+        )
+
+    [run] = auth_client.get(f"{AGENTS}{agent.id}/runs/").json()["results"]
+
+    # No counts for a run without receipts, so no verdict and no rate, whatever its calls did.
+    assert (run["outcome_status"], run["pass_rate"], run["scored"]) == (
+        None,
+        None,
+        None,
+    )

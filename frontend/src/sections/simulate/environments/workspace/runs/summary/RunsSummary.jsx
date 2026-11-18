@@ -2,7 +2,14 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Box, Stack, Typography, Button, TextField, MenuItem, Checkbox, ListItemText, CircularProgress,
+  Box,
+  Stack,
+  Typography,
+  Button,
+  TextField,
+  MenuItem,
+  Checkbox,
+  ListItemText,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
@@ -18,6 +25,7 @@ import SummaryTable from "./SummaryTable";
 import { dataColor } from "../runs.constants";
 import { countCoveredScenarios } from "./summaryData";
 import { COMPARE_COPY } from "../../workspace.constants";
+import { LoadingScreen } from "src/components/loading-screen";
 import { MIN_COMPARE_RUNS } from "../compare/compare.constants";
 
 // The Runs tab: every run of the environment as one summary — the eval-score
@@ -85,7 +93,10 @@ export default function RunsSummary({
   // fallback only serves mock runs and environments with no run-test.
   const scenarioCount =
     coveredScenarioCount ??
-    countCoveredScenarios(rows, scenarioCountProp ?? envState.scenarios?.length ?? 0);
+    countCoveredScenarios(
+      rows,
+      scenarioCountProp ?? envState.scenarios?.length ?? 0,
+    );
 
   // Which eval lines to draw. Until the user picks, the first five; the last
   // one cannot be unticked (an empty chart reads as a bug, not a choice).
@@ -108,11 +119,7 @@ export default function RunsSummary({
   // A deep link to ?tab=runs keeps the tab while the runs load; show that
   // they are loading rather than an empty summary.
   if (isLoading && rows.length === 0) {
-    return (
-      <Stack alignItems="center" sx={{ py: 6 }}>
-        <CircularProgress size={20} />
-      </Stack>
-    );
+    return <LoadingScreen compact />;
   }
 
   return (
@@ -131,12 +138,24 @@ export default function RunsSummary({
       {/* The graph's tooltip grows down past the chart; a clipping card
           would cut it off. */}
       <SectionCard
-        sx={{ overflow: "visible", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+        sx={{
+          overflow: "visible",
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
       >
         {/* eval filter + legend */}
-        <Stack direction="row" alignItems="center" spacing={2} sx={{ px: 2.5, pt: 1.5, pb: 0.5, flexShrink: 0 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={2}
+          sx={{ px: 2.5, pt: 1.5, pb: 0.5, flexShrink: 0 }}
+        >
           <TextField
-            select size="small"
+            select
+            size="small"
             value={graphRuns}
             onChange={(e) => setGraphRuns(Number(e.target.value))}
             inputProps={{ "aria-label": "Runs in graph" }}
@@ -150,7 +169,8 @@ export default function RunsSummary({
           </TextField>
           {evals.length > 0 && (
             <TextField
-              select size="small"
+              select
+              size="small"
               value={shown.map((e) => e.id)}
               onChange={(e) => toggleEval(e.target.value)}
               SelectProps={{
@@ -166,8 +186,22 @@ export default function RunsSummary({
                 const on = shown.some((x) => x.id === e.id);
                 return (
                   <MenuItem key={e.id} value={e.id}>
-                    <Checkbox size="small" checked={on} disabled={on && shown.length === 1} sx={{ p: 0.5, mr: 0.75 }} />
-                    <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: (t) => dataColor(t, e.colorIndex), mr: 1, flexShrink: 0 }} />
+                    <Checkbox
+                      size="small"
+                      checked={on}
+                      disabled={on && shown.length === 1}
+                      sx={{ p: 0.5, mr: 0.75 }}
+                    />
+                    <Box
+                      sx={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        bgcolor: (t) => dataColor(t, e.colorIndex),
+                        mr: 1,
+                        flexShrink: 0,
+                      }}
+                    />
                     <ListItemText primary={e.name} />
                   </MenuItem>
                 );
@@ -177,44 +211,87 @@ export default function RunsSummary({
           <SummaryLegend evals={shown} onHighlight={setHighlightedId} />
         </Stack>
 
-        <SummaryGraph categories={categories} series={shownSeries} highlightedId={highlightedId} />
+        <SummaryGraph
+          categories={categories}
+          series={shownSeries}
+          highlightedId={highlightedId}
+        />
 
         <Stack
-          direction="row" alignItems="center" spacing={1}
-          sx={{ px: 2.5, py: 1, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 2.5,
+            py: 1,
+            borderTop: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
           <Typography sx={{ typography: "s1", fontWeight: 500 }}>
             Runs ({count})
           </Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
-            across {scenarioCount} {scenarioCount === 1 ? "scenario" : "scenarios"}
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            across {scenarioCount}{" "}
+            {scenarioCount === 1 ? "scenario" : "scenarios"}
           </Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary", flexShrink: 0 }}>
-            {selected.length ? COMPARE_COPY.picked(selected.length) : COMPARE_COPY.pick}
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              flexShrink: 0,
+            }}
+          >
+            {selected.length
+              ? COMPARE_COPY.picked(selected.length)
+              : COMPARE_COPY.pick}
           </Typography>
           {selected.length > 0 && (
-            <Button size="small" onClick={() => setSelected([])} sx={{ flexShrink: 0 }}>
+            <Button
+              size="small"
+              onClick={() => setSelected([])}
+              sx={{ flexShrink: 0 }}
+            >
               {COMPARE_COPY.clear}
             </Button>
           )}
           <Button
-            variant="outlined" size="small" disabled={!comparable}
+            variant="outlined"
+            size="small"
+            disabled={!comparable}
             onClick={compare}
             sx={{ flexShrink: 0 }}
           >
             {COMPARE_COPY.compare}
           </Button>
           <Button
-            variant="outlined" size="small" onClick={() => onGo?.("evals")}
+            variant="outlined"
+            size="small"
+            onClick={() => onGo?.("evals")}
             startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
             sx={{ flexShrink: 0 }}
           >
             Add evals
           </Button>
-          <CustomTooltip show arrow size="small" title="Choosing a winner is coming soon">
+          <CustomTooltip
+            show
+            arrow
+            size="small"
+            title="Choosing a winner is coming soon"
+          >
             <span>
               <Button
-                variant="outlined" size="small" disabled
+                variant="outlined"
+                size="small"
+                disabled
                 startIcon={<Iconify icon="solar:cup-star-linear" width={15} />}
               >
                 Choose winner
@@ -224,13 +301,21 @@ export default function RunsSummary({
         </Stack>
 
         <SummaryTable
-          rows={rows} evals={evals} onOpenRun={onOpenRun}
+          rows={rows}
+          evals={evals}
+          onOpenRun={onOpenRun}
           selectedIds={selectedIds}
           canSelect={canSelect}
           onToggleSelect={toggleSelect}
         />
         {count > RUNS_PAGE_SIZE && (
-          <Box sx={{ flexShrink: 0, borderTop: "1px solid", borderColor: "divider" }}>
+          <Box
+            sx={{
+              flexShrink: 0,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
             <DataTablePagination
               page={page}
               pageSize={pageSize}
@@ -249,7 +334,8 @@ export default function RunsSummary({
 }
 
 RunsSummary.propTypes = {
-  env: PropTypes.shape({ id: PropTypes.string, name: PropTypes.string }).isRequired,
+  env: PropTypes.shape({ id: PropTypes.string, name: PropTypes.string })
+    .isRequired,
   envState: PropTypes.shape({ scenarios: PropTypes.array }).isRequired,
   scenarioCount: PropTypes.number,
   onOpenRun: PropTypes.func,

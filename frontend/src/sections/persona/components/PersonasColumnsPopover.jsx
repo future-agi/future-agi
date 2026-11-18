@@ -120,7 +120,7 @@ const PersonasColumnsPopover = ({
                 label={
                   <Typography
                     variant="body2"
-                    sx={{ fontSize: "13px", ml: 0.5 }}
+                    sx={{ fontSize: "12px", ml: 0.5 }}
                   >
                     {col.label}
                     {col.locked && (

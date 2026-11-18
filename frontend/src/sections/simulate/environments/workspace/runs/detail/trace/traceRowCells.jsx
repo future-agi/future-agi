@@ -43,6 +43,15 @@ const clampSx = {
   wordBreak: "break-word",
 };
 
+const EVIDENCE_WORDS = {
+  world_state: "the world",
+  tool_calls: "the agent's calls",
+  transcript: "the transcript",
+  recording: "the recording",
+};
+const evidenceLabel = (evidence) =>
+  `from ${evidence.map((one) => EVIDENCE_WORDS[one] || one).join(", ")}`;
+
 // A persona is worth showing when any field is filled, not only the name: the
 // API sends name: null when the persona has no name key.
 const hasPersonaDetails = (p) =>
@@ -80,10 +89,26 @@ export function SubGoalVerdicts({ goals, sx }) {
             <Typography sx={{ typography: "s3", color: "text.secondary" }}>
               {goal.name}
             </Typography>
-            {goal.passed == null ? (
-              <Typography sx={{ typography: "s3", color: verdict.color }}>
-                {verdict.label}
+            {goal.evidence?.length > 0 && (
+              <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+                {evidenceLabel(goal.evidence)}
               </Typography>
+            )}
+            {goal.result === "unmeasured" && goal.reason ? (
+              <Typography sx={{ typography: "s3", color: verdict.color }}>
+                {goal.reason}
+              </Typography>
+            ) : goal.passed == null ? (
+              <CustomTooltip
+                show={!!goal.reason}
+                size="small"
+                arrow
+                title={goal.reason}
+              >
+                <Typography sx={{ typography: "s3", color: verdict.color }}>
+                  {verdict.label}
+                </Typography>
+              </CustomTooltip>
             ) : (
               <Box
                 role="img"
@@ -171,6 +196,17 @@ function CallDetailsBody({ task: t, durationAdornment }) {
           </>
         )}
       </Stack>
+      {t.outcomeReason && (
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            wordBreak: "break-word",
+          }}
+        >
+          {t.outcomeReason}
+        </Typography>
+      )}
       {t.subGoalResults?.length > 0 && (
         <SubGoalVerdicts goals={t.subGoalResults} sx={{ mt: 1 }} />
       )}

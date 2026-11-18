@@ -235,6 +235,54 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "cors wildcard with credentials rejected",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = []string{"*"}
+			},
+			wantErr: true,
+		},
+		{
+			name: "cors explicit origins with credentials allowed",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = []string{"https://app.example.com"}
+			},
+			wantErr: false,
+		},
+		{
+			// The middleware treats an empty origin list as "*".
+			name: "cors empty origins with credentials rejected",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = nil
+			},
+			wantErr: true,
+		},
+		{
+			// Only a lone "*" is a wildcard in the middleware; in a list it is a
+			// literal entry that no browser Origin matches, so credentials are
+			// only ever sent to the listed origins.
+			name: "cors star inside an explicit list with credentials allowed",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = []string{"https://app.example.com", "*"}
+			},
+			wantErr: false,
+		},
+		{
+			name: "cors wildcard without credentials allowed",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowedOrigins = []string{"*"}
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {

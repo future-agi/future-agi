@@ -751,8 +751,13 @@ export const dashboardRoutes = (
         </RoleProtection>
       ),
     },
+    // Old address of Connectors (was "Falcon AI Connectors"); keeps saved links working.
     {
       path: "falcon-ai-connectors",
+      element: <Navigate to="/dashboard/settings/connectors" replace />,
+    },
+    {
+      path: "connectors",
       element: (
         <RoleProtection
           allowedRoles={[
@@ -1190,9 +1195,7 @@ export const dashboardRoutes = (
         },
         {
           path: "voice",
-          element: (
-            <EmptyContent title="Voice observability coming soon" />
-          ),
+          element: <EmptyContent title="Voice observability coming soon" />,
         },
         {
           path: "sessions",

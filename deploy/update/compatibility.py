@@ -677,14 +677,11 @@ def estimate_automatic_update(measurements: TransitionMeasurements, host_sizes: 
         migration_seconds, extra_disk = Fraction(0), Fraction(0)
         migration_data = measurements.migration_measurements
         if isinstance(migration_data, BootstrapEnvelopeMeasurement):
-            # A's sizes cannot bound a later migration's input after an earlier
-            # migration changed the same registered reference table.
-            touched_tables = set()
-            for scope in migration_data.migration_tables:
-                for table in scope["tables"]:
-                    key = (table["engine"], table["table"])
-                    require(key not in touched_tables, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
-                    touched_tables.add(key)
+            # This measures the whole ordered bootstrap, including repeated
+            # touches and intermediate growth. Its validated tables are the exact
+            # scope union, with one pre-bootstrap reference per physical table.
+            # Repeated scopes share that bound; adding/maximizing references would
+            # admit an unmeasured input. Charge the whole envelope once below.
             for table in migration_data.tables:
                 actual = sizes.get((table.engine, table.table))
                 require(actual is not None, ReasonCode.RESTORE_CAPACITY_UNKNOWN)

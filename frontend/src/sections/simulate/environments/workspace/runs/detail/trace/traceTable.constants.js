@@ -190,6 +190,7 @@ export const STATUS_CHIPS = [
   { id: "failed", label: "Failed", role: "danger" },
   { id: "error", label: "Error", role: "warning" },
   { id: "inconclusive", label: "Inconclusive", role: null },
+  { id: "no_score", label: STATUS_META.no_score.label, role: null },
   { id: "passed", label: "Passed", role: "success" },
 ];
 
@@ -335,10 +336,12 @@ export const isCallLive = (task) =>
 
 // A sub-goal's verdict, as a call outcome.
 export const subGoalOutcome = (goal) =>
-  runOutcome(
-    goal.passed === true
-      ? "passed"
-      : goal.passed === false
-        ? "failed"
-        : "inconclusive",
-  );
+  goal.result === "not_applicable" || goal.result === "unmeasured"
+    ? { label: STATUS_META[goal.result].label, color: "text.disabled" }
+    : runOutcome(
+        goal.passed === true
+          ? "passed"
+          : goal.passed === false
+            ? "failed"
+            : "inconclusive",
+      );

@@ -196,7 +196,7 @@ export default function RunTraceTable({
     runActive = false,
     isLoading,
     error,
-  } = useRunCalls(executionId, listQuery);
+  } = useRunCalls(executionId, { ...listQuery, keepPrevious: true });
 
   // Calls ticked for a re-run. The selection survives paging: "all matching"
   // is a mode with the unticked calls as exceptions, never a list of ids.
@@ -374,6 +374,7 @@ export default function RunTraceTable({
     age: ageFacet,
     attack: attackFacet,
     task: taskFacet,
+    actor: actorFacet,
   } = facets;
   const filterFields = useMemo(
     () =>
@@ -385,6 +386,7 @@ export default function RunTraceTable({
           age: ageFacet,
           attack: attackFacet,
           task: taskFacet,
+          actor: actorFacet,
         },
         levelLabels,
       ),
@@ -395,6 +397,7 @@ export default function RunTraceTable({
       ageFacet,
       attackFacet,
       taskFacet,
+      actorFacet,
       levelLabels,
     ],
   );

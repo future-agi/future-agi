@@ -17,7 +17,7 @@ Route · cache · govern · guard · observe. Single Go binary. Drop-in OpenAI A
 
 <p>
   <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0"></a>
-  <a href="../../LICENSE"><img src="https://img.shields.io/badge/built%20with-Go%201.23-00ADD8?style=flat-square&logo=go" alt="Go 1.23"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/built%20with-Go%201.25-00ADD8?style=flat-square&logo=go" alt="Go 1.25"></a>
   <a href="https://docs.futureagi.com/docs/prism"><img src="https://img.shields.io/badge/docs-docs.futureagi.com-fafafa?style=flat-square" alt="Docs"></a>
   <a href="https://discord.com/invite/n2tCUKBkAw"><img src="https://img.shields.io/badge/community-Discord-5865F2?style=flat-square" alt="Discord"></a>
 </p>
@@ -276,14 +276,26 @@ curl http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-<details><summary><b>Run from source (Go 1.23+)</b></summary>
+<details><summary><b>Run from source (Go 1.25+)</b></summary>
 
 ```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi/agentcc-gateway
 cp config.example.yaml config.yaml
-go run ./cmd/server
+# Set OPENAI_API_KEY in your environment, or configure another provider in config.yaml.
+go run ./cmd/agentcc --config config.yaml
 ```
+
+The `--config` flag explicitly loads the file you just copied. Alternatively,
+set `AGENTCC_CONFIG_FILE` to its path. The example binds to `0.0.0.0:8080`
+(all network interfaces); for a local-only server, set `server.host` to
+`127.0.0.1` in `config.yaml` before starting it. Once it starts, check it with:
+
+```bash
+curl --fail http://localhost:8080/healthz
+```
+
+This health check does not call a model provider.
 
 </details>
 
@@ -458,6 +470,52 @@ Corrections welcome — open an issue or send a PR.
 
 **Surface area at a glance:** 🔌 **112 routes** across 24 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **8 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
 
+### Selected-key guardrail policy limits
+
+Dashboard **Guardrails → Policies** binds policies to selected API keys. Org
+checks still run first; key policies cannot weaken them. Monitor policies do not
+block or rewrite client output. Dormant legacy key policies remain dormant until
+an explicit policy save activates their gateway configuration.
+
+The enforcement repair has two deliberate compatibility trade-offs, still
+subject to owner feature, image-budget and rollout approval:
+
+- **Selected-key response caching is bypassed.** Every applicable selected-key
+  policy bypasses exact, semantic and conditional edge-cache reads and writes,
+  including Monitor policies and policies with empty or disabled checks.
+  `x-agentcc-cache: skip_key_policy` identifies this path. Admitted requests reach
+  the provider instead of reusing cached output, which can increase latency and
+  provider cost. This conservative choice is broader than bypassing only known
+  request-dependent checks; it is not cache feature parity. Keys with no
+  applicable scoped policy retain their existing cache behavior. Effective
+  failure policy, timeout and pipeline settings remain part of the policy
+  fingerprint; an old request cannot populate a newly changed policy partition.
+- **Blocking output checks require nonstreaming requests.** An applicable
+  selected-key Enforce Block post-stage check, such as Hallucination Detection,
+  causes an HTTP text stream to return `403 stream_guardrail_unsupported` before
+  the provider is invoked. This also applies to clean output and `fail_open`
+  configurations. Use a nonstreaming request for these policies; nonstreaming
+  support does not imply streaming support. Speech has the separate
+  supported-direction rules documented below.
+
+Pass-through routes inspect projections but forward the original body. A
+projection-only redaction is reported as unsupported wire remediation and cannot
+hide the original content from a later Block check. Supported chat remediation
+still changes the actual forwarded request. Enabled checks with no resolvable
+implementation produce an unavailable result: Enforce Block returns
+`503 guardrail_unavailable` when fail-closed; fail-open logs the failure, and
+Monitor stays nonblocking. Arbitrary names can legitimately resolve to deployed
+static/custom implementations, so a successful policy save is not proof that an
+implementation exists on every gateway.
+
+**Monitor stream observation is incomplete.** With request/trace body capture
+disabled, post-stage checks receive no reconstructed output text and may record
+no `would_block` result. An empty guardrail-results list is not proof that the
+stream was inspected or passed. Even enabled capture is bounded and omits
+tool-call deltas. This repair does not enable persistent body logging or promise
+complete streamed-output observability; Monitor's unchanged-output guarantee is
+separate from that observation gap.
+
 ### 🌈 Modalities
 
 Every modality below has dedicated routes in the gateway. The **specific models** reachable depend on what your configured provider(s) support — we pass through whatever the provider exposes at the endpoint, except video, which is limited to the support matrix below.
@@ -469,7 +527,7 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 | Image generation | `/v1/images/generations` |
 | Speech-to-text | `/v1/audio/transcriptions` · `/v1/audio/translations` · streaming: `/deepgram/v1/listen` · `/cartesia/stt/websocket` |
 | Text-to-speech (+ streaming) | `/v1/audio/speech` · `/v1/audio/speech/stream` · streaming: `/deepgram/v1/speak` · `/cartesia/tts/websocket` |
-| Realtime voice + text (WebSocket) | `/v1/realtime` |
+| Generic realtime (not supported) | `/v1/realtime` returns 501; use a vendor speech route |
 | [Video generation](#-video-generation) | `/v1/videos` · `/v1/videos/{id}` · `/v1/videos/{id}/content` · `/v1/videos/{id}/cancel` |
 | Embeddings | `/v1/embeddings` |
 | Reranking | `/v1/rerank` |
@@ -481,6 +539,81 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 | Assistants + threads | `/v1/assistants` · `/v1/threads` · `/v1/threads/{id}/{messages,runs,runs/{id}/steps}` |
 | Vector stores (RAG) | `/v1/vector_stores` · `/v1/vector_stores/{id}/{files,file_batches,search}` |
 | Batch (async) | `/-/batches` |
+
+### Streaming speech guardrail contract
+
+Speech routes authenticate server-side SDK clients; browser origins remain refused.
+Each session binds the authenticated organization's managed checks and static rules,
+then applies the key policy and authorized `X-Guardrail-Policy` override using the
+same precedence as chat. Reconnect after a policy change. Configured blocking checks
+must be available before the session connects to the vendor. Missing evaluation credentials,
+missing/duplicate evaluation IDs and an invalid webhook URL return HTTP 503 with
+error type `guardrail_error` and code `guardrail_unavailable` before vendor dial:
+these are unavailable supported checkers, not unsupported speech directions.
+External-provider adapters are unsupported for blocking speech checks until they
+implement the realtime verdict contract.
+Malformed or missing expressions and validation patterns that cannot compile are
+also unsupported for blocking speech checks: admission returns HTTP 403
+`realtime_guardrail_unsupported`, with no vendor dial. Legacy HTTP checker behavior
+is unchanged by these realtime readiness checks.
+
+| Protocol | Inspectable direction and boundary |
+|---|---|
+| Deepgram `/v1/speak` | Pre-stage: buffer `Speak.text` messages until `Flush`; `Clear`/`Close` discard pending text |
+| Cartesia `/tts/websocket` | Pre-stage: accumulate `transcript` per `context_id` until `continue` is false (or omitted); checks see `request.model` as `cartesia/<model_id>` for each model the context's requests name (a request without `model_id` uses the last one named on the connection); a `cancel` without `transcript` discards only that context's pending text and is forwarded |
+| Deepgram `/v1/listen` | Post-stage: suppress interim hypotheses; accumulate final alternatives per channel until `speech_final` or canonical `UtteranceEnd.channel` |
+| Cartesia `/stt/websocket` | Post-stage: suppress interim hypotheses; inspect the complete `is_final` transcript |
+
+A blocking pre-stage check on transcription cannot inspect the incoming audio. A
+blocking post-stage check on synthesis cannot inspect the outgoing audio. These
+sessions, and Cartesia `/stt/turns/websocket` with a blocking post-stage check, return
+HTTP 403 with code `realtime_guardrail_unsupported` before any vendor connection.
+`/v1/realtime` remains unsupported and returns 501 `realtime_not_supported`; use a
+documented vendor speech route.
+
+Dashboard key policies (Guardrails → Policies) apply to speech sessions opened with
+one of their keys, with two differences from chat. Only an Enforce policy's Block
+checks run on speech relays: Monitor (log only) policies and Warn or Log checks would
+only write a log line there, so they never hold, buffer or refuse speech traffic. An
+Enforce policy's Block checks run only in the direction the session reads as text: its
+pre-stage checks on synthesis input, its post-stage checks on transcripts. A check
+for the other direction is skipped instead of refusing the session, so enforcing a
+pre-stage check (secret detection, PII, injection, blocklist and the like) on a key
+leaves that key's transcription sessions connected. Cartesia
+`/stt/turns/websocket` reads neither direction, so no key-policy check runs there.
+Org-wide checks keep the refusal described above.
+
+Supported text units are checked synchronously before any held frame is released.
+Pre-stage checks see the text as a request message; post-stage checks see it once,
+as the response, with the model on the request. Checks that read only request
+messages (topic restriction, instruction-override detection, language detection and
+system prompt protection) see post-stage text as a request message.
+Execution failure is separate from the score: a checker HTTP error, malformed or
+missing verdict, incomplete evaluation results or invalid score cannot approve
+speech, even with a threshold of 1. A genuine scored decision still follows the
+configured threshold. Webhook verdicts require one exact boolean `pass` key and an
+optional finite numeric `score` in [0,1]. Duplicate keys, case aliases and oversized
+envelopes are unavailable verdicts, not approvals.
+A blocking content decision closes with WebSocket 1008 and reason
+`realtime_guardrail_blocked`. Checker execution failures (including timeouts, panics,
+missing results and unapplied wire rewrites) close with 1008 and reason
+`guardrail_unavailable`, never a content-denial classification. An already-upgraded
+connection cannot return an HTTP 503; both connections terminate without releasing
+unchecked content. Realtime
+blocking checks fail closed even when ordinary chat is configured fail-open or the
+rule is marked asynchronous. Warning/log decisions do not block approved protocol
+units. Audio-only warning/log checks are not evaluated.
+
+Pending text plus frames are limited to 1 MiB and 1024 frames per session across all
+contexts. Exceeding either bound, malformed protected content, an unsupported event
+shape, or a changing alternative count closes with 1008
+`realtime_guardrail_unsupported`. Duplicate JSON keys and case aliases of protected
+protocol keys are rejected before checking or forwarding the original bytes.
+Deepgram final alternatives are checked both individually and as word-separated
+utterances; cross-segment concatenation checks are retained too. Incomplete units are discarded on disconnect,
+never flushed unchecked. These boundaries add latency: incremental transcripts and
+unapproved synthesis text are not streamed through. Checks are per completed unit,
+not across separate utterances/contexts, and do not claim to classify raw audio.
 
 ### 🎬 Video generation
 
@@ -653,7 +786,7 @@ Migration and release commit footer: [migration notes](docs/video-generation/mig
 <tr>
 <td><b>Realtime (WebSocket)</b></td>
 <td><code>GET /v1/realtime</code></td>
-<td>OpenAI Realtime voice + text · WebSocket passthrough with per-frame plugins</td>
+<td>Not supported: returns 501 <code>realtime_not_supported</code> without dispatch</td>
 </tr>
 <tr>
 <td><b>Streaming speech (WebSocket)</b></td>
@@ -712,7 +845,7 @@ Migration and release commit footer: [migration notes](docs/video-generation/mig
 </tr>
 <tr>
 <td><b>Admin — keys, orgs, config</b></td>
-<td><code>/-/keys</code> · <code>/-/orgs/{id}/config</code> · <code>/-/keys/{id}/credits</code> · <code>/-/reload</code></td>
+<td><code>/-/keys</code> · <code>/-/orgs/{id}/config</code> · <code>/-/keys/{id}/credits</code> · <code>/-/reload</code> · <code>/-/model-catalogue/source</code></td>
 <td>Virtual-key CRUD · per-org config · live reload without restart</td>
 </tr>
 <tr>
@@ -952,7 +1085,7 @@ Every request goes through a pluggable router stack. Mix and match — per virtu
 |---|---|---|
 | **Weighted round-robin** | `roundrobin` | Distribute traffic across providers by configurable weights |
 | **Latency-aware** | `latency` | Route to the provider with the lowest current P95 for the same model |
-| **Cost-optimized** | `costopt` | Route to the cheapest provider that meets your SLO |
+| **Cost-optimized** | `costopt` | Round-robin among targets with the lowest configured priority value. No price or latency lookup. |
 | **Adaptive** | `adaptive` | Online learning — continuously adjust weights based on success/latency |
 | **Complexity-based** | `complexity` | Route simple queries to small/fast models, complex queries to large models |
 | **Conditional** | `conditional` | Rule-based routing (by user, region, header, model family, prompt length…) |
@@ -1001,6 +1134,7 @@ Combines with provider-key rotation (`POST /-/admin/providers/{id}/rotate` · `/
 | **Accurate tokenizer** | Token counting package at [`internal/tokenizer/`](./internal/tokenizer/) |
 | **Hot config reload** | `POST /-/reload` reloads providers / keys / routes |
 | **Cost tracking** | Uses the LiteLLM pricing DB (2 373 models loaded at startup); emits `agentcc_cost_microdollars_total` |
+| **Provider-reported cost** | For OpenRouter, Perplexity and xAI at their official hosts, records the cost the vendor states in its response (`usage.cost`, `usage.cost.total_cost`, `usage.cost_in_usd_ticks`) instead of the catalogue estimate, on chat, Responses, Messages and completions, streamed or not. Org custom pricing still wins; `ignore_provider_cost: true` on a provider turns it off. Each priced row's metadata says `cost_source`: `org_custom`, `provider_reported`, `catalogue` or `unpriced`. A `provider_reported` row also carries `cost_reported_unit` (`openrouter_credits`, `usd` or `usd_ticks`), `cost_catalogue` (what the catalogue would have charged), `cost_is_byok` (`true` on an OpenRouter BYOK call) and `cost_reported_zero` (`true` when the vendor stated 0 for tokens the catalogue prices above 0; the 0 is recorded). Callers cannot set these keys. Trust rule and switch: `config.example.yaml` |
 | **Per-tenant spend sync** | [`internal/tenant/spend_sync.go`](./internal/tenant/spend_sync.go) |
 | **Clustering** | [`internal/cluster/`](./internal/cluster/) |
 | **Edge mode** | [`internal/edge/`](./internal/edge/) |
@@ -1242,7 +1376,7 @@ bin/loadtest -c 10 -n 50 -models gpt-4o-mini
 
 ## 🤝 Contributing
 
-Agent Command Center is part of the [Future AGI monorepo](../../README.md). See the top-level [CONTRIBUTING.md](../../CONTRIBUTING.md) for setup, CLA, and PR conventions. Gateway-specific tips in [`cmd/server/README.md`](./cmd/server).
+Agent Command Center is part of the [Future AGI monorepo](../README.md). See the top-level [CONTRIBUTING.md](../CONTRIBUTING.md) for setup, CLA, and PR conventions. The gateway entrypoint is [`cmd/agentcc/main.go`](./cmd/agentcc/main.go).
 
 ---
 

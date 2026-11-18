@@ -278,9 +278,9 @@ def _raw_eval_deletes(source: str) -> list[tuple[int, str | None]]:
                 and kw.value.value is True
                 for kw in node.keywords
             )
-            if (
-                sets_deleted or node.func.attr == "delete"
-            ) and _chain_root(node.func.value) == "EvalLogger":
+            if (sets_deleted or node.func.attr == "delete") and _chain_root(
+                node.func.value
+            ) == "EvalLogger":
                 hits.append((node.lineno, "EvalLogger"))
         elif (
             imports_eval_logger
@@ -502,10 +502,10 @@ def test_retire_and_revive_each_record_an_alert_event(
 ):
     issue, evals = issue_with_three
     cfg = evals[0].custom_eval_config
-    with patch(
-        "tracer.services.feed_alerts.events.record_issue_event"
-    ) as record:
-        soft_delete_eval_results(EvalLogger.objects.filter(id__in=[e.id for e in evals]))
+    with patch("tracer.services.feed_alerts.events.record_issue_event") as record:
+        soft_delete_eval_results(
+            EvalLogger.objects.filter(id__in=[e.id for e in evals])
+        )
         retire = record.call_args.kwargs
         assert retire["source_key"].startswith(f"eval-retire:{issue.pk}:")
         assert retire["before"]["occurrences"] == 3

@@ -25,7 +25,14 @@ from tracer.queries.error_analysis import TraceErrorAnalysisDB
 
 
 class TraceErrorAnalysisAgent:
-    def __init__(self, trace_id, llm=None, enable_memory=True, save_to_db=True, token_budget: int | None = None):
+    def __init__(
+        self,
+        trace_id,
+        llm=None,
+        enable_memory=True,
+        save_to_db=True,
+        token_budget: int | None = None,
+    ):
         self.trace_id = trace_id
         self.spans = TraceErrorAnalysisDB().get_all_spans(trace_id)
         self.db = TraceErrorAnalysisDB()
@@ -40,11 +47,12 @@ class TraceErrorAnalysisAgent:
         self._counter_lock = threading.Lock()
         self._memory_context = None
         self._memory_context_saved = False
-        self.token_budget = token_budget if token_budget and token_budget > 0 else 500000
+        self.token_budget = (
+            token_budget if token_budget and token_budget > 0 else 500000
+        )
         # Tracing variables
         self.user_id = get_user_id_from_trace(trace_id)
         self.project_name = str(self.__class__.__name__) or "TraceErrorAnalysisAgent"
-
 
         # Initialize database service. CH spans carry project_id as a string
         # (there is no PG `project` FK object post-cutover), so read it directly.
@@ -66,6 +74,7 @@ class TraceErrorAnalysisAgent:
                 self.semantic_memory = SemanticMemory(str(project_id))
 
         self.llm = llm
+
     def build_span_tree(self) -> dict[str, Any]:
         # Build a tree: span_id -> {span, children: [subtree, ...]}
         tree = {}
@@ -109,7 +118,7 @@ class TraceErrorAnalysisAgent:
         user_query = ""
         if self.spans:
             first_span = self.spans[0]
-            user_query = getattr(first_span, 'input', '') or ''
+            user_query = getattr(first_span, "input", "") or ""
             if not isinstance(user_query, str):
                 try:
                     user_query = json.dumps(user_query, ensure_ascii=False)
@@ -122,7 +131,12 @@ class TraceErrorAnalysisAgent:
         tree = self.build_span_tree()
         root_nodes = list(tree.values())
         try:
-            root_nodes.sort(key=lambda n: (getattr(n["span"], "start_time", None) or getattr(n["span"], "created_at", None)))
+            root_nodes.sort(
+                key=lambda n: (
+                    getattr(n["span"], "start_time", None)
+                    or getattr(n["span"], "created_at", None)
+                )
+            )
         except Exception:
             pass
         for root in root_nodes:
@@ -134,12 +148,12 @@ class TraceErrorAnalysisAgent:
 
         def walk(node: dict[str, Any], path: list[int], step_counter: list[int]):
             span = node["span"]
-            span_id = getattr(span, 'id', '')
-            span_name = getattr(span, 'name', '') or ''
-            span_input = getattr(span, 'input', '') or ''
-            span_output = getattr(span, 'output', '') or ''
-            span_metadata = getattr(span, 'metadata', {}) or {}
-            span_type = getattr(span, 'observation_type', '') or ''
+            span_id = getattr(span, "id", "")
+            span_name = getattr(span, "name", "") or ""
+            span_input = getattr(span, "input", "") or ""
+            span_output = getattr(span, "output", "") or ""
+            span_metadata = getattr(span, "metadata", {}) or {}
+            span_type = getattr(span, "observation_type", "") or ""
 
             path_str = ".".join(str(p) for p in path)
             outline_lines.append(f"{path_str}  {span_name}  [Span ID: {span_id}]")
@@ -159,11 +173,19 @@ class TraceErrorAnalysisAgent:
             if span_metadata:
                 relevant_metadata = {}
                 for key, value in span_metadata.items():
-                    if value and key in ['tool_result', 'tool_call', 'expected_format', 'goal', 'subtasks']:
+                    if value and key in [
+                        "tool_result",
+                        "tool_call",
+                        "expected_format",
+                        "goal",
+                        "subtasks",
+                    ]:
                         relevant_metadata[key] = value
                 if relevant_metadata:
-                    details_lines.append(f"Metadata: {json.dumps(relevant_metadata, indent=2)}")
-            details_lines.append("="*50)
+                    details_lines.append(
+                        f"Metadata: {json.dumps(relevant_metadata, indent=2)}"
+                    )
+            details_lines.append("=" * 50)
             details_lines.append("")
 
             # Recurse over children
@@ -184,9 +206,7 @@ class TraceErrorAnalysisAgent:
         return trace_execution
 
     def get_memory_context(self) -> dict[str, Any]:
-        """Get memory context for enhanced analysis using database models.
-
-        """
+        """Get memory context for enhanced analysis using database models."""
         if not self.enable_memory:
             return {}
         if self._memory_context is not None:
@@ -197,17 +217,19 @@ class TraceErrorAnalysisAgent:
             # Episodic context (lean scratchpad only)
             if self.episodic_memory and self.spans:
                 try:
-                    memory_context['episodic'] = {
-                        'recent_notes': self.episodic_memory.get_recent_notes(limit=12),
-                        'trace_notes': self.episodic_memory.get_recent_notes_for_trace(self.trace_id, limit=5),
+                    memory_context["episodic"] = {
+                        "recent_notes": self.episodic_memory.get_recent_notes(limit=12),
+                        "trace_notes": self.episodic_memory.get_recent_notes_for_trace(
+                            self.trace_id, limit=5
+                        ),
                     }
                 except Exception as e:
                     logger.error(f"Episodic memory error: {str(e)}")
             # Semantic context (lean scratchpad only)
             if self.semantic_memory:
                 try:
-                    memory_context['semantic'] = {
-                        'notes': self.semantic_memory.get_notes(limit=20, days=180),
+                    memory_context["semantic"] = {
+                        "notes": self.semantic_memory.get_notes(limit=20, days=180),
                     }
                 except Exception as e:
                     logger.error(f"Semantic memory error: {str(e)}")
@@ -226,23 +248,30 @@ class TraceErrorAnalysisAgent:
         if not self.enable_memory or not self.errors:
             return
         for err in self.errors:
-            note = err.get('agent_memory')
+            note = err.get("agent_memory")
             if not note:
                 continue
             # Gate by applicability and confidence (>= 0.7)
-            applicability = err.get('applicability') or {}
-            if isinstance(applicability, dict) and applicability.get('applicable') is False:
+            applicability = err.get("applicability") or {}
+            if (
+                isinstance(applicability, dict)
+                and applicability.get("applicable") is False
+            ):
                 continue
             try:
-                conf = float(err.get('confidence')) if err.get('confidence') is not None else None
+                conf = (
+                    float(err.get("confidence"))
+                    if err.get("confidence") is not None
+                    else None
+                )
             except Exception:
                 conf = None
             if conf is None or conf < 0.7:
                 continue
-            scope = str(note.get('scope', '')).lower()
-            if scope == 'semantic' and self.semantic_memory:
+            scope = str(note.get("scope", "")).lower()
+            if scope == "semantic" and self.semantic_memory:
                 self.semantic_memory.save_note(note)
-            elif scope == 'episodic' and self.episodic_memory:
+            elif scope == "episodic" and self.episodic_memory:
                 self.episodic_memory.save_note(self.trace_id, note)
 
     def _save_notes_from_errors(self, errors: list[dict[str, Any]]) -> None:
@@ -250,22 +279,29 @@ class TraceErrorAnalysisAgent:
         if not self.enable_memory or not errors:
             return
         for err in errors:
-            note = err.get('agent_memory')
+            note = err.get("agent_memory")
             if not note:
                 continue
-            applicability = err.get('applicability') or {}
-            if isinstance(applicability, dict) and applicability.get('applicable') is False:
+            applicability = err.get("applicability") or {}
+            if (
+                isinstance(applicability, dict)
+                and applicability.get("applicable") is False
+            ):
                 continue
             try:
-                conf = float(err.get('confidence')) if err.get('confidence') is not None else None
+                conf = (
+                    float(err.get("confidence"))
+                    if err.get("confidence") is not None
+                    else None
+                )
             except Exception:
                 conf = None
             if conf is None or conf < 0.7:
                 continue
-            scope = str(note.get('scope', '')).lower()
-            if scope == 'semantic' and self.semantic_memory:
+            scope = str(note.get("scope", "")).lower()
+            if scope == "semantic" and self.semantic_memory:
                 self.semantic_memory.save_note(note)
-            elif scope == 'episodic' and self.episodic_memory:
+            elif scope == "episodic" and self.episodic_memory:
                 self.episodic_memory.save_note(self.trace_id, note)
 
     def summarize(self):
@@ -306,14 +342,18 @@ class TraceErrorAnalysisAgent:
                     result = self._summarize_logic()
 
                     if result:
-                        span.set_attribute("output.value", json.dumps(result, default=str, indent=2))
+                        span.set_attribute(
+                            "output.value", json.dumps(result, default=str, indent=2)
+                        )
                     span.set_status(Status(StatusCode.OK))
                     return result
                 except Exception as e:
                     logger.error(f"Error summarizing trace: {str(e)}")
                     raise
         except Exception as e:
-            logger.error(f"Error during trace summarization with instrumentation: {str(e)}")
+            logger.error(
+                f"Error during trace summarization with instrumentation: {str(e)}"
+            )
             return self._summarize_logic()
 
         finally:
@@ -394,11 +434,14 @@ class TraceErrorAnalysisAgent:
         # summarize() is unaffected; only per-call litellm tracing is disabled.
         try:
             from traceai_litellm import LiteLLMInstrumentor
+
             LiteLLMInstrumentor().uninstrument()
         except Exception:
             pass  # traceai_litellm may not be installed or already uninstrumented
 
-        logger.info(f"Starting v2 (Judge & Chauffeur) trace analysis for trace: {self.trace_id}")
+        logger.info(
+            f"Starting v2 (Judge & Chauffeur) trace analysis for trace: {self.trace_id}"
+        )
 
         # Extract user query from first span
         user_query = ""
@@ -427,7 +470,11 @@ class TraceErrorAnalysisAgent:
 
         # STEP 3: Get memory context
         memory_context = self.get_memory_context()
-        memory_context_str = json.dumps(memory_context, indent=2) if memory_context else "No memory context available"
+        memory_context_str = (
+            json.dumps(memory_context, indent=2)
+            if memory_context
+            else "No memory context available"
+        )
 
         # STEP 4: Judge — active investigation with Sonnet
         logger.info("V2 Step 4: Running Judge (Sonnet) for active investigation")
@@ -484,7 +531,9 @@ class TraceErrorAnalysisAgent:
                     self.trace_id, final_result
                 )
                 final_result["analysis_id"] = str(saved_analysis.id)
-                logger.info(f"Saved v2 analysis to database with ID: {saved_analysis.id}")
+                logger.info(
+                    f"Saved v2 analysis to database with ID: {saved_analysis.id}"
+                )
             except Exception as e:
                 logger.error(f"Error saving v2 analysis to database: {str(e)}")
                 final_result["analysis_id"] = None
@@ -509,14 +558,16 @@ class TraceErrorAnalysisAgent:
             "chauffeur": chauffeur_tokens,
             "judge": judge_tokens,
             "total": {
-                "prompt_tokens": chauffeur_tokens.get("prompt_tokens", 0) + judge_tokens.get("prompt_tokens", 0),
-                "completion_tokens": chauffeur_tokens.get("completion_tokens", 0) + judge_tokens.get("completion_tokens", 0),
-                "total_tokens": chauffeur_tokens.get("total_tokens", 0) + judge_tokens.get("total_tokens", 0),
+                "prompt_tokens": chauffeur_tokens.get("prompt_tokens", 0)
+                + judge_tokens.get("prompt_tokens", 0),
+                "completion_tokens": chauffeur_tokens.get("completion_tokens", 0)
+                + judge_tokens.get("completion_tokens", 0),
+                "total_tokens": chauffeur_tokens.get("total_tokens", 0)
+                + judge_tokens.get("total_tokens", 0),
             },
         }
         logger.info(
-            f"V2 token usage — Chauffeur: {chauffeur_tokens}, "
-            f"Judge: {judge_tokens}"
+            f"V2 token usage — Chauffeur: {chauffeur_tokens}, Judge: {judge_tokens}"
         )
 
         return final_result
@@ -527,7 +578,6 @@ class TraceErrorAnalysisAgent:
             return
 
         try:
-
             for error in self.errors:
                 # Parse category path to extract components
                 category_path = error.get("category", "")
@@ -553,18 +603,18 @@ class TraceErrorAnalysisAgent:
                 root_causes = error.get("root_causes", [])
 
                 defaults = {
-                    'pattern_type': 'error_pattern',
-                    'recommendation': recommendation,
-                    'immediate_fix': immediate_fix,
-                    'root_causes': root_causes,
-                    'confidence_score': 0.5,
-                    'metadata': {
-                        'error_id': error.get("error_id", ""),
-                        'trace_id': self.trace_id,
-                        'evidence_snippets': evidence,
-                        'impact': error.get("impact", "MEDIUM"),
-                        'urgency_to_fix': error.get("urgency_to_fix", "HIGH"),
-                        'span_locations': error.get("location_spans", [])
+                    "pattern_type": "error_pattern",
+                    "recommendation": recommendation,
+                    "immediate_fix": immediate_fix,
+                    "root_causes": root_causes,
+                    "confidence_score": 0.5,
+                    "metadata": {
+                        "error_id": error.get("error_id", ""),
+                        "trace_id": self.trace_id,
+                        "evidence_snippets": evidence,
+                        "impact": error.get("impact", "MEDIUM"),
+                        "urgency_to_fix": error.get("urgency_to_fix", "HIGH"),
+                        "span_locations": error.get("location_spans", []),
                     },
                 }
 
@@ -592,14 +642,16 @@ class TraceErrorAnalysisAgent:
                     # Update metadata evidence (append unique)
                     try:
                         md = pattern.metadata or {}
-                        ev = md.get('evidence_snippets', []) or []
-                        md['evidence_snippets'] = list({*ev, *evidence})
+                        ev = md.get("evidence_snippets", []) or []
+                        md["evidence_snippets"] = list({*ev, *evidence})
                         pattern.metadata = md
                     except Exception:
                         pass
                     pattern.save()
 
-            logger.info(f"Saved {len(self.errors)} unique error patterns to semantic memory")
+            logger.info(
+                f"Saved {len(self.errors)} unique error patterns to semantic memory"
+            )
 
         except Exception as e:
             logger.error(f"Error saving error patterns to memory: {str(e)}")
@@ -610,7 +662,9 @@ class TraceErrorAnalysisAgent:
             return []
 
         try:
-            first_span_project = getattr(self.spans[0], 'project', None) if self.spans else None
+            first_span_project = (
+                getattr(self.spans[0], "project", None) if self.spans else None
+            )
             project_id = first_span_project.id if first_span_project else None
             patterns = self.db.list_error_patterns(
                 project_id=project_id,
@@ -619,20 +673,20 @@ class TraceErrorAnalysisAgent:
 
             return [
                 {
-                    'category': pattern.category,
-                    'subcategory': pattern.subcategory,
-                    'specific_error': pattern.specific_error,
-                    'frequency': pattern.frequency,
-                    'confidence_score': pattern.confidence_score,
-                    'recommendation': pattern.recommendation,
-                    'immediate_fix': pattern.immediate_fix,
-                    'root_causes': pattern.root_causes,
-                    'last_seen': pattern.last_seen.isoformat(),
-                    'is_resolved': pattern.is_resolved
-                } for pattern in patterns
+                    "category": pattern.category,
+                    "subcategory": pattern.subcategory,
+                    "specific_error": pattern.specific_error,
+                    "frequency": pattern.frequency,
+                    "confidence_score": pattern.confidence_score,
+                    "recommendation": pattern.recommendation,
+                    "immediate_fix": pattern.immediate_fix,
+                    "root_causes": pattern.root_causes,
+                    "last_seen": pattern.last_seen.isoformat(),
+                    "is_resolved": pattern.is_resolved,
+                }
+                for pattern in patterns
             ]
 
         except Exception as e:
             logger.error(f"Error getting learned patterns: {str(e)}")
             return []
-

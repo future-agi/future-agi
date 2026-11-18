@@ -182,7 +182,7 @@ const InfoBox = ({ title, text, externalLinkLabel, href }) => {
       sx={{ width: "100%", background: theme.palette.background.paper }}
       elevation={2}
     >
-      <Typography fontSize="13px" fontWeight={600} sx={{ padding: "18px" }}>
+      <Typography fontSize="12px" fontWeight={600} sx={{ padding: "18px" }}>
         {title}
       </Typography>
       <Divider />

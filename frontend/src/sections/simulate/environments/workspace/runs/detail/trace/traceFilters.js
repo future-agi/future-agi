@@ -10,7 +10,7 @@ const ENUM_KEYS = ["persona", "age", "attack", "task"];
 
 /**
  * The table's filter state as the server's `filters` param.
- * @param {Object} filters  `{ goal, goal_not, subGoal, subGoal_not, status, status_not, goal_outcome, callExecutionId }`,
+ * @param {Object} filters  `{ goal, goal_not, subGoal, subGoal_not, callActor, callActor_not, status, status_not, goal_outcome, callExecutionId }`,
  *   plus `scenario`, `situation` and `persona`, `age`, `attack`, `task` (each with `_not`)
  * @returns {Object}
  */
@@ -22,6 +22,8 @@ export function toServerFilters(filters = {}) {
   if (filters.goal_not?.length) next.goal_not = filters.goal_not;
   if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
   if (filters.subGoal_not?.length) next.sub_goal_not = filters.subGoal_not;
+  if (filters.callActor?.length) next.actor = filters.callActor;
+  if (filters.callActor_not?.length) next.actor_not = filters.callActor_not;
   if (filters.status?.length) next.status = filters.status;
   if (filters.status_not?.length) next.status_not = filters.status_not;
   if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
@@ -40,6 +42,16 @@ const textField = (value, label) => ({
   operators: ["contains"],
 });
 
+// "Rowan (5; 1 dropped, 1 not triggered)"
+const callActorChoiceLabel = (item) => {
+  if (item.count == null) return item.label;
+  const missed = [
+    item.dropped && `${item.dropped} dropped`,
+    item.not_triggered && `${item.not_triggered} not triggered`,
+  ].filter(Boolean);
+  return `${item.label} (${[item.count, missed.join(", ")].filter(Boolean).join("; ")})`;
+};
+
 // Fields whose values the server names in `level_labels`, as the Scenarios tab does.
 const LABELLED_KEYS = new Set(["attack", "task", "subGoal"]);
 
@@ -49,7 +61,8 @@ const LABELLED_KEYS = new Set(["attack", "task", "subGoal"]);
  * facet has values, as on the Scenarios tab.
  * @param {{ goal?: Array<{value: string}>, sub_goal?: Array<{value: string}>,
  *   persona?: Array<{value: string}>, age?: Array<{value: string}>,
- *   attack?: Array<{value: string}>, task?: Array<{value: string}> }} facets
+ *   attack?: Array<{value: string}>, task?: Array<{value: string}>,
+ *   actor?: Array<{value: string, label: string, count?: number}> }} facets
  * @param {Object<string, string>} levelLabels  the server's `level_labels`
  */
 export function buildTraceFilterFields(facets = {}, levelLabels = {}) {
@@ -74,6 +87,19 @@ export function buildTraceFilterFields(facets = {}, levelLabels = {}) {
       ["task", facets.task, "Task"],
       ["subGoal", facets.sub_goal, "Sub-goal"],
     ]),
+    ...(facets.actor?.length
+      ? [
+          {
+            value: "callActor",
+            label: "Actor",
+            type: "enum",
+            choices: facets.actor.map((item) => item.value),
+            choiceLabels: Object.fromEntries(
+              facets.actor.map((item) => [item.value, callActorChoiceLabel(item)]),
+            ),
+          },
+        ]
+      : []),
     {
       value: "status",
       label: "Status",
