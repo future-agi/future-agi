@@ -832,3 +832,65 @@ def source_changed(
 ) -> dict[str, list[str]]:
     """T21: for each key, the refs it cites that changed since the parent environment version."""
     return changed_refs(environment_version, contents)
+
+
+class DroppedCase(TypedDict):
+    key: str
+    name: str
+    # The capabilities the case needed that the agent version no longer has, by kind (tools, sub-goals).
+    missing: dict[str, Any]
+    agent_version: str
+    reason: str
+    # Why restoring it did not prove it, when a rebuild brought it back unproved.
+    restore_failed: str
+
+
+class RestoredCase(TypedDict):
+    key: str
+    name: str
+    # Proved again on the pair in view, with its agent version: only then does it run.
+    proved: bool
+
+
+def dropped_cases(
+    suite_version: HarnessSuiteVersion | None,
+    views: Mapping[str, LifecycleView],
+) -> tuple[list[DroppedCase], list[RestoredCase]]:
+    """The cases a rebuild dropped from ``suite_version`` for a capability the agent lost, with why; and the cases
+    its parent had dropped that are back in it, with whether each was proved again (``views`` on the pair in view).
+    Keys stay the same across both, so a case's history follows it."""
+    if suite_version is None:
+        return [], []
+    held = (suite_version.documents or {}).get("dropped") or {}
+    dropped: list[DroppedCase] = [
+        {
+            "key": str(key),
+            "name": str(record.get("name") or key),
+            "missing": dict(record.get("missing") or {}),
+            "agent_version": str(record.get("agent_version") or ""),
+            "reason": str(record.get("reason") or ""),
+            "restore_failed": str(record.get("restore_failed") or ""),
+        }
+        for key, record in sorted(held.items())
+        if isinstance(record, Mapping)
+    ]
+    parent = getattr(suite_version, "parent", None)
+    before = (
+        ((parent.documents or {}).get("dropped") or {}) if parent is not None else {}
+    )
+    members = {
+        key: str((content or {}).get("name") or key)
+        for key, content in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=suite_version, scenario_key__in=list(before)
+        ).values_list("scenario_key", "content")
+    }
+    restored: list[RestoredCase] = [
+        {
+            "key": key,
+            "name": name,
+            "proved": (views.get(key) or {}).get("state") in ("active", "validated"),
+        }
+        for key, name in sorted(members.items())
+        if key not in held
+    ]
+    return dropped, restored

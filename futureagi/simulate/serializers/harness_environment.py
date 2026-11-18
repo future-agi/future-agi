@@ -1083,6 +1083,30 @@ class HarnessScenarioDraftRefSerializer(serializers.Serializer):
     revision = serializers.IntegerField()
 
 
+class HarnessDroppedCaseSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    name = serializers.CharField()
+    missing = serializers.DictField(
+        help_text="What the case needed that the agent version no longer has, by kind."
+    )
+    agent_version = serializers.CharField(
+        allow_blank=True, help_text="The agent version it was dropped for."
+    )
+    reason = serializers.CharField(allow_blank=True)
+    restore_failed = serializers.CharField(
+        allow_blank=True,
+        help_text="Why a rebuild that brought it back could not prove it; empty otherwise.",
+    )
+
+
+class HarnessRestoredCaseSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    name = serializers.CharField()
+    proved = serializers.BooleanField(
+        help_text="Proved again on the versions in view; only then does it run."
+    )
+
+
 class HarnessScenarioListResponseSerializer(serializers.Serializer):
     """One page of an environment's authored scenarios, with what the list filters and groups by."""
 
@@ -1103,6 +1127,16 @@ class HarnessScenarioListResponseSerializer(serializers.Serializer):
     level_labels = serializers.DictField(
         child=serializers.CharField(),
         help_text="The name to show for each coverage level, sub-goal and noise bed on the page, keyed by it.",
+    )
+    dropped = HarnessDroppedCaseSerializer(
+        many=True,
+        required=False,
+        help_text="Cases a rebuild dropped from this suite version for a capability the agent lost, with why.",
+    )
+    restored = HarnessRestoredCaseSerializer(
+        many=True,
+        required=False,
+        help_text="Cases the parent suite version had dropped that are back under their keys.",
     )
 
     def get_fields(self):

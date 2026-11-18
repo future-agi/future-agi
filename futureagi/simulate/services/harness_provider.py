@@ -2252,11 +2252,17 @@ class HostedHarnessProvider:
 
         response.data["proof_counts"] = proof_counts(job)
         if lifecycle is not None:
-            from simulate.services.harness_scenario_lifecycle import lifecycle_counts
+            from simulate.services.harness_scenario_lifecycle import (
+                dropped_cases,
+                lifecycle_counts,
+            )
 
             response.data["lifecycle_counts"] = lifecycle_counts(
                 list(lifecycle["views"].values()) + lifecycle["archived"]
             )
+            dropped, restored = dropped_cases(lifecycle["suite"], lifecycle["views"])
+            response.data["dropped"] = dropped
+            response.data["restored"] = restored
         return response
 
     def scenario_coverage(self, request, pk) -> Response:
@@ -3466,6 +3472,7 @@ def _lifecycle_for_list(
 
     return {
         "wanted": wanted,
+        "suite": suite,
         "resolve_sources": resolve_draft_sources,
         "views": {key: view for key, view in views.items() if key not in archived_keys},
         "archived": archived,

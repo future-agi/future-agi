@@ -284,3 +284,48 @@ def test_a_validated_case_on_unsaved_versions_is_held_back_as_not_saved(
     assert plan.held == frozenset({CASE})
     assert plan.view["held_back"]["by"] == {"not_active": 1}
     assert "save them to run it" in plan.view["reasons"]["not_active"]
+
+
+def test_dropped_and_restored_cases_are_served_with_why_and_whether_proved_again(
+    user, workspace, storage, auth_client
+):
+    """A rebuild dropped one case for a lost tool (listed with its reason); a case its parent had dropped is back
+    under its key and runs only once proved again on these versions."""
+    environment = _base(user, workspace, storage, "lt-dropped")
+    suite = environment.suite_version
+    record = {
+        "name": "Cancel a ride",
+        "missing": {"tools": ["cancel_booking"]},
+        "agent_version": "v5",
+        "reason": "agent v5 no longer has cancel_booking",
+    }
+    parent = _copy(suite, HarnessSuiteVersion, documents={"dropped": {CASE: record}})
+    HarnessSuiteVersion._base_manager.filter(id=suite.id).update(
+        parent=parent,
+        documents={**(suite.documents or {}), "dropped": {"cancel-a-ride": record}},
+    )
+    environment.refresh_from_db()
+
+    def listed():
+        body = auth_client.get(
+            f"/simulate/api/harness-jobs/{environment.id}/scenarios/"
+        ).json()
+        return body.get("result", body)
+
+    first = listed()
+    assert first["dropped"] == [
+        {
+            "key": "cancel-a-ride",
+            "name": "Cancel a ride",
+            "missing": {"tools": ["cancel_booking"]},
+            "agent_version": "v5",
+            "reason": "agent v5 no longer has cancel_booking",
+            "restore_failed": "",
+        }
+    ]
+    assert first["restored"] == [
+        {"key": CASE, "name": first["restored"][0]["name"], "proved": False}
+    ]
+
+    _record(environment, dict.fromkeys(KEYS, PROVED))
+    assert listed()["restored"][0]["proved"] is True
