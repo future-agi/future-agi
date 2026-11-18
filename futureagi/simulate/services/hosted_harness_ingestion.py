@@ -1078,6 +1078,7 @@ def _apply_receipt_to_call(
         _apply_harness_evaluation_outputs,
         _dispatch_csat_once,
         _dispatch_evaluations_once,
+        _skip_harness_evals_without_agent,
     )
     from simulate.services.harness_evals import (
         _tool_evaluation_on,
@@ -1086,6 +1087,8 @@ def _apply_receipt_to_call(
     from simulate.services.scoring_status import locked_call_metadata_update
 
     _apply_harness_evaluation_outputs(call)
+    # The transcript is stored by now; a call the agent never answered keeps no pass.
+    _skip_harness_evals_without_agent(call)
     update_fields.append("eval_outputs")
     # The same CallExecution row is intentionally reused across user-triggered reruns so the old
     # result remains visible until its replacement receipt arrives.  Once that receipt lands it

@@ -50,6 +50,14 @@ from simulate.services.test_executor import (
     _run_simulate_evaluations_task,
 )
 from simulate.utils.ended_reason import to_canonical_ended_reason
+from simulate.utils.processing_outcomes import (
+    HARNESS_VERDICT_WITHHELD_KEY,
+    SILENT_AGENT_SKIP_REASON,
+    build_skipped_eval_output_payload,
+    is_harness_verdict_withheld,
+    is_silent_agent_skip,
+    set_processing_skip_metadata,
+)
 from simulate.utils.eval_summary import INCONCLUSIVE_OUTPUT, NOT_APPLICABLE_OUTPUT
 from simulate.utils.test_execution_utils import (
     generate_simulator_agent_prompt,
@@ -1475,7 +1483,6 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
         call_execution.call_metadata = merged
 
     segments = payload.get("transcript") or []
-    _apply_harness_evaluation_outputs(call_execution, transcript_segments=segments)
     is_text = (
         call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT
     )
@@ -1493,6 +1500,7 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
             _store_alk_chat_messages(call_execution, segments)
             call_execution.transcript_available = True
             call_execution.message_count = len(segments)
+        _apply_harness_verdicts(call_execution, segments)
         call_execution.save()
         from simulate.utils.chat_simulation import _aggregate_chat_metrics
 
@@ -1541,6 +1549,7 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
             )
             call_execution.transcript_available = True
 
+        _apply_harness_verdicts(call_execution, segments)
         _apply_conversation_metrics(call_execution)
         call_execution.save()
     _deduct_alk_sim_cost_once(call_execution)
@@ -1585,7 +1594,9 @@ def _store_alk_chat_messages(
     current: dict | None = None
     for seg in segments:
         role = (seg.get("speaker_role") or "").lower()
-        if not (seg.get("content") or "").strip():
+        # An agent that only acted (a transfer, an end_call) sends no text, yet it
+        # answered: its tool-call segment is a turn.
+        if not (seg.get("content") or "").strip() and not seg.get("tool_calls"):
             continue
         if role in {"user", "customer", "actor", "task"}:
             # Someone else in the conversation (an actor) writes on the person's side, as their own turn.
@@ -1887,10 +1898,97 @@ def _render_harness_transcript(segments: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+_SILENT_AGENT_SKIP_REASON = SILENT_AGENT_SKIP_REASON
+
+
+def _agent_acted_in(segments: list[dict[str, Any]] | None) -> bool:
+    """Whether an agent segment carries tool calls: it answered without words."""
+    return any(
+        isinstance(segment, dict)
+        and segment.get("tool_calls")
+        and str(segment.get("speaker_role") or "").lower()
+        in {"assistant", "tool_calls"}
+        for segment in segments or ()
+    )
+
+
+def _skip_harness_evals_without_agent(
+    call_execution: CallExecution, segments: list[dict[str, Any]] | None = None
+) -> bool:
+    """Withhold the harness verdicts of a call the agent never answered.
+
+    Harness checks arrive already graded, so they bypass the platform's own
+    skip decision. A call with no agent message gets no passing eval: each
+    harness entry becomes a skipped payload, and the call is marked
+    ``processing_skipped`` so its outcome reads inconclusive. Entries from any
+    other source are left alone. Run it once the transcript rows are stored.
+    Returns True when the call was marked skipped. A call that turns out to have
+    an agent message loses an earlier silent-agent mark.
+    """
+    from simulate.services.test_executor import conversation_presence_signals
+
+    _, has_agent_message, _ = conversation_presence_signals(call_execution)
+    # Voice rows keep no tool calls, so the submitted segments count too.
+    if has_agent_message or _agent_acted_in(segments):
+        # A transcript stored later (recovery, a replacing receipt) can answer a
+        # call an earlier apply marked silent; drop that mark, never the executor's.
+        metadata = call_execution.call_metadata
+        if is_silent_agent_skip(metadata):
+            metadata = set_processing_skip_metadata(metadata, skipped=False)
+        if is_harness_verdict_withheld(metadata):
+            metadata = {
+                k: v for k, v in metadata.items() if k != HARNESS_VERDICT_WITHHELD_KEY
+            }
+        call_execution.call_metadata = metadata
+        return False
+
+    outputs = dict(call_execution.eval_outputs or {})
+    for output_id, entry in outputs.items():
+        if isinstance(entry, dict) and entry.get("source") == "harness":
+            outputs[output_id] = {
+                **build_skipped_eval_output_payload(
+                    eval_name=entry.get("name") or "",
+                    reason=_SILENT_AGENT_SKIP_REASON,
+                ),
+                "source": "harness",
+            }
+    call_execution.eval_outputs = outputs
+    call_execution.call_metadata = {
+        **set_processing_skip_metadata(
+            call_execution.call_metadata,
+            skipped=True,
+            reason=_SILENT_AGENT_SKIP_REASON,
+        ),
+        HARNESS_VERDICT_WITHHELD_KEY: True,
+    }
+    return True
+
+
+def _apply_harness_verdicts(
+    call_execution: CallExecution, segments: list[dict[str, Any]]
+) -> None:
+    """Store the harness verdicts, and withhold them from a call nobody answered.
+
+    Run it once the transcript rows are stored: whether the agent spoke is read
+    from them, and decides before any verdict is stored whether the error
+    localizer runs on it.
+    """
+    from simulate.services.test_executor import conversation_presence_signals
+
+    _, has_agent_message, _ = conversation_presence_signals(call_execution)
+    _apply_harness_evaluation_outputs(
+        call_execution,
+        transcript_segments=segments,
+        localize_errors=has_agent_message or _agent_acted_in(segments),
+    )
+    _skip_harness_evals_without_agent(call_execution, segments)
+
+
 def _apply_harness_evaluation_outputs(
     call_execution: CallExecution,
     *,
     transcript_segments: list[dict[str, Any]] | None = None,
+    localize_errors: bool = True,
 ) -> None:
     """Normalize execution-backed harness checks into the platform eval shape.
 
@@ -1899,7 +1997,8 @@ def _apply_harness_evaluation_outputs(
     Platform-backed judgements are attached to their existing EvalTemplate via a
     run-scoped SimulateEvalConfig. Deterministic code checks have no template by
     design, so they receive a stable external-result ID and remain explicitly
-    marked ``source=harness``.
+    marked ``source=harness``. ``localize_errors=False`` keeps the localizer off
+    verdicts that are about to be withheld.
     """
     metadata = call_execution.call_metadata or {}
     evaluations = metadata.get("harness_evaluations")
@@ -1964,7 +2063,7 @@ def _apply_harness_evaluation_outputs(
         # that the native evaluator would create; merely setting
         # SimulateEvalConfig.error_localizer does not dispatch one. The task's
         # deterministic (call, config) source ID keeps result retries idempotent.
-        if config is not None and config.error_localizer:
+        if localize_errors and config is not None and config.error_localizer:
             if check_run is None:
                 check_run = is_fix_check_run(call_execution.test_execution_id)
             transcript = (

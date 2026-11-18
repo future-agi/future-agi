@@ -50,6 +50,7 @@ from simulate.services.scoring_status import (
     TRANSPORT_RUN_STATUSES,
     settle_run_after_commit,
 )
+from simulate.utils.processing_outcomes import HARNESS_VERDICT_WITHHELD_KEY
 from tracer.services.observability_switch import (
     ObservabilityRefused,
     refusal_body,
@@ -3242,7 +3243,15 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
         # counters answer "did the call transport complete?". Keep those dimensions separate so a
         # completed, playable call with a failed behavioural/evidence verdict is not reported as a
         # failed call.
-        scenario_completed = receipts.filter(status="passed").count()
+        # A call the agent never answered holds no verdict, whatever its receipt sealed.
+        # Reached through this run's receipts, never as a subquery over the call table.
+        withheld = f"call_execution__call_metadata__{HARNESS_VERDICT_WITHHELD_KEY}"
+        silent_receipts = receipts.filter(
+            Q(**{f"execution__{withheld}": True}) | Q(**{f"scenario__{withheld}": True})
+        ).values("id")
+        scenario_completed = (
+            receipts.filter(status="passed").exclude(id__in=silent_receipts).count()
+        )
         scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
         # A run's calls hang off its executions, a build's off its scenarios. The calls
         # counted are those of the receipts counted above: a narrowed retry keeps the

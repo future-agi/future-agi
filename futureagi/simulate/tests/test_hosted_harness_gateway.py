@@ -3747,6 +3747,12 @@ def test_cleanup_with_every_result_in_keeps_a_guest_failure_or_a_cancellation(
 @pytest.mark.django_db
 @override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
 def test_a_narrowed_retry_counts_the_calls_it_kept(organization, monkeypatch):
+    # The agent answered in both calls. These receipts carry no transcript, which on its
+    # own would withhold each pass as a silent call; this test is about the count.
+    monkeypatch.setattr(
+        "simulate.services.test_executor.conversation_presence_signals",
+        lambda _call: (2, True, True),
+    )
     first = _delivered_run(organization, "run-narrowed-call-counts", receipts=1)
     assert _lost_by(monkeypatch, "guest_crashed").reconcile_completed(first).state == (
         HostedHarnessJob.State.RETRY_WAIT

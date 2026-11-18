@@ -217,6 +217,61 @@ except ImportError:
         return None
 
 
+def conversation_presence_signals(
+    call_execution: CallExecution,
+) -> tuple[int, bool, bool]:
+    """Collect transcript coverage data for skip decision logic."""
+    message_count = 0
+    has_agent_message = False
+    has_customer_message = False
+
+    from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+    is_outbound = SpeakerRoleResolver.detect_is_outbound(call_execution)
+
+    if call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT:
+        agent_roles = frozenset({ChatMessageModel.RoleChoices.ASSISTANT})
+        customer_roles = frozenset({ChatMessageModel.RoleChoices.USER})
+        for chat_message in call_execution.chat_messages.all().order_by("created_at"):
+            role_lower = str(getattr(chat_message, "role", "") or "").lower()
+            messages = getattr(chat_message, "messages", None) or []
+            # An agent turn that only called tools carries no text, but it answered.
+            if role_lower in agent_roles and any(
+                isinstance(item, dict) and item.get("tool_calls")
+                for item in getattr(chat_message, "content", None) or []
+            ):
+                has_agent_message = True
+            for message in messages:
+                message_count += 1
+                text = str(message or "")
+                has_content = bool(text.strip())
+                if has_content and role_lower in agent_roles:
+                    has_agent_message = True
+                if has_content and role_lower in customer_roles:
+                    has_customer_message = True
+    else:
+        provider = SpeakerRoleResolver.detect_provider(
+            call_execution.provider_call_data
+        )
+        agent_roles, customer_roles = SpeakerRoleResolver.get_skip_decision_role_sets(
+            provider=provider,
+            is_outbound=is_outbound,
+        )
+
+        for role, content in call_execution.transcripts.values_list(
+            "speaker_role", "content"
+        ):
+            message_count += 1
+            role_lower = str(role or "").lower()
+            has_content = bool(content and content.strip())
+            if has_content and role_lower in agent_roles:
+                has_agent_message = True
+            if has_content and role_lower in customer_roles:
+                has_customer_message = True
+
+    return message_count, has_agent_message, has_customer_message
+
+
 class TestExecutor:
     """DEPRECATED: Legacy test executor. Do not add new tasks here.
 
@@ -4779,53 +4834,7 @@ class TestExecutor:
         call_execution: CallExecution,
     ) -> tuple[int, bool, bool]:
         """Collect transcript coverage data for skip decision logic."""
-        message_count = 0
-        has_agent_message = False
-        has_customer_message = False
-
-        from simulate.utils.speaker_roles import SpeakerRoleResolver
-
-        is_outbound = SpeakerRoleResolver.detect_is_outbound(call_execution)
-
-        if call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT:
-            agent_roles = frozenset({ChatMessageModel.RoleChoices.ASSISTANT})
-            customer_roles = frozenset({ChatMessageModel.RoleChoices.USER})
-            for chat_message in call_execution.chat_messages.all().order_by(
-                "created_at"
-            ):
-                role_lower = str(getattr(chat_message, "role", "") or "").lower()
-                messages = getattr(chat_message, "messages", None) or []
-                for message in messages:
-                    message_count += 1
-                    text = str(message or "")
-                    has_content = bool(text.strip())
-                    if has_content and role_lower in agent_roles:
-                        has_agent_message = True
-                    if has_content and role_lower in customer_roles:
-                        has_customer_message = True
-        else:
-            provider = SpeakerRoleResolver.detect_provider(
-                call_execution.provider_call_data
-            )
-            agent_roles, customer_roles = (
-                SpeakerRoleResolver.get_skip_decision_role_sets(
-                    provider=provider,
-                    is_outbound=is_outbound,
-                )
-            )
-
-            for role, content in call_execution.transcripts.values_list(
-                "speaker_role", "content"
-            ):
-                message_count += 1
-                role_lower = str(role or "").lower()
-                has_content = bool(content and content.strip())
-                if has_content and role_lower in agent_roles:
-                    has_agent_message = True
-                if has_content and role_lower in customer_roles:
-                    has_customer_message = True
-
-        return message_count, has_agent_message, has_customer_message
+        return conversation_presence_signals(call_execution)
 
     def _get_call_transcript_data(self, call_execution, url_save_only=False):
         """

@@ -60,6 +60,10 @@ from simulate.services.scoring_status import (
     scoring_input_from_call,
 )
 from simulate.utils.eval_summary import iter_live_eval_outputs
+from simulate.utils.processing_outcomes import (
+    HARNESS_VERDICT_WITHHELD_KEY,
+    is_harness_verdict_withheld,
+)
 
 OUTCOME_LABELS = {
     "queued": "Queued",
@@ -113,6 +117,9 @@ CALL_ROW_METADATA_KEYS = (
     "harness_outcome_status",
     "harness_scenario_key",
     "harness_trial_index",
+    "processing_skipped",
+    "processing_skip_reason",
+    HARNESS_VERDICT_WITHHELD_KEY,
     STARTED_BY_KEY,
     *SCORING_META_KEYS,
 )
@@ -220,6 +227,9 @@ def call_outcome(
     ]
     if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
         return "failed"
+    # A call the agent never answered holds no pass, whatever the harness said.
+    if is_harness_verdict_withheld(metadata):
+        return "inconclusive"
     # Platform evals arrive after the receipt; one that passed scores the call.
     if harness_outcome in HARNESS_NO_SCORE and "passed" not in verdicts:
         return "no_score"
@@ -778,11 +788,22 @@ def build_call_rows(
             or (harness_scenario.sub_goals if harness_scenario else None)
             or []
         )
+        # A call the agent never answered holds no verdict, whatever the receipt sealed.
+        silent_agent = is_harness_verdict_withheld(metadata)
         sub_goal_results = []
         for item in raw_sub_goals:
             name = item.get("name") if isinstance(item, dict) else item
             if not name:
                 continue
+            held = item.get("held") if isinstance(item, dict) else None
+            sub_goal_results.append(
+                {
+                    "name": str(name),
+                    "passed": (
+                        held if isinstance(held, bool) and not silent_agent else None
+                    ),
+                }
+            )
             result = sub_goal_result(item) if isinstance(item, dict) else None
             entry: dict[str, Any] = {
                 "name": str(name),
@@ -860,7 +881,9 @@ def build_call_rows(
                 "sub_goal_results": sub_goal_results,
                 "outcome": outcome,
                 "execution_status": call.status,
-                "harness_outcome_status": metadata.get("harness_outcome_status"),
+                "harness_outcome_status": (
+                    None if silent_agent else metadata.get("harness_outcome_status")
+                ),
                 # Why it was skipped, when the harness gave a reason; why an actor's call is inconclusive; a stopped call.
                 "outcome_reason": receipt.get("reason")
                 or _actor_missing_reason(receipt)
