@@ -241,13 +241,14 @@ def _is_claim_outcome_unknown(exc: BaseException) -> bool:
 
 
 async def _admit_start(task_id: str) -> bool:
-    return await workflow.execute_activity(
+    admitted = await workflow.execute_activity(
         "admit_eval_task_start_activity",
         StartAdmissionInput(task_id),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
+    return bool(admitted)
 
 
 async def _apply_labels(task_id: str) -> None:
@@ -447,7 +448,7 @@ async def _finalize(task_id: str, generation: str | None = None) -> bool:
         start_to_close_timeout=_CONTROL_TIMEOUT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
-    return result["finalized"]
+    return bool(result["finalized"])
 
 
 def _worker_lost(exc: BaseException) -> bool:
@@ -1015,7 +1016,7 @@ class RequestedHistoricalEvalTaskWorkflow(HistoricalEvalTaskWorkflow):
         workflow.continue_as_new(checkpoint, workflow=HistoricalEvalTaskWorkflow.run)
 
     @workflow.run
-    async def run(self, input: RequestedHistoricalInput) -> EvalTaskWorkflowOutput:
+    async def run(self, input: RequestedHistoricalInput) -> EvalTaskWorkflowOutput:  # type: ignore[override]
         if not await _admit_start(input.drain.task_id):
             self._phase = PHASE_DONE
             return EvalTaskWorkflowOutput(input.drain.task_id, "start_fenced", 0)
@@ -1028,7 +1029,7 @@ class RequestedContinuousEvalTaskWorkflow(ContinuousEvalTaskWorkflow):
         workflow.continue_as_new(checkpoint, workflow=ContinuousEvalTaskWorkflow.run)
 
     @workflow.run
-    async def run(self, input: RequestedContinuousInput) -> None:
+    async def run(self, input: RequestedContinuousInput) -> None:  # type: ignore[override]
         if not await _admit_start(input.drain.task_id):
             self._phase = PHASE_DONE
             return

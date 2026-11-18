@@ -787,7 +787,7 @@ def _admit_start_sync(input: StartAdmissionInput, run_id: str) -> bool:
 
     close_old_connections()
     try:
-        return admit_start(input.task_id, run_id)
+        return bool(admit_start(input.task_id, run_id))
     finally:
         close_old_connections()
 
@@ -801,7 +801,7 @@ async def admit_eval_task_start_activity(input: StartAdmissionInput) -> bool:
         )
     if not admitted:
         logger.info("eval_task_start_fenced", task_id=input.task_id)
-    return admitted
+    return bool(admitted)
 
 
 @activity.defn

@@ -1674,7 +1674,7 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             # the task says running, or it finished with rows unanswered.
             if task.status in ACTIVE:
                 cache.delete(f"ie-wf-gone:{task.id}")
-                resumable = _workflow_gone(task)
+                resumable = bool(_workflow_gone(task))
             elif task.status == EvalTaskStatus.COMPLETED:
                 resumable = _unanswered_rows(run) > 0
         if not resumable:
