@@ -115,10 +115,8 @@ E2E:
 ```bash
 cd futureagi
 
-# Create venv with correct Python (one-time):
-uv venv --python 3.11
-source .venv/bin/activate
-uv pip install -r requirements-test.txt
+# Install locked test dependencies (see ../TESTING.md; CI adds --all-extras):
+uv sync --frozen
 
 # Full suite:
 bin/test
