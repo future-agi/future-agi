@@ -768,29 +768,30 @@ class TestExecutionUtils:
         self, call_executions, row_groups, group_keys, default_columns=None
     ):
         """Apply basic grouping using Django ORM"""
-        # Build group_by_fields from default_columns
-        group_by_fields = []
-
-        if default_columns:
+        basic_fields = {
+            "timestamp": "created_at__date",
+            "status": "status",
+            "call_type": "call_type",
+            "callType": "call_type",
+            "scenario": "scenario__name",
+            "overall_score": "overall_score",
+            "overallScore": "overall_score",
+            "response_time": "response_time_ms",
+            "responseTime": "response_time_ms",
+        }
+        if row_groups and all(field in basic_fields for field in row_groups):
+            group_by_fields = [basic_fields[field] for field in row_groups]
+            # Ordering by individual calls' created_at also groups by that timestamp.
+            call_executions = call_executions.order_by(*group_by_fields)
+        elif default_columns:
+            # Keep the display-based fallback for mixed or unrecognized groups.
+            group_by_fields = []
             for column in default_columns:
                 column_id = column.get("id")
                 column_type = column.get("type", "")
 
-                # Map column IDs to Django field names. Accept both snake_case
-                # (canonical) and legacy camelCase ids so stored/legacy row_groups
-                # payloads still work.
-                if column_id == "timestamp":
-                    group_by_fields.append("created_at__date")
-                elif column_id == "status":
-                    group_by_fields.append("status")
-                elif column_id in ("call_type", "callType"):
-                    group_by_fields.append("call_type")
-                elif column_id == "scenario":
-                    group_by_fields.append("scenario__name")
-                elif column_id in ("overall_score", "overallScore"):
-                    group_by_fields.append("overall_score")
-                elif column_id in ("response_time", "responseTime"):
-                    group_by_fields.append("response_time_ms")
+                if isinstance(column_id, str) and column_id in basic_fields:
+                    group_by_fields.append(basic_fields[column_id])
                 elif column_type == "evaluation":
                     # For evaluation columns, we'll include them in annotations
                     continue
