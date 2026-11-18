@@ -146,6 +146,121 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Pull requests run the two Real jobs only when they change something those
+  # jobs exercise; every other event runs them exactly as before (pushes still
+  # skip them, schedule, merge_group and workflow_dispatch still run them). The
+  # other jobs keep the workflow-level paths above. a-b-c installs published
+  # releases with this PR's update tooling and builds nothing from the PR, so it
+  # follows the tooling list; latest-stable -> PR builds the backend, frontend,
+  # gateway, collector and standalone images from the PR and migrates real data,
+  # so it also follows the data model, startup and boot-time inputs. Fail-open:
+  # if this job does not succeed, both Real jobs run. To run them for a PR that
+  # skips them, dispatch Update CI on its branch.
+  changes:
+    name: Update-relevant changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # dorny/paths-filter reads the PR's file list.
+      pull-requests: read
+    outputs:
+      tooling: ${{ steps.filter.outputs.tooling || 'true' }}
+      upgrade: ${{ steps.filter.outputs.upgrade || 'true' }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            # The workflow-level paths without its whole-source globs (every
+            # Python and Go file, futureagi/, agentcc-gateway/, fi-collector/).
+            tooling: &tooling
+              - 'bin/update'
+              - 'deploy/update/**'
+              - 'deploy/tests/test_update_*.py'
+              - 'deploy/tests/update_e2e/**'
+              - 'scripts/generate_update_manifest.py'
+              - 'scripts/check_update_safety.py'
+              - '**/*.sql'
+              - '**/*.sh'
+              - 'bin/**'
+              - 'scripts/**'
+              - 'deploy/**'
+              - 'docker-compose*.yml'
+              - 'bin/lib/**'
+              - '.github/workflows/backend-ci.yml'
+              - 'docker-compose.yml'
+              - 'docker-compose.distributed.yml'
+              - 'deploy/docker-compose.production.yml'
+              - 'deploy/docker-compose.host-status.standalone.yml'
+              - 'deploy/docker-compose.host-status.distributed.yml'
+              - 'bin/install'
+              - 'deploy/setup.sh'
+              - '.env.example'
+              - 'deploy/.env.production.example'
+              - 'deploy/env-reference.toml'
+              - '.gitignore'
+              - '**/.dockerignore'
+              - '**/*.dockerignore'
+              - '**/Dockerfile*'
+              - '.github/actions/setup-helm-tools/**'
+              - '.github/workflows/release-update-manifest.yml'
+              - '.github/workflows/release-images.yml'
+              - '.github/workflows/update-ci.yml'
+              - '.github/workflows/build-image-multiarch.yml'
+              - '.github/workflows/helm-release.yml'
+              - 'agentcc-gateway/config.example.yaml'
+              - 'deploy/clickhouse/users.d/**'
+              - 'deploy/standalone/clickhouse/**'
+              - 'futureagi/.ci/clickhouse-storage-policy.xml'
+              - 'futureagi/config/peerdb/temporal-dynamicconfig.yaml'
+              - 'futureagi/scripts/property_catalog_oss/**'
+              - 'futureagi/tracer/services/clickhouse/v2/observed_catalog/**'
+              - '.gitattributes'
+            upgrade:
+              - *tooling
+              # Images the latest-stable -> PR job builds from this PR
+              - 'agentcc-gateway/**'
+              - 'fi-collector/**'
+              # Dependency manifests and locks
+              - '**/pyproject.toml'
+              - '**/uv.lock'
+              - '**/requirements*.txt'
+              - '**/go.mod'
+              - '**/go.sum'
+              # Backend image root: Dockerfile, entrypoint, manage.py, project and lock.
+              # Not the type-check baseline or the test-duration record: they
+              # change on many pull requests, and futureagi/.dockerignore keeps
+              # both out of the image.
+              - 'futureagi/!(mypy-baseline.txt|.test_durations)'
+              # Data model and migrations, including post_migrate hooks
+              - 'futureagi/**/migrations/**'
+              - 'futureagi/**/models.py'
+              - 'futureagi/**/models/**'
+              - 'futureagi/**/apps.py'
+              - 'futureagi/**/signals.py'
+              - 'futureagi/**/signals/**'
+              # Settings, startup and the commands the images run at boot (bootstrap_install,
+              # migrate, seed_system_evals, register_temporal_schedules, check, ...)
+              - 'futureagi/**/management/**'
+              - 'futureagi/**/settings*.py'
+              - 'futureagi/**/settings/**'
+              - 'futureagi/tfc/**'
+              - 'futureagi/config/**'
+              - 'futureagi/.ci/**'
+              - 'futureagi/scripts/**'
+              # ClickHouse DDL and change data capture, installed by bootstrap_install
+              - 'futureagi/tracer/services/clickhouse/**'
+              # Data those boot commands load
+              - 'futureagi/model_hub/system_evals/**'
+              - 'futureagi/agent_playground/templates/**'
+              - 'futureagi/accounts/utils.py'
+              - 'futureagi/ee/falcon_ai/builtin_skills_loader.py'
+              - 'futureagi/ee/usage/utils/**'
+              # The gateway admin contract the backend pushes to the gateway
+              - 'futureagi/agentcc/contracts/**'
+
   safety:
     name: Unattended update layout and environment
     runs-on: ubuntu-24.04
@@ -311,7 +426,8 @@ jobs:
 
   automatic-upgrade:
     name: Real automatic latest-stable to PR and cold restore
-    if: github.event_name != 'push'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.upgrade == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     permissions:
@@ -488,7 +604,8 @@ jobs:
 
   automatic-a-b-c:
     name: Real one-opt-in v1.53.0 to v1.54.0 to v1.55.0
-    if: github.event_name != 'push'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.tooling == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     permissions:

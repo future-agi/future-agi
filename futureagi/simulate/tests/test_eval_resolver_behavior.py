@@ -2704,19 +2704,10 @@ class TestToolEvaluationGate:
         assert not call_execution.tool_outputs
 
     @pytest.mark.requires_ee
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "TH-8055 known limit: ALK writes the tool result as "
-            "role=assistant/kind=tool_call_result; the judge only reads "
-            "role=tool with a tool_call_id -- follow-up ticket"
-        ),
-    )
     def test_harness_tool_call_is_extracted_with_its_result(self, chat_call_execution):
-        """Known gap: a harness chat call's tool result never reaches the
-        judge, because ALK writes it as `kind=tool_call_result` on a
-        `role=assistant` segment, and the judge only reads `role=tool` with
-        a `tool_call_id`."""
+        """A harness chat call's tool result reaches the judge: ALK writes it as
+        `kind=tool_call_result` on a `role=assistant` item with no
+        `tool_call_id`, and it answers the tool call before it."""
         from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
         from simulate.models.chat_message import ChatMessageModel
 
@@ -2754,8 +2745,145 @@ class TestToolEvaluationGate:
         call_data = agent._get_chat_data_from_database(chat_call_execution)
         tool_calls = agent._extract_tool_calls(call_data)
 
-        assert tool_calls
-        assert tool_calls[0]["result"] is not None
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["tool_call_id"] == "call_1"
+        assert tool_calls[0]["tool_name"] == "lookup_order"
+        assert tool_calls[0]["arguments"] == {"order_id": "123"}
+        assert tool_calls[0]["result"] == "The order shipped yesterday."
+        # The tool's output is not read back as something the agent said.
+        speech = [
+            item["content"]
+            for item in call_data["conversation_context"]
+            if item["speaker_role"] != "tool_call_result"
+        ]
+        assert "The order shipped yesterday." not in speech
+
+    def _ingest_harness_chat(self, call_execution):
+        """Store a two-tool harness transcript through ingestion itself: flat
+        `{id, name, arguments}` tool calls and id-less results, in call order."""
+        from simulate.services.alk_simulate_ingestion import (
+            _store_alk_chat_messages,
+        )
+
+        _store_alk_chat_messages(
+            call_execution,
+            [
+                {"speaker_role": "user", "content": "Where is order 123?"},
+                {
+                    "speaker_role": "tool_calls",
+                    "content": "lookup_order, track_parcel",
+                    "tool_calls": [
+                        {
+                            "id": "c1",
+                            "name": "lookup_order",
+                            "arguments": {"order_id": "123"},
+                        },
+                        {
+                            "id": "c2",
+                            "name": "track_parcel",
+                            "arguments": {"order_id": "123"},
+                        },
+                    ],
+                },
+                {
+                    "speaker_role": "tool_call_result",
+                    "content": '{"status": "shipped"}',
+                },
+                {"speaker_role": "tool_call_result", "content": "Out for delivery"},
+                {"speaker_role": "assistant", "content": "It is out for delivery."},
+            ],
+        )
+
+    @pytest.mark.requires_ee
+    def test_ingested_harness_tool_calls_get_their_results_in_call_order(
+        self, chat_call_execution
+    ):
+        from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
+
+        self._ingest_harness_chat(chat_call_execution)
+
+        agent = ToolEvalAgent(llm=Mock())
+        call_data = agent._get_chat_data_from_database(chat_call_execution)
+        tool_calls = sorted(
+            agent._extract_tool_calls(call_data), key=lambda c: c["tool_call_id"]
+        )
+
+        assert [
+            (c["tool_call_id"], c["tool_name"], c["arguments"], c["result"])
+            for c in tool_calls
+        ] == [
+            ("c1", "lookup_order", {"order_id": "123"}, {"status": "shipped"}),
+            ("c2", "track_parcel", {"order_id": "123"}, "Out for delivery"),
+        ]
+
+    @pytest.mark.requires_ee
+    def test_the_chat_adapter_pairs_ingested_harness_results_too(
+        self, chat_call_execution
+    ):
+        """The Temporal path reads chats through `ChatToolCallAdapter`."""
+        from ee.agenthub.tool_eval_agent.adapters import ChatToolCallAdapter
+        from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
+
+        self._ingest_harness_chat(chat_call_execution)
+
+        messages = ChatToolCallAdapter().get_tool_call_transcript(chat_call_execution)
+        assert [
+            (m.role, m.tool_call_id, m.content)
+            for m in messages
+            if m.role in ("tool_call", "tool_call_result")
+        ] == [
+            ("tool_call", "c1", "lookup_order"),
+            ("tool_call", "c2", "track_parcel"),
+            ("tool_call_result", "c1", '{"status": "shipped"}'),
+            ("tool_call_result", "c2", "Out for delivery"),
+        ]
+        assert [m.content for m in messages if m.role == "bot"] == [
+            "It is out for delivery."
+        ]
+
+        data = ToolEvalAgent(llm=Mock()).evaluate_tool_calls(messages)
+        assert [
+            (c["tool_name"], c["arguments"], c["result"])
+            for c in data["tool_calls_data"]
+        ] == [
+            ("lookup_order", {"order_id": "123"}, {"status": "shipped"}),
+            ("track_parcel", {"order_id": "123"}, "Out for delivery"),
+        ]
+
+    @pytest.mark.requires_ee
+    def test_a_native_tool_result_is_still_matched_by_its_id(self, chat_call_execution):
+        from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
+        from simulate.models.chat_message import ChatMessageModel
+
+        ChatMessageModel.objects.create(
+            call_execution=chat_call_execution,
+            role=ChatMessageModel.RoleChoices.ASSISTANT,
+            messages=[""],
+            content=[
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "a", "function": {"name": "one", "arguments": "{}"}},
+                        {"id": "b", "function": {"name": "two", "arguments": "{}"}},
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "b", "content": "second"},
+                {"role": "tool", "tool_call_id": "a", "content": "first"},
+            ],
+            session_id="native-chat-test",
+            organization=chat_call_execution.test_execution.run_test.organization,
+            workspace=chat_call_execution.test_execution.run_test.workspace,
+        )
+
+        agent = ToolEvalAgent(llm=Mock())
+        tool_calls = agent._extract_tool_calls(
+            agent._get_chat_data_from_database(chat_call_execution)
+        )
+        assert {c["tool_call_id"]: c["result"] for c in tool_calls} == {
+            "a": "first",
+            "b": "second",
+        }
 
 
 # --- Grading a harness run's evals again ------------------------------------

@@ -260,6 +260,34 @@ func TestStdioTransportHandlesLargeResponses(t *testing.T) {
 	}
 }
 
+// The gateway connects each server under a startup timeout and cancels it
+// once the handshake is done; the subprocess has to survive that.
+func TestStdioTransportOutlivesStartContext(t *testing.T) {
+	transport := NewStdioTransport(os.Args[0], []string{
+		"-test.run=^TestStdioTransportHelperProcess$",
+		"--",
+		"mcp-stdio-large-response",
+	})
+
+	startCtx, cancelStart := context.WithCancel(context.Background())
+	if err := transport.Start(startCtx); err != nil {
+		t.Fatalf("start stdio transport: %v", err)
+	}
+	defer transport.Close()
+	cancelStart()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	msg := &Message{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: MethodPing}
+	resp, err := transport.Send(ctx, msg)
+	if err != nil {
+		t.Fatalf("send after start context was cancelled: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected error response: %s", resp.Error.Message)
+	}
+}
+
 func TestStdioTransportHelperProcess(t *testing.T) {
 	if len(os.Args) == 0 || os.Args[len(os.Args)-1] != "mcp-stdio-large-response" {
 		return
