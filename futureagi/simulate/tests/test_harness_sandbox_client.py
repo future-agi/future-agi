@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from simulate.services import harness_sandbox
+from simulate.services.harness_refusals import refusal_sentence
 from simulate.services.harness_sandbox import (
     HarnessSandboxClient,
     HarnessSandboxRejected,
@@ -43,7 +44,7 @@ def test_token_refusal_is_unavailable_without_the_token(sandbox, status_code):
         client.list_jobs()
 
     assert sandbox.sent["headers"]["Authorization"] == f"Bearer {TOKEN}"
-    assert str(status_code) in str(caught.value)
+    assert "(sandbox_token_rejected)" in str(caught.value)
     assert TOKEN not in str(caught.value)
 
 
@@ -55,17 +56,26 @@ def test_other_client_errors_are_still_rejected(sandbox, status_code):
         client.get("missing")
 
     assert caught.value.status_code == status_code
+    # Not the connect path: the kit's own fixed text is kept (Hawk M1 on #4184).
     assert str(caught.value) == "no such job"
 
 
 def test_server_error_is_unavailable(sandbox):
-    client = sandbox(500, detail="boom")
+    # ADR-010: the page shows a fixed sentence with the status; the kit's own text
+    # goes to the server log only.
+    client = sandbox(500, detail="boom sk-live-in-a-traceback")
 
-    with pytest.raises(HarnessSandboxUnavailable, match="returned 500: boom"):
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
         client.list_jobs()
 
+    assert str(caught.value) == (
+        "The agent sandbox couldn't take this right now (HTTP 500). Try again in a "
+        "few minutes."
+    )
+    assert "boom" not in str(caught.value)
 
-def test_a_refusal_with_no_token_set_names_the_missing_setting(monkeypatch):
+
+def test_a_refusal_with_no_token_set_shows_no_setting_name(monkeypatch):
     def fake_request(method, url, *, headers, timeout, **kwargs):
         assert "Authorization" not in headers
         return SimpleNamespace(status_code=401, json=lambda: {}, text="")
@@ -73,10 +83,12 @@ def test_a_refusal_with_no_token_set_names_the_missing_setting(monkeypatch):
     monkeypatch.setattr(harness_sandbox.requests, "request", fake_request)
     client = HarnessSandboxClient(base_url="http://sandbox.test", token="")
 
-    with pytest.raises(
-        HarnessSandboxUnavailable, match="ALK_HARNESS_SANDBOX_TOKEN is not set"
-    ):
+    # Dileep, #4184: the page sees no setting name; the reason is in the server log.
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
         client.list_jobs()
+
+    assert "ALK_HARNESS_SANDBOX_TOKEN" not in str(caught.value)
+    assert "(sandbox_token_missing)" in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -104,6 +116,7 @@ def test_a_403_is_the_sandboxs_own_refusal_not_a_token_rejection(sandbox):
         client.list_jobs()
 
     assert caught.value.status_code == 403
+    # Not the connect path (list_jobs): the kit's own fixed text is kept (Hawk M1 on #4184).
     assert str(caught.value) == "source_path is outside allowed roots"
 
 
@@ -163,8 +176,8 @@ def test_a_401_on_a_request_that_carried_no_token_does_not_blame_the_token(monke
     with pytest.raises(HarnessSandboxUnavailable) as caught:
         client.health()
 
-    assert "rejected the platform's token" not in str(caught.value)
-    assert "401" in str(caught.value)
+    assert "(sandbox_token_rejected)" not in str(caught.value)
+    assert "(sandbox_refused_unauthenticated)" in str(caught.value)
 
 
 # The kit's request validation answers 422 with FastAPI's list of errors. Its
@@ -177,23 +190,50 @@ def _validation_errors(*messages):
 
 
 def test_a_github_source_without_a_commit_is_refused_in_a_sentence(sandbox):
+    # The page resolves no commit on the sandbox path, so a missing one is the platform's own
+    # fault: the sentence says so, keeps the code, and comes back as a 503 (TH-8978).
     client = sandbox(422, detail=_validation_errors("github_commit_sha_required"))
 
-    with pytest.raises(HarnessSandboxRejected) as caught:
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
         client.submit({"github_repository": "acme/agent"})
 
-    assert caught.value.status_code == 422
-    assert (
-        str(caught.value) == harness_sandbox.KIT_REFUSALS["github_commit_sha_required"]
+    assert str(caught.value) == refusal_sentence("github_commit_sha_required")
+    assert str(caught.value).startswith("We couldn't start the check")
+
+
+def test_a_code_the_user_can_fix_reaches_the_page_as_its_sentence(sandbox):
+    client = sandbox(
+        422, detail=_validation_errors("environment_value_contains_nul: API_URL")
     )
-    assert "github_commit_sha_required" not in str(caught.value)
+
+    with pytest.raises(HarnessSandboxRejected) as caught:
+        client.submit({"source_id": "abc"})
+
+    assert str(caught.value) == refusal_sentence(
+        "environment_value_contains_nul: API_URL"
+    )
+    assert "API_URL" in str(caught.value)
+    assert "environment_value_contains_nul" not in str(caught.value)
 
 
-def test_a_validation_list_without_a_known_code_reads_as_its_messages(sandbox):
+def test_an_endpoint_refusal_string_reaches_the_page_as_its_sentence(sandbox):
+    client = sandbox(404, detail="uploaded source was not found")
+
+    with pytest.raises(HarnessSandboxRejected) as caught:
+        client.submit({"source_id": "abc"})
+
+    assert str(caught.value) == refusal_sentence("uploaded source was not found")
+
+
+def test_a_validation_list_without_a_known_code_never_shows_the_kits_text(sandbox):
+    # ADR-010: an unknown code gets the generic sentence and its code; free text the
+    # kit wrote (it can repeat what was typed) never reaches the page.
     client = sandbox(
         422,
         detail=_validation_errors(
-            "exactly_one_source_required", "A subfolder needs a GitHub repository."
+            "a_code_the_kit_adds_later",
+            "a_code_the_kit_adds_later",
+            "Unexpected value sk-live-pasted-here",
         ),
     )
 
@@ -202,6 +242,155 @@ def test_a_validation_list_without_a_known_code_reads_as_its_messages(sandbox):
 
     message = str(caught.value)
     assert message == (
-        "exactly_one_source_required. A subfolder needs a GitHub repository."
+        refusal_sentence("a_code_the_kit_adds_later").rstrip(".")
+        + ". "
+        + refusal_sentence("Unexpected value sk-live-pasted-here")
     )
+    assert "sk-live" not in message
     assert "[{" not in message and "Value error" not in message
+
+
+# Kit #353: a refusal the sandbox's own configuration causes is a 500 whose detail
+# entries are typed "sandbox_configuration". It is our bug, not an outage: the page
+# shows the shared our-side sentence with the code (ADR-010, 4).
+def test_a_configuration_refusal_shows_the_our_side_sentence_not_unavailable(sandbox):
+    client = sandbox(
+        500,
+        detail=[
+            {
+                "type": "sandbox_configuration",
+                "loc": ["sandbox"],
+                "msg": "Value error, hosted_isolation_must_be_dedicated_vm",
+            }
+        ],
+    )
+
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
+        client.submit({"github_repository": "acme/agent"})
+
+    assert str(caught.value) == refusal_sentence(
+        "hosted_isolation_must_be_dedicated_vm"
+    )
+    assert "(hosted_isolation_must_be_dedicated_vm)" in str(caught.value)
+    assert "couldn't take this right now" not in str(caught.value)
+
+
+def test_a_500_list_without_a_configuration_entry_is_still_unavailable(sandbox):
+    client = sandbox(
+        500,
+        detail=[{"type": "value_error", "loc": ["body"], "msg": "Value error, boom"}],
+    )
+
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
+        client.list_jobs()
+
+    assert "couldn't take this right now (HTTP 500)" in str(caught.value)
+
+
+# Hawk M1 on #4184: the sentences belong to the connect path (submit, preflight and the two
+# uploads). A job's read, cancel and adjust refusals are fixed kit text, already right, and keep it.
+@pytest.mark.parametrize(
+    ("call", "status_code", "detail"),
+    [
+        (lambda client: client.get("job-1"), 404, "job not found"),
+        (lambda client: client.cancel("job-1"), 404, "job not found"),
+        (
+            lambda client: client.adjust("job-1", {}),
+            409,
+            "the run is already finalizing; start a follow-up run to change it",
+        ),
+        (
+            lambda client: client.adjust("job-1", {}),
+            409,
+            "a completed run cannot be adjusted",
+        ),
+    ],
+    ids=["get", "cancel", "adjust-finalizing", "adjust-completed"],
+)
+def test_a_refusal_off_the_connect_path_keeps_the_kits_fixed_text(
+    sandbox, call, status_code, detail
+):
+    client = sandbox(status_code, detail=detail)
+
+    with pytest.raises(HarnessSandboxRejected) as caught:
+        call(client)
+
+    assert caught.value.status_code == status_code
+    assert str(caught.value) == detail
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda client: client.submit({"source_id": "abc"}),
+        lambda client: client.preflight({"source_id": "abc"}),
+    ],
+    ids=["submit", "preflight"],
+)
+def test_a_refusal_on_the_connect_path_reads_as_the_platforms_sentence(sandbox, call):
+    client = sandbox(404, detail="uploaded source was not found")
+
+    with pytest.raises(HarnessSandboxRejected) as caught:
+        call(client)
+
+    assert str(caught.value) == refusal_sentence("uploaded source was not found")
+
+
+# Hawk L6 on #4184: a sandbox with no token configured is our configuration fault, not an
+# outage: the our-side sentence, logged as an error.
+def test_a_sandbox_without_its_token_reads_as_our_side_not_an_outage(sandbox):
+    client = sandbox(503, detail="sandbox_token_not_configured")
+
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
+        client.submit({"source_id": "abc"})
+
+    assert str(caught.value) == refusal_sentence("sandbox_token_not_configured")
+    assert "(sandbox_token_not_configured)" in str(caught.value)
+
+
+# Dileep, #4184: an our-side refusal is our bug, so it reaches the browser as a 503, never as the
+# kit's 4xx a client error alert would ignore.
+def test_an_our_side_4xx_comes_back_as_unavailable(sandbox):
+    client = sandbox(422, detail=_validation_errors("github_commit_sha_required"))
+
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
+        client.submit({"github_repository": "acme/agent"})
+
+    assert str(caught.value) == refusal_sentence("github_commit_sha_required")
+
+
+def test_a_4xx_mixing_our_side_and_user_refusals_stays_rejected(sandbox):
+    client = sandbox(
+        422,
+        detail=_validation_errors(
+            "github_commit_sha_required", "environment_value_contains_nul: API_URL"
+        ),
+    )
+
+    with pytest.raises(HarnessSandboxRejected) as caught:
+        client.submit({"source_id": "abc"})
+
+    assert caught.value.status_code == 422
+
+
+# Dileep, #4184: the connection failure shows no host, port, path or library text.
+def test_an_unreachable_sandbox_shows_a_fixed_sentence(monkeypatch):
+    def fake_request(method, url, **kwargs):
+        raise harness_sandbox.requests.ConnectionError(
+            "HTTPConnectionPool(host='host.docker.internal', port=8788): Max retries"
+        )
+
+    monkeypatch.setattr(harness_sandbox.requests, "request", fake_request)
+    client = HarnessSandboxClient(
+        base_url="http://host.docker.internal:8788", token=TOKEN
+    )
+
+    with pytest.raises(HarnessSandboxUnavailable) as caught:
+        client.submit({"source_id": "abc"})
+
+    message = str(caught.value)
+    assert "host.docker.internal" not in message and "8788" not in message
+    assert "HTTPConnectionPool" not in message and "/v1/jobs" not in message
+    assert message == (
+        "The agent sandbox couldn't be reached right now. Try again in a few minutes."
+    )
