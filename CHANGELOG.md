@@ -4,7 +4,7 @@
 
 ### Bug Fixes
 
-* **evals:** Multi-choice template usage averages count each scored run once, using its stored score or, for older mapped selections, the mean of its choice weights. A run scored zero counts; empty or malformed results do not.
+* **evals:** In template usage, two multi-choice runs scored 75% and 0% now average to 37.5%. Older mapped selections still use the mean of their choice weights; empty or malformed results do not count as scored runs.
 
 ## [1.56.1](https://github.com/future-agi/future-agi/compare/v1.56.0...v1.56.1) (2026-10-28)
 
