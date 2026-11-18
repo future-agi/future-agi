@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tarfile
+import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, TypedDict
@@ -15,6 +17,8 @@ from typing import Any, TypedDict
 import structlog
 from django.core.cache import cache
 from django.db.models import F
+from minio.error import S3Error
+from urllib3.exceptions import HTTPError
 
 from simulate.models import (
     HarnessAgentVersionRuntime,
@@ -254,6 +258,17 @@ def _cached_read(cache_key: str) -> _Read | None:
     return None
 
 
+# What reading a stored archive can raise: the store, the network, or a truncated or corrupt archive.
+_ARCHIVE_READ_ERRORS = (
+    S3Error,
+    HTTPError,
+    tarfile.TarError,
+    OSError,
+    EOFError,
+    zlib.error,
+)
+
+
 def _read_certification_files(object_key: str, cache_key: str) -> _Read:
     try:
         found = archives.stream_members(
@@ -269,12 +284,12 @@ def _read_certification_files(object_key: str, cache_key: str) -> _Read:
             },
             _MAX_CERTIFICATION_BYTES,
         )
-    except Exception as exc:
+    except _ARCHIVE_READ_ERRORS:
         # Storage, network or a truncated archive.
         logger.warning(
             "harness_readiness_certification_unreadable",
             object_key=object_key,
-            error=type(exc).__name__,
+            exc_info=True,
         )
         unreadable: _Read = (_files_of({}), False)
         cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
