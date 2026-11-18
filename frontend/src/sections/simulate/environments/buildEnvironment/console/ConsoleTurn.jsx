@@ -24,8 +24,11 @@ const STEP_SHAPE = PropTypes.shape({
     "cancelled",
     "completed",
     "nudge-line",
+    "node",
   ]),
   text: PropTypes.string,
+  // kind "node": a card the chat carries as is.
+  node: PropTypes.node,
   markdown: PropTypes.bool,
   label: PropTypes.string,
   result: PropTypes.string,
@@ -143,6 +146,8 @@ export function Step({ step }) {
       </Typography>
     );
   }
+
+  if (step.kind === "node") return step.node;
 
   if (step.kind === "ask") {
     return (
