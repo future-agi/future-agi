@@ -18,7 +18,13 @@ from model_hub.models.ai_model import AIModel
 from model_hub.models.evals_metric import EvalTemplate
 from tfc.temporal.eval_tasks import client as eval_task_client
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
+from tracer.models.eval_task import (
+    EvalTask,
+    EvalTaskStartRequest,
+    EvalTaskStatus,
+    RowType,
+    RunType,
+)
 from tracer.models.observation_span import (
     EvalEntryStatus,
     EvalLogger,
@@ -181,10 +187,19 @@ class TestFindStrandedTasks:
         assert task.id not in {item.id for item in sweeper.find_stranded_tasks()}
 
     @pytest.mark.parametrize("evidence", ["entry", "cursor"])
-    def test_null_start_time_does_not_exclude_a_pending_recovery_candidate(
-        self, make_task, make_entry, evidence
+    @pytest.mark.parametrize("intent", ["none", "current", "superseded"])
+    def test_pending_recovery_candidates_require_a_current_intent_not_a_start_time(
+        self, make_task, make_entry, evidence, intent
     ):
         task = make_task(status=EvalTaskStatus.PENDING)
+        if intent != "none":
+            EvalTaskStartRequest.objects.create(
+                task=task,
+                state=EvalTaskStartRequest.State.ACCEPTED,
+                attempts=1,
+                admitted_run_id=uuid.uuid4(),
+                superseded_at=timezone.now() if intent == "superseded" else None,
+            )
         if evidence == "entry":
             make_entry(task)
         else:
@@ -193,7 +208,8 @@ class TestFindStrandedTasks:
             task.save(update_fields=["run_type", "continuous_cursor"])
         assert task.start_time is None
 
-        assert task.id in {item.id for item in sweeper.find_stranded_tasks()}
+        candidates = {item.id for item in sweeper.find_stranded_tasks()}
+        assert (task.id in candidates) == (intent == "current")
 
     def test_a_task_with_pending_work_is_a_candidate(self, make_task, make_entry):
         task = make_task()

@@ -21,9 +21,11 @@ from tracer.models.instant_eval import InstantEvalRun
 from tracer.models.observation_span import EvalLogger
 from tracer.services.eval_tasks import start_requests
 from tracer.services.eval_tasks.recovery import recover_stranded_tasks
+from tracer.services.instant_eval_answers import record_answer
 from tracer.tests.test_instant_eval_scale import (
     _answer,
     _control,
+    _start,
     _summary,
 )
 from tracer.tests.test_instant_eval_scale import fake_view as fake_view
@@ -33,7 +35,7 @@ from tracer.tests.test_instant_eval_scale import (
 from tracer.tests.test_instant_eval_scale import started as started
 from tracer.tests.test_instant_eval_scale import yes_no as yes_no
 from tracer.utils.eval_tasks import _bridge_retired_dispatcher
-from tracer.views.instant_eval_scale import _prepared_run
+from tracer.views.instant_eval_scale import _prepared_run, _rows_left
 
 BASE = "/tracer/eval-task/"
 FAILED = "The run couldn't start after an automatic retry. Your task is saved."
@@ -266,16 +268,82 @@ def test_only_an_explicit_submission_clears_the_native_pause_marker(
 
 
 @pytest.mark.django_db
-@pytest.mark.usefixtures("no_new_usage")
+@pytest.mark.usefixtures("fake_view", "no_new_usage")
 @pytest.mark.parametrize(
-    "state,status,restarts",
+    "action,message",
     [
-        pytest.param("accepted", "running", False, id="sweep-watched-running-with-pending-entry"),
-        pytest.param(None, "running", True, id="sweep-legacy-running-with-pending-entry"),
-        pytest.param(None, "pending", False, id="sweep-legacy-pending-with-pending-entry"),
+        pytest.param("read_more", "This task was paused before it started.", id="marked-sample-now-completed"),
+        pytest.param("retry_failed", "A pending task cannot be resumed.", id="legacy-pending-failed-answer-workflow-gone"),
     ],
 )
-def test_stranded_sweep_rows(observe_project, yes_no, started, monkeypatch, state, status, restarts):  # noqa: F811
+def test_refused_instant_replacements_leave_the_run_untouched(
+    auth_client, observe_project, yes_no, started, monkeypatch, action, message,  # noqa: F811
+):
+    if action == "read_more":
+        monkeypatch.setattr("tracer.views.instant_eval_scale.credits_per_answer", lambda: None)
+        response = _start(auth_client, observe_project, [yes_no], sample_size=5)
+        assert response.status_code == 200, response.content
+        task = EvalTask.objects.get(pk=response.json()["result"]["task_id"])
+        assert _control(auth_client, observe_project, task, "pause").status_code == 200
+        EvalTask.objects.filter(pk=task.pk).update(status="completed")
+        task.refresh_from_db()
+        assert task.instant_paused_before_start_at is not None
+        assert not task.instant_rows.exists()
+    else:
+        rid = str(UUID(int=1))
+        task = EvalTask.objects.create(
+            project=observe_project, status="pending", run_type="historical",
+            row_type="sessions", filters={"session_id": [rid]},
+        )
+        task.evals.add(yes_no)
+        _prepared_run(task, {}, rate=None)
+        [entry] = EvalLogger.objects.bulk_create([_answer(task, yes_no, rid, error=True)])
+        assert record_answer(entry.pk) == 1
+        monkeypatch.setattr(client, "describe_eval_task_workflow_sync", Mock(return_value=client.WF_ABSENT))
+
+    assert not EvalTaskStartRequest.objects.filter(task=task).exists()
+    runs = InstantEvalRun.objects.filter(eval_task=task)
+    assert _rows_left(task, runs.get()) == 0
+    run_before = runs.values().get()
+    task_before = (task.status, task.spans_limit, task.instant_paused_before_start_at)
+    started.clear()  # Do not count the native sample's original submission.
+    extra = {"more": 1} if action == "read_more" else {}
+    response = _control(auth_client, observe_project, task, action, **extra)
+    assert response.status_code == 400, response.content
+    assert response.json()["message"] == message
+    assert started == []
+    assert runs.values().get() == run_before
+    task.refresh_from_db()
+    assert (task.status, task.spans_limit, task.instant_paused_before_start_at) == task_before
+    if action == "retry_failed":
+        entry.refresh_from_db()
+        assert entry.status == "errored" and entry.error
+        assert task.instant_answers.count() == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("no_new_usage")
+@pytest.mark.parametrize(
+    "state,status,older_pending,candidates,restarts",
+    [
+        pytest.param("accepted", "running", None, 1, False, id="sweep-watched-running-with-pending-entry"),
+        pytest.param(None, "running", None, 1, True, id="sweep-legacy-running-with-pending-entry"),
+        pytest.param(None, "pending", None, 0, False, id="sweep-legacy-pending-with-pending-entry"),
+        pytest.param(None, "running", "entry", 1, True, id="sweep-old-pending-entry-cannot-hold-the-slot"),
+        pytest.param(None, "running", "cursor", 1, True, id="sweep-old-pending-cursor-cannot-hold-the-slot"),
+    ],
+)
+def test_stranded_sweep_rows(
+    observe_project, yes_no, started, monkeypatch, state, status, older_pending, candidates, restarts,  # noqa: F811
+):
+    if older_pending:
+        old = timezone.now() - timedelta(days=1)
+        if older_pending == "entry":
+            parked = EvalTask.objects.create(project=observe_project, status="pending", run_type="historical")
+            [entry] = EvalLogger.objects.bulk_create([_answer(parked, yes_no, str(uuid4()), pending=True)])
+            EvalLogger.objects.filter(pk=entry.pk).update(updated_at=old)
+        else:
+            EvalTask.objects.create(project=observe_project, status="pending", run_type="continuous", continuous_cursor=old)
     task = EvalTask.objects.create(project=observe_project, status=status, run_type="historical")
     EvalLogger.objects.bulk_create([_answer(task, yes_no, str(uuid4()), pending=True)])
     if state:
@@ -283,9 +351,14 @@ def test_stranded_sweep_rows(observe_project, yes_no, started, monkeypatch, stat
             task=task, state=state, attempts=1, admitted_run_id=uuid4(),
             last_outcome="worker_admitted", lease_until=timezone.now() + timedelta(minutes=2),
         )
-    monkeypatch.setattr(client, "describe_eval_task_workflow_sync", Mock(return_value=client.WF_CLOSED))
-    result = recover_stranded_tasks(limit=5, stale_running_seconds=7200)
-    assert result["candidates"] == 1 and result["errors"] == 0
+    describe = Mock(return_value=client.WF_CLOSED)
+    monkeypatch.setattr(client, "describe_eval_task_workflow_sync", describe)
+    result = recover_stranded_tasks(limit=1, stale_running_seconds=7200)
+    assert result["candidates"] == candidates and result["errors"] == 0
     assert result["restarted"] == int(restarts)
-    assert result["deferred"] == int(not restarts)
+    assert result["deferred"] == candidates - int(restarts)
+    if candidates:
+        describe.assert_called_once_with(task.pk)
+    else:
+        describe.assert_not_called()
     assert started == ([(str(task.pk), {"replace_existing": False, "workflow_confirmed_stopped": True})] if restarts else [])
