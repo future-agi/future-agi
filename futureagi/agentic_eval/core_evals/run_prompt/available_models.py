@@ -3944,7 +3944,7 @@ OSS_AVAILABLE_MODELS = [
         "cutoff": "05-2024",
         "rate_limits": {"requests_per_minute": 20},
         "latency": 70,
-        "pricing": {"input_per_1k_characters": "N/A"},
+        "pricing": {"input_per_1k_characters": 0.000025},
         "notes": "Supports multiple languages; outputs normalized 768-dim vectors.",
     },
     {
@@ -4464,7 +4464,7 @@ OSS_AVAILABLE_MODELS = [
         "cutoff": "05-2024",
         "rate_limits": {"requests_per_minute": 30},
         "latency": 30,
-        "pricing": {"input_per_1M_tokens": 50},
+        "pricing": {"input_per_1M_tokens": 0.10},
         "notes": "Optimized for speed and cost. English only.",
     },
     {
@@ -4481,7 +4481,7 @@ OSS_AVAILABLE_MODELS = [
         "cutoff": "05-2024",
         "rate_limits": {"requests_per_minute": 30},
         "latency": 30,
-        "pricing": {"input_per_1M_tokens": 100},
+        "pricing": {"input_per_1M_tokens": 0.10},
         "notes": "Supports 100+ languages. State-of-the-art multilingual embedding.",
     },
     {
@@ -4498,7 +4498,7 @@ OSS_AVAILABLE_MODELS = [
         "cutoff": "05-2023",
         "rate_limits": {"requests_per_minute": 30},
         "latency": 30,
-        "pricing": {"input_per_1M_tokens": 100},
+        "pricing": {"input_per_1M_tokens": 0.10},
         "notes": "Legacy English embedding model.",
     },
     {
@@ -4515,7 +4515,7 @@ OSS_AVAILABLE_MODELS = [
         "cutoff": "05-2023",
         "rate_limits": {"requests_per_minute": 30},
         "latency": 30,
-        "pricing": {"input_per_1M_tokens": 50},
+        "pricing": {"input_per_1M_tokens": 0.10},
         "notes": "Legacy lightweight English embedding model.",
     },
     {
@@ -4532,7 +4532,7 @@ OSS_AVAILABLE_MODELS = [
         "cutoff": "05-2023",
         "rate_limits": {"requests_per_minute": 30},
         "latency": 30,
-        "pricing": {"input_per_1M_tokens": 100},
+        "pricing": {"input_per_1M_tokens": 0.10},
         "notes": "Supports 100+ languages. State-of-the-art multilingual embedding.",
     },
     {
@@ -4549,7 +4549,7 @@ OSS_AVAILABLE_MODELS = [
         "cutoff": "05-2024",
         "rate_limits": {"requests_per_minute": 30},
         "latency": 30,
-        "pricing": {"input_per_1M_tokens": 100},
+        "pricing": {"input_per_1M_tokens": 0.10},
         "notes": "Latest English embedding model from Cohere. Improved accuracy and efficiency.",
     },
     {

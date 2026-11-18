@@ -25,6 +25,8 @@ export const modelCostSourceLabel = (source) => {
     litellm: "LiteLLM cost estimate",
     mixed_estimate: "Includes estimated costs",
     provider_usage: "Provider-reported cost",
+    gateway: "Gateway-reported cost",
+    unavailable: "Cost unavailable",
     jev_flat_fee: "Flat fee",
   };
   return labels[source] || "Pricing source not recorded";

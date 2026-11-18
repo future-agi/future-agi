@@ -532,16 +532,18 @@ class TestPer1kCharacterPricing:
         assert result["completion_cost"] == 0.0012
         assert result["total_cost"] == 0.0027
 
-    def test_calculate_cost_per_1k_char_handles_na_placeholder_price(self):
-        """Placeholder character rates receive a labelled fallback estimate."""
-        token_usage = {"input_characters": 1000, "output_characters": 0}
+    def test_vertex_multilingual_embedding_uses_online_character_rate(self):
+        result = calculate_total_cost(
+            "text-multilingual-embedding-002",
+            {"input_characters": 1000, "prompt_tokens": 500, "completion_tokens": 10},
+        )
 
-        result = calculate_total_cost("text-multilingual-embedding-002", token_usage)
-
-        assert result["pricing_source"] == "default"
-        assert result["total_cost"] == 0.015
-        assert result["prompt_cost"] == 0.015
-        assert result["completion_cost"] == 0.0
+        assert result == {
+            "pricing_source": "available_models",
+            "total_cost": 0.000025,
+            "prompt_cost": 0.000025,
+            "completion_cost": 0.0,
+        }
 
 
 # =============================================================================

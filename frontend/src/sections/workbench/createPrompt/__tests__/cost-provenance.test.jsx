@@ -16,6 +16,14 @@ describe("Unit: model cost provenance", () => {
     },
   );
 
+  it.each([
+    ["gateway", "Gateway-reported cost"],
+    ["unavailable", "Cost unavailable"],
+  ])("identifies the %s source on the cost tooltip", (source, label) => {
+    render(<OutputMeta metadata={{ cost: 0, pricingSource: source }} />);
+    expect(screen.getByLabelText(label)).toHaveTextContent("0");
+  });
+
   it("shows a real zero rather than a positive-cost range", () => {
     render(
       <OutputMeta

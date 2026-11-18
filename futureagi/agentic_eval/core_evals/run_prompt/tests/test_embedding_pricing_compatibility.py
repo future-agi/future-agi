@@ -5,6 +5,30 @@ import pytest
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 
 
+@pytest.mark.parametrize(
+    "model",
+    [
+        "embed-english-light-v3.0",
+        "embed-english-v3.0",
+        "embed-multilingual-v3.0",
+        "embed-english-light-v2.0",
+        "embed-english-v2.0",
+        "embed-multilingual-v2.0",
+    ],
+)
+def test_cohere_embed_cost_per_million_input_tokens(model):
+    # Completion usage is not billable for these input-only models.
+    result = calculate_total_cost(
+        model, {"prompt_tokens": 1_000_000, "completion_tokens": 1000}
+    )
+    assert result == {
+        "pricing_source": "available_models",
+        "prompt_cost": 0.10,
+        "completion_cost": 0.0,
+        "total_cost": 0.10,
+    }
+
+
 @pytest.mark.parametrize("image_key", ["input_per_image", "image_input_per_image"])
 def test_embedding_cache_discount_and_images_are_additive(image_key):
     result = calculate_total_cost(
