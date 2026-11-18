@@ -26,7 +26,7 @@ from simulate.models import (
 )
 from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_scenario_sources import file_path
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import HostedHarnessError, not_pickable
 
 logger = structlog.get_logger(__name__)
 
@@ -61,12 +61,8 @@ def _write(
         ) from exc
 
 
-def _versions_invalid(message: str) -> HostedHarnessError:
-    return _error("versions_invalid", message, 400)
-
-
 def _environment_piece(
-    model: Any, environment: HostedHarnessJob, value: Any, default: Any
+    piece: str, model: Any, environment: HostedHarnessJob, value: Any, default: Any
 ) -> Any:
     if value in (None, ""):
         return (
@@ -81,7 +77,7 @@ def _environment_piece(
     except (ValueError, DjangoValidationError):
         found = None
     if found is None:
-        raise _versions_invalid("those versions are not this environment's")
+        raise not_pickable(piece)
     return found
 
 
@@ -91,7 +87,8 @@ def resolve_versions(
     """The agent, environment and suite versions a request names, each the environment's default when not named.
     An agent version is this environment's only by the rule readiness and runs use (its workspace, organization,
     agent and, for a shared agent, its own lineage); an environment or suite version only when this environment
-    holds it, saved or not. Refuses `versions_invalid` (400) otherwise, and for an id that is not one."""
+    holds it, saved or not. Refuses as a run's pick does (422 `version_not_pickable`, naming the piece), and for an
+    id that is not one."""
     from simulate.services.harness_readiness.report import require_environments_agent
 
     agent_id = query.get("agent_version_id") or None
@@ -99,9 +96,7 @@ def resolve_versions(
         try:
             require_environments_agent(environment, agent_id)
         except (HostedHarnessError, ValueError, DjangoValidationError) as exc:
-            raise _versions_invalid(
-                "that agent version is not this environment's"
-            ) from exc
+            raise not_pickable("agent") from exc
     agent_id = agent_id or environment.agent_version_id
     agent = (
         AgentVersion.no_workspace_objects.filter(id=agent_id).first()
@@ -111,12 +106,14 @@ def resolve_versions(
     return (
         agent,
         _environment_piece(
+            "environment",
             HarnessEnvironmentVersion,
             environment,
             query.get("environment_version_id"),
             environment.environment_version_id,
         ),
         _environment_piece(
+            "suite",
             HarnessSuiteVersion,
             environment,
             query.get("suite_version_id"),

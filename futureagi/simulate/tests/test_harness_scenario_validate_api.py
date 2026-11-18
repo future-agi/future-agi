@@ -81,7 +81,10 @@ def test_unavailable_check_is_reported(auth_client, certified):
 
 def test_refusals(auth_client, certified, settings):
     foreign = _post(auth_client, certified, {"suite_version_id": str(uuid.uuid4())})
-    assert (foreign.status_code, foreign.json()["error"]) == (400, "versions_invalid")
+    assert (foreign.status_code, foreign.json()["error"]) == (
+        422,
+        "version_not_pickable",
+    )
 
     with patch.object(validation, "can_validate", return_value=False):
         cannot = _post(auth_client, certified)
@@ -279,7 +282,48 @@ def test_another_organizations_agent_version_is_refused(
             {"agent_version_id": str(theirs.id)},
         )
 
-    assert response.status_code == 400, response.content
-    assert response.json()["error"] == "versions_invalid"
+    assert response.status_code == 422, response.content
+    assert response.json()["error"] == "version_not_pickable"
     assert response.json()["retryable"] is False
     assert HostedHarnessJob.no_workspace_objects.count() == jobs
+
+
+def test_another_environments_version_gets_one_answer_from_every_endpoint(
+    user, workspace, storage, auth_client
+):
+    """The same mistake, a version that belongs to another environment, answers as a run's pick does: 422
+    `version_not_pickable`, naming the piece, not retryable."""
+    from simulate.tests.test_harness_readiness import _environment
+
+    mine = _environment(user, workspace, storage, "one-answer-mine")
+    other = _environment(user, workspace, storage, "one-answer-other")
+    _suite(mine, _ten())
+    _suite(other, _ten())
+    mine.refresh_from_db()
+    other.refresh_from_db()
+    pick = {"environment_version_id": str(other.environment_version_id)}
+    base = f"/simulate/api/harness-environments/{mine.id}"
+
+    answers = {
+        "capabilities": auth_client.get(f"{base}/capabilities/", pick),
+        "capabilities/cases": auth_client.get(f"{base}/capabilities/cases/", pick),
+        "scenarios list": auth_client.get(
+            f"/simulate/api/harness-jobs/{mine.id}/scenarios/", pick
+        ),
+        "scenarios/validate": _post(auth_client, mine, pick),
+    }
+
+    for where, response in answers.items():
+        body = response.json()
+        body = body.get("result", body) if "error" not in body else body
+        assert (
+            response.status_code,
+            body.get("error"),
+            body.get("retryable"),
+            body.get("piece"),
+        ) == (
+            422,
+            "version_not_pickable",
+            False,
+            "environment",
+        ), (where, response.content)
