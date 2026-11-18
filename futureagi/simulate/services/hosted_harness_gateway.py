@@ -1053,9 +1053,21 @@ class HostedSourceAcquirer:
                     status_code=409,
                 )
             shutil.rmtree(checkout / ".git", ignore_errors=True)
+            selected = checkout
+            if source.get("path"):
+                selected = (checkout / str(source["path"])).resolve()
+                if (
+                    not selected.is_relative_to(checkout.resolve())
+                    or not selected.is_dir()
+                ):
+                    raise HostedHarnessError(
+                        "github_source_path_invalid",
+                        "source path is not a directory in the resolved commit",
+                        status_code=422,
+                    )
             archive = io.BytesIO()
             with tarfile.open(fileobj=archive, mode="w:gz") as tar:
-                tar.add(checkout, arcname="source", recursive=True)
+                tar.add(selected, arcname="source", recursive=True)
             max_bytes = getattr(
                 settings, "ALK_HOSTED_SOURCE_MAX_BYTES", 256 * 1024 * 1024
             )
@@ -2591,6 +2603,25 @@ class HostedHarnessGateway:
         _validate_resolved_egress_domains(
             allowed_domains, max_domains=self.client.max_egress_domains
         )
+        metadata = payload.get("metadata") or {}
+        simulation_only = bool(metadata.get("simulation_only"))
+        certification_run = bool(metadata.get("certification"))
+        fresh_build = authoring_archive is None and not simulation_only
+        harness_builds = fresh_build and getattr(
+            settings, "ALK_HOSTED_BUILDER_SESSION", True
+        )
+        if certification_run and (fresh_build or authoring_archive is not None):
+            allowed_domains = _normalize_egress_domains(
+                [
+                    *allowed_domains,
+                    *_authoring_egress_domains(
+                        simulator_env, "", provider_profile=False
+                    ),
+                ]
+            )
+            _validate_resolved_egress_domains(
+                allowed_domains, max_domains=self.client.max_egress_domains
+            )
         # Decided before the attempt is registered or a sandbox exists, and applied in one
         # step below, so a failure anywhere in it leaves the secrets, the egress list and
         # the document exactly as they were.
@@ -2853,15 +2884,7 @@ class HostedHarnessGateway:
                 if authoring_target_secrets
                 else ""
             )
-            simulation_only = bool(
-                (dispatch_payload.get("metadata") or {}).get("simulation_only")
-            )
             # A fresh build is the conversation's harness's work; this command waits for it.
-            harness_builds = (
-                authoring_archive is None
-                and not simulation_only
-                and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
-            )
             bundle_command = (
                 "rm -rf /work/bundle && "
                 "cp -a /work/authoring/environment-bundle /work/bundle && "

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1146,
+  endpointCount: 1149,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28635,6 +28635,70 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           500: {
             $ref: "#/definitions/CallExecutionErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/certification-campaigns/": {
+      get: {
+        operationId: "simulate_api_certification-campaigns_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "simulate_api_certification-campaigns_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/CertificationCampaignCreate",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/CertificationCampaignRead",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/certification-campaigns/{id}/": {
+      get: {
+        operationId: "simulate_api_certification-campaigns_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/certification-campaigns/{id}/cancel/": {
+      post: {
+        operationId: "simulate_api_certification-campaigns_cancel",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/CertificationCampaignRead",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -57577,6 +57641,145 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           default: "",
           "x-nullable": true,
+        },
+      },
+    },
+    CertificationCampaignCreate: {
+      required: ["deployment_id"],
+      type: "object",
+      properties: {
+        deployment_id: {
+          title: "Deployment id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        deployment_identity: {
+          title: "Deployment identity",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          default: {},
+        },
+        suite_key: {
+          title: "Suite key",
+          type: "string",
+          default: "production_agents_v1",
+          maxLength: 64,
+          minLength: 1,
+        },
+        tier: {
+          title: "Tier",
+          type: "string",
+          enum: ["quick", "full"],
+          default: "full",
+        },
+      },
+    },
+    CertificationCampaignRead: {
+      required: [
+        "id",
+        "state",
+        "suite_key",
+        "suite_digest",
+        "deployment_id",
+        "deployment_identity",
+        "cases_total",
+        "cases_completed",
+        "cases_failed",
+        "result",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "cancel_requested_at",
+        "cases",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        suite_key: {
+          title: "Suite key",
+          type: "string",
+          minLength: 1,
+        },
+        suite_digest: {
+          title: "Suite digest",
+          type: "string",
+          minLength: 1,
+        },
+        deployment_id: {
+          title: "Deployment id",
+          type: "string",
+          minLength: 1,
+        },
+        deployment_identity: {
+          title: "Deployment identity",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        cases_total: {
+          title: "Cases total",
+          type: "integer",
+        },
+        cases_completed: {
+          title: "Cases completed",
+          type: "integer",
+        },
+        cases_failed: {
+          title: "Cases failed",
+          type: "integer",
+        },
+        result: {
+          title: "Result",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        cancel_requested_at: {
+          title: "Cancel requested at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        cases: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CertificationCaseRead",
+          },
         },
       },
     },
@@ -97398,6 +97601,81 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    CertificationCaseRead: {
+      required: [
+        "id",
+        "case_key",
+        "sequence",
+        "state",
+        "failure_class",
+        "hosted_harness_job_id",
+        "run_job_id",
+        "reconciliation",
+        "started_at",
+        "finished_at",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        case_key: {
+          title: "Case key",
+          type: "string",
+          minLength: 1,
+        },
+        sequence: {
+          title: "Sequence",
+          type: "integer",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        failure_class: {
+          title: "Failure class",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        hosted_harness_job_id: {
+          title: "Hosted harness job id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        run_job_id: {
+          title: "Run job id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        reconciliation: {
+          title: "Reconciliation",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          "x-nullable": true,
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
     ChatSDKCodeResult: {
       required: [
         "installation_guide",
@@ -105673,6 +105951,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["public", "private"],
           default: "public",
+        },
+        path: {
+          title: "Path",
+          type: "string",
+          maxLength: 1024,
+          minLength: 1,
+          "x-nullable": true,
         },
         environment_values: {
           title: "Environment values",

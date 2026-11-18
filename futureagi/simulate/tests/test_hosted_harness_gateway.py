@@ -1212,9 +1212,9 @@ def test_dispatch_and_certify_jobs_pass_alk_secret_check_with_chat_state():
 def test_gateway_clones_exact_commit_without_archiving_git_credentials(
     organization, monkeypatch
 ):
-    job, _ = create_hosted_job(
-        organization, _payload(), idempotency_key="source-gateway"
-    )
+    payload = _payload()
+    payload["source"]["path"] = "agents/selected"
+    job, _ = create_hosted_job(organization, payload, idempotency_key="source-gateway")
     observed_commands = []
     observed_token = []
 
@@ -1236,7 +1236,10 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
             path = Path(checkout)
             path.mkdir(parents=True)
             (path / ".git").mkdir()
-            (path / "agent.py").write_text("print('agent')", encoding="utf-8")
+            (path / "outside.py").write_text("print('outside')", encoding="utf-8")
+            selected = path / "agents" / "selected"
+            selected.mkdir(parents=True)
+            (selected / "agent.py").write_text("print('agent')", encoding="utf-8")
         if "rev-parse" in command:
             return SimpleNamespace(returncode=0, stdout="a" * 40 + "\n", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -1259,6 +1262,7 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
         names = set(tar.getnames())
     assert "source/agent.py" in names
+    assert "source/outside.py" not in names
     assert all(".git" not in name for name in names)
 
 
@@ -1992,6 +1996,35 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
     assert not job.conversation.messages.filter(
         content__startswith="Build the test environment"
     ).exists()
+
+
+@pytest.mark.django_db
+def test_a_certification_run_keeps_package_egress(organization, settings, monkeypatch):
+    payload = _payload()
+    payload.setdefault("metadata", {})["simulation_only"] = True
+    payload["metadata"]["certification"] = {"campaign_id": "campaign-1"}
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="launch-authored-package-egress"
+    )
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = "sha256:" + "b" * 64
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._authoring_archive_for",
+        lambda _job: _authoring_archive(),
+    )
+
+    gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    assert {"pypi.org", "files.pythonhosted.org"} <= set(client.params.allowed_domains)
 
 
 def _launch_and_read_job_json(

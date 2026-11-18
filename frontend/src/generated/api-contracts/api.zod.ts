@@ -38784,6 +38784,97 @@ export const SimulateApiCallExecutionsListResponse = zod.array(
 );
 
 /**
+ * A campaign orchestrates ordinary hosted harness jobs against deployed
+production agents; creation is idempotent on
+(organization, deployment_id, suite_digest) and returns the existing
+campaign on retries.
+ * @summary Production certification campaign admission/read/cancel.
+ */
+export const simulateApiCertificationCampaignsCreateBodyDeploymentIdMax = 128;
+
+export const simulateApiCertificationCampaignsCreateBodyDeploymentIdentityDefault =
+  {};
+export const simulateApiCertificationCampaignsCreateBodySuiteKeyDefault = `production_agents_v1`;
+export const simulateApiCertificationCampaignsCreateBodySuiteKeyMax = 64;
+
+export const simulateApiCertificationCampaignsCreateBodyTierDefault = `full`;
+
+export const SimulateApiCertificationCampaignsCreateBody = zod.object({
+  deployment_id: zod
+    .string()
+    .min(1)
+    .max(simulateApiCertificationCampaignsCreateBodyDeploymentIdMax),
+  deployment_identity: zod
+    .record(zod.string(), zod.string())
+    .default(
+      simulateApiCertificationCampaignsCreateBodyDeploymentIdentityDefault,
+    ),
+  suite_key: zod
+    .string()
+    .min(1)
+    .max(simulateApiCertificationCampaignsCreateBodySuiteKeyMax)
+    .default(simulateApiCertificationCampaignsCreateBodySuiteKeyDefault),
+  tier: zod
+    .enum(["quick", "full"])
+    .default(simulateApiCertificationCampaignsCreateBodyTierDefault),
+});
+
+/**
+ * A campaign orchestrates ordinary hosted harness jobs against deployed
+production agents; creation is idempotent on
+(organization, deployment_id, suite_digest) and returns the existing
+campaign on retries.
+ * @summary Production certification campaign admission/read/cancel.
+ */
+export const SimulateApiCertificationCampaignsReadParams = zod.object({
+  id: zod.string(),
+});
+
+/**
+ * A campaign orchestrates ordinary hosted harness jobs against deployed
+production agents; creation is idempotent on
+(organization, deployment_id, suite_digest) and returns the existing
+campaign on retries.
+ * @summary Production certification campaign admission/read/cancel.
+ */
+export const SimulateApiCertificationCampaignsCancelParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiCertificationCampaignsCancelBody = zod.object({});
+
+export const SimulateApiCertificationCampaignsCancelResponse = zod.object({
+  id: zod.string().uuid(),
+  state: zod.string().min(1),
+  suite_key: zod.string().min(1),
+  suite_digest: zod.string().min(1),
+  deployment_id: zod.string().min(1),
+  deployment_identity: zod.record(zod.string(), zod.string()),
+  cases_total: zod.number(),
+  cases_completed: zod.number(),
+  cases_failed: zod.number(),
+  result: zod.record(zod.string(), zod.string()),
+  created_at: zod.string().datetime({ offset: true }),
+  started_at: zod.string().datetime({ offset: true }),
+  finished_at: zod.string().datetime({ offset: true }),
+  cancel_requested_at: zod.string().datetime({ offset: true }),
+  cases: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      case_key: zod.string().min(1),
+      sequence: zod.number(),
+      state: zod.string().min(1),
+      failure_class: zod.string().min(1),
+      hosted_harness_job_id: zod.string().uuid(),
+      run_job_id: zod.string().uuid(),
+      reconciliation: zod.record(zod.string(), zod.string()),
+      started_at: zod.string().datetime({ offset: true }),
+      finished_at: zod.string().datetime({ offset: true }),
+    }),
+  ),
+});
+
+/**
  * An environment is the job that built it (the world itself lives in object
 storage, addressed from the job's metadata), so these endpoints project the
 same rows the harness-jobs API serves. They exist separately because the
@@ -43273,6 +43364,8 @@ export const simulateApiHarnessJobsCreateBodySourceCommitShaRegExp = new RegExp(
 export const simulateApiHarnessJobsCreateBodySourceInstallationIdMax = 255;
 
 export const simulateApiHarnessJobsCreateBodySourceVisibilityDefault = `public`;
+export const simulateApiHarnessJobsCreateBodySourcePathMax = 1024;
+
 export const simulateApiHarnessJobsCreateBodySourceEnvironmentValuesMaxOne = 65536;
 
 export const simulateApiHarnessJobsCreateBodyAgentConfigDefault = {};
@@ -43393,6 +43486,11 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
       visibility: zod
         .enum(["public", "private"])
         .default(simulateApiHarnessJobsCreateBodySourceVisibilityDefault),
+      path: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessJobsCreateBodySourcePathMax)
+        .optional(),
       environment_values: zod
         .record(
           zod.string(),
@@ -43621,6 +43719,8 @@ export const simulateApiHarnessJobsPreflightBodySourceCommitShaRegExp =
 export const simulateApiHarnessJobsPreflightBodySourceInstallationIdMax = 255;
 
 export const simulateApiHarnessJobsPreflightBodySourceVisibilityDefault = `public`;
+export const simulateApiHarnessJobsPreflightBodySourcePathMax = 1024;
+
 export const simulateApiHarnessJobsPreflightBodySourceEnvironmentValuesMaxOne = 65536;
 
 export const simulateApiHarnessJobsPreflightBodyAgentConfigDefault = {};
@@ -43741,6 +43841,11 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
       visibility: zod
         .enum(["public", "private"])
         .default(simulateApiHarnessJobsPreflightBodySourceVisibilityDefault),
+      path: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessJobsPreflightBodySourcePathMax)
+        .optional(),
       environment_values: zod
         .record(
           zod.string(),

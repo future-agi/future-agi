@@ -50,6 +50,7 @@ class RecordingActivities:
         self.done_after = done_after
         self.max_duration_seconds = max_duration_seconds
         self.submitted = []
+        self.run_submitted = []
         self.canceled = []
         self.poll_calls = {}
         self.recorded = []
@@ -80,6 +81,13 @@ class RecordingActivities:
         self.in_flight += 1
         self.max_in_flight = max(self.max_in_flight, self.in_flight)
         return CertificationSubmitOutput(hosted_harness_job_id=f"job-{input.case_id}")
+
+    @activity.defn(name="certification_submit_run")
+    async def submit_run(self, input: CertificationCaseInput):
+        self.run_submitted.append(input.case_id)
+        return CertificationSubmitOutput(
+            hosted_harness_job_id=f"run-job-{input.case_id}"
+        )
 
     @activity.defn(name="certification_poll_case")
     async def poll(self, input: CertificationCaseInput):
@@ -128,6 +136,7 @@ class RecordingActivities:
         return [
             self.load,
             self.submit,
+            self.submit_run,
             self.poll,
             self.reconcile,
             self.record,
@@ -165,6 +174,7 @@ async def test_caps_concurrency_at_two_and_completes_every_case(
     assert result.cases_failed == 0
     assert acts.max_in_flight <= 2
     assert sorted(acts.submitted) == sorted(acts.case_ids)  # exactly-once each
+    assert sorted(acts.run_submitted) == sorted(acts.case_ids)
     assert len(acts.recorded) == 8
     assert acts.finalized
 
@@ -255,6 +265,7 @@ async def test_reconcile_failure_marks_case_failed_but_campaign_continues(
     activity_list = [
         acts.load,
         acts.submit,
+        acts.submit_run,
         acts.poll,
         flaky_reconcile,
         acts.record,

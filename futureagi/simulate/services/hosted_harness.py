@@ -322,6 +322,7 @@ def create_selected_harness_run(
     parallelism: int | None = None,
     verify: bool = False,
     coding_agent_key_id: str | None = None,
+    metadata_overrides: dict[str, Any] | None = None,
 ) -> tuple[HostedHarnessJob, bool]:
     """Freeze and preallocate one selected-scenario Run for an authored environment.
 
@@ -555,6 +556,8 @@ def create_selected_harness_run(
                 ),
             }
         )
+        if metadata_overrides:
+            child_metadata.update(json.loads(json.dumps(metadata_overrides)))
         if pins is not None:
             child_metadata["version_pins"] = pins.as_metadata()
             if pins.assembly is not None:
@@ -1608,6 +1611,7 @@ def rerun_calls_in_run(
             retry_cfg["max_infrastructure_attempts"],
             retry_cfg["initial_backoff_seconds"],
             retry_cfg["max_backoff_seconds"],
+            allow_completed_restart=True,
         )
     except Exception as exc:
         with transaction.atomic():

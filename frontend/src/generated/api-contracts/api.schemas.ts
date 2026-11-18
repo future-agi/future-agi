@@ -19225,6 +19225,79 @@ export interface CallExecutionErrorResponseApi {
   details?: CallExecutionErrorResponseApiDetails;
 }
 
+export type CertificationCampaignCreateApiDeploymentIdentity = {
+  [key: string]: string;
+};
+
+export type CertificationCampaignCreateApiTier =
+  (typeof CertificationCampaignCreateApiTier)[keyof typeof CertificationCampaignCreateApiTier];
+
+export const CertificationCampaignCreateApiTier = {
+  quick: "quick",
+  full: "full",
+} as const;
+
+export interface CertificationCampaignCreateApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  deployment_id: string;
+  deployment_identity?: CertificationCampaignCreateApiDeploymentIdentity;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  suite_key?: string;
+  tier?: CertificationCampaignCreateApiTier;
+}
+
+export type CertificationCampaignReadApiDeploymentIdentity = {
+  [key: string]: string;
+};
+
+export type CertificationCampaignReadApiResult = { [key: string]: string };
+
+export type CertificationCaseReadApiReconciliation = { [key: string]: string };
+
+export interface CertificationCaseReadApi {
+  id: string;
+  /** @minLength 1 */
+  case_key: string;
+  sequence: number;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  failure_class: string;
+  hosted_harness_job_id: string;
+  run_job_id: string;
+  reconciliation: CertificationCaseReadApiReconciliation;
+  started_at: string;
+  finished_at: string;
+}
+
+export interface CertificationCampaignReadApi {
+  id: string;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  suite_key: string;
+  /** @minLength 1 */
+  suite_digest: string;
+  /** @minLength 1 */
+  deployment_id: string;
+  deployment_identity: CertificationCampaignReadApiDeploymentIdentity;
+  cases_total: number;
+  cases_completed: number;
+  cases_failed: number;
+  result: CertificationCampaignReadApiResult;
+  created_at: string;
+  started_at: string;
+  finished_at: string;
+  cancel_requested_at: string;
+  cases: CertificationCaseReadApi[];
+}
+
 export type HarnessEnvironmentApiAgentType =
   (typeof HarnessEnvironmentApiAgentType)[keyof typeof HarnessEnvironmentApiAgentType];
 
@@ -21302,6 +21375,11 @@ export interface HarnessSourceApi {
   /** @minLength 1 */
   endpoint?: string;
   visibility?: HarnessSourceApiVisibility;
+  /**
+   * @minLength 1
+   * @maxLength 1024
+   */
+  path?: string;
   environment_values?: HarnessSourceApiEnvironmentValues;
 }
 
