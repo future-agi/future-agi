@@ -113,7 +113,9 @@ const stepsOfTurn = (t, coord, laneInfo, push) => {
       answer: t.reply
         ? {
             kind: "answer",
+            // Placed at the request when the reply has no time; then it has no duration either.
             at: turnEnd ?? start,
+            timed: turnEnd != null,
             label: oneLine(t.reply),
             full: t.reply,
             fullShown: t.replyShown,
@@ -258,7 +260,7 @@ const settleAnswers = (steps) => {
       s.at != null &&
       s.answer?.at != null &&
       s.answer.kind !== "took" &&
-      !(s.answer.kind === "none" && !s.answer.timed)
+      s.answer.timed !== false
     )
       s.dur = Math.max(0, s.answer.at - s.at);
     else s.dur = null;

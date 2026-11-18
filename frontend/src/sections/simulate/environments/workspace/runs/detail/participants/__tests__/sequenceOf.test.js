@@ -205,6 +205,12 @@ describe("sequenceOf over the worker record", () => {
     expect(handoff.dur).toBeNull();
   });
 
+  it("a caller's message whose reply has no time shows no duration", () => {
+    const record = timeline({ response: { text: "Done", at: null } });
+    const message = seqOf(record).steps.find((s) => s.kind === "message");
+    expect(message.dur).toBeNull();
+  });
+
   it("a round the record gives no turn keeps no turn number", () => {
     const record = timeline();
     record.turns = [
