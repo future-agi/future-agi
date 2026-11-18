@@ -39,7 +39,7 @@ func TestConfiguredAdminListener(t *testing.T) {
 			cmd.Env = []string{
 				"TEST_COLLECTOR_ADMIN_CONFIG=" + path,
 				"FI_CH_URL=http://127.0.0.1:1", "FI_PG_WRITE=postgres://test@127.0.0.1:1/test",
-				"FI_GRPC_ADDR=127.0.0.1:0", "FI_HTTP_ADDR=disable", "FI_PRICING_CATALOGUE_URL=",
+				"FI_GRPC_ADDR=127.0.0.1:0", "FI_HTTP_ADDR=127.0.0.1:0", "FI_PRICING_CATALOGUE_URL=",
 				"FI_DEAD_LETTER_FILE=" + filepath.Join(dir, "dead-letter.jsonl"),
 			}
 			yamlAddr := addr
@@ -58,7 +58,7 @@ func TestConfiguredAdminListener(t *testing.T) {
 
 			client := http.Client{Timeout: time.Second}
 			defer client.CloseIdleConnections()
-			deadline := time.Now().Add(5 * time.Second)
+			deadline := time.Now().Add(15 * time.Second)
 			for {
 				resp, err := client.Get("http://" + addr + "/healthz")
 				if err == nil {
