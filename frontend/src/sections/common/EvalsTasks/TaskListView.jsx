@@ -208,7 +208,7 @@ const buildFilterChips = (filtersApplied) => {
         f.filterConfig?.filterOp || f.filter_config?.filter_op || "equals";
       const rawVal =
         f.filterConfig?.filterValue ?? f.filter_config?.filter_value;
-      const val = Array.isArray(rawVal) ? rawVal.join(", ") : (rawVal ?? "");
+      const val = Array.isArray(rawVal) ? rawVal.join(", ") : rawVal ?? "";
       const isValuelessOp = op === "is_null" || op === "is_not_null";
       chips.push(
         isValuelessOp

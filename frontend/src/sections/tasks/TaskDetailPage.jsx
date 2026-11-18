@@ -325,10 +325,10 @@ const TaskDetailPage = () => {
     const isDateDirty = Boolean(dirtyFields?.startDate || dirtyFields?.endDate);
     const hasSavedDateRange = Boolean(
       taskDetails?.filters_applied?.date_range?.length ||
-      taskDetails?.filters_applied?.start_date ||
-      taskDetails?.filters_applied?.end_date ||
-      taskDetails?.start_date ||
-      taskDetails?.end_date,
+        taskDetails?.filters_applied?.start_date ||
+        taskDetails?.filters_applied?.end_date ||
+        taskDetails?.start_date ||
+        taskDetails?.end_date,
     );
     const includeDateRange = hasSavedDateRange || isDateDirty;
 
