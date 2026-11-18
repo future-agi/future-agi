@@ -442,15 +442,20 @@ matching key in `tls.key`; protect the private key, but keep it readable by
 the user each image reads it as: the gateway runs as uid and gid 65532
 (`chown 65532:65532 certs/gateway/tls.key; chmod 0400 certs/gateway/tls.key`),
 and the frontend's nginx master reads its key as root before it starts the
-workers. The frontend expects a key mode of `0400`, or `0440` from a Kubernetes
-Secret mounted with `fsGroup`; a key that its group can write or anyone else
-can read or write still loads, but it logs a warning naming the file and its
-mode (never the key) at startup and on each certificate rotation (a mode change
-alone is checked at the next rotation). Kubernetes mounts Secret files `0644`
-unless the volume sets `defaultMode`, so set `defaultMode: 0440` there in your
-own manifests. The Helm chart's frontend TLS volume does not set `defaultMode`
-yet, so a Helm install with frontend TLS logs this warning and has no value to
-clear it. A missing, empty or unreadable key still fails startup. For example:
+workers. Both images expect a key readable by its owner and at most also by
+its group (`0400` or `0600`, or `0440` from a Kubernetes Secret mounted with
+an `fsGroup`); a key that its group can write or anyone else can read or write
+still loads, but the image logs a warning naming the file and its mode (never
+the key) at startup and on each certificate rotation (a mode change alone is
+checked at the next rotation). Neither image refuses a key for its mode.
+Kubernetes mounts Secret files `0644` unless the volume sets `defaultMode` (or
+the item a `mode`), so in your own manifests set `0440` there together with
+an `fsGroup` the container runs in. The Helm chart does this for both images
+whenever the pod has an `fsGroup`, as it does by default, so a default Helm
+install logs no warning; without one (OpenShift security-context adaptation,
+or the `fsGroup` removed) the chart keeps the Secret default `0644` so the key
+stays readable, and the warning is expected. A missing, empty or unreadable
+key still fails startup. For example:
 
 ```yaml
 # docker-compose.native-tls.yml, next to docker-compose.distributed.yml
