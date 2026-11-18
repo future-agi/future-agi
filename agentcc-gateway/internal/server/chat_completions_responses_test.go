@@ -364,8 +364,12 @@ func TestChatCompletionsFallsBackFromGPT56OverResponses(t *testing.T) {
 
 // An async job runs the same chat call, so it takes the same route.
 func TestChatCompletionsAsyncJobCarriesGPT56ToolsOverResponses(t *testing.T) {
-	srv, upstream := newResponsesBridgeServer(t)
-	w := postBridgeChat(t, srv, chatToolBody("gpt-5.6-terra", false, ""), map[string]string{"x-agentcc-async": "true"})
+	logs, wantLog := responseDropsLogger(t)
+	srv, upstream := newResponsesBridgeServerWith(t, bridgeServerOptions{plugins: []pipeline.Plugin{logs}})
+	w := postBridgeChat(t, srv, chatToolBody("gpt-5.6-terra", false, allResponsesOnlySettings), map[string]string{"x-agentcc-async": "true"})
+	if got := w.Header().Get("x-agentcc-translation-drops"); got != "" {
+		t.Errorf("admission response predicts a future drop: %q", got)
+	}
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202. Body: %s", w.Code, w.Body.String())
 	}
@@ -405,6 +409,10 @@ func TestChatCompletionsAsyncJobCarriesGPT56ToolsOverResponses(t *testing.T) {
 	}
 	checkToolCompletion(t, job.Response)
 	checkHits(t, upstream, 0, 1)
+	if _, leaked := sentToResponses(t, upstream); len(leaked) != 0 {
+		t.Errorf("async call sent %v", leaked)
+	}
+	wantLog(allResponsesDropNotes)
 }
 
 func derefRaw(raw *json.RawMessage) json.RawMessage {
@@ -506,5 +514,79 @@ func TestChatCompletionsOverResponsesCostsAndLogsLikeChat(t *testing.T) {
 			}
 			t.Logf("cost %s; logged %+v", bridged, bridgedRow)
 		})
+	}
+}
+
+// On the Responses route the stream opens at response.created, before the
+// model has reasoned. That chunk goes to the caller at once, but the provider's
+// routing latency is measured to the first output, not to the acknowledgement.
+func TestResponsesRouteLatencyIsTimeToFirstOutput(t *testing.T) {
+	srv, upstream := newResponsesBridgeServer(t)
+	upstream.mu.Lock()
+	upstream.responsesThinks = 400 * time.Millisecond
+	upstream.mu.Unlock()
+
+	w := postBridgeChat(t, srv, chatToolBody("gpt-5.6-terra", true, ""), nil)
+	checkToolStream(t, w)
+	checkHits(t, upstream, 0, 1)
+
+	health := srv.handlers.healthMonitor.GetHealth("openai")
+	if health.RequestCount != 1 {
+		t.Fatalf("latency samples = %d, want 1", health.RequestCount)
+	}
+	if health.LatencyEWMAMs < 350 {
+		t.Errorf("routing latency = %d ms, want the ~400 ms to the first output, not the acknowledgement", health.LatencyEWMAMs)
+	}
+}
+
+// slowClient takes its time over each chunk after the stream opens, as a
+// client on a slow link does.
+type slowClient struct {
+	*httptest.ResponseRecorder
+	delay  time.Duration
+	writes int
+}
+
+func (c *slowClient) Write(b []byte) (int, error) {
+	c.writes++
+	if c.writes == 1 {
+		time.Sleep(c.delay)
+	}
+	return c.ResponseRecorder.Write(b)
+}
+
+// A slow client does not count as provider latency: the first output is timed
+// when the provider read it from upstream.
+func TestResponsesRouteLatencyIgnoresASlowClient(t *testing.T) {
+	srv, _ := newResponsesBridgeServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(chatToolBody("gpt-5.6-terra", true, "")))
+	req.Header.Set("Content-Type", "application/json")
+	w := &slowClient{ResponseRecorder: httptest.NewRecorder(), delay: 400 * time.Millisecond}
+	srv.httpServer.Handler.ServeHTTP(w, req)
+	checkToolStream(t, w.ResponseRecorder)
+
+	health := srv.handlers.healthMonitor.GetHealth("openai")
+	if health.RequestCount != 1 || health.LatencyEWMAMs >= 300 {
+		t.Errorf("routing latency = %d ms over %d samples, want the upstream's few ms, not the client's 400 ms", health.LatencyEWMAMs, health.RequestCount)
+	}
+}
+
+// A stream that reasons and then fails before any output records the time it
+// ran, not just the time to its acknowledgement.
+func TestResponsesRouteFailureBeforeOutputRecordsItsDuration(t *testing.T) {
+	srv, upstream := newResponsesBridgeServer(t)
+	upstream.mu.Lock()
+	upstream.responsesThinks = 400 * time.Millisecond
+	upstream.responsesFailAfterThinking = true
+	upstream.mu.Unlock()
+
+	postBridgeChat(t, srv, chatToolBody("gpt-5.6-terra", true, ""), nil)
+
+	health := srv.handlers.healthMonitor.GetHealth("openai")
+	if health.ErrorCount != 1 {
+		t.Fatalf("errors = %d, want 1", health.ErrorCount)
+	}
+	if health.LatencyEWMAMs < 350 {
+		t.Errorf("failure latency = %d ms, want the ~400 ms the stream ran", health.LatencyEWMAMs)
 	}
 }

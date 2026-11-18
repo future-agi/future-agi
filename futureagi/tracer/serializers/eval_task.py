@@ -20,6 +20,7 @@ from tracer.serializers.filters import (
     eval_task_filters_field,
     filter_list_query_param_field,
 )
+from tracer.services.eval_tasks.configuration import update_task_configuration
 from tracer.services.eval_tasks.sampling.policy import (
     InvalidSamplingPolicy,
     policy_task_filters,
@@ -288,6 +289,7 @@ class EvalTaskDetailsResultSerializer(serializers.Serializer):
     status = serializers.ChoiceField(
         choices=[*EvalTaskStatus.choices, ("", "")], allow_null=True, allow_blank=True
     )
+    can_start = serializers.BooleanField(required=False)
     filters_applied = eval_task_filters_field(allow_null=True)
     created_at = serializers.DateTimeField()
     evals_applied = EvalTaskDetailsEvalSerializer(many=True)
@@ -337,6 +339,10 @@ class EvalTaskListWithProjectNameQuerySerializer(EvalTaskListQuerySerializer):
 
 class EvalTaskIdQuerySerializer(StrictInputSerializer):
     eval_task_id = serializers.UUIDField(required=True)
+
+
+class EvalTaskUnpauseRequestSerializer(StrictInputSerializer):
+    start = serializers.BooleanField(required=False)
 
 
 class EvalTaskDeleteRequestSerializer(StrictInputSerializer):
@@ -437,6 +443,19 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             "failed_spans",
             "progress",
         ]
+        read_only_fields = ["start_time", "end_time"]
+
+    def create(self, validated_data):
+        # Lifecycle timestamps are server-owned. A new continuous task's
+        # coverage floor is its creation time; a client start_time would
+        # backfill history from before the task existed, or skip arrivals
+        # until a future time.
+        validated_data.pop("start_time", None)
+        validated_data.pop("end_time", None)
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        return update_task_configuration(instance, validated_data)
 
     def get_progress(self, obj):
         if obj.run_type != RunType.HISTORICAL:

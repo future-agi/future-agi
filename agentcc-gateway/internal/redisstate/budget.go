@@ -3,6 +3,7 @@ package redisstate
 import (
 	"context"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/models"
 	"log/slog"
 	"math"
 	"strconv"
@@ -92,17 +93,18 @@ func microsToUSD(micros int64) float64 {
 // the current total without applying its delta again.
 var recordSpendScript = redis.NewScript(`
 local key = KEYS[1]
-local cost = tonumber(ARGV[1])
 local model_field = ARGV[2]
 local ttl = tonumber(ARGV[3])
 local receipt_ttl = tonumber(ARGV[4] or '0')
 if receipt_ttl > 0 and redis.call('HEXISTS', KEYS[2], key) == 1 then
-    return tonumber(redis.call('HGET', key, 'total') or '0')
+    return redis.call('HGET', key, 'total') or '0'
 end
 
-local new_total = redis.call('HINCRBY', key, 'total', cost)
+-- ARGV[1] is passed as sent: tonumber() makes it a double, and MaxInt64 (a
+-- saturated cost) would come back as 2^63, which HINCRBY refuses.
+redis.call('HINCRBY', key, 'total', ARGV[1])
 if model_field ~= '' then
-    redis.call('HINCRBY', key, model_field, cost)
+    redis.call('HINCRBY', key, model_field, ARGV[1])
 end
 if ttl > 0 then
     local current_ttl = redis.call('TTL', key)
@@ -116,7 +118,8 @@ if receipt_ttl > 0 then
         redis.call('EXPIRE', KEYS[2], receipt_ttl)
     end
 end
-return new_total
+-- The stored integer as a string: a Lua number above 2^53 is not exact.
+return redis.call('HGET', key, 'total')
 `)
 
 // checkAndRecordScript atomically checks budget limit and records spend.
@@ -144,7 +147,7 @@ if #KEYS > 2 and redis.call('GET', KEYS[3]) ~= ARGV[7] then
     return redis.error_reply('reservation fence lost')
 end
 if receipt_ttl > 0 and redis.call('HEXISTS', KEYS[2], key) == 1 then
-    return tonumber(redis.call('HGET', key, 'total') or '0')
+    return redis.call('HGET', key, 'total') or '0'
 end
 
 local spent = tonumber(redis.call('HGET', key, 'total') or "0")
@@ -159,9 +162,11 @@ if model_field ~= '' and model_limit > 0 then
     end
 end
 
-local new_total = redis.call('HINCRBY', key, 'total', cost)
+-- ARGV[1] is passed as sent: tonumber() makes it a double, and MaxInt64 (a
+-- saturated cost) would come back as 2^63, which HINCRBY refuses.
+redis.call('HINCRBY', key, 'total', ARGV[1])
 if model_field ~= '' then
-    redis.call('HINCRBY', key, model_field, cost)
+    redis.call('HINCRBY', key, model_field, ARGV[1])
 end
 if ttl > 0 then
     local current_ttl = redis.call('TTL', key)
@@ -175,7 +180,8 @@ if receipt_ttl > 0 then
         redis.call('EXPIRE', KEYS[2], receipt_ttl)
     end
 end
-return new_total
+-- The stored integer as a string: a Lua number above 2^53 is not exact.
+return redis.call('HGET', key, 'total')
 `)
 
 // RecordSpend records cost to a budget counter in Redis.
@@ -186,7 +192,7 @@ func (s *BudgetStore) RecordSpend(org, level, key, period, model string, cost fl
 	}
 
 	redisKey := s.budgetKey(org, level, key, period)
-	costMicros := usdToMicros(cost)
+	costMicros := models.SpendMicros(cost)
 	modelField := ""
 	if model != "" {
 		modelField = "model:" + model
@@ -334,7 +340,7 @@ func (s *BudgetStore) CheckAndRecordSpend(org, level, key, period, model string,
 	}
 	err := s.client.Do(func(rdb redis.UniversalClient) error {
 		var err error
-		result, err = checkAndRecordScript.Run(ctx, rdb, keys, usdToMicros(cost), usdToMicros(limit), modelField, usdToMicros(modelLimit), int64(budgetTTL(period).Seconds()), receiptSec, s.guardToken).Int64()
+		result, err = checkAndRecordScript.Run(ctx, rdb, keys, models.SpendMicros(cost), usdToMicros(limit), modelField, usdToMicros(modelLimit), int64(budgetTTL(period).Seconds()), receiptSec, s.guardToken).Int64()
 		return err
 	})
 	if err != nil {
