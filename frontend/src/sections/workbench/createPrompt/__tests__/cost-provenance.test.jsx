@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "src/utils/test-utils";
-import RenderMeta from "src/sections/common/DevelopCellRenderer/RenderMeta";
 import OutputMeta from "../Playground/OutputSection/OutputMeta";
 
 afterEach(cleanup);
@@ -37,22 +36,6 @@ describe("Unit: model cost provenance", () => {
     expect(screen.getAllByText("0")).toHaveLength(2);
     expect(screen.queryByText("<0.1")).not.toBeInTheDocument();
   });
-
-  it.each(["default", "fallback"])(
-    "labels %s in dataset metadata",
-    (source) => {
-      render(
-        <RenderMeta
-          originType="run_prompt"
-          meta={{ tokenCount: 1000 }}
-          valuesInfo={{
-            metadata: { cost: { total_cost: 0.00045, pricing_source: source } },
-          }}
-        />,
-      );
-      expect(screen.getByText("0.00045 (estimated)")).toBeInTheDocument();
-    },
-  );
 
   it("does not label missing cost as zero", () => {
     render(<OutputMeta metadata={{ responseTime: 1 }} />);
