@@ -1593,6 +1593,13 @@ def check_native_tls(name: str, docs: list[dict]) -> list[str]:
             for item in volumes.get("tls", {}).get("secret", {}).get("items", [])
         } != {"tls.crt", "tls.key"}:
             failed.append(f"{name}: {comp} Secret must mount both files")
+        if prefix == "AGENTCC" and {
+            item["path"]: item.get("mode")
+            for item in volumes.get("tls", {}).get("secret", {}).get("items", [])
+        }.get("tls.key") != 0o440:
+            failed.append(
+                f"{name}: gateway private key must mount as 0440 (fsGroup read)"
+            )
         annotations = deployment["spec"]["template"]["metadata"].get("annotations", {})
         if any(
             "tls" in key.lower() and "checksum" in key.lower() for key in annotations

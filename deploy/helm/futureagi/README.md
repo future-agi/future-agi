@@ -791,6 +791,15 @@ configuration. The chart does not checksum the TLS Secret (the frontend
 ConfigMap checksum is unrelated to certificate rotation). The frontend nginx key needs to be
 readable by uid/fsGroup 101.
 
+The chart mounts the gateway's private key with mode 0440: owned by root and
+readable by the pod's `fsGroup` (65532 by default, or the one OpenShift
+assigns), not by other users. The gateway logs a warning with the key's path
+and mode, never its contents, when the key is accessible to other users or
+writable by its group, and keeps serving; it never refuses a key for its
+mode. If `agentccGateway.podSecurityContext` removes the `fsGroup`, the chart
+keeps the Secret default 0644 so the key stays readable, and the gateway
+warns about it.
+
 `urls.gateway` sets `AGENTCC_GATEWAY_PUBLIC_URL` on the API and workers so
 the dashboard shows a reachable HTTPS gateway rather than localhost. The
 browser also calls the API directly: `urls.api` must resolve to HTTPS for any

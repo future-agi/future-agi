@@ -130,6 +130,11 @@ spec:
                 path: tls.crt
               - key: {{ $g.tls.keyKey }}
                 path: tls.key
+                {{- if or (include "futureagi.podSecurityContext" (dict "root" $ "uid" 65532 "overrides" $g.podSecurityContext) | fromYaml).fsGroup (include "futureagi.openshift.adapt" $) }}
+                # 0440: readable by the pod's fsGroup, not by other users
+                # (the Secret default is 0644).
+                mode: 288
+                {{- end }}
         {{- end }}
         {{- if $g.gcpCredentials.existingSecret }}
         - name: gcp-credentials
