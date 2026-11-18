@@ -388,6 +388,7 @@ def create_selected_harness_run(
             environment,
             rerun_of=rerun_of,
             picks=picks,
+            fix_run=fix_run,
             scenario_keys=scenario_keys,
             trials=trials,
         )
@@ -919,6 +920,7 @@ def _readiness_plan(
     *,
     rerun_of: HostedHarnessJob | None,
     picks: VersionPicks | None,
+    fix_run: Any = None,
     scenario_keys: list[str],
     trials: int,
 ) -> _ReadinessPlan | None:
@@ -932,7 +934,10 @@ def _readiness_plan(
     """
     from simulate.services.harness_readiness import Pairing, select_for_run
 
-    resolved = resolve_run_pins(environment, rerun_of=rerun_of, picks=picks)
+    # The pins the run itself resolves: a fix's check run may pick the suite version private to it.
+    resolved = resolve_run_pins(
+        environment, rerun_of=rerun_of, picks=picks, fix_run=fix_run
+    )
     if resolved is None:
         return None
     pairing = Pairing(

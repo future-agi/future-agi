@@ -2240,6 +2240,8 @@ class TestUserApi:
             {},
             format="json",
         )
+        # Its pairing with the defaults validates before it moves.
+        settle_validations(environment)
 
         response = auth_client.post(
             f"{BASE}/{fix_run.id}/candidates/{candidate.id}/make-default/",
