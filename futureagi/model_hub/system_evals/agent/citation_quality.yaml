@@ -1,35 +1,29 @@
 eval_id: 226
 name: citation_quality
-description: Evaluates whether inline citations in the response correctly reference the corresponding source documents.
-criteria: "You are evaluating whether the inline citations in the response correctly\
-  \ reference the corresponding source documents provided in the context.\n\n## Criteria\n\
-  \n1. Citation accuracy: Each citation marker (e.g., [1], [Source A], footnotes)\
-  \ must reference the correct source document.\n   - Pass: Response states \"Python\
-  \ 3.12 was released in October 2023 [1]\" and context [1] confirms this fact.\n\
-  \   - Fail: Response states \"Python 3.12 was released in October 2023 [2]\" but\
-  \ context [2] discusses Java, not Python.\n\n2. Citation completeness: Key factual\
-  \ claims derived from the context should have citations attached.\n   - Pass: All\
-  \ major claims sourced from the context include citation markers.\n   - Fail: The\
-  \ response presents specific facts from the context but provides no citations for\
-  \ them.\n\n3. No fabricated citations: The response must not cite sources that do\
-  \ not exist in the provided context.\n   - Pass: All citation markers map to actual\
-  \ documents in the context.\n   - Fail: Response references \"[5]\" but only 3 context\
-  \ documents were provided.\n\n## Anti-bias Rules\n\n- If the response contains no\
-  \ inline citations at all, score based on whether citations were expected. A response\
-  \ to a simple factual question may not need citations — do not penalize. A response\
-  \ synthesizing multiple sources should cite them.\n- Common knowledge statements\
-  \ do not require citations even when context is provided.\n- Paraphrased content\
-  \ with correct citation is just as valid as direct quotes with citation.\n- A single\
-  \ incorrect citation among many correct ones should reduce the score proportionally,\
-  \ not zero it out.\n- Citation format variations ([1], [Source 1], (1), etc.) are\
-  \ all acceptable — evaluate correctness, not format.\n\n## Scoring\n\nScore 0.0\
-  \ if citations are systematically wrong: pointing to incorrect sources, fabricating\
-  \ non-existent references, or entirely absent when clearly needed. Score 0.5 if\
-  \ citations are partially correct: some map to the right sources but others are\
-  \ wrong or missing for key claims. Score 1.0 if all citations accurately reference\
-  \ the correct sources, key claims are properly cited, and no fabricated references\
-  \ exist.\n\n## Inputs\n\n<context>{{context}}</context>\n\n<input>{{input}}</input>\n\
-  \n<output>{{output}}</output>"
+description: Checks whether each inline citation supports its claim and whether source-dependent claims are cited.
+criteria: &rubric |-
+  Evaluate the citations in the answer, not whether you could find the same answer somewhere else.
+
+  1. Read each factual claim in the answer and the citation markers actually attached to it.
+     Resolve each marker against the supplied sources by label or, for an unlabeled list, by position
+     starting at 1. Accept different marker styles and paraphrases. Do not replace a marker with the
+     one the author should have used.
+  2. Check citation accuracy: does that particular source support the attached claim? An existing
+     source about a different subject is a wrong citation; a label with no matching source is an
+     invented citation. Both count as incorrect even if another source supports the claim. If the
+     context supplies distinct versions, use the version cited.
+  3. Check completeness only for claims the answer makes. Count a missing citation for each key
+     source-dependent claim without a marker. Do not require citations to unused documents or to
+     common knowledge. Do not grade whether the answer covers the entire context.
+
+  Score = correct citations / (all citations + missing citations). For a single cited claim,
+  award 1.0 if its marker points to a supporting source, otherwise 0.0. For mixed answers,
+  award partial credit in proportion to the correctly supported citations. If no citation is
+  present or needed, score 1.0. Explain the score by naming the actual markers and their sources.
+
+  <context>{{context}}</context>
+  <input>{{input}}</input>
+  <output>{{output}}</output>
 eval_tags:
 - RAG
 - Retrieval Systems
@@ -89,32 +83,4 @@ config:
     - FLOAT
     - ARRAY
     - DATETIME
-  rule_prompt: "You are evaluating whether the inline citations in the response correctly\
-    \ reference the corresponding source documents provided in the context.\n\n##\
-    \ Criteria\n\n1. Citation accuracy: Each citation marker (e.g., [1], [Source A],\
-    \ footnotes) must reference the correct source document.\n   - Pass: Response\
-    \ states \"Python 3.12 was released in October 2023 [1]\" and context [1] confirms\
-    \ this fact.\n   - Fail: Response states \"Python 3.12 was released in October\
-    \ 2023 [2]\" but context [2] discusses Java, not Python.\n\n2. Citation completeness:\
-    \ Key factual claims derived from the context should have citations attached.\n\
-    \   - Pass: All major claims sourced from the context include citation markers.\n\
-    \   - Fail: The response presents specific facts from the context but provides\
-    \ no citations for them.\n\n3. No fabricated citations: The response must not cite\
-    \ sources that do not exist in the provided context.\n   - Pass: All citation\
-    \ markers map to actual documents in the context.\n   - Fail: Response references\
-    \ \"[5]\" but only 3 context documents were provided.\n\n## Anti-bias Rules\n\n\
-    - If the response contains no inline citations at all, score based on whether\
-    \ citations were expected. A response to a simple factual question may not need\
-    \ citations — do not penalize. A response synthesizing multiple sources should\
-    \ cite them.\n- Common knowledge statements do not require citations even when\
-    \ context is provided.\n- Paraphrased content with correct citation is just as\
-    \ valid as direct quotes with citation.\n- A single incorrect citation among many\
-    \ correct ones should reduce the score proportionally, not zero it out.\n- Citation\
-    \ format variations ([1], [Source 1], (1), etc.) are all acceptable — evaluate\
-    \ correctness, not format.\n\n## Scoring\n\nScore 0.0 if citations are systematically\
-    \ wrong: pointing to incorrect sources, fabricating non-existent references, or\
-    \ entirely absent when clearly needed. Score 0.5 if citations are partially correct:\
-    \ some map to the right sources but others are wrong or missing for key claims.\
-    \ Score 1.0 if all citations accurately reference the correct sources, key claims\
-    \ are properly cited, and no fabricated references exist.\n\n## Inputs\n\n<context>{{context}}</context>\n\
-    \n<input>{{input}}</input>\n\n<output>{{output}}</output>"
+  rule_prompt: *rubric
