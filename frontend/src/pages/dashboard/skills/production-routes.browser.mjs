@@ -51,6 +51,7 @@ axios.post = async (url, body) => {
  window.__reviewEvents.push({ url, body });
  if (url.endsWith('/release/review/')) return envelope({ candidate: { kind: 'version', version: 4, digest }, release_state: { latest_version: 4, release_revision: 1, security_revision: 0, protected_label_names: [], labels: [{ name: 'production', version: 3, can_move: true }], permissions: { can_promote: true } }, changes: { from: 3, files: [{ path: 'AGENTS.md', status: 'modified', from_sha256: 'before', to_sha256: 'after' }], total_pages: 1 }, head_changes: { from: 4, files: [], total_pages: 1 }, checks: { items: [] }, impact: { following: 2, pinned: 1, unobserved: 0, more_available: false }, review_fingerprint: digest, head_review: null });
  if (url.endsWith('/release-requests/preview/')) return envelope({ packet, fingerprint: params.get('stale') ? 'changed' : digest });
+ if (url.endsWith('/release-requests/inspection/')) return envelope({ fingerprint: body.expected_fingerprint, capabilities: { before_digest: 'before', after_digest: digest, changes: [] }, summaries: [], target_configuration: null });
  if (url.endsWith('/decisions/')) { request.status = 'approved'; request.revision = 2; return envelope(request); }
  if (url.endsWith('/execute/')) { request.status = 'released'; request.revision = 3; return envelope({ request_id: requestId, decision_id: 'decision', revision: 3, executed_by: 'author', currentness_at_action: { fingerprint: digest }, post_move_state: { label: 'production', version: 4, release_revision: 2, event_id: 'event' } }); }
  throw new Error('Unexpected fixture write ' + url);
@@ -125,7 +126,7 @@ try {
       await page.screenshot({ path: path.join(output, `allowance-${theme}-${width}.png`) });
       for (const kind of ['agent_context', 'skill']) {
         await page.goto(`${origin}/dashboard/skills/reviews?theme=${theme}&reviewKind=${kind}`);
-        await page.getByRole('button', { name: 'Assigned policy candidate', exact: true }).click();
+        await (width < 600 ? page.getByRole('button', { name: 'Assigned policy candidate', exact: true }) : page.getByRole('table', { name: 'Assigned release requests' }).getByRole('row').filter({ hasText: 'Assigned policy candidate' }).getByRole('button', { name: 'Open request', exact: true })).click();
         const acknowledge = page.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/ });
         await acknowledge.check();
         await page.getByRole('button', { name: 'Approve release' }).click();
@@ -143,7 +144,7 @@ try {
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         await page.screenshot({ path: path.join(output, `approved-${kind}-${theme}-${width}.png`) });
         await page.goto(`${origin}/dashboard/skills/reviews?theme=${theme}&reviewKind=${kind}&stale=1`);
-        await page.getByRole('button', { name: 'Assigned policy candidate', exact: true }).click();
+        await (width < 600 ? page.getByRole('button', { name: 'Assigned policy candidate', exact: true }) : page.getByRole('table', { name: 'Assigned release requests' }).getByRole('row').filter({ hasText: 'Assigned policy candidate' }).getByRole('button', { name: 'Open request', exact: true })).click();
         await page.getByText('Approval no longer applies. See what changed and renew the request.').waitFor();
         assert.equal(await page.getByRole('checkbox', { name: /^I've checked the (?:changes|\d+ changed files?), the evidence and what this release will affect\.$/ }).isDisabled(), true);
         assert.equal(await page.getByRole('button', { name: 'Approve release' }).isDisabled(), true);

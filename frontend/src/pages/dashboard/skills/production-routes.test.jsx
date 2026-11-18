@@ -419,7 +419,7 @@ it.each(['agent_context', 'skill'])('opens, approves and executes a %s request t
   fireEvent.click(acknowledge);
   fireEvent.click(screen.getByRole('button', { name: 'Approve release' }));
   await waitFor(() => expect(axios.post.mock.calls.some(([url]) => url.endsWith('/decisions/'))).toBe(true));
-  fireEvent.click(await screen.findByRole('button', { name: 'Release to production' }));
+  fireEvent.click(await screen.findByRole('button', { name: /^Move production to v\d+$/ }));
   // This fixture advances revision on approval, so the new exact key must be acknowledged.
   fireEvent.click(await screen.findByRole('checkbox', { name: /I've checked the/ }));
   fireEvent.click(await screen.findByRole('button', { name: 'Move production', exact: true }));
@@ -434,10 +434,10 @@ it.each(['agent_context', 'skill'].flatMap((kind) => ['pending', 'approved'].map
   if (status === 'pending') {
     expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
     // A paused request keeps its release action in place, disabled until renewed and approved.
-    expect(await screen.findByRole('button', { name: 'Release to production' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: /^Move production to v\d+$/ })).toBeDisabled();
   } else {
     expect(screen.queryByRole('button', { name: 'Approve release' })).not.toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: 'Release to production' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: /^Move production to v\d+$/ })).toBeDisabled();
   }
   expect(axios.post.mock.calls.some(([url]) => /\/(decisions|execute)\//.test(url))).toBe(false);
 });
@@ -448,10 +448,10 @@ it.each(['agent_context', 'skill'].flatMap((kind) => ['pending', 'approved'].map
   if (status === 'pending') fireEvent.click(await screen.findByRole('checkbox', { name: /I've checked the/ }));
   if (status === 'pending') {
     expect(screen.getByRole('button', { name: 'Approve release' })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: 'Release to production' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Move production to v\d+$/ })).not.toBeInTheDocument();
   } else {
     expect(screen.queryByRole('button', { name: 'Approve release' })).not.toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: 'Release to production' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: /^Move production to v\d+$/ })).toBeDisabled();
   }
   expect(axios.post.mock.calls.some(([url]) => /\/(decisions|execute)\//.test(url))).toBe(false);
 });

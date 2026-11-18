@@ -127,12 +127,13 @@ export async function createDriver({ jobId, runId, registration }) {
         await expect(ack(reviewer)).toBeChecked();
       };
       // Opening a disclosure or inspecting an evidence row is a real operator click.
-      const reveal = async (scope, name) => {
-        const toggle = scope.getByRole('button', { name, exact: true }).first();
-        if ((await toggle.getAttribute('aria-expanded')) !== 'true') await op.click(toggle, name === 'Technical details' ? 'open-renewal-technical-details' : 'open-compared-fingerprints');
+      const reveal = async (scope, name, control) => {
+        const toggle = scope.getByRole('button', { name, exact: true }).last();
+        if ((await toggle.getAttribute('aria-expanded')) !== 'true') await op.click(toggle, control);
       };
       const inspectResult = async (scope, id) => {
-        const inspectors = scope.getByRole('button', { name: 'Inspect', exact: true });
+        // Inspect is the row's primary action in both the table and stacked list.
+        const inspectors = scope.getByLabel('Test evidence', { exact: true }).locator('[data-row-link="true"]');
         const total = await inspectors.count();
         for (let index = 0; index < total; index += 1) {
           if (await scope.getByTitle(id, { exact: true }).first().isVisible().catch(() => false)) return;
@@ -167,7 +168,7 @@ export async function createDriver({ jobId, runId, registration }) {
           for (const item of items) await expect(dialog.locator(`tr[data-field="${item}"]`)).toBeVisible();
           for (const row of preview.removed_evidence) await expect(dialog.getByText(new RegExp(`${row.source_id} is removed from the renewed request`))).toBeVisible();
           await expect(dialog.getByText(kept.length ? new RegExp(`renewed request keeps ${kept.length} results? for the same candidate`) : /renewed request keeps no evidence/)).toBeVisible();
-          if (kept.length) await reveal(dialog, 'Technical details');
+          if (kept.length) await reveal(dialog, 'Technical details', 'open-renewal-technical-details');
           for (const id of kept) await expect(dialog.getByTitle(id, { exact: true })).toBeVisible();
         }, decision);
         await operator.click(dialog.getByRole('checkbox', { name: "I've checked every change since the last approval, and it needs approving again.", exact: true }), `${name}-acknowledge-changes`);
@@ -338,6 +339,7 @@ export async function createDriver({ jobId, runId, registration }) {
             await expect(reviewer.getByText('Never promise a refund before the order status is checked.', { exact: false }).first()).toBeVisible();
           }, decision);
           await op.review('inspect-target-configuration', ['target-binding', 'target-configuration'], [], async () => {
+            await reveal(reviewer, 'Technical details', 'open-target-configuration-details');
             await expect(reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
             requireValue(inspection.target_configuration?.entrypoint === 'refund_agent.app:invoke', 'Target configuration differs');
           }, decision);
@@ -355,7 +357,7 @@ export async function createDriver({ jobId, runId, registration }) {
           const correct = outcomes.every((row) => row.graded === row.planned && row.planned > 0 && row.incomplete === 0 && row.regressions === 0 && row.disagreements === 0);
           requireValue(correct, 'Fixture evidence does not support approval; the correct decision would be request changes');
           await op.review('inspect-capabilities-and-impact', ['capabilities', 'impact'], [], async () => {
-            await reveal(reviewer, 'What was compared');
+            await reveal(reviewer, 'What was compared', 'open-compared-fingerprints');
             await expect(reviewer.getByTitle(inspection.capabilities.before_digest, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByTitle(inspection.capabilities.after_digest, { exact: true }).first()).toBeVisible();
           }, decision);
@@ -442,6 +444,7 @@ export async function createDriver({ jobId, runId, registration }) {
             await inspectResult(reviewer, remaining.source_id);
             await expect(reviewer.getByTitle(remaining.source_id, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByText(`${outcome.graded}/${outcome.planned} attempts graded · ${outcome.incomplete} incomplete · ${outcome.regressions} regressions`, { exact: true }).first()).toBeVisible();
+            await reveal(reviewer, 'Technical details', 'open-target-configuration-details');
             await expect(reviewer.getByTitle(detail.packet.target.configuration_digest, { exact: true }).first()).toBeVisible();
             await expect(reviewer.getByText('Approved. Confirm the move to release it.', { exact: true })).toBeVisible();
           }, renewed.decision);
