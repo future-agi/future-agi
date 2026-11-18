@@ -129,7 +129,10 @@ def test_continuous_rerun_evaluates_only_arrivals_after_rerun(
         # The workflow picks the rerun up promptly.
         clock["now"] = running_at = rerun + timedelta(minutes=1)
         result = _set_task_status_sync(
-            str(eval_task.pk), EvalTaskStatus.RUNNING, EvalTaskStatus.PENDING
+            str(eval_task.pk),
+            EvalTaskStatus.RUNNING,
+            EvalTaskStatus.PENDING,
+            workflow_generation=eval_task.workflow_generation,
         )
         assert result["changed"]
         eval_task.refresh_from_db()

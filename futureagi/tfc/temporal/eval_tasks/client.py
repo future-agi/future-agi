@@ -33,15 +33,19 @@ def _select(task, task_queue, *, workflow_confirmed_stopped: bool = False):
     )
     from tracer.models.eval_task import RunType
 
+    generation = getattr(task, "workflow_generation", None)
+    generation = str(generation) if generation is not None else None
     if task.run_type == RunType.CONTINUOUS:
         return ContinuousEvalTaskWorkflow, ContinuousDrainState(
             task_id=str(task.id),
             task_queue=task_queue,
+            workflow_generation=generation,
             workflow_confirmed_stopped=workflow_confirmed_stopped,
         )
     return HistoricalEvalTaskWorkflow, EvalTaskWorkflowInput(
         task_id=str(task.id),
         task_queue=task_queue,
+        workflow_generation=generation,
         workflow_confirmed_stopped=workflow_confirmed_stopped,
         **_instant_sizing(task),
     )
@@ -96,7 +100,7 @@ def start_eval_task_workflow_sync(
     """Start the workflow for ``task`` from synchronous Django code.
 
     New-task/legacy callers coalesce with an already-active workflow. A rerun
-    or resume passes ``replace_existing=True`` after its PENDING state commits,
+    or resume passes ``replace_existing=True`` with its new generation,
     so a stale or closing execution cannot absorb the start and strand the row.
 
     Every start carries into the workflow input whether a describe of the
@@ -128,17 +132,37 @@ def start_eval_task_workflow_sync(
         if replace_existing
         else WorkflowIDConflictPolicy.USE_EXISTING
     )
-    handle = start_workflow_sync(
-        workflow_class=workflow_class,
-        workflow_input=workflow_input,
-        workflow_id=_workflow_id(str(task.id)),
-        task_queue=task_queue,
-        cancel_existing=False,
-        # Closed executions may be followed by a new run under the per-task ID.
-        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
-        id_conflict_policy=conflict_policy,
-    )
-    return handle.id
+    workflow_id = _workflow_id(str(task.id))
+
+    def dispatch():
+        return start_workflow_sync(
+            workflow_class=workflow_class,
+            workflow_input=workflow_input,
+            workflow_id=workflow_id,
+            task_queue=task_queue,
+            cancel_existing=False,
+            id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+            id_conflict_policy=conflict_policy,
+        ).id
+
+    if replace_existing and getattr(task, "workflow_generation", None):
+        from django.db import transaction
+
+        from tracer.models.eval_task import EvalTask
+
+        # Edit and instant retry dispatch on commit. If a later edit's
+        # callback got here first, never terminate its accepted workflow.
+        with transaction.atomic():
+            current = (
+                EvalTask.objects.select_for_update()
+                .filter(pk=task.pk)
+                .values_list("workflow_generation", flat=True)
+                .first()
+            )
+            if current != task.workflow_generation:
+                return workflow_id
+            return dispatch()
+    return dispatch()
 
 
 # What a describe of the per-task workflow id told us about the task's drain.

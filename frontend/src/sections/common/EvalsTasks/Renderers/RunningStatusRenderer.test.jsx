@@ -46,7 +46,7 @@ const renderStatus = (status) => {
       <RunningStatusRenderer value={status} data={data} api={api} />
     </QueryClientProvider>,
   );
-  return { api, data };
+  return { api, data, queryClient };
 };
 
 const resumeButton = () =>
@@ -77,6 +77,17 @@ describe("RunningStatusRenderer resume action", () => {
       );
     },
   );
+
+  it("discards cached Logs when resuming from the grid", async () => {
+    const { data, queryClient } = renderStatus("failed");
+    const logs = ["eval-task-logs", data.id];
+    queryClient.setQueryData(logs, {
+      status: "failed",
+      failure_reason: "Selection failed",
+    });
+    fireEvent.click(resumeButton());
+    await waitFor(() => expect(queryClient.getQueryData(logs)).toBeUndefined());
+  });
 
   it.each(["completed", "running", "pending"])(
     "offers no Resume on a %s task",

@@ -151,7 +151,7 @@ async def test_finalize_logs_whether_the_task_actually_finished(stub):
     stub.setattr(
         activities,
         "_finalize_task_sync",
-        lambda task_id: {
+        lambda task_id, _generation: {
             "task_id": task_id,
             "finalized": False,
             "status": "running",

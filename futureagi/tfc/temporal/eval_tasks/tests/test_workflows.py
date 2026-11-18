@@ -200,6 +200,9 @@ class TestHistoricalWorkflow:
         _patch_completing_run_entry(monkeypatch)
         await sync_to_async(make_pending_entries)(eval_task, 4)
 
+        # A resumed task's accepted generation, like its progress, must
+        # survive every CAN hop or the next hop cannot publish completion.
+        await sync_to_async(eval_task.prepare_workflow_replacement)()
         # CAN after every single-item batch — must still drain all 4 and finish.
         result = await _run_historical(
             workflow_environment,
@@ -207,6 +210,7 @@ class TestHistoricalWorkflow:
             batch_size=1,
             max_concurrent=1,
             continue_as_new_after_batches=1,
+            workflow_generation=str(eval_task.workflow_generation),
         )
 
         assert result.status == "completed"
@@ -434,9 +438,14 @@ class TestHistoricalWorkflow:
             wf, "RECONCILE_RETRY_POLICY", RetryPolicy(maximum_attempts=1)
         )
 
+        await sync_to_async(eval_task.prepare_workflow_replacement)()
         with pytest.raises(WorkflowFailureError):
             await _run_historical(
-                workflow_environment, str(eval_task.id), batch_size=2, max_concurrent=4
+                workflow_environment,
+                str(eval_task.id),
+                batch_size=2,
+                max_concurrent=4,
+                workflow_generation=str(eval_task.workflow_generation),
             )
 
         assert await _task_status(str(eval_task.id)) == EvalTaskStatus.FAILED
@@ -606,6 +615,7 @@ class TestContinuousWorkflow:
             run_type=RunType.CONTINUOUS
         )
 
+        await sync_to_async(eval_task.prepare_workflow_replacement)()
         env = workflow_environment
         queue = f"eval-task-test-{uuid.uuid4().hex[:8]}"
         task_id = str(eval_task.id)
@@ -618,7 +628,11 @@ class TestContinuousWorkflow:
         ):
             handle = await env.client.start_workflow(
                 ContinuousEvalTaskWorkflow.run,
-                ContinuousDrainState(task_id=task_id, task_queue=queue),
+                ContinuousDrainState(
+                    task_id=task_id,
+                    task_queue=queue,
+                    workflow_generation=str(eval_task.workflow_generation),
+                ),
                 id=f"eval-task-{task_id}",
                 task_queue=queue,
             )

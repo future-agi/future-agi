@@ -852,7 +852,7 @@ def _jev_key_missing(gm, project, configs):
     return None
 
 
-def _start_workflow_on_commit(task, *, replace: bool) -> None:
+def _start_workflow_on_commit(task, *, replace: bool, prior_reason=None) -> None:
     from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync
 
     def start():
@@ -860,7 +860,11 @@ def _start_workflow_on_commit(task, *, replace: bool) -> None:
             start_eval_task_workflow_sync(task, replace_existing=replace)
         except Exception:
             logger.exception("instant_eval_workflow_start_failed", task_id=str(task.id))
-            EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.FAILED)
+            EvalTask.objects.filter(
+                id=task.id,
+                workflow_generation=task.workflow_generation,
+                status=EvalTaskStatus.PENDING,
+            ).update(status=EvalTaskStatus.FAILED, failure_reason=prior_reason)
 
     transaction.on_commit(start)
 
@@ -1610,12 +1614,9 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         return self._ok(task, "Paused. Answers already being read will still land.")
 
     def _restart(self, task):
-        EvalTask.objects.filter(id=task.id).update(
-            status=EvalTaskStatus.PENDING, failure_reason=None
-        )
-        task.status = EvalTaskStatus.PENDING
-        task.failure_reason = None
-        _start_workflow_on_commit(task, replace=True)
+        prior_reason = task.failure_reason
+        task.prepare_workflow_replacement()
+        _start_workflow_on_commit(task, replace=True, prior_reason=prior_reason)
 
     def _resume(self, request, task, run, data):
         if run is not None and run.cancelled_at:

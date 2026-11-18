@@ -2912,33 +2912,30 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
             if not eval_task_id:
                 return self._gm.bad_request("Eval task ID is required")
 
-            try:
-                eval_task = self._scope_eval_task_queryset(EvalTask.objects).get(
-                    id=eval_task_id,
-                )
-            except EvalTask.DoesNotExist:
-                return self._gm.bad_request("Eval task not found")
+            # Keep the old status/diagnostic visible until Temporal accepts
+            # the replacement. A fast replacement worker waits on this same
+            # row at admission; an RPC failure rolls back all three fields.
+            with transaction.atomic():
+                try:
+                    eval_task = self._scope_eval_task_queryset(
+                        EvalTask.objects.select_for_update(of=("self",))
+                    ).get(id=eval_task_id)
+                except EvalTask.DoesNotExist:
+                    return self._gm.bad_request("Eval task not found")
 
-            # PAUSED and FAILED; ``RESUMABLE_TASK_STATUSES`` says why failed is
-            # in it. The AI tool and the task UIs accept the same set.
-            if eval_task.status not in RESUMABLE_TASK_STATUSES:
-                return self._gm.bad_request(
-                    f"Cannot unpause eval task with status '{eval_task.status}'. "
-                    "Only paused or failed tasks can be resumed."
-                )
+                if eval_task.status not in RESUMABLE_TASK_STATUSES:
+                    return self._gm.bad_request(
+                        f"Cannot unpause eval task with status '{eval_task.status}'. "
+                        "Only paused or failed tasks can be resumed."
+                    )
 
-            recovered_from = eval_task.status
-            undrained = EvalLogger.objects.filter(
-                eval_task_id=str(eval_task.id),
-                status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
-            ).count()
-            eval_task.status = EvalTaskStatus.PENDING
-            eval_task.failure_reason = None
-            eval_task.save(update_fields=["status", "failure_reason"])
-
-            # Pause exits the workflow; resuming starts a fresh run that picks up
-            # the remaining pending/running entries.
-            start_eval_task_workflow_sync(eval_task, replace_existing=True)
+                recovered_from = eval_task.status
+                undrained = EvalLogger.objects.filter(
+                    eval_task_id=str(eval_task.id),
+                    status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
+                ).count()
+                eval_task.prepare_workflow_replacement()
+                start_eval_task_workflow_sync(eval_task, replace_existing=True)
             # Counts and the previous status only — never an entry payload or
             # any tenant-identifying value.
             logger.info(
@@ -3212,7 +3209,9 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     eval_task, data=update_fields, partial=True
                 )
                 task_serializer.is_valid(raise_exception=True)
-                eval_task = task_serializer.save()
+                eval_task = task_serializer.save(
+                    workflow_generation=uuid_module.uuid4()
+                )
 
                 effective_run_type = update_fields.get("run_type", original_run_type)
                 if effective_run_type == RunType.CONTINUOUS and (

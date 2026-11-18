@@ -7,6 +7,7 @@ is the policy. Candidates come from ``tracer.selectors.eval_tasks.stranded``.
 from __future__ import annotations
 
 import structlog
+from django.db import transaction
 
 from tfc.temporal.eval_tasks.types import ReapInput
 from tracer.models.eval_task import EvalTask, EvalTaskStatus
@@ -153,28 +154,33 @@ def recover_task(task: EvalTask, *, stale_running_seconds: int) -> dict:
             outcome["deferred"] = True
             return outcome
 
-        if task.status == EvalTaskStatus.FAILED:
-            # A failed row makes ``get_eval_task_state_activity`` report the
-            # task inactive, so a restart would exit on its first state check.
-            # Clear it the way Resume does, guarded so a concurrent pause or
-            # delete wins.
-            changed = EvalTask.objects.filter(
-                id=task.id, status=EvalTaskStatus.FAILED
-            ).update(status=EvalTaskStatus.PENDING, failure_reason=None)
-            if not changed:
-                return outcome
-            task.status = EvalTaskStatus.PENDING
-            task.failure_reason = None
+        def restart(candidate):
+            # The sweep keeps USE_EXISTING: never terminate an execution that
+            # started after the describe above. Reuse its answer for the reap.
+            start_eval_task_workflow_sync(
+                candidate, replace_existing=False, workflow_confirmed_stopped=True
+            )
 
-        # The describe above is the evidence the restarted run's first reap
-        # needs, and it has answered: nothing owns the task. Handed over
-        # rather than asked again, so the deferral check's 600 s is the
-        # threshold the run really applies — a second describe that failed
-        # would drop it to the blind floor after this tick had admitted the
-        # restart on 600 s.
-        start_eval_task_workflow_sync(
-            task, replace_existing=False, workflow_confirmed_stopped=True
-        )
+        if task.status == EvalTaskStatus.FAILED:
+            # As with a manual Resume, a refused start must leave the failed
+            # row retryable with its original diagnostic. Check under the lock
+            # so a concurrent manual handoff, pause or delete wins.
+            with transaction.atomic():
+                failed = (
+                    EvalTask.objects.select_for_update()
+                    .filter(
+                        pk=task.pk,
+                        status=EvalTaskStatus.FAILED,
+                        workflow_generation=task.workflow_generation,
+                    )
+                    .first()
+                )
+                if failed is None:
+                    return outcome
+                failed.prepare_workflow_replacement()
+                restart(failed)
+        else:
+            restart(task)
     except Exception as exc:
         raise RecoveryInterrupted(outcome, exc) from exc
     outcome["restarted"] = True
