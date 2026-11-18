@@ -155,7 +155,7 @@ export const TRIAL_ROUTES_COPY = {
       no_answer: "No answer",
       cut_off: "Cut off",
       repeated: `×${count}`,
-      absent: "Not asked",
+      absent: kind === "tool_call" ? "Not called" : "Not asked",
     })[state] ?? state,
   // "Asked in trials 1 and 3", "Asked 2 times in trial 1".
   splitGroup: (state, kind, count, trials) => {

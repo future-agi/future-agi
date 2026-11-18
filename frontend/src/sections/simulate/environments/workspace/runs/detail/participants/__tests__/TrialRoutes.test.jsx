@@ -193,6 +193,29 @@ describe("TrialRoutes", () => {
     ).toBeInTheDocument();
   });
 
+  it("says a trial never called a tool, not that it never asked", () => {
+    routes = {
+      ...SPLIT,
+      columns: [
+        ...SPLIT.columns,
+        {
+          ...column("lookup"),
+          key: "tool:worker:lookup:find_order",
+          kind: "tool_call",
+          tool: "find_order",
+        },
+      ],
+      trials: SPLIT.trials.map((one) => ({
+        ...one,
+        cells: [...one.cells, cell("absent", null)],
+      })),
+    };
+    draw();
+    fireEvent.click(screen.getByRole("button", { name: "Show trials" }));
+    expect(screen.getAllByText("Not called")).toHaveLength(3);
+    expect(screen.queryByText("Not asked")).toBeNull();
+  });
+
   it("asks for tool-call columns only when they are switched on", () => {
     draw();
     expect(asked.at(-1)).toEqual(["ex1", "refund", false]);
