@@ -43,6 +43,8 @@ logger = structlog.get_logger(__name__)
 
 CERTIFICATE = "runtime-validation.json"
 SEALED_MANIFEST = "environment-bundle/manifest.json"
+# What a build stamps as its manifest's `sealed_from`; a chat's reseal stamps the digest of the tree it sealed.
+BUILD_SEAL = "build"
 BUNDLE_ROOT = "environment-bundle/"
 CERTIFY_JOB_PATH = "/work/certify-job.json"
 CERTIFY_REPORT_PATH = "/work/authoring/certify-report.json"
@@ -263,7 +265,7 @@ def sealed_certificate(sealed: Mapping[str, bytes]) -> dict[str, Any] | None:
 
 # A bundle's object never changes once ready, so what is read from it is kept by its key; a bundle that could not
 # be read is tried again only after a short while.
-_SEAL_CACHE = "harness_bundle_seal:"
+_SEAL_CACHE = "harness_bundle_seal:v2:"
 _SEAL_SECONDS = 7 * 24 * 60 * 60
 _SEAL_RETRY_SECONDS = 5 * 60
 _SEAL_MAX_BYTES = 8 * 1024 * 1024
@@ -272,11 +274,13 @@ _UNREADABLE = {"unreadable": True}
 
 @dataclass(frozen=True)
 class Seal:
-    """What a ready bundle was sealed with: its contract, and whether a chat's save resealed it from its tree
-    (``resealed``) rather than a build sealing it."""
+    """What a ready bundle was sealed with: its contract, whether a chat's save resealed it from its tree
+    (``resealed``) rather than a build sealing it, and whether it says which (``stamped``): a bundle sealed before
+    builds stamped theirs says nothing."""
 
     contract: dict[str, Any]
     resealed: bool
+    stamped: bool = True
 
 
 def pins_bundle_key(pins: Any) -> str | None:
@@ -351,8 +355,10 @@ def _seal_at(rows: Any) -> Seal | None:
     metadata = manifest.get("metadata") if isinstance(manifest, dict) else None
     read = {
         "contract": contract if isinstance(contract, dict) else {},
-        # A chat's reseal stamps the tree it sealed from; a build does not.
-        "resealed": bool(isinstance(metadata, dict) and metadata.get("sealed_from")),
+        # A chat's reseal stamps the tree it sealed from, a build stamps that it is one, an older bundle neither.
+        "stamp": str(metadata.get("sealed_from") or "")
+        if isinstance(metadata, dict)
+        else "",
     }
     cache.set(_SEAL_CACHE + key, read, _SEAL_SECONDS)
     return _seal(read)
@@ -361,7 +367,12 @@ def _seal_at(rows: Any) -> Seal | None:
 def _seal(read: Any) -> Seal | None:
     if not isinstance(read, dict) or read == _UNREADABLE or not read.get("contract"):
         return None
-    return Seal(contract=read["contract"], resealed=bool(read.get("resealed")))
+    stamp = str(read.get("stamp") or "")
+    return Seal(
+        contract=read["contract"],
+        resealed=bool(stamp) and stamp != BUILD_SEAL,
+        stamped=bool(stamp),
+    )
 
 
 def seed_ready_bundle(

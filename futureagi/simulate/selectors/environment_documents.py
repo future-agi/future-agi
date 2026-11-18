@@ -104,8 +104,14 @@ def _resolve(job: HostedHarnessJob, version: Any, key: str | None) -> dict[str, 
     node, node_key = version, key
     for _ in range(_MOST_ANCESTORS):
         documents = node.documents or {}
+        # An older version on the walk, which no run names, reads any pair's bundle: reach is the environment's.
         seal = run_seal(job.id, node_key) if node_key else latest_seal(node)
-        if seal is not None and not seal.resealed:
+        # A bundle sealed before seals were stamped says nothing: on a version no full build made, it is a reseal.
+        resealed = seal is not None and (
+            seal.resealed
+            or (not seal.stamped and getattr(node, "origin", "") not in PROVED_ORIGINS)
+        )
+        if seal is not None and not resealed:
             # A build's seal: how it reaches each tool.
             base, stop = seal.contract, node
             break

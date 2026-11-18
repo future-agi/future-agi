@@ -329,6 +329,7 @@ class TestVersionRecordedBeforeItsSealedContract:
         contract=SEALED,
         agent_version_id=None,
         resealed=False,
+        built=False,
     ):
         from simulate.tests.test_harness_versioning_picks import _ready
 
@@ -341,9 +342,14 @@ class TestVersionRecordedBeforeItsSealedContract:
         if contract is not None:
             storage.objects[row.object_key] = archives.pack_archive(
                 {
-                    # A chat's reseal stamps the tree it sealed from; a build does not.
+                    # A chat's reseal stamps the tree it sealed from, a build stamps that it is one; an older
+                    # bundle says neither.
                     "environment-bundle/manifest.json": json.dumps(
-                        {"metadata": {"sealed_from": "sha256:tree"}} if resealed else {}
+                        {"metadata": {"sealed_from": "sha256:tree"}}
+                        if resealed
+                        else {"metadata": {"sealed_from": "build"}}
+                        if built
+                        else {}
                     ).encode(),
                     "environment-bundle/contract.json": json.dumps(contract).encode(),
                 }
@@ -943,23 +949,30 @@ class TestVersionRecordedBeforeItsSealedContract:
             entry["tool"] for entry in blocked_tools(environment, unkeyed)
         ] == sorted(TOOLS)
 
-    @pytest.mark.parametrize("resealed, blocked", [(False, list(TOOLS)), (True, [])])
-    def test_a_row_reused_by_a_later_build_reads_as_its_bundle_was_sealed(
-        self, user, workspace, monkeypatch, resealed, blocked
+    @pytest.mark.parametrize(
+        "origin, resealed, blocked",
+        # A present stamp always wins over the version's origin.
+        [
+            ("authoring", False, list(TOOLS)),
+            ("chat", True, []),
+            ("authoring", True, []),
+        ],
+    )
+    def test_a_bundle_reads_as_its_own_stamp_says_it_was_sealed(
+        self, user, workspace, monkeypatch, origin, resealed, blocked
     ):
-        """A row a chat save made is reused when a build has identical authored bytes; its bundle, not the row's
-        origin, says whether the seal is a build's own (kept as sealed) or a chat's reseal (reached as built)."""
+        """Identical authored bytes, two seals: a build's (no stamp, on a version a full build made) is kept as
+        sealed, even keeping the author's import entries; a chat's stamped reseal is reached as built."""
         environment, version, storage = self._version(
-            user, workspace, f"rc-reused-{resealed}", monkeypatch
+            user, workspace, f"rc-reused-{origin}", monkeypatch
         )
         self._bundle(environment, version, storage)
         edited = {**AUTHORED, "hard_constraints": ["Never refund twice."]}
         saved = self._saved_edit(environment, version, edited)
         HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
-            origin="chat"
+            origin=origin
         )
         saved.refresh_from_db()
-        # The later seal keeps the author's import entries.
         self._bundle(environment, saved, storage, contract=edited, resealed=resealed)
 
         assert _blocked(environment, saved) == sorted(blocked)
@@ -1199,3 +1212,49 @@ def test_a_draft_keeps_an_unchanged_fault_on_a_tool_its_build_moved_behind_the_d
     )
 
     assert write is not None and "environment" in write.written
+
+
+class TestResealsSavedBeforeTheyWereStamped:
+    """A chat save resealed its bundle before reseals were stamped: no `sealed_from`, on a version a chat saved."""
+
+    def test_an_unstamped_bundle_on_a_chat_saved_version_is_read_as_a_reseal(
+        self, user, workspace, monkeypatch, auth_client
+    ):
+        legacy = TestVersionRecordedBeforeItsSealedContract()
+        environment, version, storage = legacy._version(
+            user, workspace, "rc-unstamped", monkeypatch
+        )
+        legacy._bundle(environment, version, storage)
+        edited = {**AUTHORED, "hard_constraints": ["Never refund twice."]}
+        saved = legacy._saved_edit(environment, version, edited)
+        HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
+            origin="chat"
+        )
+        saved.refresh_from_db()
+        # The reseal carries the author's import entries and no stamp.
+        legacy._bundle(environment, saved, storage, contract=edited)
+
+        blocked, statuses = legacy._through_the_views(auth_client, environment)
+
+        assert blocked == []
+        assert statuses == {one["tool"]: one["status"] for one in tool_status(SEALED)}
+
+    def test_a_chat_saved_row_reused_by_a_stamped_build_reads_as_the_build_sealed_it(
+        self, user, workspace, monkeypatch
+    ):
+        """A build stamps its seal, so a row a chat save made, reused by a later full build that kept the author's
+        import entries, reads as that build sealed it."""
+        legacy = TestVersionRecordedBeforeItsSealedContract()
+        environment, version, storage = legacy._version(
+            user, workspace, "rc-build-stamp", monkeypatch
+        )
+        legacy._bundle(environment, version, storage)
+        edited = {**AUTHORED, "hard_constraints": ["Never refund twice."]}
+        saved = legacy._saved_edit(environment, version, edited)
+        HarnessEnvironmentVersion._base_manager.filter(id=saved.id).update(
+            origin="chat"
+        )
+        saved.refresh_from_db()
+        legacy._bundle(environment, saved, storage, contract=edited, built=True)
+
+        assert _blocked(environment, saved) == sorted(TOOLS)
