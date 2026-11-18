@@ -34,7 +34,7 @@ describe("useReadiness", () => {
     axios.post.mockResolvedValue({ data: report("ready") });
     const picks = { agent: "a2", suite: "s1" };
 
-    renderHook(() => useReadiness("env-1", picks), { wrapper });
+    renderHook(() => useReadiness("env-1", picks, { trials: 3 }), { wrapper });
     await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
     expect(axios.get.mock.calls[0][0]).toContain(
       "/harness-environments/env-1/capabilities/",
@@ -42,6 +42,7 @@ describe("useReadiness", () => {
     expect(axios.get.mock.calls[0][1].params).toEqual({
       agent_version_id: "a2",
       suite_version_id: "s1",
+      trials: 3,
     });
 
     renderHook(
@@ -94,10 +95,14 @@ describe("useReadiness", () => {
       agent_version_id: "a2",
       bucket: "stale",
       keys: ["a", "b"],
+      trials: 1,
     });
 
-    await getReadinessCases("env-1", {}, null, null, "tool_routing");
-    expect(axios.get.mock.calls[1][1].params).toEqual({ row: "tool_routing" });
+    await getReadinessCases("env-1", {}, null, null, "tool_routing", 3);
+    expect(axios.get.mock.calls[1][1].params).toEqual({
+      row: "tool_routing",
+      trials: 3,
+    });
   });
 
   it("keeps asking while the agent's start check is still running", async () => {

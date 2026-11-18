@@ -16,6 +16,7 @@ export default function CountTip({
   envId,
   picks,
   keys,
+  trials,
   bucket,
   count,
   report,
@@ -27,6 +28,7 @@ export default function CountTip({
     picks,
     bucket,
     keys,
+    trials,
     report,
     enabled: shown && !tooMany,
   });
@@ -55,6 +57,7 @@ export default function CountTip({
   return (
     <CustomTooltip
       show
+      card
       title={title}
       size="small"
       arrow
@@ -75,6 +78,7 @@ CountTip.propTypes = {
   envId: PropTypes.string,
   picks: PropTypes.object,
   keys: PropTypes.arrayOf(PropTypes.string),
+  trials: PropTypes.number,
   bucket: PropTypes.string.isRequired,
   count: PropTypes.number,
   report: PropTypes.string,

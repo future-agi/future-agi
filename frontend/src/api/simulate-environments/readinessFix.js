@@ -103,7 +103,7 @@ const savedIds = (run) =>
   `${run?.saved?.environment?.id || ""}|${run?.saved?.suite?.id || ""}`;
 
 // Follows a run's changes (edges only, so the first run a fresh tab sees
-// triggers nothing). Call once per popup.
+// triggers nothing). Call once per page.
 export function useFollowFixRun(envId, fixRun) {
   const queryClient = useQueryClient();
   const prev = useRef(null);
@@ -118,6 +118,9 @@ export function useFollowFixRun(envId, fixRun) {
     if (!was) return;
     if (was.state !== state || was.updatedAt !== updatedAt) {
       queryClient.invalidateQueries({ queryKey: ["harness-readiness", envId] });
+      // The server posts the fix's turn after the POST returns; an idle
+      // chat isn't polling, so read it again as the run moves.
+      queryClient.invalidateQueries({ queryKey: ["harness-job", envId] });
     }
     if (saved !== was.saved && saved !== "|") {
       refreshFollowers(queryClient, envId);

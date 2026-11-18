@@ -506,6 +506,7 @@ export const DRAFTS_COPY = {
   // The Scenarios tab and the run dialog.
   unsaved: "Unsaved",
   saveToRun: "Save to run",
+  validateOnPage: "Validate these changes on the page first, then save them.",
   saveToRunSelected: "Save the unsaved changes to run these scenarios",
   addedToDraft: "Added to unsaved changes",
   notInRun:

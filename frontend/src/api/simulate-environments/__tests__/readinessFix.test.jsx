@@ -67,5 +67,6 @@ describe("useFollowFixRun", () => {
     const keys = spy.mock.calls.map(([arg]) => arg.queryKey[0]);
     expect(keys).toContain("harness-readiness");
     expect(keys).toContain("harness-env-versions");
+    expect(keys).toContain("harness-job");
   });
 });

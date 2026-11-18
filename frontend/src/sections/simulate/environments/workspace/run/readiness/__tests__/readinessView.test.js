@@ -226,6 +226,33 @@ describe("readinessView", () => {
   });
 });
 
+it("keeps a grouped line nobody can fix out of Needs you", () => {
+  const view = readinessView({
+    ...report({
+      areas: [{ id: "cancellation", status: "untested", rows: ["cancel"] }],
+      rows: [row("cancel", "untested", { fix_group: null })],
+    }),
+    fix_groups: {},
+  });
+  expect(view.groups.needs_you).toEqual([]);
+  expect(view.open).toEqual([]);
+  expect(view.limits).toEqual([
+    { area: "cancellation", status: "untested", reason: "cancel is untested" },
+  ]);
+});
+
+it("counts the cases that can't be graded past the 200 it lists", () => {
+  const view = readinessView(
+    report({
+      selection: {
+        requested: 300,
+        grading: { gradable: 50, not_gradable: Array(200).fill("k") },
+      },
+    }),
+  );
+  expect(view.grading).toEqual({ gradable: 50, notGradable: 250 });
+});
+
 describe("fixEndCard", () => {
   it("names what a saved fix left open, or says the pair is clear", () => {
     const fix = { state: "done", draft: false };
@@ -261,6 +288,20 @@ describe("fixEndCard", () => {
     expect(fixEndCard(run(["fixed", "could_not_fix"]), report()).text).toBe(
       "Fixed 1 of 2. The pair passed its check.",
     );
+    const unchecked = run(["fixed"]);
+    unchecked.lines.push({
+      state: "could_not_fix",
+      reason: { code: "check_unavailable", message: "x" },
+    });
+    expect(fixEndCard(unchecked, report()).text).toBe(
+      "Fixed 1 of 2. The check didn't finish. Re-check in the run plan.",
+    );
+    expect(
+      fixEndCard(run(["fixed"]), report({ validation: "check_unavailable" })),
+    ).toEqual({
+      text: "Fixed. The check didn't finish. Re-check in the run plan.",
+      action: "Open run plan",
+    });
     const unsaved = run(["fixed"], {
       draft: true,
       error: { code: "draft_stale", message: "The environment changed" },

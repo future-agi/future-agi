@@ -209,10 +209,9 @@ describe("ReadyToRunSection", () => {
     report = blockedReport("pair");
     recheckPending = true;
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
-    expect(screen.getByText(/Checking these versions · runs wait/)).toHaveAttribute(
-      "aria-live",
-      "polite",
-    );
+    expect(
+      screen.getByText(/Checking these versions · runs wait/),
+    ).toHaveAttribute("aria-live", "polite");
   });
 
   it("explains a refused re-check with the server's words", () => {
@@ -339,7 +338,9 @@ describe("ReadyToRunSection", () => {
     recheckPending = true;
     render(<ReadyToRunSection envId="env-1" picks={picks} />);
     expect(screen.getByRole("button", { name: /Checking/ })).toBeDisabled();
-    expect(screen.getByText(/Checking these versions · runs wait/)).toBeVisible();
+    expect(
+      screen.getByText(/Checking these versions · runs wait/),
+    ).toBeVisible();
     // The lines are the last results until the check ends: no Fix on them.
     expect(screen.queryByRole("button", { name: /^Details for/ })).toBeNull();
   });
@@ -352,9 +353,7 @@ describe("ReadyToRunSection", () => {
     };
     const onView = vi.fn();
     render(<ReadyToRunSection envId="env-1" picks={picks} onView={onView} />);
-    expect(
-      screen.getByText(/Checking these versions together…/),
-    ).toBeVisible();
+    expect(screen.getByText(/Checking these versions together…/)).toBeVisible();
     expect(screen.queryByText(/blocker/)).toBeNull();
     expect(screen.queryByText(/Not checked yet/)).toBeNull();
     expect(screen.getByRole("button", { name: /Checking/ })).toBeDisabled();
@@ -467,7 +466,7 @@ describe("ReadyToRunSection", () => {
     expect(screen.getByText("Builder chat can fix")).toBeVisible();
     expect(screen.queryByTestId("fix-chat")).toBeNull();
     await userEvent.click(
-      screen.getByRole("button", { name: "Fix 1 with builder chat" }),
+      screen.getByRole("button", { name: "Fix with builder chat" }),
     );
     expect(startFix).toHaveBeenCalledWith(
       { group: "builder", rows: ["tool_routing"], picks: {} },
@@ -484,7 +483,7 @@ describe("ReadyToRunSection", () => {
       }),
     );
     expect(
-      screen.getByRole("button", { name: "Tick lines to send" }),
+      screen.getByRole("button", { name: "Fix with builder chat" }),
     ).toBeDisabled();
   });
 
@@ -500,7 +499,7 @@ describe("ReadyToRunSection", () => {
       }),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Add 1 to this fix" }),
+      screen.getByRole("button", { name: "Add to this fix" }),
     );
     expect(startFix).toHaveBeenCalledWith(
       { group: "builder", rows: ["tool_routing"], picks: {} },
@@ -571,7 +570,7 @@ describe("ReadyToRunSection", () => {
     drafts = open;
     render(<ReadyToRunSection envId="env-1" picks={picked} />);
     const send = screen.getByRole("button", {
-      name: "Fix 1 with builder chat",
+      name: "Fix with builder chat",
     });
     expect(send).toBeDisabled();
     expect(send).toHaveAccessibleDescription(why);

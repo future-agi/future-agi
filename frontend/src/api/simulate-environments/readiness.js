@@ -59,7 +59,9 @@ export const getReadiness = async (
         trials,
         ...fields,
       })
-    : await axios.get(capabilitiesPath(envId), { params: fields });
+    : await axios.get(capabilitiesPath(envId), {
+        params: { ...fields, trials },
+      });
   return data;
 };
 
@@ -105,8 +107,9 @@ export const getReadinessCases = async (
   bucket,
   keys = null,
   row = null,
+  trials = 1,
 ) => {
-  const params = { ...versionPickFields(picks) };
+  const params = { ...versionPickFields(picks), trials };
   if (bucket) params.bucket = bucket;
   if (row) params.row = row;
   if (keys) params.keys = keys;
@@ -127,6 +130,7 @@ export function useReadinessCases(
     bucket = null,
     row = null,
     keys = null,
+    trials = 1,
     report = null,
     enabled = true,
   } = {},
@@ -135,13 +139,13 @@ export function useReadinessCases(
     // `report` (when the report was worked out) ties the names to the counts
     // beside them: a new report asks for them again.
     queryKey: [
-      ...readinessKey(envId, picks, keys),
+      ...readinessKey(envId, picks, keys, trials),
       "cases",
       bucket,
       row,
       report,
     ],
-    queryFn: () => getReadinessCases(envId, picks, bucket, keys, row),
+    queryFn: () => getReadinessCases(envId, picks, bucket, keys, row, trials),
     enabled: Boolean(envId) && Boolean(bucket || row) && enabled,
     retry: retryServerFailures,
     meta: { errorHandled: true },

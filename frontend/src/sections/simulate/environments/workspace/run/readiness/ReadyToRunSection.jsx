@@ -12,6 +12,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
+import { runStatusOf } from "src/utils/runStatus";
 import CustomTooltip from "src/components/tooltip";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
@@ -26,7 +27,6 @@ import {
 import {
   FIX_ACTIVE_STATES,
   useFixRun,
-  useFollowFixRun,
   useStartGroupFix,
 } from "src/api/simulate-environments/readinessFix";
 import {
@@ -92,8 +92,7 @@ const PROGRESS_ROLE = {
 
 // Lines the chat can still take on: not started, or it gave up.
 const fixable = (line) =>
-  !line.progress ||
-  ["not_started", "could_not_fix"].includes(line.progress.state);
+  !line.progress || line.progress.state === "could_not_fix";
 
 const GROUP_ICON = {
   needs_you: "solar:user-linear",
@@ -218,10 +217,11 @@ GridRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
 const WAITS_NAMES = 3;
 
 // The scenarios this line's row holds back, by name; nothing until some load.
-function WaitsOn({ envId, picks, keys, line, report }) {
+function WaitsOn({ envId, picks, keys, trials, line, report }) {
   const cases = useReadinessCases(envId, {
     picks,
     keys,
+    trials,
     row: line.rowId,
     report,
     enabled:
@@ -245,6 +245,7 @@ WaitsOn.propTypes = {
   envId: PropTypes.string,
   picks: PropTypes.object,
   keys: PropTypes.arrayOf(PropTypes.string),
+  trials: PropTypes.number,
   line: PropTypes.object.isRequired,
   report: PropTypes.string,
 };
@@ -270,6 +271,7 @@ function FixLine({
   fixOneLabel,
   picks,
   keys,
+  trials,
   report,
 }) {
   const { fix } = line;
@@ -443,6 +445,7 @@ function FixLine({
                   envId={envId}
                   picks={picks}
                   keys={keys}
+                  trials={trials}
                   line={line}
                   report={report}
                 />
@@ -451,6 +454,9 @@ function FixLine({
             {saved && <SavedCredentials version={saved} />}
             {credentials && !inFlight && (
               <CredentialsForm
+                // Its rows are seeded once: a new version or new missing
+                // names starts it again.
+                key={`${credentials.id}:${checkMissing(credentials).join(",")}`}
                 envId={envId}
                 version={credentials}
                 onSaved={onSaved}
@@ -497,7 +503,7 @@ function FixLine({
               <Box>
                 <Button
                   size="small"
-                  variant="contained"
+                  variant="outlined"
                   disabled={busy}
                   startIcon={inFlight ? spinner : null}
                   onClick={
@@ -547,6 +553,7 @@ FixLine.propTypes = {
   // What the opened line's scenario names are read for.
   picks: PropTypes.object,
   keys: PropTypes.arrayOf(PropTypes.string),
+  trials: PropTypes.number,
   report: PropTypes.string,
   // Its checkbox, while the chat can take it on: { checked, onChange }.
   select: PropTypes.shape({
@@ -601,8 +608,10 @@ export default function ReadyToRunSection({
   useRereadWhenDone(envId, savedChecking);
 
   const grouped = Boolean(view?.grouped);
-  const fixRun = useFixRun(envId, { enabled: grouped }).data ?? null;
-  useFollowFixRun(envId, fixRun);
+  const fixQuery = useFixRun(envId, { enabled: grouped });
+  const fixRun = fixQuery.data ?? null;
+  // Unread is not "no fix": Fix waits until the run is known.
+  const fixUnknown = fixQuery.isError && fixQuery.data === undefined;
   const start = useStartGroupFix(envId);
   // A refusal belongs to the run state it met; once the run moves on, drop it.
   const fixState = fixRun?.state;
@@ -735,6 +744,7 @@ export default function ReadyToRunSection({
       fixOneLabel={chatShown ? COPY.addOne : COPY.fixOne}
       picks={picks}
       keys={keys}
+      trials={trials}
       report={view.computedAt}
       select={
         view.grouped && line.group === "builder" && fixable(line)
@@ -782,7 +792,9 @@ export default function ReadyToRunSection({
   // Fix works on the default versions only (picks hold just the others). The
   // unsaved changes a running fix makes don't stop adding lines to it.
   let fixHeld = null;
-  if (Object.values(picks || {}).some(Boolean)) {
+  if (fixUnknown) {
+    fixHeld = COPY.fixLoadError;
+  } else if (Object.values(picks || {}).some(Boolean)) {
     fixHeld = COPY.fixRefused.fix_needs_defaults;
   } else if (drafts?.any && !chatShown) {
     fixHeld = COPY.fixesUnsaved;
@@ -862,7 +874,7 @@ export default function ReadyToRunSection({
                 takeable.length > 0 || chatShown ? (
                   <Button
                     size="small"
-                    variant="contained"
+                    variant="outlined"
                     disabled={
                       !chosen.length ||
                       checking ||
@@ -870,7 +882,7 @@ export default function ReadyToRunSection({
                       Boolean(fixHeld)
                     }
                     aria-describedby={
-                      takeable.length > 0 && fixHeld
+                      takeable.length > 0 && fixHeld && !fixUnknown
                         ? "fix-chat-held"
                         : undefined
                     }
@@ -879,13 +891,19 @@ export default function ReadyToRunSection({
                   >
                     {chatShown
                       ? COPY.addSelected(chosen.length)
-                      : COPY.sendSelected(chosen.length)}
+                      : COPY.sendSelected}
                   </Button>
                 ) : null
               }
               note={
                 <>
-                  {takeable.length > 0 && fixHeld && (
+                  {fixUnknown && (
+                    <ErrorState
+                      title={COPY.fixLoadError}
+                      onRetry={() => fixQuery.refetch()}
+                    />
+                  )}
+                  {takeable.length > 0 && fixHeld && !fixUnknown && (
                     <Typography
                       id="fix-chat-held"
                       sx={{ typography: "s3", color: "text.secondary" }}
@@ -964,7 +982,10 @@ export default function ReadyToRunSection({
         >
           <StatusBadge
             status={line.status}
-            label={COPY.areas[line.area] || line.area}
+            // The area and its status in words, never the dot's colour alone.
+            label={`${COPY.areas[line.area] || line.area}: ${
+              runStatusOf(line.status).label
+            }`}
             variant="dot"
           />
           <Typography

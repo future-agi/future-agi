@@ -10,6 +10,7 @@ import {
   Stack,
   TextField,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
 import { useReadiness } from "src/api/simulate-environments/readiness";
 import {
@@ -18,6 +19,7 @@ import {
 } from "src/api/simulate-environments/readinessFix";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import { useDrawerCovered } from "src/hooks/use-drawer-stack";
 import ContentSkeleton from "src/components/content-skeleton";
 import {
   VERSION_PIECES,
@@ -47,11 +49,11 @@ const offered = (piece, version) =>
   version.isDefault ||
   (piece === "agent" ? version.pickable : version.status === "active");
 
-const PANEL_WIDTH = 560;
+// The design system's 640 drawer, never wider than the screen less room for
+// the edge tab.
+const PANEL_WIDTH = "min(640px, calc(100vw - 40px))";
 // Opening, closing and collapsing all slide the width over this long.
 const SLIDE_MS = 300;
-
-const BOX_SX = { border: "1px solid", borderColor: "divider", borderRadius: 1 };
 
 // A quiet note: a small icon and grey text, no box. Its actions sit on the
 // right.
@@ -198,6 +200,13 @@ export default function RunDialog({
   const [entered, setEntered] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const closing = useRef(null);
+  // Users who ask for less motion get no slide and no wait to close.
+  const still = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const covered = useDrawerCovered(open);
+  const [shownOver, setShownOver] = useState(false);
+  useEffect(() => {
+    if (!covered) setShownOver(false);
+  }, [covered]);
   useEffect(() => {
     const frame = requestAnimationFrame(() => setEntered(true));
     return () => {
@@ -207,7 +216,7 @@ export default function RunDialog({
   }, []);
   const close = () => {
     setLeaving(true);
-    closing.current = setTimeout(onClose, SLIDE_MS);
+    closing.current = setTimeout(onClose, still ? 0 : SLIDE_MS);
   };
   const fixRun =
     useFixRun(env?.id, { enabled: open && Boolean(readiness?.grouped) }).data ??
@@ -369,13 +378,8 @@ export default function RunDialog({
     (!readiness || readiness.canRun) &&
     !allHeld;
 
+  // A fixed label: the counts line above says how many run.
   let runLabel = warnings.length ? COPY.runAnyway : COPY.run;
-  if (heldBack && !allHeld) {
-    runLabel = RUN_PLAN_COPY.runOf(
-      held.requested - held.blocked,
-      held.requested,
-    );
-  }
   if (submitting) runLabel = COPY.starting;
   // Ready to run reads the scenarios this run sends. Run-all asks for the
   // picked scenario version as a whole, so it never waits on its members.
@@ -419,6 +423,11 @@ export default function RunDialog({
       (piece) =>
         new Date(drafts[piece].updatedAt || 0) <= new Date(fixRun.finished_at),
     );
+  // Reviewed changes are validated before they save, as in the draft bar,
+  // which holds that flow; Save to run can't save them.
+  const needsValidate =
+    saveDrafts.error?.error === "validation_required" ||
+    Boolean(drafts?.validation);
   const saveDraftsNow = () =>
     saveDrafts.mutate(
       drafts.pieces.map((piece) => ({
@@ -519,17 +528,8 @@ export default function RunDialog({
 
   const body = () => {
     if (versions.isLoading) {
-      // The plan's own boxes, greyed, so nothing jumps when they load.
-      return (
-        <>
-          <Box>
-            <ContentSkeleton variant="panel" rows={2} label={COPY.loading} />
-          </Box>
-          <Box sx={BOX_SX} aria-hidden>
-            <ContentSkeleton variant="panel" rows={3} role="presentation" />
-          </Box>
-        </>
-      );
+      // One loader per wait.
+      return <ContentSkeleton variant="panel" rows={2} label={COPY.loading} />;
     }
     if (!data) {
       return (
@@ -617,6 +617,7 @@ export default function RunDialog({
                           envId={env.id}
                           picks={picks}
                           keys={readinessKeys}
+                          trials={trials}
                           bucket={part.bucket}
                           count={part.count}
                           report={readiness.computedAt}
@@ -647,7 +648,9 @@ export default function RunDialog({
                 <Button
                   size="small"
                   onClick={saveDraftsNow}
-                  disabled={saveDrafts.isPending || drafts.stale}
+                  disabled={
+                    saveDrafts.isPending || drafts.stale || needsValidate
+                  }
                 >
                   {saveDrafts.isPending
                     ? DRAFTS_COPY.saving
@@ -660,15 +663,21 @@ export default function RunDialog({
                 : draftsFromRun
                   ? PROMPTS.draftFix
                   : DRAFTS_COPY.notInRun}
-              {saveDrafts.error && (
-                <Box
-                  component="span"
-                  role="alert"
-                  sx={{ display: "block", color: "error.main" }}
-                >
-                  {DRAFTS_COPY.errors[saveDrafts.error.error] ??
-                    DRAFTS_COPY.saveError}
+              {needsValidate ? (
+                <Box component="span" sx={{ display: "block" }}>
+                  {DRAFTS_COPY.validateOnPage}
                 </Box>
+              ) : (
+                saveDrafts.error && (
+                  <Box
+                    component="span"
+                    role="alert"
+                    sx={{ display: "block", color: "error.main" }}
+                  >
+                    {DRAFTS_COPY.errors[saveDrafts.error.error] ??
+                      DRAFTS_COPY.saveError}
+                  </Box>
+                )
               )}
             </Note>
           )}
@@ -731,10 +740,22 @@ export default function RunDialog({
     env?.name,
     options.environment.find((one) => one.id === selected.environment)?.label,
   );
-  const toggleLabel = collapsed ? RUN_PLAN_COPY.expand : RUN_PLAN_COPY.collapse;
+  // Another drawer opened over the plan folds it to its tab, so both stay
+  // reachable; the tab opens it again over that drawer.
+  const folded = collapsed || (covered && !shownOver);
+  const toggle = () => {
+    if (folded) {
+      if (covered) setShownOver(true);
+      onCollapsedChange?.(false);
+    } else {
+      setShownOver(false);
+      onCollapsedChange?.(true);
+    }
+  };
+  const toggleLabel = folded ? RUN_PLAN_COPY.expand : RUN_PLAN_COPY.collapse;
   // Starts at zero width and slides open like expanding; closing slides shut
   // like collapsing, then unmounts.
-  const narrow = collapsed || !entered || leaving;
+  const narrow = folded || !entered || leaving;
 
   // Persistent and without a backdrop: it sits over the page's right edge and
   // everything outside it stays clickable.
@@ -762,7 +783,9 @@ export default function RunDialog({
           overflow: "visible",
           minWidth: narrow ? 0 : PANEL_WIDTH,
           maxWidth: narrow ? 0 : PANEL_WIDTH,
-          transition: `min-width ${SLIDE_MS}ms ease-in-out, max-width ${SLIDE_MS}ms ease-in-out`,
+          transition: still
+            ? "none"
+            : `min-width ${SLIDE_MS}ms ease-in-out, max-width ${SLIDE_MS}ms ease-in-out`,
         },
       }}
     >
@@ -777,8 +800,8 @@ export default function RunDialog({
         <IconButton
           size="small"
           aria-label={toggleLabel}
-          aria-expanded={!collapsed}
-          onClick={() => onCollapsedChange?.(!collapsed)}
+          aria-expanded={!folded}
+          onClick={toggle}
           // right: 100% puts its right edge on the paper's padding edge, so it
           // covers the paper's 1px left border and the two read as one.
           sx={{
@@ -786,14 +809,13 @@ export default function RunDialog({
             top: "48px",
             right: "100%",
             zIndex: 1,
-            width: 28,
-            height: 28,
-            p: 0,
             bgcolor: "background.paper",
             border: "1px solid",
             borderColor: "divider",
             borderRight: 0,
-            borderRadius: "4px 0 0 4px",
+            // The theme's radius on the left; the right side joins the drawer.
+            borderTopRightRadius: 0,
+            borderBottomRightRadius: 0,
             "&:hover": { bgcolor: "background.default" },
           }}
         >
@@ -802,11 +824,11 @@ export default function RunDialog({
             width={16}
             sx={{
               color: "text.disabled",
-              transform: collapsed ? "rotate(180deg)" : "rotate(0deg)",
-              transition: "transform 200ms ease-in-out",
+              transform: folded ? "rotate(180deg)" : "rotate(0deg)",
+              transition: still ? "none" : "transform 200ms ease-in-out",
             }}
           />
-          {fixActive && collapsed && (
+          {fixActive && folded && (
             <Box
               data-testid="run-plan-busy"
               sx={{
@@ -831,11 +853,11 @@ export default function RunDialog({
       <Stack
         sx={{
           // The paper's width less its 1px left border.
-          width: PANEL_WIDTH - 1,
+          width: `calc(${PANEL_WIDTH} - 1px)`,
           flexShrink: 0,
           height: "100%",
           overflow: "hidden",
-          visibility: collapsed || leaving ? "hidden" : "visible",
+          visibility: folded || leaving ? "hidden" : "visible",
         }}
       >
         <Stack

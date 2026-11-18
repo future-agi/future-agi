@@ -94,9 +94,16 @@ export function readinessView(report) {
   const rowsById = new Map((report?.rows || []).map((row) => [row.id, row]));
   const lines = (report?.areas || []).map((area) => areaLine(area, rowsById));
   const selection = report?.selection || {};
-  const notGradable = selection.grading?.not_gradable || [];
+  const grouped = Boolean(report?.fix_groups);
+  // With groups, an open line nobody can fix (a Stop not seen yet) is a note
+  // beside the limits, not a fix in Needs you.
+  const noted = (line) =>
+    grouped &&
+    OPEN.has(line.status) &&
+    !line.fix &&
+    !rowsById.get(line.rowId)?.fix_group;
   const open = lines
-    .filter((line) => OPEN.has(line.status))
+    .filter((line) => OPEN.has(line.status) && !noted(line))
     .sort((a, b) => rank(a.status) - rank(b.status));
   const groups = { needs_you: [], builder: [], recheck: [] };
   [...open, ...lines.filter(isFixed)].forEach((line) =>
@@ -118,17 +125,20 @@ export function readinessView(report) {
     },
     open,
     // The server sends fix_groups only once it supports fixes.
-    grouped: Boolean(report?.fix_groups),
+    grouped,
     groups,
     limits: lines
-      .filter((line) => LIMIT.has(line.status))
+      .filter((line) => LIMIT.has(line.status) || noted(line))
       .map(({ area, status, reason }) => ({ area, status, reason })),
     ready: lines
       .filter((line) => line.status === "supported" && !isFixed(line))
       .map((line) => line.area),
     grading: {
       gradable: selection.grading?.gradable ?? 0,
-      notGradable: notGradable.length,
+      // The list stops at 200; the total is what the rest leaves out.
+      notGradable: selection.grading
+        ? (selection.requested ?? 0) - selection.grading.gradable
+        : 0,
     },
   };
 }
@@ -176,10 +186,17 @@ export function fixEndCard(fix, report, draftsGone = false) {
     lines.filter((line) => line.state === "fixed").length,
     lines.length,
   );
+  const view = readinessView(report);
   // Blockers only, as the plan's header counts them.
-  const open = readinessView(report).open.filter(
-    (line) => line.status === "blocked",
-  );
+  const open = view.open.filter((line) => line.status === "blocked");
+  // Passed only when the saved pair's check answered ready. A re-check that
+  // couldn't run leaves its lines with check_unavailable.
+  const unconfirmed =
+    view.state !== "ready" ||
+    failed.some((line) => line.reason?.code === "check_unavailable");
+  if (!open.length && unconfirmed) {
+    return { text: `${fixed} ${copy.unconfirmed}`, action: copy.openPlan };
+  }
   if (!open.length) {
     return {
       text: failed.length ? `${fixed} ${copy.passed}` : copy.clear,

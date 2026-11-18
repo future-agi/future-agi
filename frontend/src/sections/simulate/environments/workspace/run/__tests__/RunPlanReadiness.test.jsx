@@ -166,10 +166,10 @@ describe("RunDialog with Ready to run", () => {
     expect(runButton()).toBeDisabled();
   });
 
-  it("reads Run 6 of 10 when 4 of the selected scenarios are held back", () => {
+  it("keeps Run's label and counts the held-back scenarios beside it", () => {
     state.view = view({ requested: 10, blocked: 4 });
     renderDialog();
-    expect(runButton()).toHaveTextContent("Run 6 of 10");
+    expect(runButton()).toHaveTextContent(/^Run$/);
     expect(runButton()).toBeEnabled();
     expect(
       screen.getByText(/10 selected · 6 will run · 4 held back/),

@@ -29,6 +29,7 @@ import {
 import {
   FIX_ACTIVE_STATES,
   useFixRun,
+  useFollowFixRun,
 } from "src/api/simulate-environments/readinessFix";
 import { useReadiness } from "src/api/simulate-environments/readiness";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
@@ -143,12 +144,13 @@ export default function EnvironmentWorkspace() {
   const pendingSubmission = useRef(null);
   // The run awaiting its version picks: { ids, trials, initialPicks, collapsed }.
   const [runDialog, setRunDialog] = useState(null);
+  // Where runs go through the run plan.
+  const planned = source === "harness" && Boolean(env?.versioning?.enabled);
   // A fix started from the Run plan talks in the builder chat: lines it hasn't
   // picked up yet show there as queued, and the chat opens when one starts.
-  const fixOn = Boolean(runDialog);
-  const fixData = useFixRun(env?.id, { enabled: fixOn }).data;
-  // A disabled query keeps its last data; a closed plan shows none of it.
-  const fixRun = fixOn ? fixData ?? null : null;
+  // It keeps running after the plan closes, so the page follows it.
+  const fixRun = useFixRun(env?.id, { enabled: planned }).data ?? null;
+  useFollowFixRun(env?.id, fixRun);
   let chatTurns = [
     ...(chat.turns || []),
     ...(fixRun?.queue || []).map((item, i) => ({
@@ -180,7 +182,6 @@ export default function EnvironmentWorkspace() {
   }, [fixRun, endedFix, lastTurnId]);
   // The card opens the run plan, so only where runs go through it. A saved
   // fix became the defaults, so the no-picks report says what is still open.
-  const planned = source === "harness" && Boolean(env?.versioning?.enabled);
   const endedSaved = planned && endedFix?.state === "done" && !endedFix.draft;
   const endReport = useReadiness(env?.id, {}, { enabled: endedSaved }).data;
   // A fix left unsaved says so only while its draft is still there.
