@@ -69,4 +69,47 @@ check 1 'invalid destination after protected branch' <<EOF
 HEAD $seed refs/heads/dev $seed
 HEAD $seed refs/heads/feature/bad $zero
 EOF
+check 1 'source with spaces to invalid destination' <<EOF
+HEAD@{1 second ago} $seed refs/heads/feature/bad $zero
+EOF
+check 0 'source with spaces to valid destination' <<EOF
+HEAD@{1 second ago} $seed refs/heads/fix/valid $zero
+EOF
+check 1 'source with spaces naming a branch-like word' <<EOF
+fix/ok@{2 days  ago} $seed refs/heads/plain-name $zero
+EOF
+check 1 'unreadable update line' <<EOF
+refs/heads/fix/0 $seed
+EOF
+
+# Real pushes through the installed hook: the same commit named by its ID and
+# by a source expression containing spaces must get the same decision.
+remote=$(mktemp -d)
+hooks=$(mktemp -d)
+trap 'rm -rf "$repo" "$remote" "$hooks"' EXIT
+git init -q --bare "$remote"
+printf '#!/bin/sh\nexec %s %s "$@"\n' "$shell" "$hook" >"$hooks/pre-push"
+chmod +x "$hooks/pre-push"
+push() {
+    expected=$1 label=$2 source=$3 branch=$4
+    actual=0
+    git -c core.hooksPath="$hooks" push -q "$remote" "$source:refs/heads/$branch" \
+        >/dev/null 2>&1 || actual=$?
+    [ "$actual" -eq 0 ] || actual=1
+    present=1
+    git --git-dir="$remote" rev-parse -q --verify "refs/heads/$branch" >/dev/null || present=0
+    if [ "$actual" -ne "$expected" ] || [ "$present" -ne $((1 - expected)) ]; then
+        printf '%s: real push %s: expected exit %s, got %s (remote ref present: %s)\n' \
+            "$shell" "$label" "$expected" "$actual" "$present" >&2
+        fail=1
+    fi
+}
+push 0 'by ID to valid branch' "$seed" fix/by-id
+push 1 'by ID to invalid branch' "$seed" feature/by-id
+push 0 'by dated expression to valid branch' 'HEAD@{0 seconds ago}' fix/by-date
+push 1 'by dated expression to invalid branch' 'HEAD@{0 seconds ago}' feature/by-date
+push 1 'by message search to invalid branch' 'HEAD^{/Seed branch-name test}' feature/by-text
+push 1 'by expression with a tab to invalid branch' "$(printf 'HEAD@{0\tseconds ago}')" feature/by-tab
+push 1 'by expression with a newline to invalid branch' "$(printf 'HEAD@{0\nseconds ago}')" feature/by-line
+push 0 'by message search to valid branch' 'HEAD^{/Seed branch-name test}' fix/by-text
 exit "$fail"

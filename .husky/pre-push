@@ -1,8 +1,37 @@
 # Validate the destination branch of each update Git supplies on stdin.
+# Each line is "<local ref> SP <local oid> SP <remote ref> SP <remote oid>".
+# The local ref is the source as written on the command line and may contain
+# spaces (for example HEAD@{1 second ago}), so the other three fields are
+# taken from the right: object IDs and ref names never contain spaces.
 branch_regex='^(feat|fix|chore|docs|refactor|test|perf)/[a-zA-Z0-9]+([a-zA-Z0-9-]*[a-zA-Z0-9])?$'
-while read -r local_ref local_oid remote_ref remote_oid; do
+oid_regex='^([0-9a-f]{40}|[0-9a-f]{64})$'
+is_oid() {
+    printf '%s\n' "$1" | grep -Eq "$oid_regex"
+}
+while IFS= read -r line || [ -n "$line" ]; do
+    [ -z "$line" ] && continue
+    remote_oid=${line##* }
+    rest=${line% *}
+    remote_ref=${rest##* }
+    rest=${rest% *}
+    local_oid=${rest##* }
+    case "$line" in
+        *?' '*' '*' '*) ;;
+        *) remote_ref= ;;
+    esac
+    case "$remote_ref" in
+        refs/*) ;;
+        *) remote_ref= ;;
+    esac
+    if [ -z "$remote_ref" ] || ! is_oid "$local_oid" || ! is_oid "$remote_oid"; then
+        echo "❌ Could not read the ref update Git supplied: '$line'"
+        exit 1
+    fi
     # Deleting a ref does not create a branch name; tags are not branches.
-    [ "$local_ref" = '(delete)' ] && continue
+    case "$local_oid" in
+        *[!0]*) ;;
+        *) continue ;;
+    esac
     case "$remote_ref" in
         refs/heads/*) branch_name=${remote_ref#refs/heads/} ;;
         *) continue ;;
