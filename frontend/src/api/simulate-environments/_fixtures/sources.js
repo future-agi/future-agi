@@ -98,7 +98,16 @@ const READABLE = [
   "jsonl",
   "txt",
   "md",
+  "rtf",
 ];
+// A return window only from an explicit number ("-45", "_45", "45d",
+// "45 days"), never from a year like 2026.
+const windowOf = (lower) => {
+  const found = lower.match(
+    /[-_](\d{1,3})(?!\d)|(?:^|\D)(\d{1,3})\s?d(?:ays?)?\b/,
+  );
+  return found ? found[1] || found[2] : "30";
+};
 const READABLE_NAMES = READABLE.map((ext) => ext.toUpperCase()).join(", ");
 
 const extOf = (name) => String(name).split(".").pop().toLowerCase();
@@ -468,7 +477,7 @@ export const readSource = ({ name, size, text, origin }) => {
   const policy =
     origin.kind === "knowledge_base"
       ? POLICY_PASSAGES(14, { approval: 300, extra: true })
-      : POLICY_PASSAGES((lower.match(/(\d{2})/) || [])[1] || "30");
+      : POLICY_PASSAGES(windowOf(lower));
   const policyish =
     /polic|terms|rule|sop|procedure|guideline|sla|returns?|refund/.test(lower);
   const reference =

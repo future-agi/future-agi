@@ -58,7 +58,7 @@ describe("environment sources stub", () => {
     const { ui } = await prepare([
       fileOf("notes.pages"),
       fileOf("policy-scan.pdf"),
-      fileOf("policy.pdf"),
+      fileOf("Refund policy 2026.pdf"),
     ]);
 
     expect(ui.sources.map((source) => source.ui.settlesTo.status)).toEqual([
@@ -66,7 +66,9 @@ describe("environment sources stub", () => {
       "unreadable",
       "not_saved",
     ]);
-    expect(ui.items.some((item) => item.kind === "rule")).toBe(true);
+    expect(ui.items.map((item) => item.title)).toContain(
+      "Rule: Refunds are allowed within 30 days of delivery.",
+    );
   });
 
   it("accepting moves the files read from not saved to ready", async () => {
