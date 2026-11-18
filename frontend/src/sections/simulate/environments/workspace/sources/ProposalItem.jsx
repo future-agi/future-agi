@@ -52,7 +52,13 @@ export default function ProposalItem({
   const [editing, setEditing] = useState(false);
   const pickable = isPickable(item);
   const kind = PROPOSAL_KINDS[item.kind];
+  const rule = item.kind === "rule";
   const ruleText = edit ?? item.rule ?? item.title.replace(/^Rule:\s*/, "");
+  // A rule's wording, or one field of what else it adds (an approval scope).
+  const editable = rule || Boolean(item.editable);
+  const editValue = rule
+    ? ruleText
+    : edit ?? item.actor?.[item.editable?.field] ?? "";
 
   if (item.kind === "reference")
     return (
@@ -105,10 +111,15 @@ export default function ProposalItem({
           <Typography
             sx={{ typography: "s1", fontWeight: 500, flex: 1, minWidth: 0 }}
           >
-            {item.kind === "rule" ? ruleText : item.title}
+            {rule ? ruleText : item.title}
           </Typography>
-          {item.kind === "rule" && pickable && (
-            <CustomTooltip show arrow describeChild title={COPY.editHint}>
+          {editable && pickable && (
+            <CustomTooltip
+              show
+              arrow
+              describeChild
+              title={rule ? COPY.editHint : COPY.editOtherHint}
+            >
               {editing ? (
                 <Button
                   size="small"
@@ -122,7 +133,7 @@ export default function ProposalItem({
                 <IconButton
                   size="small"
                   className="pi-actions"
-                  aria-label={COPY.editRule}
+                  aria-label={rule ? COPY.editRule : COPY.edit}
                   onClick={() => setEditing(true)}
                   sx={{
                     p: 0.25,
@@ -160,13 +171,20 @@ export default function ProposalItem({
               : COPY.missingKept}
           </Typography>
         )}
+        {!rule && edit != null && !editing && (
+          <Typography
+            sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+          >
+            {COPY.edited(item.editable?.label, edit)}
+          </Typography>
+        )}
         {editing && (
           <TextField
             size="small"
             fullWidth
             autoFocus
-            label={COPY.ruleLabel}
-            value={ruleText}
+            label={rule ? COPY.ruleLabel : item.editable.label}
+            value={editValue}
             onChange={(event) => onEdit(event.target.value)}
             onKeyDown={(event) => event.key === "Enter" && setEditing(false)}
             sx={{ mt: 0.75 }}
@@ -179,7 +197,8 @@ export default function ProposalItem({
             {COPY.personalReplaced}
           </Typography>
         )}
-        {item.cite && (
+        {/* A file that couldn't be read has nothing to point at. */}
+        {item.cite && item.kind !== "unreadable" && (
           <>
             {item.cite.excerpt &&
               item.cite.excerpt.trim() !== String(item.rule || "").trim() &&
@@ -277,6 +296,12 @@ ProposalItem.propTypes = {
     affects: PropTypes.array,
     options: PropTypes.array,
     pick: PropTypes.object,
+    actor: PropTypes.object,
+    // The one field of a non-rule item that can be edited before adding.
+    editable: PropTypes.shape({
+      field: PropTypes.string.isRequired,
+      label: PropTypes.string.isRequired,
+    }),
     suggested: PropTypes.string,
     choice: PropTypes.string,
     cite: PropTypes.shape({

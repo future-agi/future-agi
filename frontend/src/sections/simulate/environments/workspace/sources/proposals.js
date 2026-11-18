@@ -78,6 +78,34 @@ export const readProgress = (prepared, liveSources = []) => {
   };
 };
 
+// The prepare responses a review covers, one accept each.
+export const batchesOf = (prepared) => prepared.batches || [prepared];
+
+/**
+ * A second prepare while a review is open joins it, so both batches can be
+ * added. Items the open review already has (same id) aren't repeated.
+ */
+export const mergePrepared = (current, next) => {
+  const known = new Set(current.ui.items.map((item) => item.id));
+  const added = {
+    ...next,
+    ui: {
+      ...next.ui,
+      items: next.ui.items.filter((item) => !known.has(item.id)),
+    },
+  };
+  return {
+    ...current,
+    batches: [...batchesOf(current), added],
+    ui: {
+      ...current.ui,
+      readMs: Math.max(current.ui.readMs, next.ui.readMs),
+      sources: [...current.ui.sources, ...next.ui.sources],
+      items: [...current.ui.items, ...added.ui.items],
+    },
+  };
+};
+
 // #4158 knows two modes; "Keep" and "No personal data present" both leave the values as they are.
 const PERSONAL_MODE = { replace: "synthetic_replace" };
 
@@ -137,7 +165,10 @@ export const PROPOSALS_COPY = {
   inferred: "· inferred",
   from: (ref) => `From ${ref}`,
   editRule: "Edit rule",
+  edit: "Edit",
   editHint: "Changes the rule we'll add. The file stays as it is.",
+  editOtherHint: "Changes what we'll add. The file stays as it is.",
+  edited: (label, value) => `${label}: ${value} · edited`,
   editDone: "Done",
   ruleLabel: "Rule",
   conflictOption: (option) => `${option.label} applies: ${option.rule}`,
@@ -173,8 +204,9 @@ export const PROPOSALS_COPY = {
   reject: "Reject",
   done: "Done",
   add: (n) => `Add ${plural(n, "change")}`,
-  added: (n, failed) =>
-    `Added ${failed ? `${n} of ${plural(n + failed, "change")}` : plural(n, "change")} to your unsaved changes${failed ? ` · ${failed} couldn't apply` : ""}. Review and save them to make the version.`,
+  // Counted against the button: of the `count` on it, the blocked ones didn't apply.
+  added: (count, failed) =>
+    `Added ${failed ? `${Math.max(0, count - failed)} of ${plural(count, "change")}` : plural(count, "change")} to your unsaved changes${failed ? ` · ${failed} couldn't apply` : ""}. Review and save them to make the version.`,
   addFailed: "Couldn't add these changes. Try again in a moment.",
   reviewChanges: "Review changes",
 };

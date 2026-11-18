@@ -21,6 +21,7 @@ import ProposalItem from "./ProposalItem";
 import { applyFileChoice, columnsOf } from "./personalData";
 import {
   PROPOSALS_COPY as COPY,
+  batchesOf,
   groupProposals,
   isPickable,
   readProgress,
@@ -222,52 +223,66 @@ export function Proposals({
     });
   };
 
-  const add = () => {
+  // One accept per prepare the review covers, in order.
+  const add = async () => {
     const choices = Object.fromEntries(
       personal.map((item) => [item.sourceId, item.choice]),
     );
-    accept.mutate(
-      {
-        import_ref: prepared.import_ref,
-        expected_environment_version_id:
-          prepared.capabilities.environment_version_id,
-        expected_draft: prepared.capabilities.draft,
-        expected_draft_digest: prepared.draft_digest,
-        review: buildSourceReview(
-          prepared.draft,
-          reviewDecisions(prepared.draft, accepted, choices),
-        ),
-        ui: { accepted, failed },
-      },
-      {
-        onSuccess: () => {
-          enqueueSnackbar(COPY.added(count, failed.length), {
-            variant: "success",
-            ...(onReviewChanges && {
-              action: (key) => (
-                <Button
-                  size="small"
-                  color="inherit"
-                  onClick={() => {
-                    closeSnackbar(key);
-                    onReviewChanges();
-                  }}
-                >
-                  {COPY.reviewChanges}
-                </Button>
+    try {
+      // eslint-disable-next-line no-restricted-syntax -- sequential on purpose: accepts share one draft
+      for (const batch of batchesOf(prepared)) {
+        const own = new Set(batch.ui.items.map((item) => item.id));
+        const files = new Set(batch.ui.sources.map((one) => one.source_id));
+        const mine = (list) => list.filter((item) => own.has(item.id));
+        // eslint-disable-next-line no-await-in-loop
+        await accept.mutateAsync({
+          import_ref: batch.import_ref,
+          expected_environment_version_id:
+            batch.capabilities.environment_version_id,
+          expected_draft: batch.capabilities.draft,
+          expected_draft_digest: batch.draft_digest,
+          review: buildSourceReview(
+            batch.draft,
+            reviewDecisions(
+              batch.draft,
+              mine(accepted),
+              Object.fromEntries(
+                Object.entries(choices).filter(([id]) => files.has(id)),
               ),
-            }),
-          });
-          onDone({ accepted, failed });
-        },
-        onError: () => enqueueSnackbar(COPY.addFailed, { variant: "error" }),
-      },
-    );
+            ),
+          ),
+          ui: { accepted: mine(accepted), failed: mine(failed) },
+        });
+      }
+    } catch {
+      enqueueSnackbar(COPY.addFailed, { variant: "error" });
+      return;
+    }
+    enqueueSnackbar(COPY.added(count, failed.length), {
+      variant: "success",
+      ...(onReviewChanges && {
+        action: (key) => (
+          <Button
+            size="small"
+            color="inherit"
+            onClick={() => {
+              closeSnackbar(key);
+              onReviewChanges();
+            }}
+          >
+            {COPY.reviewChanges}
+          </Button>
+        ),
+      }),
+    });
+    onDone({ accepted, failed });
   };
 
   let footer = COPY.footer.saved;
   if (undecided) footer = COPY.footer.choose;
   else if (failed.length) footer = COPY.footer.blocked;
+  // Nothing to decide while every file is still being read.
+  const showFooter = !(reading && !items.length);
 
   return (
     <Box
@@ -377,38 +392,42 @@ export function Proposals({
           </Box>
         ))}
       </Box>
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1}
-        sx={{
-          px: inset,
-          py: 1.25,
-          borderTop: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
-          {footer}
-        </Typography>
-        <Button variant="outlined" size="small" onClick={() => onDone(null)}>
-          {COPY.reject}
-        </Button>
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled={
-            reading ||
-            undecided ||
-            accept.isPending ||
-            (!count && !personal.length)
-          }
-          onClick={count ? add : () => onDone(null)}
+      {showFooter && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: inset,
+            py: 1.25,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
         >
-          {count ? COPY.add(count) : COPY.done}
-        </Button>
-      </Stack>
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}
+          >
+            {footer}
+          </Typography>
+          <Button variant="outlined" size="small" onClick={() => onDone(null)}>
+            {COPY.reject}
+          </Button>
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            disabled={
+              reading ||
+              undecided ||
+              accept.isPending ||
+              (!count && !personal.length)
+            }
+            onClick={count ? add : () => onDone(null)}
+          >
+            {count ? COPY.add(count) : COPY.done}
+          </Button>
+        </Stack>
+      )}
       <AddSourceMenu
         anchorEl={supplyAnchor}
         onClose={() => setSupplyAnchor(null)}
