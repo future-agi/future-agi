@@ -41746,6 +41746,7 @@ export const TraceSessionListMetadataApiQueryProvenance = {
 } as const;
 
 export interface TraceSessionListMetadataApi {
+  skill_links_exist?: boolean;
   total_rows: number;
   total_rows_exact?: number | null;
   total_rows_is_lower_bound?: boolean;
@@ -42256,6 +42257,7 @@ export const TraceObserveListMetadataApiQueryAppliedFilterVersion = {
 } as const;
 
 export interface TraceObserveListMetadataApi {
+  skill_links_exist?: boolean;
   total_rows: number;
   total_rows_exact?: number | null;
   total_rows_is_lower_bound?: boolean;
@@ -42358,6 +42360,7 @@ export interface TraceObserveListResponseApi {
 }
 
 export interface TraceObserveListQueryApi {
+  include_skill_links?: boolean;
   /**
    * JSON-encoded list of sort params.
    * @minLength 1
@@ -50689,6 +50692,7 @@ export type TracerTraceListTracesParams = {
 };
 
 export type TracerTraceListTracesOfSessionParams = {
+  include_skill_links?: boolean;
   /**
    * @minLength 1
    */

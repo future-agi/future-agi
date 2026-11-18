@@ -2316,6 +2316,43 @@
 - the bookmarked /insights link shows the same upgrade page
 - the browser never requests an Insights endpoint
 
+### OBS-E2E-059 — F2 correlate the skill and agent within one load
+
+**Goal:** Find traces where the chosen agent loaded the chosen skill
+
+**Spec:** `flows/observe/skill-filters.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. Serve one trace with independent agent scopes A and B
+2. Filter first for A, then B, then a separate also-loaded group
+
+**Backend state verified:**
+
+- The two SDK loads belong to different agents
+- The real list response rejects a cross-agent match but accepts the separate load group
+
+### OBS-E2E-060 — reconcile scoped spans and skill-version cohorts
+
+**Goal:** Tell which spans ran after a skill was loaded, and inspect the overlapping version cohorts
+
+**Spec:** `flows/observe/skill-filters.spec.ts:38`
+
+**Tags:** —
+
+**User steps:**
+
+1. Run requests for two agents that load different versions
+2. Open the filtered span list and compare it with storage
+3. Switch to the trace cohort and split the graph by version
+
+**Backend state verified:**
+
+- Only spans stamped with the selected version are in the scoped span list
+- The version trace filter, cohort strip and split graph identify the same application request
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
@@ -2689,7 +2726,7 @@
 
 **Goal:** An incident responder proves a context repair on the actual application with matched native runs, and the product holds a text-only success and a routing near-miss
 
-**Spec:** `flows/skills/j2-native-verification.spec.ts:38`
+**Spec:** `flows/skills/j2-native-verification.spec.ts:37`
 
 **Tags:** —
 
@@ -2745,7 +2782,7 @@
 
 **Goal:** An independent assigned reviewer discovers a published candidate, approves its exact packet, deliberately releases it and reopens the durable receipt after the pointer changes
 
-**Spec:** `flows/skills/j4-reviewer-receipt.spec.ts:14`
+**Spec:** `flows/skills/j4-reviewer-receipt.spec.ts:15`
 
 **Tags:** —
 
@@ -2771,7 +2808,7 @@
 
 **Goal:** An assigned reviewer cannot release an approval that a safety, target, annotation, role or retention race made stale, renews it explicitly with the exact changes shown, and releases only the renewed and re-approved packet
 
-**Spec:** `flows/skills/j4-race-renewal.spec.ts:19`
+**Spec:** `flows/skills/j4-race-renewal.spec.ts:20`
 
 **Tags:** —
 
@@ -3069,7 +3106,7 @@
 
 **Goal:** Choose and review an eligible historical context, reject an unsafe alternative and stale pointer authority, then deliberately roll back without declaring application recovery
 
-**Spec:** `flows/skills/j6-reviewed-rollback.spec.ts:11`
+**Spec:** `flows/skills/j6-reviewed-rollback.spec.ts:12`
 
 **Tags:** —
 
@@ -3115,3 +3152,356 @@
 - the resumed thread keeps its original session identity and the receipt precedes the checkpoint advance
 - the retired child delivers its exact retained bytes and the quarantined alternative is refused
 - the expired-credential session is denied by the public access check and the lost-mapping and never-observed consumers stay unknown
+
+### SKILLS-E2E-101 — F1 Inspect the two skill versions loaded by a python request
+
+**Goal:** Inspect the two skill versions loaded by a python request
+
+**Spec:** `flows/skills/skill-traces.spec.ts:35`
+
+**Tags:** —
+
+**User steps:**
+
+1. Publish a context with three linked skills and read only two with the installed SDK
+2. Filter Observe by the immutable version and inspect its skill load
+
+**Backend state verified:**
+
+- The two stored skill links match the published identities, digests, and agent; the unread link is absent
+
+### SKILLS-E2E-103 — F3 Read production adoption and the reason an agent stays on v1
+
+**Goal:** Read production adoption and the reason an agent stays on v1
+
+**Spec:** `flows/skills/skill-traces.spec.ts:259`
+
+**Tags:** —
+
+**User steps:**
+
+1. Serve production requests on v1
+2. Move the production label in the UI
+3. Serve fresh and version-pinned requests and inspect Runtime
+
+**Backend state verified:**
+
+- The version and agent cohort comes from actual reads before and after the move
+
+### SKILLS-E2E-104 — F4 distinguish loaded and unread links
+
+**Goal:** See which linked skills the application actually loaded
+
+**Spec:** `flows/skills/skill-traces.spec.ts:86`
+
+**Tags:** —
+
+**User steps:**
+
+1. Read two skills in a context with a third linked skill
+2. Open its Runtime and Linked skills tabs
+
+**Backend state verified:**
+
+- The linked but unread skill stays out of the loaded rows
+
+### SKILLS-E2E-105 — F5 tracing off retains the request without skill loads
+
+**Goal:** Understand missing loads for an opted-out application
+
+**Spec:** `flows/skills/skill-traces.spec.ts:105`
+
+**Tags:** —
+
+**User steps:**
+
+1. Turn off Skills tracing and read an immutable skill inside a traced request
+2. Inspect the skill Runtime tab
+
+**Backend state verified:**
+
+- The flushed request is present with no load spans and the SDK fetch reports off
+
+### SKILLS-E2E-106 — F6 Inspect the two skill versions loaded by a typescript request
+
+**Goal:** Inspect the two skill versions loaded by a typescript request
+
+**Spec:** `flows/skills/skill-traces.spec.ts:35`
+
+**Tags:** —
+
+**User steps:**
+
+1. Publish a context with three linked skills and read only two with the installed SDK
+2. Filter Observe by the immutable version and inspect its skill load
+
+**Backend state verified:**
+
+- The two stored skill links match the published identities, digests, and agent; the unread link is absent
+
+### SKILLS-E2E-107 — F7 read files without OpenTelemetry
+
+**Goal:** Load a skill without installing a telemetry stack
+
+**Spec:** `flows/skills/skill-traces.spec.ts:116`
+
+**Tags:** —
+
+**User steps:**
+
+1. Run the plain SDK in an isolated interpreter
+2. Read its immutable file
+
+**Backend state verified:**
+
+- The interpreter has no OpenTelemetry package and the SDK fetch bucket reports no_otel
+
+### SKILLS-E2E-108 — F8 native verification emits no customer loads
+
+**Goal:** Keep native test runs out of production attribution
+
+**Spec:** `flows/skills/skill-traces.spec.ts:404`
+
+**Tags:** —
+
+**User steps:**
+
+1. Prove the customer project receives a real SDK load
+2. Run two matched native cells against production-like fixture inputs
+3. Inspect the job window after completion
+
+**Backend state verified:**
+
+- Both native cells ran to completion without adding a skill link to the customer project
+
+### SKILLS-E2E-109 — F9 save and reload a version cohort
+
+**Goal:** Return to a saved skill cohort from its Runtime metric
+
+**Spec:** `flows/skills/skill-traces.spec.ts:147`
+
+**Tags:** —
+
+**User steps:**
+
+1. Follow the v1 traces number on Runtime
+2. Save the view and reload it
+
+**Backend state verified:**
+
+- The saved view and runtime link both find the exact emitted trace
+
+### SKILLS-E2E-110 — F10 show evaluation score with coverage
+
+**Goal:** Read the score and coverage on the skill version cohort
+
+**Spec:** `flows/skills/skill-traces.spec.ts:332`
+
+**Tags:** —
+
+**User steps:**
+
+1. Run a real application request
+2. Register a local mock-routed evaluator and run a historical evaluation
+3. Read the eval cell in Loaded by
+
+**Backend state verified:**
+
+- The durable task completes and only the single evaluated trace contributes to coverage
+
+### SKILLS-E2E-111 — F11 Open failing requests after a production change
+
+**Goal:** Open failing requests after a production change
+
+**Spec:** `flows/skills/skill-traces.spec.ts:259`
+
+**Tags:** —
+
+**User steps:**
+
+1. Serve production requests on v1
+2. Move the production label in the UI
+3. Serve fresh and version-pinned requests and inspect Runtime
+
+**Backend state verified:**
+
+- The version and agent cohort comes from actual reads before and after the move
+
+### SKILLS-E2E-112 — F12 choose a project from a two-project metric
+
+**Goal:** Open the exact per-project cohort, without a dialog
+
+**Spec:** `flows/skills/skill-traces.spec.ts:169`
+
+**Tags:** —
+
+**User steps:**
+
+1. Serve one request in each project
+2. Choose a line from the traces number
+
+**Backend state verified:**
+
+- Only the selected project trace is shown
+
+### SKILLS-E2E-113 — F13 retain failed load without a verified identity
+
+**Goal:** Inspect a failed integrity check separately from verified loads
+
+**Spec:** `flows/skills/skill-traces.spec.ts:188`
+
+**Tags:** —
+
+**User steps:**
+
+1. Read a damaged file with the real verifying SDK
+2. Follow the failed-load link to the trace detail
+
+**Backend state verified:**
+
+- The failed load has no verified link; Observe filters to the actual failing request
+
+### SKILLS-E2E-114 — F14 explain historical, disabled and MCP-only fetches
+
+**Goal:** Diagnose first-day fetches without suggesting a runtime load
+
+**Spec:** `flows/skills/skill-traces.spec.ts:204`
+
+**Tags:** —
+
+**User steps:**
+
+1. Fetch separate skills with a client reporting an old version, tracing off, and MCP only
+2. Open Runtime for each resource
+
+**Backend state verified:**
+
+- The three diagnosis states describe the corresponding transport and cannot claim a load
+
+### SKILLS-E2E-115 — F15 inspect the changed skill on both release cards
+
+**Goal:** Verify the skill that changed across two reviewed context releases
+
+**Spec:** `flows/skills/skill-traces.spec.ts:362`
+
+**Tags:** —
+
+**User steps:**
+
+1. Release context v1, move one linked skill and refresh its link in v2
+2. Independently approve the new release
+3. Inspect Runtime and the receipt
+
+**Backend state verified:**
+
+- The refreshed dependency references the new immutable skill version and both cards identify that same skill
+
+### SKILLS-E2E-116 — F16 Distinguish an unreleased follower from a pinned skill
+
+**Goal:** Distinguish an unreleased follower from a pinned skill
+
+**Spec:** `flows/skills/skill-traces.spec.ts:259`
+
+**Tags:** —
+
+**User steps:**
+
+1. Serve production requests on v1
+2. Move the production label in the UI
+3. Serve fresh and version-pinned requests and inspect Runtime
+
+**Backend state verified:**
+
+- The version and agent cohort comes from actual reads before and after the move
+
+### SKILLS-E2E-117 — F17 inspect the same agent on three surfaces
+
+**Goal:** Inspect the same agent and its skills from Runtime and Observe
+
+**Spec:** `flows/skills/skill-traces.spec.ts:218`
+
+**Tags:** —
+
+**User steps:**
+
+1. Open the agent in Loaded by
+2. Inspect the same agent from the grid and trace detail
+
+**Backend state verified:**
+
+- All three panels show both actual loaded versions in the same project
+
+### SKILLS-E2E-118 — F18 check tracing waits for the next request
+
+**Goal:** Confirm a new application load reaches the project
+
+**Spec:** `flows/skills/skill-traces.spec.ts:123`
+
+**Tags:** —
+
+**User steps:**
+
+1. Start Check tracing on Install
+2. Serve a fresh request with the installed Python SDK
+
+**Backend state verified:**
+
+- The receipt identifies the skill version and agent from the new load
+
+### SKILLS-E2E-119 — F19 count SDK fetches on both Activity tabs
+
+**Goal:** See the SDK version that fetched the skill and context
+
+**Spec:** `flows/skills/skill-traces.spec.ts:133`
+
+**Tags:** —
+
+**User steps:**
+
+1. Resolve a skill and a context with the packaged Python client
+2. Inspect both Activity tabs
+
+**Backend state verified:**
+
+- Both resources report the SDK channel and actual installed version
+
+### SKILLS-E2E-130 — install a reviewed bundle and observe a Deep Agents turn
+
+**Goal:** Distinguish correct project installation from an actual runtime skill read.
+
+**Spec:** `flows/skills/install-turn.spec.ts:34`
+
+**Tags:** —
+
+**User steps:**
+
+1. Publish a skill and a reviewed context linking its exact version.
+2. Create read-only keys in the Install tabs and run their copied commands in clean projects.
+3. Run Deep Agents against the deterministic stack model; inspect the matching Observe request and Runtime row.
+
+**Backend state verified:**
+
+- Compare installed bytes and locks with both Hub manifests.
+- Check model-boundary disclosure and the exact skill and context identities stored for this trace.
+
+**Browser observations:**
+
+- Observe shows the filtered request, detail shows the loaded skill, and Runtime shows the release.
+
+### SKILLS-E2E-131 — runtime reads work on a newly bootstrapped standalone stack
+
+**Goal:** Open Runtime before the first skill load without installing a schema by hand.
+
+**Spec:** `flows/skills/runtime-bootstrap.spec.ts:8`
+
+**Tags:** —
+
+**User steps:**
+
+1. Publish a skill and send an ordinary trace in a new project.
+2. Request runtime usage for that skill and project.
+
+**Backend state verified:**
+
+- The Runtime endpoint returns a zero-trace summary.
+- Both load tables and their materialized views exist.

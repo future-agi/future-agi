@@ -95237,6 +95237,7 @@ export const TracerTraceSessionListSessionsResponse = zod.object({
         "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
       ),
     metadata: zod.object({
+      skill_links_exist: zod.boolean().optional(),
       total_rows: zod.number(),
       total_rows_exact: zod.number().nullish(),
       total_rows_is_lower_bound: zod.boolean().optional(),
@@ -96850,6 +96851,7 @@ export const TracerTraceListTracesResponse = zod.object({
       }),
     ),
     metadata: zod.object({
+      skill_links_exist: zod.boolean().optional(),
       total_rows: zod.number(),
       total_rows_exact: zod.number().nullish(),
       total_rows_is_lower_bound: zod.boolean().optional(),
@@ -96990,6 +96992,7 @@ export const tracerTraceListTracesOfSessionQueryCursorMax = 4096;
 export const tracerTraceListTracesOfSessionQueryCursorModeDefault = false;
 
 export const TracerTraceListTracesOfSessionQueryParams = zod.object({
+  include_skill_links: zod.boolean().optional(),
   sort_params: zod
     .string()
     .min(1)
@@ -97086,6 +97089,7 @@ export const TracerTraceListTracesOfSessionResponse = zod.object({
         "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
       ),
     metadata: zod.object({
+      skill_links_exist: zod.boolean().optional(),
       total_rows: zod.number(),
       total_rows_exact: zod.number().nullish(),
       total_rows_is_lower_bound: zod.boolean().optional(),
@@ -97194,6 +97198,7 @@ export const tracerTraceListTracesOfSessionCreateBodyCursorMax = 4096;
 export const tracerTraceListTracesOfSessionCreateBodyCursorModeDefault = false;
 
 export const TracerTraceListTracesOfSessionCreateBody = zod.object({
+  include_skill_links: zod.boolean().optional(),
   sort_params: zod
     .string()
     .min(1)

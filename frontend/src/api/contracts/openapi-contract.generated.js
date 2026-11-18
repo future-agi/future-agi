@@ -52131,6 +52131,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
+          include_skill_links: {
+            required: false,
+            schema: {
+              type: "boolean",
+            },
+          },
           sort_params: {
             required: false,
             schema: {
@@ -101761,6 +101767,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
     TraceObserveListQuery: {
       type: "object",
       properties: {
+        include_skill_links: {
+          title: "Include skill links",
+          type: "boolean",
+        },
         sort_params: {
           title: "Sort params",
           type: "string",
@@ -155274,6 +155284,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["total_rows"],
       type: "object",
       properties: {
+        skill_links_exist: {
+          title: "Skill links exist",
+          type: "boolean",
+        },
         total_rows: {
           title: "Total rows",
           type: "integer",
@@ -155368,6 +155382,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["total_rows"],
       type: "object",
       properties: {
+        skill_links_exist: {
+          title: "Skill links exist",
+          type: "boolean",
+        },
         total_rows: {
           title: "Total rows",
           type: "integer",

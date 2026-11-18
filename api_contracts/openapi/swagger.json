@@ -95117,6 +95117,12 @@
                 "description": "List traces filtered by project ID with optimized queries.",
                 "parameters": [
                     {
+                        "name": "include_skill_links",
+                        "in": "query",
+                        "required": false,
+                        "type": "boolean"
+                    },
+                    {
                         "name": "sort_params",
                         "in": "query",
                         "required": false,
@@ -214919,6 +214925,10 @@
             ],
             "type": "object",
             "properties": {
+                "skill_links_exist": {
+                    "title": "Skill links exist",
+                    "type": "boolean"
+                },
                 "total_rows": {
                     "title": "Total rows",
                     "type": "integer"
@@ -216085,6 +216095,10 @@
             ],
             "type": "object",
             "properties": {
+                "skill_links_exist": {
+                    "title": "Skill links exist",
+                    "type": "boolean"
+                },
                 "total_rows": {
                     "title": "Total rows",
                     "type": "integer"
@@ -216352,6 +216366,10 @@
         "TraceObserveListQuery": {
             "type": "object",
             "properties": {
+                "include_skill_links": {
+                    "title": "Include skill links",
+                    "type": "boolean"
+                },
                 "sort_params": {
                     "title": "Sort params",
                     "type": "string",
