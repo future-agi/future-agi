@@ -996,6 +996,79 @@ class HarnessScenarioCoverageSerializer(serializers.Serializer):
     overlay_intensity = serializers.CharField(required=False, allow_null=True)
 
 
+_LIFECYCLE_STATES = ("draft", "validated", "active", "kept_as_written", "archived")
+
+
+class HarnessScenarioProofSerializer(serializers.Serializer):
+    """The case's proof on the pair in view, and the versions it was made with."""
+
+    proved = serializers.BooleanField(
+        help_text="Its checks ran and held on these versions."
+    )
+    outcome = serializers.CharField(allow_null=True)
+    assumed = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Tools whose steps never ran because they have no endpoint here.",
+    )
+    controls = serializers.ListField(
+        child=serializers.DictField(),
+        help_text="Each negative control: name, why, failed (the checks failed it, as they should), assumed.",
+    )
+    leaks = serializers.ListField(child=serializers.DictField())
+    judged_only = serializers.BooleanField()
+    proved_at = serializers.CharField(allow_null=True)
+    agent_version_id = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text="The agent version the proof was made with; null for a proof made before it was recorded.",
+    )
+    environment_version_id = serializers.CharField(required=False)
+    suite_version_id = serializers.CharField(required=False)
+
+
+class HarnessScenarioLifecycleSerializer(serializers.Serializer):
+    """Where the case stands on the pair in view: its state, why, and its proof."""
+
+    state = serializers.ChoiceField(
+        choices=_LIFECYCLE_STATES,
+        help_text="active and kept_as_written run; kept_as_written runs labelled as not proved.",
+    )
+    reason = serializers.CharField(
+        allow_null=True,
+        help_text="Why it is in this state, as a code; null when nothing holds it.",
+    )
+    reason_text = serializers.CharField(allow_null=True)
+    warning = serializers.CharField(allow_null=True)
+    warning_text = serializers.CharField(allow_null=True)
+    legacy = serializers.BooleanField(
+        help_text="Proved before proofs were checked per case."
+    )
+    proof = HarnessScenarioProofSerializer(allow_null=True)
+    sources = serializers.ListField(
+        child=serializers.DictField(),
+        help_text="Where each requirement of the case comes from, with its label.",
+    )
+    source_changed = serializers.ListField(
+        child=serializers.CharField(allow_blank=True)
+    )
+    source_changed_version = serializers.IntegerField(allow_null=True)
+    source_changed_version_id = serializers.CharField(allow_null=True)
+    must_pass = serializers.BooleanField()
+    negative_controls = serializers.ListField(child=serializers.DictField())
+
+
+class HarnessLifecycleCountsSerializer(serializers.Serializer):
+    """Cases per state, and proved / not proved over every case not archived."""
+
+    draft = serializers.IntegerField()
+    validated = serializers.IntegerField()
+    active = serializers.IntegerField()
+    kept_as_written = serializers.IntegerField()
+    archived = serializers.IntegerField()
+    proved = serializers.IntegerField()
+    not_proved = serializers.IntegerField()
+
+
 class HarnessScenarioRowSerializer(serializers.Serializer):
     """One authored scenario on the Scenarios list."""
 
@@ -1031,6 +1104,11 @@ class HarnessScenarioRowSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         help_text="Present while the list shows unsaved changes.",
+    )
+    lifecycle = HarnessScenarioLifecycleSerializer(
+        required=False,
+        allow_null=True,
+        help_text="Its lifecycle on the pair in view; null for an environment that is not versioned.",
     )
 
 
@@ -1127,6 +1205,9 @@ class HarnessScenarioListResponseSerializer(serializers.Serializer):
     level_labels = serializers.DictField(
         child=serializers.CharField(),
         help_text="The name to show for each coverage level, sub-goal and noise bed on the page, keyed by it.",
+    )
+    lifecycle_counts = HarnessLifecycleCountsSerializer(
+        required=False, help_text="Present for a versioned environment."
     )
     private_fields = serializers.ListField(
         child=serializers.CharField(),

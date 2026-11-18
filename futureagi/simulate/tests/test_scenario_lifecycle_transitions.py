@@ -16,6 +16,10 @@ from simulate.models import (
     HarnessSuiteVersion,
     HostedHarnessScenario,
 )
+from simulate.serializers.harness_environment import (
+    HarnessLifecycleCountsSerializer,
+    HarnessScenarioLifecycleSerializer,
+)
 from simulate.services.harness_readiness import selection
 from simulate.services.harness_readiness.report import resolve_pairing
 from simulate.services.harness_scenario_lifecycle import runnable, scenario_lifecycle
@@ -322,6 +326,11 @@ def test_dropped_and_restored_cases_are_served_with_why_and_whether_proved_again
         first["private_fields"]
     )
     assert "persona" not in first["private_fields"]
+    # Every lifecycle the list serves reads as its declared shape.
+    for row in first["results"]:
+        lifecycle = HarnessScenarioLifecycleSerializer(data=row["lifecycle"])
+        assert lifecycle.is_valid(), lifecycle.errors
+    assert HarnessLifecycleCountsSerializer(data=first["lifecycle_counts"]).is_valid()
     assert first["dropped"] == [
         {
             "key": "cancel-a-ride",
