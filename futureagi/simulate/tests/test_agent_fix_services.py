@@ -2255,7 +2255,9 @@ class TestMakeDefault:
         HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
             payload=payload
         )
-        assert make_candidate_default(first, user=user) == "activated"
+        # Its pairing with the defaults validates before it moves.
+        assert make_candidate_default(first, user=user) == "validating"
+        settle_validations(environment)
         retry_deferred_activations(second.agent_version_id)
         environment.refresh_from_db()
         assert environment.agent_version_id == first.agent_version_id
@@ -2270,7 +2272,9 @@ class TestMakeDefault:
         first = self._winner(source_run)
         second = self._winner(source_run)
 
-        assert make_candidate_default(first, user=user) == "activated"
+        # Its pairing with the defaults validates before it moves.
+        assert make_candidate_default(first, user=user) == "validating"
+        settle_validations(environment)
         with pytest.raises(HostedHarnessError) as refused:
             make_candidate_default(second, user=user)
 
