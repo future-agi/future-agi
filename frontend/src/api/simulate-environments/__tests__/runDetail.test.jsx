@@ -2031,6 +2031,25 @@ describe("useTrialRoutes", () => {
     );
   });
 
+  it("keeps the last lining-up on screen while tool-call columns load", async () => {
+    const { useTrialRoutes } = await import("../runDetail");
+    const first = { trials: [], columns: [], split: null, same_route: true };
+    let release;
+    axios.get
+      .mockReset()
+      .mockResolvedValueOnce({ status: 200, data: first })
+      .mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+    const { result, rerender } = renderHook(
+      ({ tools }) => useTrialRoutes("ex1", "s", tools),
+      { wrapper: wrapper(), initialProps: { tools: false } },
+    );
+    await waitFor(() => expect(result.current.data).toEqual(first));
+    rerender({ tools: true });
+    expect(result.current.data).toEqual(first);
+    release({ status: 200, data: { ...first, tool_calls: true } });
+    await waitFor(() => expect(result.current.data.tool_calls).toBe(true));
+  });
+
   it("reads nothing without a run or a scenario", async () => {
     const { useTrialRoutes } = await import("../runDetail");
     axios.get.mockReset();

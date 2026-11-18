@@ -1,6 +1,6 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Collapse, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { useTrialRoutes } from "src/api/simulate-environments/runDetail";
 import { TRIAL_ROUTES_COPY as C } from "../callTraces.constants";
@@ -83,7 +83,11 @@ export default function TrialRoutes({
 }) {
   const [open, setOpen] = useState(false);
   const [showTools, setShowTools] = useState(false);
-  const { data } = useTrialRoutes(testExecutionId, scenarioKey, showTools);
+  const { data, isPlaceholderData } = useTrialRoutes(
+    testExecutionId,
+    scenarioKey,
+    showTools,
+  );
   if (!data || data.trials.length < 2) return null;
   const { columns, trials, split } = data;
   const tint = (t) => alpha(t.palette.warning.main, 0.08);
@@ -144,145 +148,148 @@ export default function TrialRoutes({
           {open ? C.hide : C.show}
         </Typography>
       </Stack>
-      {open && (
-        <>
-          <Stack direction="row" justifyContent="flex-end" sx={{ py: 0.5 }}>
-            <Toggle on={showTools} onClick={() => setShowTools((was) => !was)}>
-              {C.showTools}
-            </Toggle>
-          </Stack>
-          <Box sx={{ overflowX: "auto", pb: 1 }}>
-            <Box
-              component="table"
-              sx={{
-                borderCollapse: "collapse",
-                minWidth: "100%",
-                "& th, & td": {
-                  px: 0.75,
-                  py: 0.625,
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                  textAlign: "left",
-                  whiteSpace: "nowrap",
-                },
-                "& th": {
-                  typography: "s3",
-                  fontSize: 10.5,
-                  fontWeight: 600,
-                  color: "text.disabled",
-                  letterSpacing: "0.03em",
-                  textTransform: "uppercase",
-                  maxWidth: 150,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                },
-              }}
-            >
-              <thead>
-                <tr>
-                  <th>{C.trial}</th>
-                  <th>{C.result}</th>
-                  {columns.map((column) => (
-                    <Box
-                      component="th"
-                      key={column.key}
-                      title={labelOf(column)}
-                      sx={
-                        column.key === split?.key
-                          ? { bgcolor: tint }
-                          : undefined
-                      }
-                    >
-                      {labelOf(column)}
-                    </Box>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {trials.map((one) => {
-                  // Named and coloured as the run's calls table names a call's outcome.
-                  const { label, color } = runOutcome(one.result);
-                  const isCurrent = one.call_execution_id === currentId;
-                  return (
-                    <tr key={one.call_execution_id}>
-                      <td>
+      {/* Slides open, so the diagram below is seen moving down. */}
+      <Collapse in={open} unmountOnExit>
+        <Stack direction="row" justifyContent="flex-end" sx={{ py: 0.5 }}>
+          <Toggle on={showTools} onClick={() => setShowTools((was) => !was)}>
+            {C.showTools}
+          </Toggle>
+        </Stack>
+        {/* Dimmed, not emptied, while the tool-call columns load. */}
+        <Box
+          sx={{
+            overflowX: "auto",
+            pb: 1,
+            opacity: isPlaceholderData ? 0.5 : 1,
+            transition: "opacity 150ms",
+          }}
+        >
+          <Box
+            component="table"
+            sx={{
+              borderCollapse: "collapse",
+              minWidth: "100%",
+              "& th, & td": {
+                px: 0.75,
+                py: 0.625,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                textAlign: "left",
+                whiteSpace: "nowrap",
+              },
+              "& th": {
+                typography: "s3",
+                fontSize: 10.5,
+                fontWeight: 600,
+                color: "text.disabled",
+                letterSpacing: "0.03em",
+                textTransform: "uppercase",
+                maxWidth: 150,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              },
+            }}
+          >
+            <thead>
+              <tr>
+                <th>{C.trial}</th>
+                <th>{C.result}</th>
+                {columns.map((column) => (
+                  <Box
+                    component="th"
+                    key={column.key}
+                    title={labelOf(column)}
+                    sx={
+                      column.key === split?.key ? { bgcolor: tint } : undefined
+                    }
+                  >
+                    {labelOf(column)}
+                  </Box>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {trials.map((one) => {
+                // Named and coloured as the run's calls table names a call's outcome.
+                const { label, color } = runOutcome(one.result);
+                const isCurrent = one.call_execution_id === currentId;
+                return (
+                  <tr key={one.call_execution_id}>
+                    <td>
+                      <Box
+                        component="button"
+                        type="button"
+                        onClick={() => onOpen(one.call_execution_id, null)}
+                        sx={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 0.75,
+                          p: 0,
+                          border: 0,
+                          bgcolor: "transparent",
+                          cursor: "pointer",
+                          typography: "s2",
+                          fontWeight: isCurrent ? 600 : 400,
+                          color: isCurrent ? "text.primary" : "text.secondary",
+                        }}
+                      >
                         <Box
-                          component="button"
-                          type="button"
-                          onClick={() => onOpen(one.call_execution_id, null)}
                           sx={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 0.75,
-                            p: 0,
-                            border: 0,
-                            bgcolor: "transparent",
-                            cursor: "pointer",
-                            typography: "s2",
-                            fontWeight: isCurrent ? 600 : 400,
-                            color: isCurrent
-                              ? "text.primary"
-                              : "text.secondary",
+                            width: 7,
+                            height: 7,
+                            borderRadius: "50%",
+                            bgcolor: color,
                           }}
+                        />
+                        {C.trialN(one.number)}
+                      </Box>
+                    </td>
+                    <td>
+                      <Typography
+                        component="span"
+                        sx={{ typography: "s3", fontWeight: 600, color }}
+                      >
+                        {label}
+                      </Typography>
+                    </td>
+                    {one.cells ? (
+                      columns.map((column, index) => (
+                        <Box
+                          component="td"
+                          key={column.key}
+                          sx={
+                            column.key === split?.key
+                              ? { bgcolor: tint }
+                              : undefined
+                          }
                         >
-                          <Box
-                            sx={{
-                              width: 7,
-                              height: 7,
-                              borderRadius: "50%",
-                              bgcolor: color,
-                            }}
+                          <Cell
+                            cell={one.cells[index]}
+                            kind={column.kind}
+                            trialNumber={one.number}
+                            onOpen={(step) =>
+                              onOpen(one.call_execution_id, step)
+                            }
                           />
-                          {C.trialN(one.number)}
                         </Box>
-                      </td>
-                      <td>
+                      ))
+                    ) : (
+                      <td colSpan={columns.length}>
                         <Typography
                           component="span"
-                          sx={{ typography: "s3", fontWeight: 600, color }}
+                          sx={{ typography: "s3", color: "text.tertiary" }}
                         >
-                          {label}
+                          {C.notCompared[one.route] ?? one.route}
                         </Typography>
                       </td>
-                      {one.cells ? (
-                        columns.map((column, index) => (
-                          <Box
-                            component="td"
-                            key={column.key}
-                            sx={
-                              column.key === split?.key
-                                ? { bgcolor: tint }
-                                : undefined
-                            }
-                          >
-                            <Cell
-                              cell={one.cells[index]}
-                              kind={column.kind}
-                              trialNumber={one.number}
-                              onOpen={(step) =>
-                                onOpen(one.call_execution_id, step)
-                              }
-                            />
-                          </Box>
-                        ))
-                      ) : (
-                        <td colSpan={columns.length}>
-                          <Typography
-                            component="span"
-                            sx={{ typography: "s3", color: "text.tertiary" }}
-                          >
-                            {C.notCompared[one.route] ?? one.route}
-                          </Typography>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </Box>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
           </Box>
-        </>
-      )}
+        </Box>
+      </Collapse>
     </Box>
   );
 }

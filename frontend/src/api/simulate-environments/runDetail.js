@@ -1,5 +1,9 @@
 import { useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import {
   simulateV3CallExecutionWorkers,
@@ -731,6 +735,8 @@ export function useTrialRoutes(
       return response.data;
     },
     enabled: !!testExecutionId && !!scenarioKey,
+    // Switching tool-call columns keeps the table on screen until the new one arrives.
+    placeholderData: keepPreviousData,
     // The strip says nothing when it can't read them; a call drawer must not toast about it.
     meta: { errorHandled: true },
   });
