@@ -278,6 +278,10 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
     connected = serializers.BooleanField(read_only=True)
     managed_by = RunEnvironmentRefSerializer(read_only=True, allow_null=True)
     found_check = AgentFoundCheckSerializer(read_only=True)
+    source_checked_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    source_check_interval_seconds = serializers.IntegerField(
+        read_only=True, allow_null=True
+    )
 
     class Meta(AgentDefinitionResponseSerializer.Meta):
         fields = [
@@ -293,6 +297,8 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
             "connected",
             "managed_by",
             "found_check",
+            "source_checked_at",
+            "source_check_interval_seconds",
         ]
         read_only_fields = fields
 

@@ -57,6 +57,7 @@ from simulate.services.agent_overview import (
     recent_agent_runs,
     version_list_context,
 )
+from simulate.services.harness_agent_changes import poll_interval_seconds
 from simulate.services.harness_agent_versions import (
     connected_agent,
     environment_owned,
@@ -491,6 +492,10 @@ class AgentDefinitionDetailView(APIView):
                         "required": found_check_required(agent),
                         "done_at": agent.found_checked_at,
                     },
+                    "source_checked_at": agent.source_checked_at,
+                    "source_check_interval_seconds": (
+                        poll_interval_seconds() if agent._source == "github" else None
+                    ),
                 },
                 status=status.HTTP_200_OK,
             )
@@ -857,6 +862,7 @@ class EditAgentDefinitionView(APIView):
                     link_production_project(
                         agent_definition=agent,
                         project_id=validated["production_project_id"],
+                        workspace=getattr(request, "workspace", None),
                     )
                 if "observability_enabled" in validated:
                     set_agent_observability(
