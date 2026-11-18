@@ -833,17 +833,27 @@ def record_proofs(
                 state=HarnessAssembledBundle.State.READY,
             ).exists()
         )
+        made_with = (
+            {
+                "agent_version_id": str(job.agent_version_id),
+                "job_id": str(job.id),
+            }
+            if job is not None and job.agent_version_id
+            else {}
+        )
         for key, entry in incoming.items():
             if entry.get("blocked_reason") == "validation_incomplete" and key in merged:
                 continue
+            # Each entry keeps the agent version it was proved with: a partial validation by
+            # another agent version replaces only its own keys.
+            entry = {**entry, **made_with}
             if (
                 suite_version.lifecycle_legacy
-                and entry.get("format") == 2
-                and entry.get("proved") is not True
+                and entry.get("blocked_reason") == "validation_incomplete"
                 and _legacy_validated(merged.get(key), certified)
             ):
-                # The re-proof replaces the old entry, so the key keeps the fact that it was
-                # validated by legacy on this pair (section 4.15 reads it).
+                # The case was not reached: it keeps the fact that legacy validated it on this pair
+                # (section 4.15 reads it). A re-proof that ran and failed ends it.
                 entry = {**entry, "legacy_validated": True}
             merged[key] = entry
         validation.proofs = merged

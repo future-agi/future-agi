@@ -12,6 +12,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal, TypedDict
 
+from django.db.models import F
+
 from simulate.models import (
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
@@ -300,13 +302,17 @@ def _legacy_keys(
     """Keys validated by legacy on this pair, with the legacy proof entry (None when the legacy
     pairing was certified with no entry at all)."""
     found: dict[str, Mapping[str, Any] | None] = {}
+    # Newest first: the latest legacy version holding the case unchanged decides.
     versions = list(
         HarnessSuiteVersion._base_manager.filter(
             job_id=environment.id, lifecycle_legacy=True
-        ).values_list("id", flat=True)
+        )
+        .order_by(F("version_number").desc(nulls_last=True), "-created_at")
+        .values_list("id", flat=True)
     )
     if not versions:
         return found
+    order = {suite_id: at for at, suite_id in enumerate(versions)}
     proofs_by_suite = dict(
         HarnessSuiteValidation.no_workspace_objects.filter(
             suite_version_id__in=versions, environment_version_id=environment_version.id
@@ -323,10 +329,16 @@ def _legacy_keys(
     digests = {
         key: canonical_digest(content or {}) for key, content in contents.items()
     }
-    for suite_id, key, content in HarnessSuiteMember.no_workspace_objects.filter(
-        suite_version_id__in=versions, scenario_key__in=list(contents)
-    ).values_list("suite_version_id", "scenario_key", "content"):
-        if key in found and found[key] is not None:
+    members = sorted(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id__in=versions, scenario_key__in=list(contents)
+        ).values_list("suite_version_id", "scenario_key", "content"),
+        key=lambda one: order[one[0]],
+    )
+    # Keys a format-2 proof decided: a re-proof that ran ends what legacy granted, whatever it found.
+    decided: set[str] = set()
+    for suite_id, key, content in members:
+        if key in decided or (key in found and found[key] is not None):
             continue
         # Content carried unchanged from a legacy version on the same environment version inherits it.
         if suite_id != suite_version.id and canonical_digest(
@@ -335,14 +347,22 @@ def _legacy_keys(
             continue
         proofs = proofs_by_suite.get(suite_id) or {}
         entry = proofs.get(key) if isinstance(proofs, Mapping) else None
-        if isinstance(entry, Mapping) and (
-            entry.get("legacy_validated") is True
-            or (entry.get("format") != 2 and entry.get("holds") is True)
+        incomplete = (
+            isinstance(entry, Mapping)
+            and entry.get("blocked_reason") == "validation_incomplete"
+        )
+        if isinstance(entry, Mapping) and entry.get("legacy_validated") is True:
+            # Only an unreached case keeps the mark (record_proofs): legacy still holds for it.
+            found[key] = entry
+        elif isinstance(entry, Mapping) and entry.get("format") == 2 and not incomplete:
+            decided.add(key)
+        elif (
+            isinstance(entry, Mapping)
+            and entry.get("format") != 2
+            and entry.get("holds") is True
         ):
             found[key] = entry
-        elif suite_id in certified and (
-            entry is None or entry.get("blocked_reason") == "validation_incomplete"
-        ):
+        elif suite_id in certified and (entry is None or incomplete):
             # A `validation_incomplete` entry counts as no format-2 proof (section 4.15).
             found.setdefault(key, None)
     return found
@@ -381,10 +401,15 @@ def scenario_lifecycle(
     ) or ({}, None)
     proofs = proofs or {}
     agent = agent_version_id or environment.agent_version_id
-    # Proofs from a validation of another agent version; one whose agent is not recorded is kept as it was.
-    other_agent = (
-        proved_with is not None and agent is not None and str(proved_with) != str(agent)
-    )
+
+    def other_agent(entry: Mapping[str, Any]) -> bool:
+        """Whether this entry was proved with another agent version: its own stamp, else (an older entry) the row's
+        job; one whose agent is not recorded is kept as it was."""
+        made_with = entry.get("agent_version_id") or proved_with
+        return (
+            made_with is not None and agent is not None and str(made_with) != str(agent)
+        )
+
     rows = {
         row["scenario_key"]: row
         for row in HostedHarnessScenario.no_workspace_objects.filter(
@@ -438,7 +463,7 @@ def scenario_lifecycle(
             and entry.get("blocked_reason") != "validation_incomplete"
         ):
             blocked = entry.get("blocked_reason")
-            if entry.get("proved") is True and other_agent:
+            if entry.get("proved") is True and other_agent(entry):
                 view = _view("draft", reason="proved_on_other_agent", entry=entry)
             elif entry.get("proved") is True:
                 view = _view(good, entry=entry)
