@@ -4,7 +4,7 @@ import re
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import structlog
@@ -1236,9 +1236,10 @@ class EvaluationRunner:
             input_type[key] = detect_input_type(value)
         return input_type
 
-    def _emit_cell_usage(self, eval_instance, api_call_log_row, row):
+    def _emit_cell_usage(self, eval_instance, api_call_log_row, row, started_at=None):
         """Bill one evaluated cell. Billing never fails the cell, but a lost
-        charge is logged."""
+        charge is logged. A token fallback cost is priced at ``started_at``, the
+        instant the cell's evaluation started (None means now)."""
         try:
             try:
                 from ee.usage.schemas.events import UsageEvent
@@ -1276,7 +1277,7 @@ class EvaluationRunner:
                 )
 
                 _model = self.user_eval_metric.model or "unknown"
-                _fallback = calculate_total_cost(_model, _token_usage)
+                _fallback = calculate_total_cost(_model, _token_usage, at=started_at)
                 _fallback_cost = _fallback.get("total_cost", 0)
             except Exception:
                 pass
@@ -1379,6 +1380,8 @@ class EvaluationRunner:
                 base_column_ids, dataset_id=row.dataset_id
             )
             api_call_log_row = self._handle_api_call(row, mappings, config)
+            # The evaluation starts here; a fallback cost is priced at this instant.
+            eval_started_at = datetime.now(UTC)
             (
                 eval_result,
                 required_field_error,
@@ -1449,7 +1452,9 @@ class EvaluationRunner:
                 self._handle_api_call_status(api_call_log_row, CellStatus.PASS.value)
 
             # Post-eval cost-based usage emit
-            self._emit_cell_usage(eval_instance, api_call_log_row, row)
+            self._emit_cell_usage(
+                eval_instance, api_call_log_row, row, started_at=eval_started_at
+            )
 
             # Trigger error localization when enabled either on the dataset binding
             # (UserEvalMetric) or directly on the eval template.

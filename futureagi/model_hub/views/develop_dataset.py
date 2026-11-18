@@ -34,7 +34,6 @@ from django.db.models import (
     Prefetch,
     Q,
     Subquery,
-    Sum,
     Value,
     When,
 )
@@ -59,7 +58,6 @@ from agentic_eval.core.embeddings.embedding_manager import (
     model_manager,
 )
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from analytics.utils import (
     MixpanelEvents,
@@ -311,6 +309,7 @@ from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import (
     calculate_column_average,
+    cell_token_cost,
     get_eval_stats,
     get_prompt_stats,
 )
@@ -2836,44 +2835,46 @@ class GetDatasetTableView(APIView):
 
                         if status == StatusType.COMPLETED.value:
                             if column_config_only:
-                                # Use DB aggregation instead of per-cell Python loop
-                                agg = (
-                                    Cell.objects.filter(
-                                        column=column,
-                                        deleted=False,
+                                # Use DB aggregation instead of per-cell Python loop;
+                                # each cell is priced at the rate of its date.
+                                try:
+                                    # A savepoint, so a failed aggregate does not
+                                    # abort the transaction the rest of the read uses.
+                                    with transaction.atomic():
+                                        stats = cell_token_cost(
+                                            Cell.objects.filter(
+                                                column=column,
+                                                deleted=False,
+                                            ).exclude(
+                                                status=CellStatus.ERROR.value,
+                                            ),
+                                            model_name,
+                                        )
+                                except DatabaseError:
+                                    # Say so, rather than drop the column and
+                                    # answer 200 with a column_config that lacks it.
+                                    logger.exception(
+                                        "Could not aggregate the run-prompt stats of a column.",
+                                        column_id=str(column.id),
                                     )
-                                    .exclude(
-                                        status=CellStatus.ERROR.value,
-                                    )
-                                    .aggregate(
-                                        cell_count=Count("id"),
-                                        total_prompt_tokens=Sum("prompt_tokens"),
-                                        total_completion_tokens=Sum(
-                                            "completion_tokens"
-                                        ),
-                                        total_response_time=Sum("response_time"),
-                                    )
-                                )
-                                cell_count = agg["cell_count"] or 0
-                                if cell_count:
-                                    total_prompt = agg["total_prompt_tokens"] or 0
-                                    total_completion = (
-                                        agg["total_completion_tokens"] or 0
-                                    )
-                                    total_response = agg["total_response_time"] or 0
-                                    total_tokens = total_prompt + total_completion
-
-                                    # Single cost calculation on totals (pricing is linear)
-                                    cost_calculation = calculate_total_cost(
-                                        model_name,
+                                    stats = None
+                                    metadata.update(
                                         {
-                                            "prompt_tokens": total_prompt,
-                                            "completion_tokens": total_completion,
-                                        },
+                                            "stats_unavailable": True,
+                                            "average_latency": None,
+                                            "average_cost": None,
+                                            "average_tokens": None,
+                                        }
                                     )
-                                    total_cost = (
-                                        cost_calculation.get("total_cost", 0) or 0
-                                    )
+                                cell_count = stats["cell_count"] if stats else 0
+                                if stats is None:
+                                    pass  # marked unavailable above
+                                elif cell_count:
+                                    total_prompt = stats["prompt_tokens"]
+                                    total_completion = stats["completion_tokens"]
+                                    total_response = stats["response_time"]
+                                    total_tokens = total_prompt + total_completion
+                                    total_cost = stats["cost"]
 
                                     metadata["average_latency"] = (
                                         total_response / cell_count

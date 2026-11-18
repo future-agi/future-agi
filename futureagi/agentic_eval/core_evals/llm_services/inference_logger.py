@@ -1,5 +1,6 @@
 import asyncio
 import threading
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -35,8 +36,21 @@ class InferenceLogger(FiApiKey):
         custom_attributes: dict | None = None,
         custom_eval_metrics: dict | None = None,
         cost: float | None = None,
+        started_at: datetime | None = None,
     ) -> None:
+        """Log one inference.
+
+        The cost of a call that did not report one is priced at the instant the
+        request started: ``started_at``, else the logging time less the
+        ``response_time`` (ms) the call took, else now.
+        """
         try:
+            if (
+                started_at is None
+                and isinstance(response_time, int | float)
+                and response_time > 0
+            ):
+                started_at = datetime.now(UTC) - timedelta(milliseconds=response_time)
             args = (
                 prompt,
                 response,
@@ -61,6 +75,7 @@ class InferenceLogger(FiApiKey):
                 custom_attributes,
                 cost,
                 custom_eval_metrics,
+                started_at,
             )
             threading.Thread(
                 target=lambda: asyncio.run(
@@ -95,6 +110,7 @@ class InferenceLogger(FiApiKey):
         custom_attributes,
         cost,
         custom_eval_metrics,
+        started_at=None,
     ) -> None:
         """
         logs the llm inference to Fi client
@@ -135,6 +151,7 @@ class InferenceLogger(FiApiKey):
                         "prompt_tokens": prompt_tokens,
                         "completion_tokens": completion_tokens,
                     },
+                    at=started_at,
                 ).get("total_cost", 0.0),
             }
             # Remove None fields from the payload

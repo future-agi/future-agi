@@ -37,6 +37,10 @@ type ModelInfo struct {
 	DeprecationDate string          `json:"deprecation_date,omitempty"`
 	Regions         []string        `json:"regions,omitempty"`
 
+	// RegionalUplift is the factor Vertex AI adds to this model's token prices
+	// away from its global endpoint; 0 when the table states none.
+	RegionalUplift float64 `json:"regional_uplift,omitempty"`
+
 	// priceOverride is the config price override New merged into Pricing. A
 	// dated row in force replaces token prices, so PricingAt merges it again.
 	priceOverride *PricingOverride
@@ -247,9 +251,16 @@ func (db *ModelDB) Count() int {
 // pricing in force at opts.At, or now when it is zero.
 // Returns 0, false if the model is not found or has no pricing.
 func (db *ModelDB) CalculateCost(modelID string, inputTokens, outputTokens int, opts CostOptions) (float64, bool) {
+	cost, _, ok := db.CalculateCostCached(modelID, inputTokens, outputTokens, opts)
+	return cost, ok
+}
+
+// CalculateCostCached is CalculateCost that also returns how many input tokens
+// were priced at the cached rate: zero when the entry gave no cached discount.
+func (db *ModelDB) CalculateCostCached(modelID string, inputTokens, outputTokens int, opts CostOptions) (float64, int, bool) {
 	m, ok := db.Get(modelID)
 	if !ok {
-		return 0, false
+		return 0, 0, false
 	}
 	at := opts.At
 	if at.IsZero() {
@@ -260,9 +271,10 @@ func (db *ModelDB) CalculateCost(modelID string, inputTokens, outputTokens int, 
 		pricing = m.PricingAt(at)
 	}
 	if pricing.InputPerToken == 0 {
-		return 0, false
+		return 0, 0, false
 	}
-	return pricing.Calculate(inputTokens, outputTokens, opts), true
+	cost, cached := pricing.calculate(inputTokens, outputTokens, opts)
+	return cost, cached, true
 }
 
 // AudioCost returns the cost of transcribing the given seconds of audio.

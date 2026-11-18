@@ -3,6 +3,7 @@ package cost
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -63,6 +64,25 @@ const (
 	MetadataReportedZero = "cost_reported_zero"
 )
 
+// cachedTokensKey records how many prompt tokens a chat request was priced
+// at the cached rate for. It is absent when no cached discount was given.
+const cachedTokensKey = "cost_cached_tokens"
+
+// Where a chat request priced with Vertex AI's regional uplift records the
+// location it was sent to and the factor applied.
+const (
+	vertexLocationKey = "cost_vertex_location"
+	regionalUpliftKey = "cost_region_uplift"
+)
+
+// servedVertexLocationKey is where the server records the Vertex AI location
+// of the provider instance that served a chat request.
+const servedVertexLocationKey = "served_vertex_location"
+
+// maxRegionalUplift bounds the table's regional multiplier. Google's is 1.1;
+// a larger one is a bad row, not a price.
+const maxRegionalUplift = 1.5
+
 // Where an operator sets a missing price, by the unit the endpoint is billed
 // in. The budget plugin does not read the model database: it prices chat
 // tokens from cost_tracking.custom_pricing, so every hint names that key too,
@@ -93,9 +113,15 @@ type Plugin struct {
 	now func() time.Time
 	// providerTypes gives the type a provider's config records, "" for none.
 	providerTypes func(rc *models.RequestContext) string
+	// cachedInPrompt says whether the provider instance that served a request
+	// counts the prompt tokens it read from its prompt cache inside
+	// prompt_tokens.
+	cachedInPrompt func(rc *models.RequestContext) bool
 
 	unpricedWarned      sync.Map     // price hint + model → struct{}: already warned about
 	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
+	usageWarned         sync.Map     // key → struct{}: odd usage already warned about
+	usageWarnedCount    atomic.Int32 // size of usageWarned, for the cap
 
 	reportedZeroWarned      sync.Map     // provider + model + streamed → struct{}
 	reportedZeroWarnedCount atomic.Int32 // size of reportedZeroWarned, for the cap
@@ -138,6 +164,13 @@ func (p *Plugin) pricedAt(rc *models.RequestContext) time.Time {
 // so a reseller configured under another ID is still known by its type.
 func (p *Plugin) SetProviderTypes(f func(rc *models.RequestContext) string) {
 	p.providerTypes = f
+}
+
+// SetCachedTokensInPrompt gives the plugin, per provider, whether its usage
+// counts cached prompt tokens inside prompt_tokens. Only those are priced at
+// the cached rate.
+func (p *Plugin) SetCachedTokensInPrompt(f func(rc *models.RequestContext) bool) {
+	p.cachedInPrompt = f
 }
 
 // providerType is the type rc's provider's config records, or "".
@@ -215,10 +248,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	table := p.tableName(rc)
 	model = db.PriceKey(model, rc.Provider, table)
 
-	opts := modeldb.CostOptions{
-		Cached: rc.Metadata["cache_status"] == "hit",
-		At:     p.pricedAt(rc),
-	}
+	opts := modeldb.CostOptions{At: p.pricedAt(rc)}
 
 	var cost float64
 	var ok bool
@@ -305,14 +335,32 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		}
 		usage := rc.Response.Usage
 		billed = float64(usage.PromptTokens + usage.CompletionTokens)
+		opts.CachedTokens = p.cachedTokens(rc, model, usage)
 		providerType := p.providerType(rc)
 		ownKey, keep := resellerPrice(db, model, rc.Provider, table, providerType, opts.At)
 		opts.TablePrice = keep
-		cost, ok = db.CalculateCost(cmp.Or(ownKey, model), usage.PromptTokens, usage.CompletionTokens, opts)
+		priced := cmp.Or(ownKey, model)
+		var discounted int
+		cost, discounted, ok = db.CalculateCostCached(priced, usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && rc.ResolvedModel != "" && rc.Model != "" {
 			fallback := db.PriceKey(rc.Model, rc.Provider, table)
 			ownKey, opts.TablePrice = resellerPrice(db, fallback, rc.Provider, table, providerType, opts.At)
-			cost, ok = db.CalculateCost(cmp.Or(ownKey, fallback), usage.PromptTokens, usage.CompletionTokens, opts)
+			priced = cmp.Or(ownKey, fallback)
+			cost, discounted, ok = db.CalculateCostCached(priced, usage.PromptTokens, usage.CompletionTokens, opts)
+		}
+		// Only tokens actually priced at the cached rate are recorded: an entry
+		// with no lower cached rate gave no discount, so the log claims none.
+		if ok && discounted > 0 {
+			rc.Metadata[cachedTokensKey] = strconv.Itoa(discounted)
+		}
+		// Chat completions only: the GenAI routes, /v1/messages and the other
+		// endpoints that fall into this branch keep their price.
+		if ok && (rc.EndpointType == "chat" || rc.EndpointType == "") {
+			if factor, location := p.regionalUplift(db, rc, table, priced); factor > 1 {
+				cost *= factor
+				rc.Metadata[vertexLocationKey] = location
+				rc.Metadata[regionalUpliftKey] = strconv.FormatFloat(factor, 'f', -1, 64)
+			}
 		}
 		// A trusted vendor's own statement of the cost wins over the
 		// catalogue, operator overrides included; org custom pricing has
@@ -546,6 +594,92 @@ func resellerPrice(db *modeldb.ModelDB, model, provider, table, configuredType s
 		}
 	}
 	return "", true
+}
+
+// cachedTokens is how many of a chat request's prompt tokens to price at the
+// cached rate: the count its usage reports, when the provider that served it
+// counts them inside the prompt. A count above the prompt means the upstream
+// counts them some other way, so none is discounted.
+func (p *Plugin) cachedTokens(rc *models.RequestContext, model string, usage *models.Usage) int {
+	if p.cachedInPrompt == nil || rc.Provider == "" || !p.cachedInPrompt(rc) {
+		return 0
+	}
+	cached := cachedPromptTokens(usage)
+	if cached > usage.PromptTokens {
+		p.warnOnce("cached\x00"+rc.Provider+"\x00"+model,
+			"cost: provider reported more cached prompt tokens than prompt tokens; pricing the whole prompt at the input rate",
+			"provider", rc.Provider,
+			"model", model,
+			"request_id", rc.RequestID,
+			"prompt_tokens", usage.PromptTokens,
+			"cached_tokens", cached,
+		)
+		return 0
+	}
+	return cached
+}
+
+// cachedPromptTokens is the prompt_tokens_details.cached_tokens count usage
+// carries; 0 when it carries none, or one that is not a whole number of
+// tokens.
+func cachedPromptTokens(u *models.Usage) int {
+	if u == nil || u.PromptTokensDetails == nil {
+		return 0
+	}
+	var details struct {
+		CachedTokens int `json:"cached_tokens"`
+	}
+	if err := json.Unmarshal(*u.PromptTokensDetails, &details); err != nil || details.CachedTokens < 0 {
+		return 0
+	}
+	return details.CachedTokens
+}
+
+// warnOnce logs msg the first time key is seen, for up to
+// maxUnpricedWarnings keys, so a caller cannot grow the set without limit.
+func (p *Plugin) warnOnce(key, msg string, args ...any) {
+	if p.usageWarnedCount.Load() >= maxUnpricedWarnings {
+		return
+	}
+	if _, seen := p.usageWarned.LoadOrStore(key, struct{}{}); seen {
+		return
+	}
+	p.usageWarnedCount.Add(1)
+	slog.Warn(msg, args...)
+}
+
+// regionalUplift is the factor Google adds to a Vertex AI chat request's
+// token prices away from the global endpoint, and the location the request
+// was sent to; 1 and "" when none applies. The location is the one the
+// server recorded from the provider instance that served the request. A
+// location it could not tell counts as global, so nobody is charged an
+// uplift they may not owe. The factor is read from the model's "vertex_ai/"
+// entry, since the request may have been priced from another key.
+func (p *Plugin) regionalUplift(db *modeldb.ModelDB, rc *models.RequestContext, table, priced string) (float64, string) {
+	if table != "vertex_ai" {
+		return 1, ""
+	}
+	location := rc.Metadata[servedVertexLocationKey]
+	if location == "" || location == "global" {
+		return 1, ""
+	}
+	m, ok := db.Get(priced)
+	if !ok {
+		return 1, ""
+	}
+	key := "vertex_ai/" + m.ID[strings.LastIndexByte(m.ID, '/')+1:]
+	entry, ok := db.Get(key)
+	if !ok || entry.ID != key || entry.RegionalUplift == 0 {
+		return 1, ""
+	}
+	if f := entry.RegionalUplift; !(f > 1 && f <= maxRegionalUplift) {
+		p.warnOnce("uplift\x00"+key, "cost: ignoring a regional price multiplier outside (1, 1.5]",
+			"model", key,
+			"multiplier", f,
+		)
+		return 1, ""
+	}
+	return entry.RegionalUplift, location
 }
 
 // imageCost prices an image call: by tokens when the upstream reported them,

@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime, timedelta
 
 import structlog
 
@@ -6,6 +7,26 @@ logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.fi_meta import FiMeta
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from agentic_eval.core_evals.llm_services.inference_logger import InferenceLogger
+
+
+def _started_at(response, fi_meta) -> datetime | None:
+    """When the call behind a finished response started, for pricing it.
+
+    This prices a record made elsewhere, so there is no request start of its own:
+    the record's own created time (``response.created``, epoch seconds), less the
+    ``response_time`` (ms) the call took when ``fi_meta`` has it. None means now.
+    """
+    created = getattr(response, "created", None)
+    if not isinstance(created, int | float):
+        return None
+    try:
+        started = datetime.fromtimestamp(created, tz=UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+    response_time = getattr(fi_meta, "response_time", None)
+    if isinstance(response_time, int | float) and response_time > 0:
+        started -= timedelta(milliseconds=response_time)
+    return started
 
 
 class LiteLlmAgi:
@@ -33,7 +54,11 @@ class LiteLlmAgi:
                 "prompt_tokens": response.usage.prompt_tokens,
                 "total_tokens": response.usage.total_tokens,
             },
-            "cost": calculate_total_cost(response.model, dict(response.usage)),
+            "cost": calculate_total_cost(
+                response.model,
+                dict(response.usage),
+                at=_started_at(response, fi_meta),
+            ),
         }
 
         # Parse choices

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/detid"
 	"github.com/future-agi/future-agi/fi-collector/pkg/pricing"
@@ -210,7 +211,7 @@ func TestNonOpenRouterSpansUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	pr := pricing.New(tbl, nil)
-	mini, _ := tbl.Cost("gpt-4o-mini", 120, 38)
+	mini, _ := tbl.Cost("gpt-4o-mini", 120, 38, time.Time{})
 
 	app := func(fill func(pcommon.Map)) ptrace.Traces {
 		td := contentSpan(fill)

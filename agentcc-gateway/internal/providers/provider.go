@@ -58,6 +58,37 @@ func PriceTableName(p Provider) string {
 	return ""
 }
 
+// PromptCacheCounter is implemented by providers whose usage counts the
+// prompt tokens the upstream read from its prompt cache inside prompt_tokens,
+// as prompt_tokens_details.cached_tokens. Only their cached tokens are priced
+// at the cached rate: an upstream that counts them outside the prompt would be
+// under-billed.
+type PromptCacheCounter interface {
+	CachedTokensInPrompt() bool
+}
+
+// CachedTokensInPrompt says whether p's usage counts its cached prompt tokens
+// inside prompt_tokens; false for nil and for a provider that does not say.
+func CachedTokensInPrompt(p Provider) bool {
+	c, ok := p.(PromptCacheCounter)
+	return ok && c.CachedTokensInPrompt()
+}
+
+// VertexLocator is implemented by providers that know which Vertex AI
+// location their requests are sent to.
+type VertexLocator interface {
+	VertexLocation() string
+}
+
+// VertexLocation returns the Vertex AI location p's requests are sent to, or
+// "" when p is not on Vertex AI or cannot tell.
+func VertexLocation(p Provider) string {
+	if l, ok := p.(VertexLocator); ok {
+		return l.VertexLocation()
+	}
+	return ""
+}
+
 // ReportedCostSource is implemented by providers whose responses may state
 // what the request cost: the OpenAI-format provider. It says what the
 // provider was configured as and where it sends requests, which is what
