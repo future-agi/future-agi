@@ -269,9 +269,7 @@ class TestRows:
         report = _report(environment)
 
         statuses = {row["id"]: row["status"] for row in report["rows"]}
-        from simulate.services.harness_readiness.rules import PAIR_CHECKED
-
-        measured = [row["id"] for row in report["rows"] if row["id"] in PAIR_CHECKED]
+        measured = [row["id"] for row in report["rows"] if row["measured"]]
         assert measured == [
             "start",
             "message",
