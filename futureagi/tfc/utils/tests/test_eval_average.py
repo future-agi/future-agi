@@ -83,11 +83,15 @@ class TestCalculateEvalAverage(unittest.TestCase):
         self.assert_choice_average(logs, 20)
 
     def test_empty_or_malformed_selections_are_not_successes(self):
-        for invalid_choices in ([], None, "Excellent"):
+        for invalid_choices in ([], None, ""):
             with self.subTest(invalid_choices=invalid_choices):
                 self.assert_choice_average([_log(invalid_choices)], 0)
                 logs = [_log(invalid_choices), _log(["Average"])]
                 self.assert_choice_average(logs, 50)
+
+    def test_single_unscored_label_uses_the_map(self):
+        # The formatter stores a bare label when the template has no scores.
+        self.assert_choice_average([_log("Excellent"), _log(["Poor"])], 50)
 
     def test_unsuccessful_and_malformed_logs_are_skipped(self):
         logs = [

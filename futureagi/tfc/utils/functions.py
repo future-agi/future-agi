@@ -705,7 +705,7 @@ def calculate_eval_average(eval_template, api_logs):
                             case _:
                                 valid_logs += 1
                     elif eval_template.multi_choice:
-                        if isinstance(result, str):
+                        if isinstance(result, str) and result:
                             result = [result]  # one unscored pick
                         if not isinstance(result, list) or not result:
                             continue
