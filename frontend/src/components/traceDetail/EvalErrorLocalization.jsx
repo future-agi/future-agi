@@ -120,6 +120,27 @@ const EvalErrorLocalization = ({
     traceData?.error_analysis ||
     null;
 
+  // Trace mode: the details response carries the localized input snapshot
+  // the card highlights, plus the localization task's status and reason.
+  const traceInputKey = traceData?.selected_input_key || null;
+  const traceDatapoint = traceData
+    ? {
+        selected_input_key: traceInputKey,
+        selectedInputKey: traceInputKey,
+        input_data: traceData.input_data || {},
+        input_types: traceData.input_types || {},
+      }
+    : null;
+  const effectiveDatapoint =
+    datapoint || (mode === "trace" ? traceDatapoint : null);
+  const effectiveInputKey =
+    selectedInputKey || (mode === "trace" ? traceInputKey : null);
+  const statusMessage =
+    cellPollData?.error_message ||
+    initialMessage ||
+    traceData?.error_localizer_message ||
+    null;
+
   // ── Cell-mode trigger ───────────────────────────────────────────────────
   const cellTriggerMutation = useMutation({
     mutationFn: async () => {
@@ -180,7 +201,12 @@ const EvalErrorLocalization = ({
 
   const effectiveStatus = analysis
     ? "completed"
-    : cellPollData?.status || initialStatus || null;
+    : cellPollData?.status ||
+      initialStatus ||
+      traceData?.error_localizer_status ||
+      null;
+  // Trace-mode re-runs need the project version, which Observe rows lack.
+  const canRetry = mode === "cell" || (mode === "trace" && !!projectVersionId);
 
   // ── Loading state (trace mode, waiting on first fetch) ─────────────────
   if (mode === "trace" && traceLoading && !analysis) {
@@ -235,17 +261,20 @@ const EvalErrorLocalization = ({
           </Typography>
           {isAudioLocalization ? (
             <AudioErrorCard
-              valueInfos={{ errorAnalysis: analysis }}
-              column={selectedInputKey || "input"}
+              valueInfos={{
+                ...(effectiveDatapoint || {}),
+                errorAnalysis: analysis,
+              }}
+              column={effectiveInputKey || "input"}
             />
           ) : (
             entries.map(([key, value]) => (
               <ErrorLocalizeCard
                 key={key}
                 value={value}
-                column={selectedInputKey || key}
+                column={effectiveInputKey || key}
                 tabValue="raw"
-                datapoint={datapoint}
+                datapoint={effectiveDatapoint}
               />
             ))
           )}
@@ -310,16 +339,16 @@ const EvalErrorLocalization = ({
         <Typography variant="caption" fontWeight={600} color="error.main">
           Error localization failed
         </Typography>
-        {(cellPollData?.error_message || initialMessage) && (
+        {statusMessage && (
           <Typography
             variant="caption"
             color="text.secondary"
             sx={{ fontSize: 12 }}
           >
-            {cellPollData?.error_message || initialMessage}
+            {statusMessage}
           </Typography>
         )}
-        {mode && (
+        {canRetry && (
           <Box>
             <Button
               size="small"
@@ -339,11 +368,12 @@ const EvalErrorLocalization = ({
 
   // ── State 4: skipped ─────────────────────────────────────────────────────
   if (effectiveStatus === "skipped") {
-    return (
-      <SkippedLocalizationBanner
-        message={cellPollData?.error_message || initialMessage}
-      />
-    );
+    return <SkippedLocalizationBanner message={statusMessage} />;
+  }
+
+  // ── State 4b: finished without a localizable segment ───────────────────
+  if (mode === "trace" && effectiveStatus === "completed" && statusMessage) {
+    return <SkippedLocalizationBanner message={statusMessage} />;
   }
 
   // ── State 5: not yet run — show dashed card with Run button ──────────────
