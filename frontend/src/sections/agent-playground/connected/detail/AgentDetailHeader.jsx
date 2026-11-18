@@ -11,6 +11,8 @@ import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { paths } from "src/routes/paths";
+import PlatformLogo from "src/sections/simulate/environments/components/PlatformLogo";
+import { PLATFORM_LOGOS } from "src/sections/simulate/environments/components/platformLogos";
 import { sourceLabel } from "../connectedAgentLabels";
 import AddVersionDialog from "./AddVersionDialog";
 import SyncAgentDialog from "./SyncAgentDialog";
@@ -18,7 +20,37 @@ import UploadVersionDialog from "./UploadVersionDialog";
 import { newVersionAction } from "./newVersionAction";
 import AgentMoreMenu from "./AgentMoreMenu";
 import { LineSkeleton, Pill } from "./bits";
-import { MONO, ago } from "./format";
+import { MONO, ago, syncTooltip, syncedText } from "./format";
+
+const SOURCE_ICONS = {
+  github: "simple-icons:github",
+  archive: "solar:upload-minimalistic-linear",
+};
+
+function SourceBadge({ source }) {
+  const logo = PLATFORM_LOGOS[source];
+  const label = sourceLabel(source);
+  return (
+    <Pill>
+      <Box
+        component="span"
+        data-testid="agent-source-badge"
+        sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
+      >
+        {logo ? (
+          <PlatformLogo id={source} name={label} />
+        ) : (
+          SOURCE_ICONS[source] && (
+            <Iconify icon={SOURCE_ICONS[source]} width={14} />
+          )
+        )}
+        {logo?.type === "wordmark" ? null : label}
+      </Box>
+    </Pill>
+  );
+}
+
+SourceBadge.propTypes = { source: PropTypes.string.isRequired };
 
 const environmentsText = (count) => {
   if (count === 0) return "No environment yet";
@@ -97,6 +129,28 @@ function NewVersionButton({ agent }) {
 
 NewVersionButton.propTypes = { agent: PropTypes.object.isRequired };
 
+function SyncedAt({ checkedAt, intervalSeconds }) {
+  const tip = syncTooltip(intervalSeconds);
+  return (
+    <CustomTooltip show title={tip} size="small" arrow>
+      <Box
+        component="span"
+        tabIndex={0}
+        aria-label={tip}
+        data-testid="agent-synced-at"
+        sx={{ cursor: "default" }}
+      >
+        {syncedText(checkedAt)}
+      </Box>
+    </CustomTooltip>
+  );
+}
+
+SyncedAt.propTypes = {
+  checkedAt: PropTypes.string,
+  intervalSeconds: PropTypes.number.isRequired,
+};
+
 /**
  * Back, name and source pill; then where the agent lives · when it was
  * connected · how many environments test it. On the right: the version the
@@ -130,6 +184,13 @@ export default function AgentDetailHeader({
       </Box>
     ),
     agent.createdAt && `Connected ${ago(agent.createdAt)}`,
+    source === "github" && agent.sourceCheckIntervalSeconds > 0 && (
+      <SyncedAt
+        key="synced"
+        checkedAt={agent.sourceCheckedAt}
+        intervalSeconds={agent.sourceCheckIntervalSeconds}
+      />
+    ),
     envs &&
       (onOpenEnvironments && agent.environmentCount ? (
         <Box
@@ -176,7 +237,7 @@ export default function AgentDetailHeader({
         </IconButton>
       }
       title={agent.name}
-      badge={source ? <Pill>{sourceLabel(source)}</Pill> : null}
+      badge={source ? <SourceBadge source={source} /> : null}
       description={
         <Box component="span" data-testid="agent-detail-subline">
           {pieces.map((p, i) => (
