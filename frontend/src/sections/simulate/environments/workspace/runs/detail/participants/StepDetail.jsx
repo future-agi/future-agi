@@ -8,11 +8,14 @@ import ChatMarkdown from "src/sections/simulate/environments/buildEnvironment/co
 import { KIND, asMarkdown, readable, smallBtn, took } from "./sequenceLayout";
 import { CopyLink, Label, Pill, Quote } from "./SequenceParts";
 
-const Missing = () => (
+// Nothing to show: the record dropped it at its size limit, or never had it.
+const Missing = ({ notKept = false }) => (
   <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
-    {C.notInRecord}
+    {notKept ? C.notKept : C.notInRecord}
   </Typography>
 );
+
+Missing.propTypes = { notKept: PropTypes.bool };
 
 const SCROLL_SX = { maxHeight: 320, overflow: "auto" };
 
@@ -119,7 +122,7 @@ export default function StepDetail({
   const tool = step.kind === "tool";
   const to = tool ? step.tool : seq.nameOf(step.to);
   const a = step.answer;
-  const waited = a?.kind === "none" && !a.cut && step.dur != null;
+  const waited = a?.kind === "none" && !a.cut && !a.stopped && step.dur != null;
   const meta = [
     step.dur != null &&
       (waited ? C.waited(took(step.dur)) : C.took(took(step.dur))),
@@ -141,7 +144,7 @@ export default function StepDetail({
         {step.input != null ? (
           <Payload value={step.input} testId="tool-input" />
         ) : (
-          <Missing />
+          <Missing notKept={step.inputOmitted} />
         )}
       </Box>
     </>

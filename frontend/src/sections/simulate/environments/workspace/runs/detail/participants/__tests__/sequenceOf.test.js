@@ -10,6 +10,7 @@ import {
   LOOKUP,
   REPLY_CALL,
   REQUEST,
+  RETURNED,
   callStep,
   handOffStep,
   oneTurn,
@@ -113,7 +114,94 @@ describe("sequenceOf over the worker record", () => {
     const tool = seqOf(record).steps.find((s) => s.tool === "get_order");
     expect(tool.refused).toBe(true);
     expect(tool.bad).toBe(false);
-    expect(tool.reason).toBe("not_permitted");
+    // The world's code in plain words, never the code itself.
+    expect(tool.reason).toBe("not permitted");
+  });
+
+  it("a refusal code it doesn't know reads only as refused", () => {
+    const refused = {
+      ...LOOKUP,
+      status: "error",
+      refusal_code: "some_new_code",
+    };
+    const record = timeline({
+      steps: [
+        handOffStep(1, {
+          worker_id: "r/order_lookup",
+          handoff: DELEGATED,
+          end: "finished",
+          children: [refused.seq],
+        }),
+        callStep(refused, { parent: 1, depth: 1 }),
+      ],
+    });
+    const tool = seqOf(record).steps.find((s) => s.tool === "get_order");
+    expect(tool.refused).toBe(true);
+    expect(tool.reason).toBeNull();
+  });
+
+  it("a tool's payload dropped at the record's size limit says so, never that nothing came back", () => {
+    const cut = { ...LOOKUP, output: null, output_omitted: true };
+    const record = timeline({
+      steps: [
+        handOffStep(1, {
+          worker_id: "r/order_lookup",
+          handoff: DELEGATED,
+          end: "finished",
+          children: [cut.seq],
+        }),
+        callStep(cut, { parent: 1, depth: 1 }),
+      ],
+    });
+    const tool = seqOf(record).steps.find((s) => s.tool === "get_order");
+    expect(tool.result).toBe(
+      "Not kept: this call's record reached its size limit",
+    );
+  });
+
+  it("a hand-off the user stopped is neither an error nor a problem", () => {
+    const record = timeline({
+      steps: [
+        {
+          ...handOffStep(1, {
+            worker_id: "r/order_lookup",
+            handoff: DELEGATED,
+            end: "no_return",
+          }),
+          end_state: "cancelled",
+        },
+      ],
+      turns: oneTurn(undefined, undefined, [1]),
+    });
+    const seq = seqOf(record);
+    const handoff = seq.steps.find((s) => s.kind === "handoff");
+    expect(handoff.bad).toBe(false);
+    expect(handoff.answer).toMatchObject({ kind: "none", bad: false });
+    expect(seq.problems).toEqual([]);
+  });
+
+  it("attaches steps by the record's parent, never by time", () => {
+    // The worker's own tool call 60 s in, outside any hand-off the record names.
+    const late = { ...LOOKUP, seq: 9, at: "2026-10-31T12:00:50+00:00" };
+    const record = timeline({
+      steps: [
+        handOffStep(1, {
+          worker_id: "r/order_lookup",
+          handoff: DELEGATED,
+          returned: RETURNED,
+          end: "finished",
+        }),
+        callStep(late),
+      ],
+      turns: oneTurn(undefined, undefined, [1, late.seq]),
+    });
+    const seq = seqOf(record);
+    const handoff = seq.steps.find((s) => s.kind === "handoff");
+    const tool = seq.steps.find((s) => s.tool === "get_order");
+    expect(tool.parent).toBeNull();
+    // Delegated 11:59:55.9, returned 11:59:59: what the record says, not stretched to the late call.
+    expect(handoff.dur).toBeCloseTo(3.1, 1);
+    expect(handoff.tools).toBe(0);
   });
 
   it("uses the served text as the exact message", () => {

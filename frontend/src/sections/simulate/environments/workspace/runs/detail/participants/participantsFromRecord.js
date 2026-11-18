@@ -39,6 +39,9 @@ const STATE_OF_END = {
   cut_off: "cut_off",
 };
 
+// Cut short by a user stop: neither an error nor a failure of the worker.
+const STOPPED_BY_USER = new Set(["cancelled", "cancel_requested"]);
+
 export function participantsFromRecord(record) {
   if (!record) return null;
   const workerOf = Object.fromEntries(
@@ -79,11 +82,12 @@ export function participantsFromRecord(record) {
       spanId: call.span_id ?? null,
       traceId: call.trace_id ?? null,
       unattributed: call.attribution === "unattributed",
+      // The hand-off the record files it under, by step key; null at the top of its turn.
+      parentKey: step.parent ?? null,
       // A worker's call outside any hand-off the record ties it to: its lane, under no hand-off.
       by: step.worker_id ? laneOf(step.worker_id) : null,
       byName: by?.name ?? step.worker_id ?? null,
       byUndeclared: !!by?.undeclared,
-      looseParent: step.relationship === "unknown",
     };
   };
 
@@ -99,7 +103,10 @@ export function participantsFromRecord(record) {
       undeclared: !!worker?.undeclared,
       state: step.transfer
         ? "transferred"
-        : STATE_OF_END[step.end] ?? "unknown",
+        : STOPPED_BY_USER.has(step.end_state)
+          ? "stopped"
+          : STATE_OF_END[step.end] ?? "unknown",
+      parentKey: step.parent ?? null,
       transfer: !!step.transfer,
       unknownParent: step.relationship === "unknown",
       parentId: parentLane,

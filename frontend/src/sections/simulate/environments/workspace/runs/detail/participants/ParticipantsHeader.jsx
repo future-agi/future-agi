@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, ButtonBase, Stack, Tooltip, Typography } from "@mui/material";
+import { ButtonBase, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SEQUENCE_COPY as C } from "./sequence.constants";
 
@@ -59,7 +59,7 @@ Line.propTypes = {
   onPick: PropTypes.func.isRequired,
 };
 
-// The call in one line; what the record is and what it covers sit behind the icon.
+// The call in one line, then what the record is and what it covers.
 export default function ParticipantsHeader({
   summary,
   notes = [],
@@ -70,34 +70,23 @@ export default function ParticipantsHeader({
   const refusals = seq?.refusals || [];
   if (!summary && !notes.length && !problems.length && !refusals.length)
     return null;
-  const about = notes.join(" ");
   return (
     <Stack spacing={0.5}>
-      {summary || about ? (
-        <Stack direction="row" spacing={0.75} alignItems="center">
-          {summary ? (
-            <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-              {summary}
-            </Typography>
-          ) : null}
-          {about ? (
-            <Tooltip title={about} arrow>
-              <Box
-                tabIndex={0}
-                aria-label={about}
-                data-testid="participants-recorded"
-                sx={{ display: "flex", cursor: "default" }}
-              >
-                <Iconify
-                  icon="solar:check-circle-linear"
-                  width={14}
-                  sx={{ color: "success.main" }}
-                />
-              </Box>
-            </Tooltip>
-          ) : null}
-        </Stack>
+      {summary ? (
+        <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+          {summary}
+        </Typography>
       ) : null}
+      {/* What the record is and what it covers, said in plain text, never only on hover. */}
+      {notes.map((note) => (
+        <Typography
+          key={note}
+          data-testid="participants-note"
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >
+          {note}
+        </Typography>
+      ))}
       {problems.map((line) => (
         <Line
           key={`p-${line.n}`}

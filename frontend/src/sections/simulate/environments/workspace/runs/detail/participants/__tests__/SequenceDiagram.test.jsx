@@ -253,6 +253,24 @@ describe("SequenceDiagram", () => {
     expect(within(detail).getByText("Eligible").tagName).toBe("STRONG");
   });
 
+  it("says a tool's input was not kept when the record dropped it at its size limit", () => {
+    const call = { ...LOOKUP, input: null, input_omitted: true };
+    const steps = [
+      handOffStep(1, {
+        worker_id: "r/order_lookup",
+        handoff: DELEGATED,
+        returned: RETURNED,
+        end: "finished",
+        children: [call.seq],
+      }),
+      callStep(call, { parent: 1, depth: 1 }),
+    ];
+    draw(seqOf(timeline({ steps })), { selected: 3 });
+    expect(screen.getByTestId("step-detail")).toHaveTextContent(
+      "Not kept: this call's record reached its size limit",
+    );
+  });
+
   it("shows a tool's object result in the JSON viewer", () => {
     const call = {
       ...LOOKUP,
