@@ -25,7 +25,6 @@ function iconForFile(name) {
   if (["md", "txt"].includes(ext)) return "solar:document-linear";
   if (["pdf"].includes(ext)) return "solar:document-medicine-linear";
   if (["docx", "doc"].includes(ext)) return "solar:document-add-linear";
-  if (["wav", "mp3", "m4a"].includes(ext)) return "solar:microphone-3-linear";
   return "solar:paperclip-linear";
 }
 
@@ -143,21 +142,14 @@ export default function DescribeFlowCard({
   canSubmit,
   submitLabel,
   accept,
+  filesFooter = null,
 }) {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
 
   const onFiles = (list) => {
-    if (!list || !list.length) return;
-    onAdd(
-      Array.from(list).map((f) => ({
-        id: `${f.name}-${f.size}-${f.lastModified}`,
-        name: f.name,
-        size: f.size,
-        type: f.type,
-      })),
-    );
+    if (list?.length) onAdd(list);
   };
   const words = value.trim() ? value.trim().split(/\s+/).length : 0;
 
@@ -243,6 +235,78 @@ export default function DescribeFlowCard({
                 sx: { ...T13, lineHeight: 1.6, px: 0.5, py: 0.25 },
               }}
             />
+            {files.length > 0 && (
+              <Stack
+                component="ul"
+                aria-label="Attached files"
+                direction="row"
+                flexWrap="wrap"
+                gap={0.75}
+                sx={{
+                  listStyle: "none",
+                  m: 0,
+                  p: 0,
+                  mt: 1,
+                  maxHeight: 180,
+                  overflowY: "auto",
+                }}
+              >
+                {files.map((f) => (
+                  <Stack
+                    component="li"
+                    key={f.id}
+                    direction="row"
+                    alignItems="center"
+                    spacing={1}
+                    sx={{
+                      pl: 1,
+                      pr: 0.5,
+                      py: 0.75,
+                      minWidth: 220,
+                      maxWidth: "100%",
+                      borderRadius: "6px",
+                      border: "1px solid",
+                      borderColor: "divider",
+                      bgcolor: "background.paper",
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: "6px",
+                        bgcolor: "action.hover",
+                        display: "grid",
+                        placeItems: "center",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Iconify
+                        icon={iconForFile(f.name)}
+                        width={16}
+                        sx={{ color: "text.secondary" }}
+                      />
+                    </Box>
+                    <Box flex={1} minWidth={0}>
+                      <Typography noWrap sx={{ ...T13, fontWeight: 500 }}>
+                        {f.name}
+                      </Typography>
+                      <Typography sx={{ ...T12, color: "text.disabled" }}>
+                        {formatFileSize(f.size)}
+                      </Typography>
+                    </Box>
+                    <IconButton
+                      size="small"
+                      aria-label={`Remove ${f.name}`}
+                      onClick={() => onRemove(f.id)}
+                      sx={{ p: 0.5, color: "text.secondary" }}
+                    >
+                      <Iconify icon="solar:close-linear" width={14} />
+                    </IconButton>
+                  </Stack>
+                ))}
+              </Stack>
+            )}
             <Stack
               direction="row"
               alignItems="center"
@@ -309,6 +373,8 @@ export default function DescribeFlowCard({
           </Box>
         </Box>
 
+        {files.length > 0 && filesFooter}
+
         {chips?.length > 0 && (
           <Stack
             direction="row"
@@ -340,60 +406,6 @@ export default function DescribeFlowCard({
               >
                 {c}
               </ButtonBase>
-            ))}
-          </Stack>
-        )}
-
-        {files.length > 0 && (
-          <Stack
-            component="ul"
-            aria-label="Attached files"
-            spacing={0.5}
-            sx={{
-              listStyle: "none",
-              m: 0,
-              p: 0,
-              mt: 1.25,
-              maxHeight: 180,
-              overflowY: "auto",
-            }}
-          >
-            {files.map((f) => (
-              <Stack
-                component="li"
-                key={f.id}
-                direction="row"
-                alignItems="center"
-                spacing={1}
-                sx={{
-                  px: 1.25,
-                  py: 0.75,
-                  borderRadius: "6px",
-                  bgcolor: "action.hover",
-                }}
-              >
-                <Iconify
-                  icon={iconForFile(f.name)}
-                  width={16}
-                  sx={{ color: "text.secondary", flexShrink: 0 }}
-                />
-                <Typography noWrap sx={{ ...T13, flex: 1, minWidth: 0 }}>
-                  {f.name}
-                </Typography>
-                <Typography
-                  sx={{ ...T12, color: "text.disabled", flexShrink: 0 }}
-                >
-                  {formatFileSize(f.size)}
-                </Typography>
-                <IconButton
-                  size="small"
-                  aria-label={`Remove ${f.name}`}
-                  onClick={() => onRemove(f.id)}
-                  sx={{ p: 0.25, color: "text.secondary" }}
-                >
-                  <Iconify icon="solar:close-linear" width={12} />
-                </IconButton>
-              </Stack>
             ))}
           </Stack>
         )}
@@ -440,10 +452,13 @@ DescribeFlowCard.propTypes = {
   value: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
   files: PropTypes.array.isRequired,
+  // Called with the picked or dropped FileList.
   onAdd: PropTypes.func.isRequired,
   onRemove: PropTypes.func.isRequired,
   onNext: PropTypes.func.isRequired,
   canSubmit: PropTypes.bool,
   submitLabel: PropTypes.string.isRequired,
   accept: PropTypes.string,
+  // What the attached files need before building, right under the box.
+  filesFooter: PropTypes.node,
 };

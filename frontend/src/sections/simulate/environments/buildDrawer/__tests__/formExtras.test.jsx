@@ -453,7 +453,12 @@ describe("LiveKit: room config and sessions, UI only", () => {
       screen.queryByRole("textbox", { name: "Room config JSON" }),
     ).toBeNull();
     click("button", "Room config and sessions at once");
-    expect(screen.getByText("UI only")).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("button", { name: "Hide room config and sessions" })
+          .parentElement,
+      ).getByText("UI only"),
+    ).toBeInTheDocument();
     expect(box("Max sessions at once")).toHaveValue("5");
     type("Room config JSON", "{not json");
     expect(screen.getByText("Not valid JSON.")).toBeInTheDocument();
